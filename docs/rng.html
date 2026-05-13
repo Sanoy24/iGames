@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RNG &amp; Audit — iGames Docs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<nav class="sidebar">
+  <div class="logo">iGames Docs<span>v0.1.0 — System Architecture</span></div>
+  <div class="nav-section">
+    <div class="nav-section-title">Overview</div>
+    <a class="nav-link" href="index.html"><span class="nav-icon">🏠</span>Architecture</a>
+    <a class="nav-link" href="auth.html"><span class="nav-icon">🔐</span>Authentication</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Games</div>
+    <a class="nav-link" href="keno.html"><span class="nav-icon">🎰</span>Keno</a>
+    <a class="nav-link" href="bingo.html"><span class="nav-icon">🎱</span>90-Ball Bingo</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Finance</div>
+    <a class="nav-link" href="wallet.html"><span class="nav-icon">💰</span>Wallet &amp; Ledger</a>
+    <a class="nav-link" href="payments.html"><span class="nav-icon">💳</span>Telebirr Payments</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Infrastructure</div>
+    <a class="nav-link active" href="rng.html"><span class="nav-icon">🎲</span>RNG &amp; Audit</a>
+    <a class="nav-link" href="api.html"><span class="nav-icon">📡</span>API Reference</a>
+  </div>
+</nav>
+
+<main class="main">
+<h1>RNG &amp; Audit System</h1>
+<p class="subtitle">Cryptographically secure random number generation with full audit trail for every game draw.</p>
+
+<h2>Why Not Math.random()?</h2>
+<div class="alert alert-danger">
+  <span class="alert-icon">🚫</span>
+  <div><strong>Non-negotiable rule:</strong> <code>Math.random()</code> is never used for game outcomes. It uses a PRNG (V8's xorshift128+) that is predictable and unsuitable for gambling applications. All game draws use Node.js <code>crypto.randomInt()</code>.</div>
+</div>
+
+<h2>Algorithm: Fisher-Yates Shuffle</h2>
+<p>The <code>drawWithoutReplacement(min, max, count)</code> method implements a partial Fisher-Yates shuffle:</p>
+<pre><code>drawWithoutReplacement(min, max, count):
+  pool = [min, min+1, ..., max]          // All possible numbers
+  
+  for i = 0 to count-1:
+    swapIndex = crypto.randomInt(i, pool.length)  // Cryptographic random
+    swap(pool[i], pool[swapIndex])                // Fisher-Yates step
+  
+  return pool.slice(0, count)             // First 'count' elements</code></pre>
+
+<p>This guarantees:</p>
+<ul>
+  <li><strong>Uniqueness</strong> — numbers are drawn without replacement (no duplicates).</li>
+  <li><strong>Uniform distribution</strong> — every possible combination is equally likely.</li>
+  <li><strong>Cryptographic security</strong> — uses <code>crypto.randomInt()</code> which sources entropy from the OS CSPRNG.</li>
+  <li><strong>Efficiency</strong> — O(count) swaps, no rejection sampling needed.</li>
+</ul>
+
+<h2>Algorithm Version</h2>
+<p>Current version: <code>crypto-random-int-without-replacement-v1</code></p>
+<p>The version string is stored with every audit log so that if the algorithm is ever changed, historical draws can be attributed to the correct implementation.</p>
+
+<h2>Audit Log Schema</h2>
+<p>Every draw that specifies a <code>gameType</code> and <code>gameReference</code> creates an immutable audit record:</p>
+<table>
+<thead><tr><th>Field</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>gameType</code></td><td><code>"keno"</code> or <code>"bingo"</code></td></tr>
+<tr><td><code>gameReference</code></td><td>Draw ID (Keno) or <code>roomId:drawNumber</code> (Bingo)</td></tr>
+<tr><td><code>algorithmVersion</code></td><td>Algorithm identifier string</td></tr>
+<tr><td><code>min</code>, <code>max</code>, <code>count</code></td><td>Draw parameters</td></tr>
+<tr><td><code>outputNumbers</code></td><td>The actual numbers that were drawn</td></tr>
+<tr><td><code>inputHash</code></td><td>SHA-256 of all draw input parameters (stable-stringified)</td></tr>
+<tr><td><code>randomnessMaterialHash</code></td><td>SHA-256 of 32 random bytes generated alongside the draw</td></tr>
+<tr><td><code>metadata</code></td><td>Additional context (config version, room ID, etc.)</td></tr>
+</tbody>
+</table>
+
+<h3>What the hashes prove</h3>
+<ul>
+  <li><strong>inputHash</strong> — proves the draw was requested with specific parameters. Can be recomputed from the draw request to verify integrity.</li>
+  <li><strong>randomnessMaterialHash</strong> — proves that 32 bytes of cryptographic randomness were generated at the time of the draw. The raw material is <em>not stored</em> (to prevent reverse engineering), only the hash.</li>
+</ul>
+
+<div class="alert alert-info">
+  <span class="alert-icon">💡</span>
+  <div>The audit log is designed for <strong>internal verification</strong>, not public provable fairness. Future implementations could add commit-reveal schemes for public verification.</div>
+</div>
+
+<h2>Input Validation</h2>
+<p>Before any draw executes, the RNG service validates:</p>
+<ul>
+  <li><code>min</code> and <code>max</code> are safe integers, <code>min >= 1</code>, <code>max >= min</code>.</li>
+  <li><code>count</code> is a positive safe integer and does not exceed the range size.</li>
+  <li>If <code>gameType</code> is provided, <code>gameReference</code> must also be provided (and vice versa).</li>
+</ul>
+
+<h2>Usage in Games</h2>
+<h3>Keno</h3>
+<pre><code>rngService.drawUniqueNumbers({
+  min: 1, max: 80, count: 20,    // Standard Keno parameters
+  gameType: 'keno',
+  gameReference: drawId,
+  metadata: { configVersion },
+  session                          // Within the draw transaction
+})</code></pre>
+
+<h3>Bingo</h3>
+<pre><code>// Each number is drawn individually from the remaining pool
+rngService.drawUniqueNumbers({
+  min: 1, max: remainingNumbers.length, count: 1,
+  gameType: 'bingo',
+  gameReference: `${roomId}:${drawNumber}`,
+  metadata: { roomId, remainingNumbers },
+  session
+})
+// The result indexes into the remaining numbers array</code></pre>
+<p>Bingo uses an indirect approach: it draws a random index into the array of remaining numbers, ensuring each number is drawn exactly once across the game.</p>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authentication — iGames Docs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<nav class="sidebar">
+  <div class="logo">iGames Docs<span>v0.1.0 — System Architecture</span></div>
+  <div class="nav-section">
+    <div class="nav-section-title">Overview</div>
+    <a class="nav-link" href="index.html"><span class="nav-icon">🏠</span>Architecture</a>
+    <a class="nav-link active" href="auth.html"><span class="nav-icon">🔐</span>Authentication</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Games</div>
+    <a class="nav-link" href="keno.html"><span class="nav-icon">🎰</span>Keno</a>
+    <a class="nav-link" href="bingo.html"><span class="nav-icon">🎱</span>90-Ball Bingo</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Finance</div>
+    <a class="nav-link" href="wallet.html"><span class="nav-icon">💰</span>Wallet &amp; Ledger</a>
+    <a class="nav-link" href="payments.html"><span class="nav-icon">💳</span>Telebirr Payments</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Infrastructure</div>
+    <a class="nav-link" href="rng.html"><span class="nav-icon">🎲</span>RNG &amp; Audit</a>
+    <a class="nav-link" href="api.html"><span class="nav-icon">📡</span>API Reference</a>
+  </div>
+</nav>
+
+<main class="main">
+<h1>Authentication &amp; Users</h1>
+<p class="subtitle">Telegram Mini App login → internal user mapping → first-party JWT sessions.</p>
+
+<h2>Identity Model</h2>
+<p>The system separates <strong>external identity providers</strong> from <strong>internal iGames users</strong>:</p>
+<ul>
+  <li>A <strong>User</strong> is an internal iGames account with a unique <code>_id</code>, <code>displayName</code>, and <code>roles[]</code> array.</li>
+  <li>An <strong>AuthIdentity</strong> links a provider (e.g., <code>telegram</code>) and a provider-specific user ID to an internal User.</li>
+  <li>One user can have multiple auth identities (Telegram today, email/password in the future).</li>
+</ul>
+
+<div class="alert alert-info">
+  <span class="alert-icon">💡</span>
+  <div>Telegram is just one login provider. The core backend never requires Telegram — game, wallet, ledger, and RNG modules have zero Telegram imports.</div>
+</div>
+
+<h2>Telegram Mini App Login Flow</h2>
+<div class="flow">
+  <div class="flow-step">Client sends <code>initData</code></div><span class="flow-arrow">→</span>
+  <div class="flow-step highlight">HMAC-SHA256 validation</div><span class="flow-arrow">→</span>
+  <div class="flow-step">Check <code>auth_date</code> freshness</div><span class="flow-arrow">→</span>
+  <div class="flow-step">Find or create User</div><span class="flow-arrow">→</span>
+  <div class="flow-step">Ensure default wallet</div><span class="flow-arrow">→</span>
+  <div class="flow-step highlight">Issue JWT pair</div>
+</div>
+
+<h3>Step-by-Step</h3>
+<ol>
+  <li><strong>Client sends raw initData</strong> — the URL-encoded string from <code>Telegram.WebApp.initData</code> is sent to <code>POST /auth/telegram/miniapp</code>.</li>
+  <li><strong>HMAC validation</strong> — the backend derives a secret key using <code>HMAC-SHA256("WebAppData", BOT_TOKEN)</code>, then computes <code>HMAC-SHA256(secret, data_check_string)</code> and compares it against the received <code>hash</code> using timing-safe comparison.</li>
+  <li><strong>Freshness check</strong> — the <code>auth_date</code> timestamp is validated to reject stale initData.</li>
+  <li><strong>User resolution</strong> — <code>UsersService.findOrCreateTelegramUser()</code> looks up an AuthIdentity by <code>provider=telegram</code> + <code>providerUserId</code>. If none exists, it creates a new User and AuthIdentity in the same transaction.</li>
+  <li><strong>Wallet provisioning</strong> — <code>WalletService.ensureDefaultWallet()</code> creates a <code>CREDIT</code> wallet if the user doesn't have one yet.</li>
+  <li><strong>Token issuance</strong> — the system generates a JWT access token + a JWT refresh token, stores a <code>RefreshSession</code> document with the hashed refresh token, and returns both tokens to the client.</li>
+</ol>
+
+<h2>JWT Token System</h2>
+<table>
+<thead><tr><th>Token</th><th>Secret Env Var</th><th>TTL Env Var</th><th>Default TTL</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Access Token</td><td><code>JWT_ACCESS_SECRET</code></td><td><code>JWT_ACCESS_TTL</code></td><td>15 minutes</td><td>Short-lived bearer token for API requests</td></tr>
+<tr><td>Refresh Token</td><td><code>JWT_REFRESH_SECRET</code></td><td><code>JWT_REFRESH_TTL</code></td><td>30 days</td><td>Long-lived token to obtain new access tokens</td></tr>
+</tbody>
+</table>
+
+<h3>Token Payload</h3>
+<pre><code>{
+  "sub": "user_object_id",    // Internal iGames user ID
+  "roles": ["player"],        // User roles
+  "sessionId": "uuid-v4",     // Links to RefreshSession document
+  "iat": 1715600000,
+  "exp": 1715600900
+}</code></pre>
+
+<h3>Refresh Flow</h3>
+<ol>
+  <li>Client sends the refresh token to <code>POST /auth/refresh</code>.</li>
+  <li>Backend verifies the JWT signature using <code>JWT_REFRESH_SECRET</code>.</li>
+  <li>Looks up the <code>RefreshSession</code> by <code>sessionId</code> from the payload.</li>
+  <li>Verifies the session is not revoked and not expired.</li>
+  <li>Performs a <strong>timing-safe comparison</strong> of <code>SHA-256(refreshToken)</code> against the stored hash.</li>
+  <li>Revokes the old session, creates a new one, and returns a fresh token pair.</li>
+</ol>
+
+<div class="alert alert-danger">
+  <span class="alert-icon">🔒</span>
+  <div><strong>Security:</strong> Refresh tokens are never stored in plaintext. Only a SHA-256 hash is persisted. Token comparison uses <code>crypto.timingSafeEqual()</code> to prevent timing attacks.</div>
+</div>
+
+<h2>Roles &amp; Guards</h2>
+<p>The system uses NestJS guards for route protection:</p>
+<ul>
+  <li><strong>JwtAuthGuard</strong> — validates the Bearer access token and injects the user into the request.</li>
+  <li><strong>RolesGuard</strong> — checks the user's <code>roles[]</code> array against required roles on the route.</li>
+</ul>
+<p>Default roles: <code>player</code> (assigned on registration), <code>admin</code> (manually assigned or via dev seed).</p>
+
+<h2>Dev Seed (Non-Production)</h2>
+<p>When <code>NODE_ENV !== 'production'</code>, a dev endpoint allows creating seeded admin users for testing:</p>
+<pre><code>POST /auth/dev/seed
+{ "displayName": "Test Admin", "roles": ["player", "admin"] }</code></pre>
+<p>This creates (or reuses) a user and returns a valid token pair. This endpoint is disabled in production.</p>
+</main>
+</div>
+</body>
+</html>

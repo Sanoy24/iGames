@@ -1,0 +1,59 @@
+import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from './decorators/current-user.decorator';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { TelegramMiniAppAuthDto } from './dto/telegram-mini-app-auth.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { AuthService, AuthTokenResponse } from './auth.service';
+import { AuthenticatedUser } from './types/authenticated-user';
+
+@ApiTags('auth')
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
+
+  @Post('telegram/miniapp')
+  @ApiCreatedResponse({
+    schema: {
+      example: {
+        accessToken: 'eyJhbGciOi...',
+        refreshToken: 'eyJhbGciOi...',
+        tokenType: 'Bearer',
+        expiresIn: 900,
+        user: { id: '665f...', displayName: 'Jane Player', roles: ['player'] }
+      }
+    }
+  })
+  loginWithTelegramMiniApp(
+    @Body() dto: TelegramMiniAppAuthDto
+  ): Promise<AuthTokenResponse> {
+    return this.authService.loginWithTelegramMiniApp(dto.initData);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({
+    schema: {
+      example: {
+        accessToken: 'eyJhbGciOi...',
+        refreshToken: 'eyJhbGciOi...',
+        tokenType: 'Bearer',
+        expiresIn: 900,
+        user: { id: '665f...', displayName: 'Jane Player', roles: ['player'] }
+      }
+    }
+  })
+  refresh(@Body() dto: RefreshTokenDto): Promise<AuthTokenResponse> {
+    return this.authService.refreshTokens(dto.refreshToken);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  async logout(@CurrentUser() user: AuthenticatedUser): Promise<void> {
+    if (user.sessionId) {
+      await this.authService.logout(user.sessionId);
+    }
+  }
+}

@@ -1,17 +1,62 @@
+version: '3.8'
+
 services:
-  mongo:
-    image: mongo:7
-    container_name: igames-mongo
-    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+  mongodb:
+    image: mongo:6
     ports:
-      - "27018:27017"
+      - "27017:27017"
     volumes:
-      - mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--port", "27017", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0', members:[{_id:0, host:'127.0.0.1:27017'}]}).ok }"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MONGO_URI=mongodb://mongodb:27017/igames
+      - REDIS_URL=redis://redis:6379
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      - JWT_ACCESS_TTL=15m
+      - JWT_REFRESH_TTL=30d
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      - AUTH_MODE=${AUTH_MODE:-telegram_only}
+      - TELEGRAM_MINIAPP_URL=${TELEGRAM_MINIAPP_URL:-}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-*}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - THROTTLE_TTL_SECONDS=${THROTTLE_TTL_SECONDS:-60}
+      - THROTTLE_MAX_REQUESTS=${THROTTLE_MAX_REQUESTS:-120}
+      - TELEBIRR_EXPECTED_RECEIVER_NAME=${TELEBIRR_EXPECTED_RECEIVER_NAME:-}
+      - TELEBIRR_EXPECTED_RECEIVER_ACCOUNT=${TELEBIRR_EXPECTED_RECEIVER_ACCOUNT:-}
+      - TELEBIRR_CREDIT_MINOR_PER_BIRR=${TELEBIRR_CREDIT_MINOR_PER_BIRR:-100}
+    depends_on:
+      - mongodb
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
 
 volumes:
-  mongo-data:
+  mongodb_data:
+  redis_data:

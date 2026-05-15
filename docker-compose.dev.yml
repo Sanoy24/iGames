@@ -1,0 +1,28 @@
+# Development infrastructure only
+# Starts MongoDB + Redis. Run backend/frontend natively with npm.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml down
+
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6
+    container_name: igames-mongo-dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_dev_data:/data/db
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: igames-redis-dev
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  mongodb_dev_data:

@@ -10,6 +10,7 @@ type EnvConfig = {
   JWT_REFRESH_TTL: string;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_AUTH_MAX_AGE_SECONDS: number;
+  TELEGRAM_MINIAPP_URL: string;
   AUTH_MODE: AuthMode;
   TELEBIRR_EXPECTED_RECEIVER_NAME: string;
   TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: string;
@@ -29,6 +30,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     JWT_REFRESH_TTL: readString(raw, 'JWT_REFRESH_TTL', '30d'),
     TELEGRAM_BOT_TOKEN: readString(raw, 'TELEGRAM_BOT_TOKEN'),
     TELEGRAM_AUTH_MAX_AGE_SECONDS: readNumber(raw, 'TELEGRAM_AUTH_MAX_AGE_SECONDS', 86400),
+    TELEGRAM_MINIAPP_URL: readString(raw, 'TELEGRAM_MINIAPP_URL', ''),
     AUTH_MODE: readAuthMode(raw),
     TELEBIRR_EXPECTED_RECEIVER_NAME: readString(
       raw,

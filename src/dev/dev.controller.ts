@@ -32,7 +32,8 @@ export class DevController {
     try {
       return await this.authService.devSeedAdmin(
         dto.displayName ?? 'Dev Admin',
-        dto.roles ?? ['admin', 'player']
+        dto.roles ?? ['admin', 'player'],
+        dto.initialBalanceMinor
       );
     } catch (error) {
       this.logger.error('devSeedAdmin failed', error instanceof Error ? error.stack : error);
@@ -47,7 +48,8 @@ export class DevController {
     try {
       return await this.authService.devSeedAdmin(
         dto.displayName ?? 'Dev Player',
-        dto.roles ?? ['player']
+        dto.roles ?? ['player'],
+        dto.initialBalanceMinor
       );
     } catch (error) {
       this.logger.error('devSeedPlayer failed', error instanceof Error ? error.stack : error);

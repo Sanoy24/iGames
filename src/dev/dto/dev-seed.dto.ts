@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsEnum, IsOptional, IsString, IsNotEmpty } from 'class-validator';
+import { IsArray, IsEnum, IsOptional, IsString, IsNotEmpty, IsNumber, Min } from 'class-validator';
 
 export class DevSeedDto {
   @ApiPropertyOptional({
@@ -21,4 +21,14 @@ export class DevSeedDto {
   @IsArray()
   @IsEnum(['admin', 'player', 'system'], { each: true })
   roles?: string[];
+
+  @ApiPropertyOptional({
+    example: 100000,
+    description: 'Initial balance in minor units',
+    default: 0
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  initialBalanceMinor?: number;
 }

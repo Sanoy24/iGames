@@ -1,8 +1,11 @@
+import * as Sentry from '@sentry/nestjs';
+import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import helmet from 'helmet';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
 import { AppModule } from './app.module';
@@ -10,6 +13,19 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const isDev = process.env.NODE_ENV !== 'production';
+
+  // ── Sentry: must init before NestFactory.create ──────────────────
+  const sentryDsn = process.env.SENTRY_DSN;
+  if (sentryDsn) {
+    Sentry.init({
+      dsn: sentryDsn,
+      environment: process.env.NODE_ENV ?? 'development',
+      integrations: [nodeProfilingIntegration()],
+      tracesSampleRate: isDev ? 1.0 : 0.1,
+      profilesSampleRate: isDev ? 1.0 : 0.05,
+    });
+    console.log('[Sentry] Initialized');
+  }
 
   const logger = WinstonModule.createLogger({
     transports: [
@@ -27,7 +43,6 @@ async function bootstrap() {
               winston.format.json()
             )
       }),
-      // File transport for production: structured JSON logs
       ...(isDev
         ? []
         : [
@@ -53,11 +68,19 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { logger });
   const configService = app.get(ConfigService);
 
+  // ── Security: Helmet HTTP headers ────────────────────────────────
+  app.use(helmet({
+    crossOriginEmbedderPolicy: false, // allow Socket.IO iframe scenarios
+  }));
+
+  // ── CORS ──────────────────────────────────────────────────────────
+  const allowedOrigin = configService.get<string>('ALLOWED_ORIGIN', '*');
   app.enableCors({
-    origin: true,
-    credentials: true
+    origin: isDev ? true : allowedOrigin,
+    credentials: true,
   });
 
+  // ── Global pipes / filters / guards ──────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -67,21 +90,27 @@ async function bootstrap() {
   );
   app.useGlobalFilters(new HttpExceptionFilter());
 
+  // ── WebSockets ────────────────────────────────────────────────────
   app.useWebSocketAdapter(new IoAdapter(app));
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('iGames API')
-    .setDescription('Backend API for Keno and 90-ball Bingo.')
-    .setVersion('0.1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+  // ── Swagger (dev only) ────────────────────────────────────────────
+  if (isDev) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('iGames API')
+      .setDescription('Backend API for Keno and 90-ball Bingo.')
+      .setVersion('0.1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('docs', app, document);
+  }
 
   const port = configService.getOrThrow<number>('PORT');
   await app.listen(port);
   logger.log(`🚀 iGames API running on http://localhost:${port}`, 'Bootstrap');
-  logger.log(`📚 Swagger docs at http://localhost:${port}/docs`, 'Bootstrap');
+  if (isDev) {
+    logger.log(`📚 Swagger docs at http://localhost:${port}/docs`, 'Bootstrap');
+  }
   logger.log(`❤️  Health check at http://localhost:${port}/health`, 'Bootstrap');
 }
 

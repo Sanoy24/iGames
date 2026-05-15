@@ -4,6 +4,7 @@ type EnvConfig = {
   NODE_ENV: string;
   PORT: number;
   MONGODB_URI: string;
+  REDIS_URL: string;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
   JWT_ACCESS_TTL: string;
@@ -15,6 +16,10 @@ type EnvConfig = {
   TELEBIRR_EXPECTED_RECEIVER_NAME: string;
   TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: string;
   TELEBIRR_CREDIT_MINOR_PER_BIRR: number;
+  SENTRY_DSN: string;
+  ALLOWED_ORIGIN: string;
+  THROTTLE_TTL_SECONDS: number;
+  THROTTLE_MAX_REQUESTS: number;
 };
 
 const AUTH_MODES: AuthMode[] = ['telegram_only', 'standalone', 'hybrid'];
@@ -24,6 +29,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     NODE_ENV: readString(raw, 'NODE_ENV', 'development'),
     PORT: readNumber(raw, 'PORT', 3000),
     MONGODB_URI: readString(raw, 'MONGODB_URI'),
+    REDIS_URL: readString(raw, 'REDIS_URL', 'redis://localhost:6379'),
     JWT_ACCESS_SECRET: readString(raw, 'JWT_ACCESS_SECRET'),
     JWT_REFRESH_SECRET: readString(raw, 'JWT_REFRESH_SECRET'),
     JWT_ACCESS_TTL: readString(raw, 'JWT_ACCESS_TTL', '15m'),
@@ -32,21 +38,13 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     TELEGRAM_AUTH_MAX_AGE_SECONDS: readNumber(raw, 'TELEGRAM_AUTH_MAX_AGE_SECONDS', 86400),
     TELEGRAM_MINIAPP_URL: readString(raw, 'TELEGRAM_MINIAPP_URL', ''),
     AUTH_MODE: readAuthMode(raw),
-    TELEBIRR_EXPECTED_RECEIVER_NAME: readString(
-      raw,
-      'TELEBIRR_EXPECTED_RECEIVER_NAME',
-      ''
-    ),
-    TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: readString(
-      raw,
-      'TELEBIRR_EXPECTED_RECEIVER_ACCOUNT',
-      ''
-    ),
-    TELEBIRR_CREDIT_MINOR_PER_BIRR: readNumber(
-      raw,
-      'TELEBIRR_CREDIT_MINOR_PER_BIRR',
-      100
-    )
+    TELEBIRR_EXPECTED_RECEIVER_NAME: readString(raw, 'TELEBIRR_EXPECTED_RECEIVER_NAME', ''),
+    TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: readString(raw, 'TELEBIRR_EXPECTED_RECEIVER_ACCOUNT', ''),
+    TELEBIRR_CREDIT_MINOR_PER_BIRR: readNumber(raw, 'TELEBIRR_CREDIT_MINOR_PER_BIRR', 100),
+    SENTRY_DSN: readString(raw, 'SENTRY_DSN', ''),
+    ALLOWED_ORIGIN: readString(raw, 'ALLOWED_ORIGIN', '*'),
+    THROTTLE_TTL_SECONDS: readNumber(raw, 'THROTTLE_TTL_SECONDS', 60),
+    THROTTLE_MAX_REQUESTS: readNumber(raw, 'THROTTLE_MAX_REQUESTS', 120),
   };
 
   return config;

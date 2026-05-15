@@ -1,13 +1,11 @@
-import { Logger } from '@nestjs/common';
-import {
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  WebSocketGateway,
-  WebSocketServer
-} from '@nestjs/websockets';
+import { Inject, Logger } from '@nestjs/common';
+import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import IORedis from 'ioredis';
 import { KenoDrawResponse } from '../keno/keno.service';
 import { BingoRoomResponse } from '../bingo/bingo.service';
+import { REDIS_CLIENT } from '../redis/redis.module';
 
 export type KenoDrawStartedPayload = {
   drawId: string;
@@ -43,11 +41,26 @@ export type BingoRoomCompletedPayload = {
 };
 
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
-export class GameEventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class GameEventsGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   private readonly server: Server;
 
   private readonly logger = new Logger(GameEventsGateway.name);
+
+  constructor(@Inject(REDIS_CLIENT) private readonly redisClient: IORedis) {}
+
+  /**
+   * After the Socket.IO server is initialized, attach the Redis pub/sub
+   * adapter so events are broadcast across ALL backend instances.
+   */
+  afterInit(server: Server) {
+    const pubClient = this.redisClient;
+    const subClient = pubClient.duplicate();
+    server.adapter(createAdapter(pubClient, subClient));
+    this.logger.log('Socket.IO Redis adapter attached — WebSocket events are now cluster-aware.');
+  }
 
   handleConnection(client: Socket) {
     this.logger.debug(`Client connected: ${client.id}`);

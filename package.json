@@ -13,7 +13,8 @@
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "seed:dev": "node scripts/seed-dev.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
@@ -29,6 +30,7 @@
     "argon2": "^0.44.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "grammy": "^1.42.0",
     "mongoose": "^8.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",

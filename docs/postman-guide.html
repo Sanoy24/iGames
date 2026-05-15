@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Postman Testing Guide — iGames Docs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<nav class="sidebar">
+  <div class="logo">iGames Docs<span>v0.1.0 — System Architecture</span></div>
+  <div class="nav-section">
+    <div class="nav-section-title">Overview</div>
+    <a class="nav-link" href="index.html"><span class="nav-icon">🏠</span>Architecture</a>
+    <a class="nav-link" href="auth.html"><span class="nav-icon">🔐</span>Authentication</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Games</div>
+    <a class="nav-link" href="keno.html"><span class="nav-icon">🎰</span>Keno</a>
+    <a class="nav-link" href="bingo.html"><span class="nav-icon">🎱</span>90-Ball Bingo</a>
+    <a class="nav-link" href="game-mechanics.html"><span class="nav-icon">🏆</span>Win/Loss Mechanics</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Finance</div>
+    <a class="nav-link" href="wallet.html"><span class="nav-icon">💰</span>Wallet &amp; Ledger</a>
+    <a class="nav-link" href="payments.html"><span class="nav-icon">💳</span>Telebirr Payments</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Testing</div>
+    <a class="nav-link active" href="postman-guide.html"><span class="nav-icon">🧪</span>Postman Guide</a>
+    <a class="nav-link" href="api.html"><span class="nav-icon">📡</span>API Reference</a>
+  </div>
+</nav>
+
+<main class="main">
+<h1>Postman Testing Guide</h1>
+<p class="subtitle">Step-by-step walkthrough to test the entire iGames API using Postman.</p>
+
+<h2>Prerequisites</h2>
+<ol>
+  <li><strong>MongoDB running</strong> — <code>docker compose up -d</code></li>
+  <li><strong>API running</strong> — <code>npm run start:dev</code></li>
+  <li><strong>Base URL</strong> — <code>http://localhost:3000</code></li>
+  <li><strong>NODE_ENV</strong> must be <code>development</code> (for dev seed endpoints)</li>
+</ol>
+
+<div class="alert alert-info">
+  <span class="alert-icon">💡</span>
+  <div><strong>Tip:</strong> In Postman, create a Collection variable <code>baseUrl</code> = <code>http://localhost:3000</code> and <code>token</code> = (empty). We'll populate the token in Step 1.</div>
+</div>
+
+<h2>Step 1 — Get Auth Tokens (Dev Seed)</h2>
+<p>Since we can't simulate Telegram <code>initData</code> in Postman, use the dev seed endpoints to create test users:</p>
+
+<h3>Create an Admin User</h3>
+<pre><code>POST http://localhost:3000/dev/seed/admin
+Content-Type: application/json
+
+{
+  "displayName": "Test Admin",
+  "roles": ["admin", "player"]
+}</code></pre>
+<p><strong>Response:</strong></p>
+<pre><code>{
+  "accessToken": "eyJhbGciOi...",
+  "refreshToken": "eyJhbGciOi...",
+  "tokenType": "Bearer",
+  "expiresIn": 900,
+  "user": {
+    "id": "665f...",
+    "displayName": "Test Admin",
+    "roles": ["admin", "player"]
+  }
+}</code></pre>
+<p>📋 <strong>Copy the <code>accessToken</code></strong> — you'll use this for all subsequent requests.</p>
+
+<div class="alert alert-warn">
+  <span class="alert-icon">⚠️</span>
+  <div>In Postman, go to the Collection's <strong>Authorization</strong> tab → Type: <strong>Bearer Token</strong> → paste the <code>accessToken</code>. All requests in the collection will inherit it.</div>
+</div>
+
+<h3>Create a Player User (optional second user)</h3>
+<pre><code>POST http://localhost:3000/dev/seed/player
+Content-Type: application/json
+
+{
+  "displayName": "Test Player"
+}</code></pre>
+
+<h2>Step 2 — Check Wallet (should be 0)</h2>
+<pre><code>GET http://localhost:3000/wallet
+Authorization: Bearer &lt;accessToken&gt;</code></pre>
+<p>Response shows <code>availableMinor: 0</code> — the wallet is empty.</p>
+
+<h2>Step 3 — Fund the Wallet</h2>
+<p>Since Telebirr requires a real receipt, the easiest way to fund a test wallet is to create a bot user (which gets initial credits):</p>
+<pre><code>POST http://localhost:3000/admin/bots
+Authorization: Bearer &lt;admin-accessToken&gt;
+Content-Type: application/json
+
+{
+  "displayName": "Funded Player",
+  "initialBalanceMinor": 500000,
+  "ticketsPerRound": 0,
+  "spotCount": 3
+}</code></pre>
+<p>This creates a user with 500,000 credits. You can then seed that user as an admin to get their token:</p>
+<pre><code>POST http://localhost:3000/dev/seed/player
+Content-Type: application/json
+
+{ "displayName": "Funded Player" }</code></pre>
+<p>Use the returned <code>accessToken</code> for the player flow below.</p>
+
+<hr>
+
+<h2>Full Keno Flow</h2>
+
+<h3>3a. Get Active Config</h3>
+<pre><code>GET http://localhost:3000/keno/config</code></pre>
+<p>Returns the paytable, allowed spots, ticket price, number range.</p>
+
+<h3>3b. Buy a Keno Ticket</h3>
+<pre><code>POST http://localhost:3000/keno/tickets
+Authorization: Bearer &lt;player-accessToken&gt;
+Content-Type: application/json
+Idempotency-Key: test-keno-ticket-001
+
+{
+  "selectedNumbers": [3, 15, 27, 44, 68]
+}</code></pre>
+<p>This debits the ticket price from the wallet and creates a pending ticket. Note the <code>drawId</code> in the response.</p>
+
+<h3>3c. List Your Tickets</h3>
+<pre><code>GET http://localhost:3000/keno/tickets
+Authorization: Bearer &lt;player-accessToken&gt;</code></pre>
+
+<h3>3d. Execute the Draw (Admin)</h3>
+<pre><code>POST http://localhost:3000/admin/keno/draws/execute-next
+Authorization: Bearer &lt;admin-accessToken&gt;</code></pre>
+<p>This draws 20 numbers, evaluates all tickets, and settles winners. Response includes <code>drawnNumbers</code> and <code>settlementSummary</code>.</p>
+
+<h3>3e. Check Your Ticket Result</h3>
+<pre><code>GET http://localhost:3000/keno/tickets/&lt;ticketId&gt;
+Authorization: Bearer &lt;player-accessToken&gt;</code></pre>
+<p>Look at <code>status</code> (<code>"won"</code> or <code>"lost"</code>), <code>matches</code>, and <code>payoutMinor</code>.</p>
+
+<h3>3f. Check Updated Wallet</h3>
+<pre><code>GET http://localhost:3000/wallet
+Authorization: Bearer &lt;player-accessToken&gt;</code></pre>
+<p>If you won, <code>availableMinor</code> will have increased.</p>
+
+<h3>3g. View Ledger History</h3>
+<pre><code>GET http://localhost:3000/wallet/ledger
+Authorization: Bearer &lt;player-accessToken&gt;</code></pre>
+<p>Shows the <code>stake</code> debit and (if won) the <code>win</code> credit entries.</p>
+
+<hr>
+
+<h2>Full Bingo Flow</h2>
+
+<h3>4a. Create a Bingo Room (Admin)</h3>
+<pre><code>POST http://localhost:3000/admin/bingo/rooms
+Authorization: Bearer &lt;admin-accessToken&gt;
+Content-Type: application/json
+
+{
+  "name": "Test Room",
+  "ticketPriceMinor": 100,
+  "maxTickets": 50,
+  "prizes": {
+    "oneLineMinor": 5000,
+    "twoLinesMinor": 15000,
+    "fullHouseMinor": 50000
+  }
+}</code></pre>
+<p>Note the room <code>id</code> from the response.</p>
+
+<h3>4b. Buy Bingo Tickets (Player)</h3>
+<pre><code>POST http://localhost:3000/bingo/rooms/&lt;roomId&gt;/tickets
+Authorization: Bearer &lt;player-accessToken&gt;
+Content-Type: application/json
+Idempotency-Key: test-bingo-purchase-001
+
+{
+  "count": 3
+}</code></pre>
+<p>Returns 3 generated tickets, each with a unique 3×9 grid.</p>
+
+<h3>4c. Draw Numbers One by One (Admin)</h3>
+<pre><code>POST http://localhost:3000/admin/bingo/rooms/&lt;roomId&gt;/draw-next
+Authorization: Bearer &lt;admin-accessToken&gt;</code></pre>
+<p>Call this repeatedly. Each call draws one number. Watch <code>drawnNumbers</code> grow and <code>settledTiers</code> fill in as tiers are achieved.</p>
+
+<h3>4d. Check Room State</h3>
+<pre><code>GET http://localhost:3000/bingo/rooms/&lt;roomId&gt;/state</code></pre>
+<p>Shows drawn numbers, settled tiers, winners by tier, and settlement summary.</p>
+
+<h3>4e. Keep Drawing Until Complete</h3>
+<p>Keep calling <code>draw-next</code> until the room <code>status</code> becomes <code>"completed"</code> (full house achieved) or you've drawn all 90 numbers.</p>
+
+<hr>
+
+<h2>Other Useful Endpoints</h2>
+
+<h3>List Draws</h3>
+<pre><code>GET http://localhost:3000/keno/draws</code></pre>
+
+<h3>Refresh Token</h3>
+<pre><code>POST http://localhost:3000/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "&lt;your-refresh-token&gt;" }</code></pre>
+
+<h3>Cancel a Keno Draw (refunds all tickets)</h3>
+<pre><code>POST http://localhost:3000/admin/keno/draws/&lt;drawId&gt;/cancel
+Authorization: Bearer &lt;admin-accessToken&gt;</code></pre>
+
+<h3>Cancel a Bingo Room (refunds all tickets)</h3>
+<pre><code>POST http://localhost:3000/admin/bingo/rooms/&lt;roomId&gt;/cancel
+Authorization: Bearer &lt;admin-accessToken&gt;</code></pre>
+
+<h2>Postman Tips</h2>
+<ul>
+  <li>Use <strong>Collection Variables</strong> for <code>baseUrl</code>, <code>adminToken</code>, <code>playerToken</code>, <code>kenoDrawId</code>, <code>bingoRoomId</code>.</li>
+  <li>Add a <strong>Test script</strong> on the seed requests to auto-save the token:
+    <pre><code>const res = pm.response.json();
+pm.collectionVariables.set("adminToken", res.accessToken);</code></pre>
+  </li>
+  <li>The Swagger UI at <code>http://localhost:3000/docs</code> also works for quick testing.</li>
+</ul>
+</main>
+</div>
+</body>
+</html>

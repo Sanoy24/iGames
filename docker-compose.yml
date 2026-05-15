@@ -4,11 +4,11 @@ services:
     container_name: igames-mongo
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0', members:[{_id:0, host:'localhost:27017'}]}).ok }"]
+      test: ["CMD", "mongosh", "--quiet", "--port", "27017", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0', members:[{_id:0, host:'127.0.0.1:27017'}]}).ok }"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Win/Loss Game Mechanics — iGames Docs</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+<nav class="sidebar">
+  <div class="logo">iGames Docs<span>v0.1.0 — System Architecture</span></div>
+  <div class="nav-section">
+    <div class="nav-section-title">Overview</div>
+    <a class="nav-link" href="index.html"><span class="nav-icon">🏠</span>Architecture</a>
+    <a class="nav-link" href="auth.html"><span class="nav-icon">🔐</span>Authentication</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Games</div>
+    <a class="nav-link" href="keno.html"><span class="nav-icon">🎰</span>Keno</a>
+    <a class="nav-link" href="bingo.html"><span class="nav-icon">🎱</span>90-Ball Bingo</a>
+    <a class="nav-link active" href="game-mechanics.html"><span class="nav-icon">🏆</span>Win/Loss Mechanics</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Finance</div>
+    <a class="nav-link" href="wallet.html"><span class="nav-icon">💰</span>Wallet &amp; Ledger</a>
+    <a class="nav-link" href="payments.html"><span class="nav-icon">💳</span>Telebirr Payments</a>
+  </div>
+  <div class="nav-section">
+    <div class="nav-section-title">Testing</div>
+    <a class="nav-link" href="postman-guide.html"><span class="nav-icon">🧪</span>Postman Guide</a>
+    <a class="nav-link" href="api.html"><span class="nav-icon">📡</span>API Reference</a>
+  </div>
+</nav>
+
+<main class="main">
+<h1>How Players Win &amp; Lose</h1>
+<p class="subtitle">Complete breakdown of the game structures, winning conditions, and payout mechanics for Keno and 90-Ball Bingo.</p>
+
+<!-- ========== KENO ========== -->
+<h2>🎰 Keno</h2>
+
+<h3>Game Structure</h3>
+<table>
+<thead><tr><th>Property</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Number range</td><td>1 to 80</td></tr>
+<tr><td>Numbers drawn per round</td><td>20</td></tr>
+<tr><td>Player picks ("spots")</td><td>1 to 12 numbers</td></tr>
+<tr><td>Ticket price</td><td>Configurable (default: 100 minor units)</td></tr>
+<tr><td>RNG</td><td>Cryptographic (Node.js <code>crypto.randomInt</code>)</td></tr>
+</tbody>
+</table>
+
+<h3>How a Keno Round Works</h3>
+<ol>
+  <li><strong>Player picks numbers</strong> — e.g., picks 5 numbers: <code>[3, 15, 27, 44, 68]</code></li>
+  <li><strong>Wallet is debited</strong> — ticket price is deducted immediately</li>
+  <li><strong>Draw happens</strong> — the system randomly draws 20 numbers from 1–80, e.g.:<br>
+    <code>[2, 7, 15, 18, 22, 27, 33, 38, 41, 44, 49, 53, 58, 61, 65, 68, 72, 76, 80, 84]</code></li>
+  <li><strong>Matches are counted</strong> — player's <code>[3, 15, 27, 44, 68]</code> vs drawn numbers → <strong>4 matches</strong> (15, 27, 44, 68)</li>
+  <li><strong>Paytable lookup</strong> — spots=5, matches=4 → multiplier = <strong>25×</strong></li>
+  <li><strong>Payout</strong> — 100 (stake) × 25 = <strong>2,500 credits</strong> → wallet credited</li>
+</ol>
+
+<h3>When You WIN</h3>
+<div class="alert alert-info">
+  <span class="alert-icon">✅</span>
+  <div>You win when your number of matches has a corresponding entry in the paytable. The payout = <strong>stake × multiplier</strong>.</div>
+</div>
+
+<h3>When You LOSE</h3>
+<div class="alert alert-danger">
+  <span class="alert-icon">❌</span>
+  <div>You lose when your match count has NO entry in the paytable for your spot count. Payout = <strong>0</strong>. Example: picked 5 spots but only matched 2 → no paytable entry → loss.</div>
+</div>
+
+<h3>Full Keno Paytable</h3>
+<p>Each cell shows the <strong>payout multiplier</strong> applied to your stake. "—" means no payout (loss).</p>
+<table>
+<thead><tr><th>Spots Picked</th><th>0 hits</th><th>1 hit</th><th>2 hits</th><th>3 hits</th><th>4 hits</th><th>5 hits</th><th>6 hits</th><th>7 hits</th><th>8 hits</th><th>9 hits</th><th>10 hits</th><th>11 hits</th><th>12 hits</th></tr></thead>
+<tbody>
+<tr><td><strong>1</strong></td><td>—</td><td>3×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>2</strong></td><td>—</td><td>—</td><td>12×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>3</strong></td><td>—</td><td>—</td><td>2×</td><td>45×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>4</strong></td><td>—</td><td>—</td><td>1×</td><td>8×</td><td>120×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>5</strong></td><td>—</td><td>—</td><td>—</td><td>3×</td><td>25×</td><td>800×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>6</strong></td><td>—</td><td>—</td><td>—</td><td>1×</td><td>12×</td><td>150×</td><td>1,600×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>7</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>5×</td><td>50×</td><td>400×</td><td>7,000×</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>8</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>20×</td><td>200×</td><td>2,000×</td><td>10,000×</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>9</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>5×</td><td>50×</td><td>500×</td><td>5,000×</td><td>20,000×</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td><strong>10</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>2×</td><td>25×</td><td>250×</td><td>2,500×</td><td>10,000×</td><td>50,000×</td><td>—</td><td>—</td></tr>
+<tr><td><strong>11</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>10×</td><td>100×</td><td>1,000×</td><td>8,000×</td><td>25,000×</td><td>75,000×</td><td>—</td></tr>
+<tr><td><strong>12</strong></td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>5×</td><td>50×</td><td>500×</td><td>5,000×</td><td>20,000×</td><td>50,000×</td><td>100,000×</td></tr>
+</tbody>
+</table>
+
+<h3>Keno Examples</h3>
+<div class="card-grid">
+  <div class="card" style="border-left: 3px solid var(--green);">
+    <div class="card-icon">✅</div>
+    <h4>WIN — 5 spots, 4 matches</h4>
+    <p>Stake: 100 · Multiplier: 25× · <strong>Payout: 2,500</strong></p>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--green);">
+    <div class="card-icon">🎉</div>
+    <h4>BIG WIN — 10 spots, 10 matches</h4>
+    <p>Stake: 100 · Multiplier: 50,000× · <strong>Payout: 5,000,000</strong></p>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--red);">
+    <div class="card-icon">❌</div>
+    <h4>LOSS — 5 spots, 2 matches</h4>
+    <p>Stake: 100 · No paytable entry · <strong>Payout: 0</strong></p>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--amber);">
+    <div class="card-icon">🔄</div>
+    <h4>BREAK EVEN — 4 spots, 2 matches</h4>
+    <p>Stake: 100 · Multiplier: 1× · <strong>Payout: 100</strong></p>
+  </div>
+</div>
+
+<h3>Keno Ticket Lifecycle</h3>
+<div class="flow">
+  <div class="flow-step">pending</div><span class="flow-arrow">→</span>
+  <div class="flow-step highlight">won</div><span class="flow-arrow">or</span>
+  <div class="flow-step" style="border-color: var(--red);">lost</div><span class="flow-arrow">or</span>
+  <div class="flow-step">cancelled (refunded)</div>
+</div>
+
+<!-- ========== BINGO ========== -->
+<h2>🎱 90-Ball Bingo</h2>
+
+<h3>Game Structure</h3>
+<table>
+<thead><tr><th>Property</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Number range</td><td>1 to 90</td></tr>
+<tr><td>Draw style</td><td>One number at a time (live)</td></tr>
+<tr><td>Ticket grid</td><td>3 rows × 9 columns</td></tr>
+<tr><td>Numbers per ticket</td><td>15 (5 per row, 4 blanks per row)</td></tr>
+<tr><td>Tickets per purchase</td><td>1 to 24</td></tr>
+<tr><td>Game type</td><td>Room-based (multiplayer)</td></tr>
+</tbody>
+</table>
+
+<h3>Column Number Ranges</h3>
+<table>
+<thead><tr><th>Column</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr></thead>
+<tbody><tr><td>Range</td><td>1–9</td><td>10–19</td><td>20–29</td><td>30–39</td><td>40–49</td><td>50–59</td><td>60–69</td><td>70–79</td><td>80–90</td></tr></tbody>
+</table>
+
+<h3>Three Prize Tiers</h3>
+<div class="card-grid">
+  <div class="card" style="border-left: 3px solid var(--amber);">
+    <div class="card-icon">1️⃣</div>
+    <h4>One Line</h4>
+    <p>All 5 numbers in <strong>any single row</strong> have been drawn. First tier to settle.</p>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--accent);">
+    <div class="card-icon">2️⃣</div>
+    <h4>Two Lines</h4>
+    <p>All 5 numbers in <strong>any two rows</strong> have been drawn. Settles after one-line.</p>
+  </div>
+  <div class="card" style="border-left: 3px solid var(--green);">
+    <div class="card-icon">🏠</div>
+    <h4>Full House</h4>
+    <p>All <strong>15 numbers</strong> on the ticket drawn. Ends the game.</p>
+  </div>
+</div>
+
+<h3>How a Bingo Round Works</h3>
+<ol>
+  <li><strong>Admin creates a room</strong> with ticket price, max tickets, and prizes per tier.</li>
+  <li><strong>Players buy tickets</strong> — 1 to 24 auto-generated tickets. Wallet debited per ticket.</li>
+  <li><strong>Numbers drawn one at a time</strong> — each draw triggers evaluation of ALL tickets.</li>
+  <li><strong>Tier settlement</strong> — when the first ticket(s) achieve a tier, that tier is settled immediately:
+    <ul>
+      <li>Prize is split evenly among all tickets that achieved the tier on that same draw.</li>
+      <li>Each tier is settled <strong>exactly once</strong> per room.</li>
+    </ul>
+  </li>
+  <li><strong>Game ends</strong> when full house is achieved — all remaining active tickets marked as <code>lost</code>.</li>
+</ol>
+
+<h3>When You WIN</h3>
+<div class="alert alert-info">
+  <span class="alert-icon">✅</span>
+  <div>You win when all 5 numbers in one or more rows of your ticket are drawn. You can win <strong>multiple tiers</strong> on the same ticket (one-line → two-lines → full house), accumulating payouts.</div>
+</div>
+
+<h3>When You LOSE</h3>
+<div class="alert alert-danger">
+  <span class="alert-icon">❌</span>
+  <div>You lose when another player achieves full house before you. The game ends and your ticket is marked <code>lost</code> with payout = 0. <strong>However</strong>, you might still have won one-line or two-lines prizes earlier in the game.</div>
+</div>
+
+<h3>Prize Splitting</h3>
+<p>If multiple tickets achieve a tier on the same drawn number, the prize is split:</p>
+<pre><code>Prize: 15,000 credits | Winners: 3 tickets
+→ 15,000 ÷ 3 = 5,000 each
+
+Prize: 10,000 credits | Winners: 3 tickets  
+→ 10,000 ÷ 3 = 3,334 + 3,333 + 3,333
+   (remainder goes to earlier ticket purchases)</code></pre>
+<p>The split is integer-safe — no floating point. Remainder credits go to the first winners (by ticket creation order).</p>
+
+<h3>Bingo Example: Full Game</h3>
+<table>
+<thead><tr><th>Draw #</th><th>Number</th><th>Event</th></tr></thead>
+<tbody>
+<tr><td>1–12</td><td>various</td><td>Numbers accumulate, no tiers hit yet</td></tr>
+<tr><td>13</td><td>44</td><td>🎉 <strong>One-line achieved!</strong> Player A's row 2 is complete. Prize: 5,000 → credited to Player A's wallet.</td></tr>
+<tr><td>14–28</td><td>various</td><td>More numbers drawn...</td></tr>
+<tr><td>29</td><td>71</td><td>🎉 <strong>Two-lines achieved!</strong> Player B has rows 0 and 2 complete. Prize: 15,000 → credited to Player B.</td></tr>
+<tr><td>30–52</td><td>various</td><td>More numbers drawn...</td></tr>
+<tr><td>53</td><td>88</td><td>🏠 <strong>Full house!</strong> Player A's entire ticket is complete. Prize: 50,000. Room status → <code>completed</code>. All other tickets → <code>lost</code>.</td></tr>
+</tbody>
+</table>
+
+<h3>Bingo Ticket Lifecycle</h3>
+<div class="flow">
+  <div class="flow-step">active</div><span class="flow-arrow">→</span>
+  <div class="flow-step highlight">won (one or more tiers)</div><span class="flow-arrow">or</span>
+  <div class="flow-step" style="border-color: var(--red);">lost (game ended)</div><span class="flow-arrow">or</span>
+  <div class="flow-step">cancelled (refunded)</div>
+</div>
+
+<!-- ========== KEY DIFFERENCES ========== -->
+<h2>Keno vs Bingo — Key Differences</h2>
+<table>
+<thead><tr><th>Aspect</th><th>Keno</th><th>Bingo</th></tr></thead>
+<tbody>
+<tr><td><strong>Player choice</strong></td><td>Player picks their numbers</td><td>Numbers are auto-generated on the ticket</td></tr>
+<tr><td><strong>Draw style</strong></td><td>All 20 numbers at once</td><td>One number at a time (live)</td></tr>
+<tr><td><strong>Win condition</strong></td><td>Match count + paytable multiplier</td><td>Complete rows (1, 2, or 3 rows)</td></tr>
+<tr><td><strong>Payout model</strong></td><td>Multiplier × stake (per ticket)</td><td>Fixed prize pool split among tier winners</td></tr>
+<tr><td><strong>Multiplayer</strong></td><td>Independent (your ticket vs the draw)</td><td>Competitive (first to complete rows wins)</td></tr>
+<tr><td><strong>Multiple prizes</strong></td><td>One payout per ticket</td><td>Can win up to 3 tiers on one ticket</td></tr>
+<tr><td><strong>Game end</strong></td><td>After settlement (instant)</td><td>When full house is achieved (progressive)</td></tr>
+</tbody>
+</table>
+
+<h2>Money Flow Summary</h2>
+<div class="flow">
+  <div class="flow-step">Top-up (Telebirr)</div><span class="flow-arrow">→</span>
+  <div class="flow-step" style="border-color: var(--red);">Buy Ticket (debit)</div><span class="flow-arrow">→</span>
+  <div class="flow-step highlight">Draw &amp; Settlement</div><span class="flow-arrow">→</span>
+  <div class="flow-step" style="border-color: var(--green);">Win Credit or Loss</div>
+</div>
+<p>Every step creates an immutable ledger entry. The wallet balance is always the sum of all credits minus all debits.</p>
+</main>
+</div>
+</body>
+</html>

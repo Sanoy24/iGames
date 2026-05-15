@@ -15,5 +15,10 @@
     "strict": true,
     "strictPropertyInitialization": false,
     "noImplicitAny": true
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "frontend"
+  ]
 }

@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 /**
  * Dev seed script — creates test users with funded wallets.
  *
@@ -42,58 +43,36 @@ async function main() {
     console.log(`\n🎮 iGames Dev Seed`);
     console.log(`   Base URL: ${BASE_URL}\n`);
 
-    // 1. Seed admin user
+    // 1. Seed admin user with some initial funds
     console.log("1️⃣  Seeding admin user...");
     const admin = await post("/dev/seed/admin", {
         displayName: "Dev Admin",
         roles: ["admin", "player"],
+        initialBalanceMinor: 500000, // 5,000 credits
     });
     console.log(
         `   ✅ Admin created: ${admin.user.displayName} (${admin.user.id})`,
     );
     console.log(`   🔑 Admin token: ${admin.accessToken.slice(0, 40)}...`);
 
-    // 2. Seed player user
+    // 2. Seed player user with some initial funds
     console.log("\n2️⃣  Seeding player user...");
     const player = await post("/dev/seed/player", {
         displayName: "Dev Player",
+        initialBalanceMinor: 100000, // 1,000 credits
     });
     console.log(
         `   ✅ Player created: ${player.user.displayName} (${player.user.id})`,
     );
     console.log(`   🔑 Player token: ${player.accessToken.slice(0, 40)}...`);
 
-    // 3. Fund the player's wallet via the admin bot endpoint
-    console.log("\n3️⃣  Funding player wallet (100,000 credits)...");
-    try {
-        // Create a temporary bot to get funds, then we'll use the player directly
-        // Instead, let's use the bots endpoint to create a funded entry
-        const bot = await post(
-            "/admin/bots",
-            {
-                displayName: "__seed_funder__",
-                initialBalanceMinor: 1,
-                ticketsPerRound: 0,
-                spotCount: 3,
-            },
-            admin.accessToken,
-        );
-        // The player wallet starts at 0. Let's fund it by creating the player as a bot with balance.
-        // Actually, the simplest approach: create a second "player bot" with funds
-        console.log(
-            `   ℹ️  Player wallet starts at 0 (use Telebirr receipt or bot endpoint to fund)`,
-        );
-    } catch {
-        console.log(
-            `   ℹ️  Bot endpoint not available — player wallet starts at 0`,
-        );
-    }
+    // 3. Verify wallets
+    console.log("\n3️⃣  Verifying wallet balances...");
+    const adminWallet = await get("/wallet", admin.accessToken);
+    const playerWallet = await get("/wallet", player.accessToken);
 
-    // 4. Check the player wallet
-    const wallet = await get("/wallet", player.accessToken);
-    console.log(
-        `   💰 Player wallet balance: ${wallet.availableMinor} credits`,
-    );
+    console.log(`   💰 Admin balance: ${adminWallet.availableMinor} credits`);
+    console.log(`   💰 Player balance: ${playerWallet.availableMinor} credits`);
 
     // 5. Print summary
     console.log("\n" + "═".repeat(60));
@@ -107,14 +86,11 @@ async function main() {
     );
     console.log(`👤 Admin User ID:  ${admin.user.id}`);
     console.log(`👤 Player User ID: ${player.user.id}`);
-    console.log(`\n💡 To fund the player wallet, create a bot with credits:`);
-    console.log(`   POST ${BASE_URL}/admin/bots`);
-    console.log(`   Authorization: Bearer <admin-token>`);
+    console.log(`\n💡 To create more funded users, use the seed endpoint:`);
+    console.log(`   POST ${BASE_URL}/dev/seed/player`);
     console.log(
-        `   Body: { "displayName": "Funded Player", "initialBalanceMinor": 500000 }`,
+        `   Body: { "displayName": "New User", "initialBalanceMinor": 500000 }`,
     );
-    console.log(`   Then seed that user: POST ${BASE_URL}/dev/seed/player`);
-    console.log(`   Body: { "displayName": "Funded Player" }`);
     console.log("\n" + "═".repeat(60));
 }
 

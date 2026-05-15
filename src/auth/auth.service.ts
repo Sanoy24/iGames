@@ -161,7 +161,11 @@ export class AuthService {
    * Never call this from production code; the controller that exposes it is
    * gated behind NODE_ENV !== 'production'.
    */
-  async devSeedAdmin(displayName: string, roles: string[]): Promise<AuthTokenResponse> {
+  async devSeedAdmin(
+    displayName: string,
+    roles: string[],
+    initialBalanceMinor: number = 0
+  ): Promise<AuthTokenResponse> {
     const providerUserId = `dev-seed:${displayName.toLowerCase().replace(/\s+/g, '-')}`;
     const session = await this.connection.startSession();
 
@@ -188,6 +192,19 @@ export class AuthService {
         }
 
         await this.walletService.ensureDefaultWallet(user._id, session);
+        if (initialBalanceMinor > 0) {
+          await this.walletService.creditInSession(
+            {
+              userId: user._id.toString(),
+              amountMinor: initialBalanceMinor,
+              entryType: 'deposit',
+              sourceType: 'dev_seed',
+              sourceId: `seed-${Date.now()}`,
+              idempotencyKey: `seed-fund-${user._id}-${Date.now()}`
+            },
+            session
+          );
+        }
 
         response = await this.issueTokens({
           userId: user._id.toString(),

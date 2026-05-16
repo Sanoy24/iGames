@@ -31,6 +31,12 @@ export class KenoAdminController {
     return this.kenoService.listConfigs();
   }
 
+  @Post('draws')
+  scheduleDraw(@Body('scheduledAt') scheduledAt?: string) {
+    const date = scheduledAt ? new Date(scheduledAt) : undefined;
+    return this.kenoService.scheduleDraw(date);
+  }
+
   @Post('draws/execute-next')
   async executeNextOpenDraw() {
     const result = await this.kenoService.executeNextOpenDraw();

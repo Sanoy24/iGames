@@ -373,6 +373,22 @@ export class KenoService {
     return this.executeDraw(draw._id.toString());
   }
 
+  async scheduleDraw(scheduledAt?: Date): Promise<KenoDrawResponse> {
+    const config = await this.getActiveConfig();
+    const date = scheduledAt || new Date(Date.now() + 60_000); // Default to 1 minute from now
+
+    const [draw] = await this.kenoDrawModel.create([{
+      configId: config._id,
+      configVersion: config.version,
+      status: 'open',
+      scheduledAt: date,
+      drawnNumbers: [],
+      settlementSummary: {}
+    }]);
+
+    return this.toDrawResponse(draw);
+  }
+
   async cancelDraw(drawId: string): Promise<KenoDrawResponse> {
     const objectDrawId = this.toObjectId(drawId, 'drawId');
     const session = await this.connection.startSession();

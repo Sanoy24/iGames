@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { TelegramModule } from '../telegram/telegram.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { AdminModule } from '../admin/admin.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { RefreshSession, RefreshSessionSchema } from './schemas/refresh-session.schema';
@@ -16,7 +17,8 @@ import { RefreshSession, RefreshSessionSchema } from './schemas/refresh-session.
     ]),
     TelegramModule,
     UsersModule,
-    WalletModule
+    WalletModule,
+    AdminModule
   ],
   controllers: [AuthController],
   providers: [AuthService],

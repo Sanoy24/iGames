@@ -10,6 +10,7 @@ import { ClientSession, Connection, Model } from 'mongoose';
 import { TelegramMiniAppAuthService } from '../telegram/telegram-mini-app-auth.service';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
+import { AdminService } from '../admin/admin.service';
 import { RefreshSession } from './schemas/refresh-session.schema';
 
 export type AuthTokenResponse = {
@@ -40,7 +41,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly telegramMiniAppAuthService: TelegramMiniAppAuthService,
     private readonly usersService: UsersService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
+    private readonly adminService: AdminService
   ) {}
 
   async loginWithTelegramMiniApp(initData: string): Promise<AuthTokenResponse> {
@@ -51,7 +53,7 @@ export class AuthService {
       let response: AuthTokenResponse | undefined;
 
       await session.withTransaction(async () => {
-        const { user } = await this.usersService.findOrCreateTelegramUser(
+        const { user, created } = await this.usersService.findOrCreateTelegramUser(
           {
             telegramUserId: String(validatedTelegramData.user.id),
             username: validatedTelegramData.user.username,
@@ -65,6 +67,22 @@ export class AuthService {
         );
 
         await this.walletService.ensureDefaultWallet(user._id, session);
+        
+        if (created) {
+          const config = await this.adminService.getSystemConfig();
+          if (config.welcomeBonusMinor > 0) {
+            await this.walletService.creditInSession({
+              userId: user._id.toString(),
+              amountMinor: config.welcomeBonusMinor,
+              entryType: 'bonus',
+              sourceType: 'welcome_bonus',
+              sourceId: user._id.toString(),
+              idempotencyKey: `welcome-bonus-${user._id.toString()}`,
+              metadata: { reason: 'welcome_bonus' }
+            }, session);
+          }
+        }
+
         response = await this.issueTokens({
           userId: user._id.toString(),
           roles: user.roles,

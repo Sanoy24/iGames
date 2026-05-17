@@ -120,6 +120,31 @@ export class BingoService {
     );
   }
 
+  async listTicketsForUser(input: {
+    userId: string;
+    limit: number;
+  }): Promise<BingoTicketResponse[]> {
+    const limit = Math.min(Math.max(input.limit || 50, 1), 100);
+    const tickets = await this.bingoTicketModel
+      .find({ userId: this.toObjectId(input.userId, 'userId') })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .exec();
+
+    return tickets.map((ticket) => this.toTicketResponse(ticket));
+  }
+
+  async findStuckRooms(thresholdMinutes = 10): Promise<string[]> {
+    const thresholdDate = new Date(Date.now() - thresholdMinutes * 60000);
+    const rooms = await this.bingoRoomModel
+      .find({
+        status: { $in: ['open', 'locked'] },
+        scheduledAt: { $lt: thresholdDate }
+      })
+      .exec();
+    return rooms.map(r => r._id.toString());
+  }
+
   async getRoomState(input: {
     roomId: string;
     userId?: string;

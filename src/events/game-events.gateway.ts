@@ -3,6 +3,8 @@ import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGatew
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis from 'ioredis';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { KenoDrawResponse } from '../keno/keno.service';
 import { BingoRoomResponse } from '../bingo/bingo.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
@@ -49,7 +51,11 @@ export class GameEventsGateway
 
   private readonly logger = new Logger(GameEventsGateway.name);
 
-  constructor(@Inject(REDIS_CLIENT) private readonly redisClient: IORedis) {}
+  constructor(
+    @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService
+  ) {}
 
   /**
    * After the Socket.IO server is initialized, attach the Redis pub/sub
@@ -62,12 +68,33 @@ export class GameEventsGateway
     this.logger.log('Socket.IO Redis adapter attached — WebSocket events are now cluster-aware.');
   }
 
-  handleConnection(client: Socket) {
-    this.logger.debug(`Client connected: ${client.id}`);
+  async handleConnection(client: Socket) {
+    try {
+      const token = client.handshake.auth?.token;
+      if (!token) {
+        throw new Error('No token provided');
+      }
+
+      const secret = this.configService.getOrThrow<string>('JWT_ACCESS_SECRET');
+      const payload = await this.jwtService.verifyAsync(token, { secret });
+      
+      // Store user ID on socket if needed later
+      client.data.user = payload;
+      await client.join(`user_${payload.sub}`);
+      this.logger.debug(`Client authenticated & connected: ${client.id} (User: ${payload.sub})`);
+    } catch (error) {
+      const err = error as Error;
+      this.logger.warn(`Unauthorized WebSocket connection attempt: ${client.id} - ${err.message}`);
+      client.disconnect();
+    }
   }
 
   handleDisconnect(client: Socket) {
     this.logger.debug(`Client disconnected: ${client.id}`);
+  }
+
+  emitWalletUpdated(userId: string, wallet: any): void {
+    this.server.to(`user_${userId}`).emit('wallet.updated', wallet);
   }
 
   emitKenoDrawStarted(payload: KenoDrawStartedPayload): void {

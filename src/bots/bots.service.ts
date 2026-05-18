@@ -7,7 +7,7 @@ import {
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { randomInt } from 'crypto';
 import { Connection, Model, Types } from 'mongoose';
-import { KenoService, KenoDrawResponse } from '../keno/keno.service';
+import { KenoService } from '../keno/keno.service';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { WalletService } from '../wallet/wallet.service';
 import { CreateBotDto } from './dto/create-bot.dto';

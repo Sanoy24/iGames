@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import { SystemConfig } from './schemas/system-config.schema';
+import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
 export class AdminService {
   constructor(
     @InjectConnection() private readonly connection: Connection,
-    @InjectModel(SystemConfig.name) private readonly configModel: Model<SystemConfig>
+    @InjectModel(SystemConfig.name) private readonly configModel: Model<SystemConfig>,
+    private readonly walletService: WalletService
   ) {}
 
   async getSystemConfig(): Promise<SystemConfig> {
@@ -56,31 +58,20 @@ export class AdminService {
     ]).toArray();
 
     // 4. Ledger Stats (Total Volume & GGR)
-    // ticket_purchase is money IN. payout is money OUT. refund is money OUT.
-    const ledgerStats = await this.connection.collection('ledgerentries').aggregate([
-      {
-        $group: {
-          _id: '$entryType',
-          totalAmount: { $sum: '$amountMinor' }
-        }
-      }
-    ]).toArray();
+    const platformStatsDoc = await this.connection.collection('platformstats').findOne({ key: 'global' });
+    const ticketPurchases = platformStatsDoc?.totalTicketVolumeMinor || 0;
+    const payouts = platformStatsDoc?.totalPayoutsMinor || 0;
+    const refunds = platformStatsDoc?.totalRefundsMinor || 0;
 
     const totals = {
       walletAvailable: walletStats[0]?.totalAvailable || 0,
       walletReserved: walletStats[0]?.totalReserved || 0,
       kenoPendingStakes: kenoLiability[0]?.totalStake || 0,
       bingoPendingStakes: bingoLiability[0]?.totalStake || 0,
-      ticketPurchases: 0,
-      payouts: 0,
-      refunds: 0,
+      ticketPurchases,
+      payouts,
+      refunds,
     };
-
-    ledgerStats.forEach(stat => {
-      if (stat._id === 'ticket_purchase') totals.ticketPurchases = stat.totalAmount;
-      if (stat._id === 'payout') totals.payouts = stat.totalAmount;
-      if (stat._id === 'refund') totals.refunds = stat.totalAmount;
-    });
 
     const ggr = totals.ticketPurchases - totals.payouts - totals.refunds;
     const totalLiabilities = totals.walletAvailable + totals.walletReserved + totals.kenoPendingStakes + totals.bingoPendingStakes;
@@ -93,5 +84,33 @@ export class AdminService {
       totalLiabilitiesMinor: totalLiabilities,
       breakdown: totals
     };
+  }
+
+  async adjustUserWallet(userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) {
+    const session = await this.connection.startSession();
+    try {
+      let result;
+      await session.withTransaction(async () => {
+        const payload = {
+          userId,
+          amountMinor,
+          direction,
+          entryType: 'bonus' as const,
+          sourceType: 'admin_adjustment',
+          sourceId: new Types.ObjectId().toString(),
+          idempotencyKey: `admin-adj:${new Types.ObjectId().toString()}`,
+          metadata: { reason }
+        };
+        
+        if (direction === 'credit') {
+          result = await this.walletService.creditInSession(payload, session);
+        } else {
+          result = await this.walletService.debitInSession(payload, session);
+        }
+      });
+      return result;
+    } finally {
+      await session.endSession();
+    }
   }
 }

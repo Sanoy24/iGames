@@ -49,6 +49,15 @@ export class BingoController {
     });
   }
 
+  @Get('rooms/:id/sync')
+  syncRoomState(@Param('id') roomId: string, @Req() request: Request) {
+    const maybeUser = (request as Partial<AuthenticatedRequest>).user;
+    return this.bingoService.getRoomState({
+      roomId,
+      userId: maybeUser?.id
+    });
+  }
+
   @Post('rooms/:id/tickets')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)

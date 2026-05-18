@@ -1,4 +1,4 @@
-import { Inject, Logger } from '@nestjs/common';
+import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -44,7 +44,7 @@ export type BingoRoomCompletedPayload = {
 
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class GameEventsGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown
 {
   @WebSocketServer()
   private readonly server: Server;
@@ -56,6 +56,12 @@ export class GameEventsGateway
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService
   ) {}
+
+  async onApplicationShutdown(signal?: string) {
+    this.logger.warn(`Application shutting down via ${signal}. Broadcasting system.maintenance event.`);
+    this.server.emit('system.maintenance', { message: 'System is shutting down for maintenance or scaling.' });
+    this.server.disconnectSockets();
+  }
 
   /**
    * After the Socket.IO server is initialized, attach the Redis pub/sub

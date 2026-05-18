@@ -42,7 +42,7 @@ export class RngService {
     this.validateDrawInput(input);
 
     const randomnessMaterial = randomBytes(32);
-    const numbers = this.drawWithoutReplacement(input.min, input.max, input.count, input.mustInclude);
+    const numbers = this.drawWithoutReplacement(input.min, input.max, input.count, input.mustInclude, randomnessMaterial);
     const inputHash = this.hashJson({
       min: input.min,
       max: input.max,
@@ -114,14 +114,26 @@ export class RngService {
     return auditLog;
   }
 
-  private drawWithoutReplacement(min: number, max: number, count: number, mustInclude?: number[]): number[] {
+  private drawWithoutReplacement(min: number, max: number, count: number, mustInclude?: number[], seedMaterial?: Buffer): number[] {
     const included = new Set(mustInclude ?? []);
     const pool = Array.from({ length: max - min + 1 }, (_, index) => min + index).filter((n) => !included.has(n));
     const result = Array.from(included);
 
     const needed = count - included.size;
+    let seedCounter = 0;
+    
+    const getNextRandomInt = (upperBound: number): number => {
+      if (!seedMaterial) return randomInt(upperBound);
+      const hash = createHash('sha256')
+        .update(seedMaterial)
+        .update(Buffer.from(seedCounter.toString()))
+        .digest();
+      seedCounter++;
+      return hash.readUInt32LE(0) % upperBound;
+    };
+
     for (let index = 0; index < needed; index += 1) {
-      const swapIndex = randomInt(index, pool.length);
+      const swapIndex = getNextRandomInt(pool.length - index) + index;
       const selected = pool[swapIndex];
       pool[swapIndex] = pool[index];
       pool[index] = selected;
@@ -129,7 +141,7 @@ export class RngService {
     }
 
     for (let i = result.length - 1; i > 0; i--) {
-      const j = randomInt(0, i + 1);
+      const j = getNextRandomInt(i + 1);
       const temp = result[i];
       result[i] = result[j];
       result[j] = temp;

@@ -43,7 +43,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
       this.bot.start({
         onStart: () => this.logger.log('Telegram bot started (long polling)'),
-      });
+      }).catch((err) => this.logger.error('Telegram bot error', err));
     } catch (error) {
       this.logger.error(
         'Failed to start Telegram bot',

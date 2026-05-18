@@ -94,6 +94,11 @@ export class KenoController {
     });
   }
 
+  @Get('active-draw')
+  getActiveDraw() {
+    return this.kenoService.getActiveDraw();
+  }
+
   @Get('draws/:id')
   getDraw(@Param('id') drawId: string) {
     return this.kenoService.getDraw(drawId);

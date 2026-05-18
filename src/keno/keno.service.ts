@@ -91,7 +91,8 @@ export class KenoService {
               allowedSpots: dto.allowedSpots ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
               ticketPriceMinor: dto.ticketPriceMinor,
               paytable: dto.paytable,
-              globalBotWinInterval: dto.globalBotWinInterval ?? 0
+              globalBotWinInterval: dto.globalBotWinInterval ?? 0,
+              autoScheduleIntervalMinutes: dto.autoScheduleIntervalMinutes ?? 3
             }
           ],
           { session }
@@ -250,6 +251,17 @@ export class KenoService {
     return draws.map((draw) => this.toDrawResponse(draw));
   }
 
+  async findStuckDraws(thresholdMinutes = 10): Promise<string[]> {
+    const thresholdDate = new Date(Date.now() - thresholdMinutes * 60000);
+    const draws = await this.kenoDrawModel
+      .find({
+        status: { $in: ['open', 'locked'] },
+        scheduledAt: { $lt: thresholdDate }
+      })
+      .exec();
+    return draws.map(d => d._id.toString());
+  }
+
   async listConfigs(): Promise<KenoConfigDocument[]> {
     return this.kenoConfigModel.find().sort({ version: -1 }).exec();
   }
@@ -339,6 +351,21 @@ export class KenoService {
         draw.settledAt = new Date();
         await draw.save({ session });
 
+        if (config.autoScheduleIntervalMinutes > 0) {
+          const existingOpen = await this.kenoDrawModel.findOne({ status: 'open' }).session(session).exec();
+          if (!existingOpen) {
+            const nextDrawDate = new Date(Date.now() + config.autoScheduleIntervalMinutes * 60000);
+            await this.kenoDrawModel.create([{
+              configId: config._id,
+              configVersion: config.version,
+              status: 'open',
+              scheduledAt: nextDrawDate,
+              drawnNumbers: [],
+              settlementSummary: {}
+            }], { session });
+          }
+        }
+
         response = this.toDrawResponse(draw);
       });
 
@@ -355,6 +382,14 @@ export class KenoService {
   async findNextScheduledDraw(): Promise<KenoDrawResponse | null> {
     const draw = await this.kenoDrawModel
       .findOne({ status: 'open', scheduledAt: { $lte: new Date() } })
+      .sort({ scheduledAt: 1 })
+      .exec();
+    return draw ? this.toDrawResponse(draw) : null;
+  }
+
+  async getActiveDraw(): Promise<KenoDrawResponse | null> {
+    const draw = await this.kenoDrawModel
+      .findOne({ status: { $in: ['open', 'locked', 'drawn'] } })
       .sort({ scheduledAt: 1 })
       .exec();
     return draw ? this.toDrawResponse(draw) : null;

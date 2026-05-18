@@ -26,9 +26,14 @@ export type VerifiedTelebirrReceipt = {
   };
 };
 
+import { AdminService } from '../admin/admin.service';
+
 @Injectable()
 export class TelebirrReceiptVerifierService {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly adminService: AdminService
+  ) {}
 
   async verifyReceipt(receiptNoOrUrl: string): Promise<VerifiedTelebirrReceipt> {
     const receiptNo = this.extractReceiptNo(receiptNoOrUrl);
@@ -38,10 +43,10 @@ export class TelebirrReceiptVerifierService {
     return this.verifyParsedReceipt(receiptNo, parsedReceipt);
   }
 
-  verifyParsedReceipt(
+  async verifyParsedReceipt(
     submittedReceiptNo: string,
     parsedReceipt: ParsedTelebirrReceipt
-  ): VerifiedTelebirrReceipt {
+  ): Promise<VerifiedTelebirrReceipt> {
     const receiptNo = parsedReceipt.receiptNo || submittedReceiptNo;
     if (!receiptNo) {
       throw new BadRequestException('Telebirr receipt number was not found');
@@ -81,7 +86,7 @@ export class TelebirrReceiptVerifierService {
 
     return {
       receiptNo,
-      amountMinor: this.toCreditMinor(amountBirr),
+      amountMinor: await this.toCreditMinor(amountBirr),
       parsedReceipt,
       verification: {
         receiverNameMatched,
@@ -166,10 +171,10 @@ export class TelebirrReceiptVerifierService {
     return value.replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
-  private toCreditMinor(amountBirr: number): number {
-    const multiplier = this.configService.getOrThrow<number>(
-      'TELEBIRR_CREDIT_MINOR_PER_BIRR'
-    );
+  private async toCreditMinor(amountBirr: number): Promise<number> {
+    const systemConfig = await this.adminService.getSystemConfig();
+    const multiplier = systemConfig.telebirrCreditMinorPerBirr || 100;
+
     const amountMinor = Math.round(amountBirr * multiplier);
     if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
       throw new BadRequestException('Telebirr converted wallet amount is invalid');

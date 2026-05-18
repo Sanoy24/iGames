@@ -66,6 +66,7 @@ async function bootstrap() {
   });
 
   const app = await NestFactory.create(AppModule, { logger });
+  app.enableShutdownHooks();
   const configService = app.get(ConfigService);
 
   // ── Security: Helmet HTTP headers ────────────────────────────────

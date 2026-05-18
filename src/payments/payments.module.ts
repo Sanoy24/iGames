@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletModule } from '../wallet/wallet.module';
+import { AdminModule } from '../admin/admin.module';
 import { PaymentsController } from './payments.controller';
 import {
   TelebirrDeposit,
@@ -17,7 +18,8 @@ import { PaymentsService } from './payments.service';
     WalletModule,
     MongooseModule.forFeature([
       { name: TelebirrDeposit.name, schema: TelebirrDepositSchema }
-    ])
+    ]),
+    AdminModule
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService, TelebirrReceiptVerifierService, JwtAuthGuard]

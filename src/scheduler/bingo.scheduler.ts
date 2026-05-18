@@ -1,17 +1,22 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 
 @Injectable()
-export class BingoScheduler {
+export class BingoScheduler implements OnApplicationShutdown {
   private readonly logger = new Logger(BingoScheduler.name);
   private isRunning = false;
+  private shuttingDown = false;
 
   constructor(
     private readonly bingoService: BingoService,
     private readonly gameEventsGateway: GameEventsGateway
   ) {}
+
+  onApplicationShutdown() {
+    this.shuttingDown = true;
+  }
 
   /**
    * Runs every 5 seconds. Finds all running rooms and draws the next number
@@ -20,7 +25,7 @@ export class BingoScheduler {
    */
   @Cron(CronExpression.EVERY_5_SECONDS)
   async drawNextNumbers(): Promise<void> {
-    if (this.isRunning) {
+    if (this.isRunning || this.shuttingDown) {
       return;
     }
     this.isRunning = true;
@@ -28,6 +33,7 @@ export class BingoScheduler {
     try {
       const runningRooms = await this.bingoService.listRunningRooms();
       for (const room of runningRooms) {
+        if (this.shuttingDown) break;
         try {
           const updated = await this.bingoService.drawNextNumber(room.id);
           this.gameEventsGateway.emitBingoNumberDrawn(updated);
@@ -47,6 +53,7 @@ export class BingoScheduler {
       // Auto-start rooms whose scheduledStartAt has passed
       const roomsToStart = await this.bingoService.findRoomsToStart();
       for (const room of roomsToStart) {
+        if (this.shuttingDown) break;
         try {
           this.logger.log(`Auto-starting Bingo room ${room.id}`);
           const updated = await this.bingoService.drawNextNumber(room.id);

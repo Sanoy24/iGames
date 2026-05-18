@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationShutdown } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { BotsService } from "../bots/bots.service";
 import { KenoService } from "../keno/keno.service";
@@ -6,11 +6,12 @@ import { GameEventsGateway } from "../events/game-events.gateway";
 import { RedisLockService } from "../redis/redis-lock.service";
 
 const DRAW_LOCK_KEY = "igames:keno:draw-lock";
-const DRAW_LOCK_TTL_MS = 55_000; // 55 seconds — expires before next CRON minute fires
+const DRAW_LOCK_TTL_MS = 300_000; // 5 minutes — prevents lock expiration during long settlements
 
 @Injectable()
-export class KenoScheduler {
+export class KenoScheduler implements OnApplicationShutdown {
     private readonly logger = new Logger(KenoScheduler.name);
+    private shuttingDown = false;
 
     constructor(
         private readonly kenoService: KenoService,
@@ -19,6 +20,10 @@ export class KenoScheduler {
         private readonly lockService: RedisLockService,
     ) {}
 
+    onApplicationShutdown() {
+        this.shuttingDown = true;
+    }
+
     /**
      * Runs every minute. Uses a Redis distributed lock so that only ONE
      * backend instance executes a draw even when running behind a load balancer.
@@ -26,6 +31,7 @@ export class KenoScheduler {
      */
     @Cron(CronExpression.EVERY_MINUTE)
     async executeScheduledDraws(): Promise<void> {
+        if (this.shuttingDown) return;
         const lock = await this.lockService.acquireLock(
             DRAW_LOCK_KEY,
             DRAW_LOCK_TTL_MS,

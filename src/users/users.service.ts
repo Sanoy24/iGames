@@ -108,6 +108,27 @@ export class UsersService {
     };
   }
 
+  async listUsers(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      this.userModel.find().sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.userModel.countDocuments().exec()
+    ]);
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    };
+  }
+
+  async updateStatus(userId: string, status: 'active' | 'suspended' | 'banned') {
+    const user = await this.userModel.findByIdAndUpdate(userId, { status }, { new: true }).exec();
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
   private async findByIdInSession(
     userId: Types.ObjectId,
     session: ClientSession

@@ -1,17 +1,28 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthIdentity, AuthIdentitySchema } from './schemas/auth-identity.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { UsersService } from './users.service';
+import { UsersController } from './users.controller';
+import { KenoModule } from '../keno/keno.module';
+import { BingoModule } from '../bingo/bingo.module';
+
+import { JwtModule } from '@nestjs/jwt';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 @Module({
   imports: [
+    JwtModule.register({}),
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: AuthIdentity.name, schema: AuthIdentitySchema }
-    ])
+    ]),
+    forwardRef(() => KenoModule),
+    forwardRef(() => BingoModule)
   ],
-  providers: [UsersService],
+  controllers: [UsersController],
+  providers: [UsersService, JwtAuthGuard, RolesGuard],
   exports: [UsersService, MongooseModule]
 })
 export class UsersModule {}

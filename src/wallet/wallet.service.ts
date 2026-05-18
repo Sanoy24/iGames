@@ -10,7 +10,9 @@ import { createHash } from 'crypto';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { LedgerService } from '../ledger/ledger.service';
 import { LedgerEntryType } from '../ledger/schemas/ledger-entry.schema';
+import { GameEventsGateway } from '../events/game-events.gateway';
 import { Wallet, WalletDocument } from './schemas/wallet.schema';
+import { WagerLimit } from './schemas/wager-limit.schema';
 
 export type WalletSummary = {
   id: string;
@@ -57,7 +59,9 @@ export class WalletService {
   constructor(
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(Wallet.name) private readonly walletModel: Model<Wallet>,
-    private readonly ledgerService: LedgerService
+    @InjectModel(WagerLimit.name) private readonly wagerLimitModel: Model<WagerLimit>,
+    private readonly ledgerService: LedgerService,
+    private readonly gameEventsGateway: GameEventsGateway
   ) {}
 
   async ensureDefaultWallet(
@@ -251,21 +255,26 @@ export class WalletService {
       throw new ConflictException('Wallet is not active');
     }
 
-    if (input.direction === 'debit' && wallet.availableMinor < input.amountMinor) {
-      throw new ConflictException('Insufficient wallet balance');
+    if (input.entryType === 'stake') {
+      await this.enforceWagerLimit(userId, input.amountMinor, session);
     }
 
-    wallet.availableMinor =
-      input.direction === 'credit'
-        ? wallet.availableMinor + input.amountMinor
-        : wallet.availableMinor - input.amountMinor;
+    const incAmount = input.direction === 'credit' ? input.amountMinor : -input.amountMinor;
 
-    await wallet.save({ session });
+    const updatedWallet = await this.walletModel.findOneAndUpdate(
+      { _id: wallet._id, availableMinor: { $gte: input.direction === 'debit' ? input.amountMinor : 0 } },
+      { $inc: { availableMinor: incAmount } },
+      { new: true, session }
+    ).exec();
+
+    if (!updatedWallet) {
+      throw new ConflictException('Insufficient wallet balance or concurrent update failed');
+    }
 
     const ledgerEntry = await this.ledgerService.createEntry(
       {
         userId,
-        walletId: wallet._id,
+        walletId: updatedWallet._id,
         currencyCode,
         amountMinor: input.amountMinor,
         direction: input.direction,
@@ -273,14 +282,22 @@ export class WalletService {
         sourceType: input.sourceType,
         sourceId: input.sourceId,
         idempotencyKey: input.idempotencyKey,
-        balanceAfterMinor: wallet.availableMinor,
+        balanceAfterMinor: updatedWallet.availableMinor,
         metadata: input.metadata
       },
       session
     );
 
+    if (input.entryType === 'stake') {
+      await this.connection.collection('platformstats').updateOne({ key: 'global' }, { $inc: { totalTicketVolumeMinor: input.amountMinor } }, { upsert: true, session });
+    } else if (input.entryType === 'win') {
+      await this.connection.collection('platformstats').updateOne({ key: 'global' }, { $inc: { totalPayoutsMinor: input.amountMinor } }, { upsert: true, session });
+    } else if (input.entryType === 'refund') {
+      await this.connection.collection('platformstats').updateOne({ key: 'global' }, { $inc: { totalRefundsMinor: input.amountMinor } }, { upsert: true, session });
+    }
+
     const result: WalletMutationResult = {
-      wallet: this.toWalletSummary(wallet),
+      wallet: this.toWalletSummary(updatedWallet),
       ledgerEntry: {
         id: ledgerEntry._id.toString(),
         walletId: ledgerEntry.walletId.toString(),
@@ -302,6 +319,8 @@ export class WalletService {
       response: result,
       session
     });
+
+    this.gameEventsGateway.emitWalletUpdated(userId.toString(), result.wallet);
 
     return result;
   }
@@ -328,6 +347,55 @@ export class WalletService {
       throw new BadRequestException(`${name} must be a valid ObjectId`);
     }
     return new Types.ObjectId(value);
+  }
+
+  private async enforceWagerLimit(userId: Types.ObjectId, amountMinor: number, session: ClientSession): Promise<void> {
+    const now = new Date();
+    
+    let wagerLimit = await this.wagerLimitModel.findOne({ userId }).session(session).exec();
+    
+    if (!wagerLimit) {
+      const tomorrow = new Date(now);
+      tomorrow.setUTCHours(24, 0, 0, 0);
+      const nextWeek = new Date(tomorrow);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      
+      const [newLimit] = await this.wagerLimitModel.create([{
+        userId,
+        dailyLimitMinor: 0,
+        weeklyLimitMinor: 0,
+        currentDailyWagerMinor: 0,
+        currentWeeklyWagerMinor: 0,
+        dailyResetAt: tomorrow,
+        weeklyResetAt: nextWeek
+      }], { session });
+      wagerLimit = newLimit;
+    }
+
+    if (now >= wagerLimit.dailyResetAt) {
+      wagerLimit.currentDailyWagerMinor = 0;
+      const tomorrow = new Date(now);
+      tomorrow.setUTCHours(24, 0, 0, 0);
+      wagerLimit.dailyResetAt = tomorrow;
+    }
+    if (now >= wagerLimit.weeklyResetAt) {
+      wagerLimit.currentWeeklyWagerMinor = 0;
+      const nextWeek = new Date(now);
+      nextWeek.setUTCHours(24, 0, 0, 0);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      wagerLimit.weeklyResetAt = nextWeek;
+    }
+
+    if (wagerLimit.dailyLimitMinor > 0 && wagerLimit.currentDailyWagerMinor + amountMinor > wagerLimit.dailyLimitMinor) {
+      throw new ConflictException('Daily wagering limit exceeded');
+    }
+    if (wagerLimit.weeklyLimitMinor > 0 && wagerLimit.currentWeeklyWagerMinor + amountMinor > wagerLimit.weeklyLimitMinor) {
+      throw new ConflictException('Weekly wagering limit exceeded');
+    }
+
+    wagerLimit.currentDailyWagerMinor += amountMinor;
+    wagerLimit.currentWeeklyWagerMinor += amountMinor;
+    await wagerLimit.save({ session });
   }
 
   private hashRequest(value: Record<string, unknown>): string {

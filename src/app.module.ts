@@ -20,6 +20,7 @@ import { SchedulerModule } from "./scheduler/scheduler.module";
 import { TelegramModule } from "./telegram/telegram.module";
 import { UsersModule } from "./users/users.module";
 import { WalletModule } from "./wallet/wallet.module";
+import { AdminModule } from "./admin/admin.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -58,6 +59,7 @@ const isDev = process.env.NODE_ENV !== "production";
         GameEventsModule,
         SchedulerModule,
         BotsModule,
+        AdminModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

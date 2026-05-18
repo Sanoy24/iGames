@@ -51,6 +51,9 @@ export class KenoConfig {
 
   @Prop({ required: true, default: 0, min: 0 })
   globalBotWinInterval: number;
+
+  @Prop({ required: true, default: 3, min: 0 })
+  autoScheduleIntervalMinutes: number;
 }
 
 export const KenoConfigSchema = SchemaFactory.createForClass(KenoConfig);

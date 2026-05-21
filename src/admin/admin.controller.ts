@@ -1,13 +1,14 @@
-import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UseInterceptors, Query, ParseIntPipe } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { AdminService } from './admin.service';
-import { UsersService } from '../users/users.service';
-import { WalletService } from '../wallet/wallet.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
+import { AdminService } from './admin.service';
+import { CreateShiftDto } from '../agents/dto/create-shift.dto';
+import { UsersService } from '../users/users.service';
+import { WalletService } from '../wallet/wallet.service';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -17,59 +18,45 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly usersService: UsersService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
   ) {}
 
   @Get('stats/overview')
-  async getOverview() {
+  getOverview() {
     return this.adminService.getPlatformStats();
   }
 
   @Get('config')
-  async getConfig() {
+  getConfig() {
     return this.adminService.getSystemConfig();
   }
 
   @Post('config')
-  async updateConfig(@Body() update: any) {
+  updateConfig(@Body() update: any) {
     return this.adminService.updateSystemConfig(update);
   }
 
+  // ── Users ─────────────────────────────────────────────────────────
+
   @Get('users')
-  async getUsers(
+  getUsers(
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50'
+    @Query('limit') limit: string = '50',
   ) {
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 50;
-    return this.usersService.listUsers(pageNum, limitNum);
+    return this.usersService.listUsers(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
   }
 
   @Put('users/:id/status')
-  async updateUserStatus(@Param('id') id: string, @Body('status') status: string) {
+  updateUserStatus(@Param('id') id: string, @Body('status') status: string) {
     return this.usersService.updateStatus(id, status as any);
   }
 
   @Post('users/:id/wallet/adjust')
-  async adjustUserWallet(
+  adjustUserWallet(
     @Param('id') userId: string,
-    @Body() body: { amountMinor: number; direction: 'credit' | 'debit'; reason: string }
+    @Body() body: { amountMinor: number; direction: 'credit' | 'debit'; reason: string },
   ) {
     return this.adminService.adjustUserWallet(userId, body.amountMinor, body.direction, body.reason);
-  }
-
-  @Get('withdrawals')
-  async getWithdrawals() {
-    return this.walletService.getAllWithdrawals();
-  }
-
-  @Post('withdrawals/:id/process')
-  async processWithdrawal(
-    @Param('id') id: string,
-    @Body() body: { action: 'approve' | 'reject'; adminNotes?: string },
-    @CurrentUser() admin: AuthenticatedUser
-  ) {
-    return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
   }
 
   @Get('users/:id/wager-limit')
@@ -90,5 +77,81 @@ export class AdminController {
   async deleteWagerLimit(@Param('id') userId: string) {
     await this.walletService.deleteWagerLimit(userId);
     return { deleted: true };
+  }
+
+  // ── Agents ────────────────────────────────────────────────────────
+
+  @Post('agents')
+  createAgent(@Body() body: { email: string; displayName: string; password: string }) {
+    return this.adminService.createAgent(body);
+  }
+
+  @Get('agents')
+  listAgents(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.adminService.listAgents(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+  }
+
+  // ── Withdrawals ───────────────────────────────────────────────────
+
+  @Get('withdrawals')
+  getAllWithdrawals() {
+    return this.walletService.getAllWithdrawals();
+  }
+
+  @Post('withdrawals/:id/process')
+  processWithdrawal(
+    @Param('id') id: string,
+    @Body() body: { action: 'approve' | 'reject'; adminNotes?: string },
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
+  }
+
+  // ── Agent Shifts ──────────────────────────────────────────────────
+
+  @Get('shifts')
+  listShifts() {
+    return this.adminService.listShifts();
+  }
+
+  @Get('shifts/active')
+  getActiveShift() {
+    return this.adminService.getActiveShift();
+  }
+
+  @Post('shifts')
+  createShift(@Body() dto: CreateShiftDto) {
+    return this.adminService.createShift(dto);
+  }
+
+  @Put('shifts/:id')
+  updateShift(@Param('id') id: string, @Body() dto: Partial<CreateShiftDto>) {
+    return this.adminService.updateShift(id, dto);
+  }
+
+  @Delete('shifts/:id')
+  async deleteShift(@Param('id') id: string) {
+    await this.adminService.deleteShift(id);
+    return { deleted: true };
+  }
+
+  // ── RNG Audit Logs ────────────────────────────────────────────────
+
+  @Get('rng/audit-logs')
+  getRngAuditLogs(
+    @Query('gameType') gameType?: string,
+    @Query('gameReference') gameReference?: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.adminService.getRngAuditLogs({
+      gameType,
+      gameReference,
+      page: parseInt(page, 10) || 1,
+      limit: Math.min(parseInt(limit, 10) || 50, 100),
+    });
   }
 }

@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import * as argon2 from 'argon2';
 import { ClientSession, Model, Types } from 'mongoose';
 import {
   AuthIdentity,
@@ -124,6 +125,88 @@ export class UsersService {
       limit,
       totalPages: Math.ceil(total / limit)
     };
+  }
+
+  async createAgentUser(input: {
+    email: string;
+    displayName: string;
+    password: string;
+  }): Promise<UserDocument> {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    if (!normalizedEmail) throw new BadRequestException('Email is required');
+
+    const existing = await this.authIdentityModel
+      .findOne({ provider: 'password', normalizedEmail })
+      .exec();
+    if (existing) {
+      throw new ConflictException('An agent with that email already exists');
+    }
+
+    const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+
+    const [user] = await this.userModel.create([
+      {
+        displayName: input.displayName.trim(),
+        email: normalizedEmail,
+        roles: ['agent'],
+        status: 'active',
+      },
+    ]);
+
+    await this.authIdentityModel.create([
+      {
+        userId: user._id,
+        provider: 'password',
+        providerUserId: normalizedEmail,
+        normalizedEmail,
+        passwordHash,
+        profileSnapshot: { email: normalizedEmail },
+        linkedAt: new Date(),
+        lastAuthAt: new Date(),
+      },
+    ]);
+
+    return user;
+  }
+
+  async findAgentByCredentials(
+    email: string,
+    password: string,
+  ): Promise<UserDocument> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const identity = await this.authIdentityModel
+      .findOne({ provider: 'password', normalizedEmail })
+      .select('+passwordHash')
+      .exec();
+
+    if (!identity || !identity.passwordHash) {
+      throw new BadRequestException('Invalid email or password');
+    }
+
+    const valid = await argon2.verify(identity.passwordHash, password);
+    if (!valid) {
+      throw new BadRequestException('Invalid email or password');
+    }
+
+    const user = await this.userModel.findById(identity.userId).exec();
+    if (!user || user.status !== 'active') {
+      throw new BadRequestException('Account is inactive');
+    }
+
+    identity.lastAuthAt = new Date();
+    await identity.save();
+
+    return user;
+  }
+
+  async listAgents(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const filter = { roles: 'agent' };
+    const [data, total] = await Promise.all([
+      this.userModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.userModel.countDocuments(filter).exec(),
+    ]);
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async updateStatus(userId: string, status: 'active' | 'suspended' | 'banned') {

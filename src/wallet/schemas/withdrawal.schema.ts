@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
 export type WithdrawalDocument = HydratedDocument<Withdrawal>;
-export type WithdrawalStatus = 'pending' | 'processing' | 'completed' | 'rejected';
+export type WithdrawalStatus = 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
 
 @Schema({ timestamps: true })
 export class Withdrawal {
@@ -16,7 +16,7 @@ export class Withdrawal {
 
   @Prop({
     required: true,
-    enum: ['pending', 'processing', 'completed', 'rejected'],
+    enum: ['pending', 'claimed', 'processing', 'completed', 'rejected'],
     default: 'pending',
     index: true,
   })
@@ -24,6 +24,23 @@ export class Withdrawal {
 
   @Prop({ required: true, trim: true })
   destinationAccount: string;
+
+  // Agent fields
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
+  agentId?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  claimedAt?: Date;
+
+  // Populated when the agent completes the withdrawal
+  @Prop({ default: 0, min: 0 })
+  serviceChargeMinor: number;
+
+  @Prop({ min: 0 })
+  netAmountMinor?: number;
+
+  @Prop({ trim: true })
+  telebirrReference?: string;
 
   @Prop({ trim: true })
   adminNotes?: string;
@@ -36,3 +53,5 @@ export class Withdrawal {
 }
 
 export const WithdrawalSchema = SchemaFactory.createForClass(Withdrawal);
+
+WithdrawalSchema.index({ agentId: 1, status: 1 });

@@ -35,6 +35,9 @@ export class BingoRoom {
   @Prop({ required: true, min: 1 })
   maxTickets: number;
 
+  @Prop({ default: 0, min: 0 })
+  soldTickets: number;
+
   @Prop({ type: BingoPrizeConfigSchema, required: true })
   prizes: BingoPrizeConfig;
 

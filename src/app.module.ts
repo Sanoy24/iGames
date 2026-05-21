@@ -21,6 +21,7 @@ import { TelegramModule } from "./telegram/telegram.module";
 import { UsersModule } from "./users/users.module";
 import { WalletModule } from "./wallet/wallet.module";
 import { AdminModule } from "./admin/admin.module";
+import { AgentsModule } from "./agents/agents.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -67,6 +68,7 @@ const isDev = process.env.NODE_ENV !== "production";
         SchedulerModule,
         BotsModule,
         AdminModule,
+        AgentsModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

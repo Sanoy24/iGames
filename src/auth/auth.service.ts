@@ -102,6 +102,28 @@ export class AuthService {
     }
   }
 
+  async loginWithCredentials(email: string, password: string): Promise<AuthTokenResponse> {
+    const user = await this.usersService.findAgentByCredentials(email, password);
+    const session = await this.connection.startSession();
+    try {
+      let response: AuthTokenResponse | undefined;
+      await session.withTransaction(async () => {
+        await this.walletService.ensureDefaultWallet(user._id, session);
+        response = await this.issueTokens({
+          userId: user._id.toString(),
+          roles: user.roles,
+          displayName: user.displayName,
+          provider: 'password',
+          session,
+        });
+      });
+      if (!response) throw new Error('Credentials login transaction did not complete');
+      return response;
+    } finally {
+      await session.endSession();
+    }
+  }
+
   async refreshTokens(rawRefreshToken: string): Promise<AuthTokenResponse> {
     let payload: JwtSubjectPayload;
     try {

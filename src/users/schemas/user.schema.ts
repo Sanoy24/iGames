@@ -2,7 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
 export type UserDocument = HydratedDocument<User>;
-export type UserRole = 'player' | 'admin' | 'system';
+export type UserRole = 'player' | 'admin' | 'agent' | 'system';
 export type UserStatus = 'active' | 'suspended' | 'closed';
 
 @Schema({ timestamps: true })

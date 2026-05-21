@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
 import { SystemConfig, SystemConfigSchema } from './schemas/system-config.schema';
+import { AgentsModule } from '../agents/agents.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 
@@ -12,10 +13,11 @@ import { WalletModule } from '../wallet/wallet.module';
     MongooseModule.forFeature([{ name: SystemConfig.name, schema: SystemConfigSchema }]),
     JwtModule.register({}),
     UsersModule,
-    WalletModule
+    WalletModule,
+    AgentsModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],
-  exports: [AdminService]
+  exports: [AdminService],
 })
 export class AdminModule {}

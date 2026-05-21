@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { KenoDrawResponse } from '../keno/keno.service';
 import { BingoRoomResponse } from '../bingo/bingo.service';
+import { WalletSummary } from '../wallet/wallet.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 
 export type KenoDrawStartedPayload = {
@@ -44,6 +45,13 @@ export type BingoRoomCompletedPayload = {
   settlementSummary: Record<string, unknown>;
 };
 
+export type WithdrawalPendingPayload = {
+  withdrawalId: string;
+  userId: string;
+  amountMinor: number;
+  destinationAccount: string;
+};
+
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class GameEventsGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown
@@ -66,10 +74,6 @@ export class GameEventsGateway
     this.server.disconnectSockets();
   }
 
-  /**
-   * After the Socket.IO server is initialized, attach the Redis pub/sub
-   * adapter so events are broadcast across ALL backend instances.
-   */
   afterInit(server: Server) {
     const pubClient = this.redisClient;
     const subClient = pubClient.duplicate();
@@ -95,7 +99,7 @@ export class GameEventsGateway
         .collection('users')
         .findOne(
           { _id: new Types.ObjectId(payload.sub) },
-          { projection: { status: 1 } },
+          { projection: { status: 1, roles: 1 } },
         );
 
       if (!user || user.status !== 'active') {
@@ -104,10 +108,16 @@ export class GameEventsGateway
 
       client.data.user = payload;
       await client.join(`user_${payload.sub}`);
-      this.logger.debug(`Client authenticated & connected: ${client.id} (User: ${payload.sub})`);
+
+      // Agents join a shared room so withdrawal.pending broadcasts reach them all.
+      if (Array.isArray(user.roles) && user.roles.includes('agent')) {
+        await client.join('agents');
+      }
+
+      this.logger.debug(`Client connected: ${client.id} (User: ${payload.sub}, roles: ${(user.roles as string[]).join(',')})`);
     } catch (error) {
-      const err = error as Error;
-      this.logger.warn(`Unauthorized WebSocket connection attempt: ${client.id} - ${err.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Unauthorized WebSocket connection attempt: ${client.id} - ${message}`);
       client.disconnect();
     }
   }
@@ -116,8 +126,13 @@ export class GameEventsGateway
     this.logger.debug(`Client disconnected: ${client.id}`);
   }
 
-  emitWalletUpdated(userId: string, wallet: any): void {
+  emitWalletUpdated(userId: string, wallet: WalletSummary): void {
     this.server.to(`user_${userId}`).emit('wallet.updated', wallet);
+  }
+
+  /** Notify all connected agents that a new withdrawal is waiting. */
+  emitWithdrawalPending(payload: WithdrawalPendingPayload): void {
+    this.server.to('agents').emit('withdrawal.pending', payload);
   }
 
   emitKenoDrawStarted(payload: KenoDrawStartedPayload): void {

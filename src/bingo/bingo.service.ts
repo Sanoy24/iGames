@@ -195,19 +195,23 @@ export class BingoService {
           return;
         }
 
-        const room = await this.bingoRoomModel.findById(roomId).session(session).exec();
+        // Atomically claim ticket slots: only succeeds if room is open AND soldTickets + count <= maxTickets.
+        // This prevents the race where two concurrent transactions both pass a countDocuments check
+        // and both insert, exceeding maxTickets.
+        const room = await this.bingoRoomModel.findOneAndUpdate(
+          {
+            _id: roomId,
+            status: 'open',
+            $expr: { $lte: [{ $add: ['$soldTickets', input.count] }, '$maxTickets'] },
+          },
+          { $inc: { soldTickets: input.count } },
+          { session, new: true },
+        ).exec();
         if (!room) {
-          throw new NotFoundException('Bingo room not found');
-        }
-        if (room.status !== 'open') {
-          throw new ConflictException('Bingo room is not open for ticket sales');
-        }
-
-        const soldTickets = await this.bingoTicketModel
-          .countDocuments({ roomId })
-          .session(session);
-        if (soldTickets + input.count > room.maxTickets) {
-          throw new ConflictException('Bingo room ticket limit would be exceeded');
+          const exists = await this.bingoRoomModel.exists({ _id: roomId }).session(session).exec();
+          throw exists
+            ? new ConflictException('Bingo room is full or not open for ticket sales')
+            : new NotFoundException('Bingo room not found');
         }
 
         const createdTickets: BingoTicketDocument[] = [];

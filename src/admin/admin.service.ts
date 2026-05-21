@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { SystemConfig } from './schemas/system-config.schema';
+import { AgentsService } from '../agents/agents.service';
+import { CreateShiftDto } from '../agents/dto/create-shift.dto';
+import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 
 @Injectable()
@@ -9,7 +12,9 @@ export class AdminService {
   constructor(
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(SystemConfig.name) private readonly configModel: Model<SystemConfig>,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
+    private readonly usersService: UsersService,
+    private readonly agentsService: AgentsService,
   ) {}
 
   async getSystemConfig(): Promise<SystemConfig> {
@@ -112,5 +117,62 @@ export class AdminService {
     } finally {
       await session.endSession();
     }
+  }
+
+  // ── Agent Shifts ──────────────────────────────────────────────────
+
+  createShift(dto: CreateShiftDto) {
+    return this.agentsService.createShift(dto);
+  }
+
+  listShifts() {
+    return this.agentsService.listShifts();
+  }
+
+  updateShift(shiftId: string, dto: Partial<CreateShiftDto>) {
+    return this.agentsService.updateShift(shiftId, dto);
+  }
+
+  deleteShift(shiftId: string) {
+    return this.agentsService.deleteShift(shiftId);
+  }
+
+  getActiveShift() {
+    return this.agentsService.getActiveShift();
+  }
+
+  // ── Agent Users ───────────────────────────────────────────────────
+
+  async createAgent(input: { email: string; displayName: string; password: string }) {
+    return this.usersService.createAgentUser(input);
+  }
+
+  async listAgents(page: number, limit: number) {
+    return this.usersService.listAgents(page, limit);
+  }
+
+  async getRngAuditLogs(input: {
+    gameType?: string;
+    gameReference?: string;
+    page: number;
+    limit: number;
+  }) {
+    const filter: Record<string, unknown> = {};
+    if (input.gameType) filter.gameType = input.gameType;
+    if (input.gameReference) filter.gameReference = input.gameReference;
+
+    const skip = (input.page - 1) * input.limit;
+    const [data, total] = await Promise.all([
+      this.connection
+        .collection('rngauditlogs')
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(input.limit)
+        .toArray(),
+      this.connection.collection('rngauditlogs').countDocuments(filter),
+    ]);
+
+    return { data, total, page: input.page, limit: input.limit, totalPages: Math.ceil(total / input.limit) };
   }
 }

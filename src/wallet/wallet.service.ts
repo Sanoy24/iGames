@@ -13,7 +13,7 @@ import { LedgerEntryType } from '../ledger/schemas/ledger-entry.schema';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { Wallet, WalletDocument } from './schemas/wallet.schema';
 import { WagerLimit } from './schemas/wager-limit.schema';
-import { Withdrawal, WithdrawalDocument } from './schemas/withdrawal.schema';
+import { Withdrawal, WithdrawalDocument, WithdrawalStatus } from './schemas/withdrawal.schema';
 
 export type WalletSummary = {
   id: string;
@@ -429,6 +429,21 @@ export class WalletService {
       throw new BadRequestException('Destination account is required');
     }
 
+    // Enforce admin-configured withdrawal limits
+    const config = await this.connection
+      .collection('systemconfigs')
+      .findOne({ key: 'global' });
+    const minAmount = (config?.withdrawalMinAmountMinor as number) ?? 0;
+    const maxAmount = (config?.withdrawalMaxAmountMinor as number) ?? 0;
+    const maxPending = (config?.maxPendingWithdrawalsPerUser as number) ?? 1;
+
+    if (minAmount > 0 && amountMinor < minAmount) {
+      throw new BadRequestException(`Minimum withdrawal is ${minAmount} credits`);
+    }
+    if (maxAmount > 0 && amountMinor > maxAmount) {
+      throw new BadRequestException(`Maximum withdrawal is ${maxAmount} credits`);
+    }
+
     const objectUserId = this.toObjectId(userId, 'userId');
     const session = await this.connection.startSession();
 
@@ -436,6 +451,17 @@ export class WalletService {
       let createdWithdrawal: Withdrawal | undefined;
 
       await session.withTransaction(async () => {
+        // Enforce max pending withdrawals per user
+        if (maxPending > 0) {
+          const pendingCount = await this.withdrawalModel
+            .countDocuments({ userId: objectUserId, status: { $in: ['pending', 'claimed', 'processing'] } })
+            .session(session)
+            .exec();
+          if (pendingCount >= maxPending) {
+            throw new ConflictException(`You already have ${pendingCount} pending withdrawal(s). Wait for them to complete before requesting another.`);
+          }
+        }
+
         // Find user wallet
         const wallet = await this.walletModel
           .findOne({ userId: objectUserId, currencyCode: 'CREDIT' })
@@ -497,8 +523,15 @@ export class WalletService {
           session
         );
 
-        // Notify client via websocket
+        // Notify the requesting user
         this.gameEventsGateway.emitWalletUpdated(userId, this.toWalletSummary(updatedWallet));
+        // Notify all connected agents so the on-duty agent can claim it immediately
+        this.gameEventsGateway.emitWithdrawalPending({
+          withdrawalId: withdrawal._id.toString(),
+          userId,
+          amountMinor: withdrawal.amountMinor,
+          destinationAccount: withdrawal.destinationAccount,
+        });
       });
 
       if (!createdWithdrawal) {
@@ -534,7 +567,10 @@ export class WalletService {
           throw new NotFoundException('Withdrawal request not found');
         }
 
-        if (withdrawal.status !== 'pending' && withdrawal.status !== 'processing') {
+        const settleable: WithdrawalStatus[] = action === 'approve'
+          ? ['pending', 'processing']
+          : ['pending', 'claimed', 'processing'];
+        if (!settleable.includes(withdrawal.status)) {
           throw new ConflictException(`Withdrawal is already in '${withdrawal.status}' status`);
         }
 
@@ -658,6 +694,147 @@ export class WalletService {
       .populate('userId', 'displayName email username')
       .sort({ createdAt: -1 })
       .exec();
+  }
+
+  async getAvailableWithdrawals(): Promise<Withdrawal[]> {
+    return this.withdrawalModel
+      .find({ status: 'pending' })
+      .populate('userId', 'displayName username')
+      .sort({ createdAt: 1 })
+      .exec();
+  }
+
+  async getAgentWithdrawals(agentId: string): Promise<Withdrawal[]> {
+    const objectAgentId = this.toObjectId(agentId, 'agentId');
+    return this.withdrawalModel
+      .find({ agentId: objectAgentId, status: { $in: ['claimed', 'processing'] } })
+      .populate('userId', 'displayName username')
+      .sort({ claimedAt: -1 })
+      .exec();
+  }
+
+  async claimWithdrawal(withdrawalId: string, agentId: string): Promise<Withdrawal> {
+    const objectWithdrawalId = this.toObjectId(withdrawalId, 'withdrawalId');
+    const objectAgentId = this.toObjectId(agentId, 'agentId');
+
+    const withdrawal = await this.withdrawalModel.findOneAndUpdate(
+      { _id: objectWithdrawalId, status: 'pending' },
+      { $set: { status: 'claimed', agentId: objectAgentId, claimedAt: new Date() } },
+      { new: true },
+    ).exec();
+
+    if (!withdrawal) {
+      throw new ConflictException('Withdrawal is not available to claim (not pending or already claimed)');
+    }
+    return withdrawal;
+  }
+
+  async releaseWithdrawal(withdrawalId: string, agentId: string): Promise<Withdrawal> {
+    const objectWithdrawalId = this.toObjectId(withdrawalId, 'withdrawalId');
+    const objectAgentId = this.toObjectId(agentId, 'agentId');
+
+    const withdrawal = await this.withdrawalModel.findOneAndUpdate(
+      { _id: objectWithdrawalId, status: 'claimed', agentId: objectAgentId },
+      { $set: { status: 'pending' }, $unset: { agentId: 1, claimedAt: 1 } },
+      { new: true },
+    ).exec();
+
+    if (!withdrawal) {
+      throw new ConflictException('Withdrawal not found or not assigned to you');
+    }
+    return withdrawal;
+  }
+
+  async completeWithdrawalByAgent(input: {
+    withdrawalId: string;
+    agentId: string;
+    telebirrReference: string;
+    serviceChargePct: number;
+  }): Promise<Withdrawal> {
+    const objectWithdrawalId = this.toObjectId(input.withdrawalId, 'withdrawalId');
+    const objectAgentId = this.toObjectId(input.agentId, 'agentId');
+    const session = await this.connection.startSession();
+
+    try {
+      let completed: WithdrawalDocument | null = null;
+
+      await session.withTransaction(async () => {
+        const withdrawal = await this.withdrawalModel
+          .findOne({ _id: objectWithdrawalId, status: 'claimed', agentId: objectAgentId })
+          .session(session)
+          .exec();
+
+        if (!withdrawal) {
+          throw new ConflictException('Withdrawal not found or not assigned to you');
+        }
+
+        const serviceChargeMinor = Math.floor(withdrawal.amountMinor * input.serviceChargePct / 100);
+        const netAmountMinor = withdrawal.amountMinor - serviceChargeMinor;
+
+        if (netAmountMinor <= 0) {
+          throw new BadRequestException('Service charge would consume the entire withdrawal amount');
+        }
+
+        // Settle the user's reservation
+        const wallet = await this.walletModel
+          .findOneAndUpdate(
+            { userId: withdrawal.userId, currencyCode: 'CREDIT', reservedMinor: { $gte: withdrawal.amountMinor } },
+            { $inc: { reservedMinor: -withdrawal.amountMinor } },
+            { new: true, session },
+          )
+          .exec();
+
+        if (!wallet) {
+          throw new ConflictException('Insufficient reserved balance on user wallet');
+        }
+
+        // Credit the agent's wallet (net of service charge)
+        await this.ensureDefaultWallet(objectAgentId, session);
+        await this.creditInSession(
+          {
+            userId: input.agentId,
+            amountMinor: netAmountMinor,
+            entryType: 'agent_receipt',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal._id.toString(),
+            idempotencyKey: `agent-receipt:${withdrawal._id}`,
+            metadata: {
+              withdrawalId: withdrawal._id.toString(),
+              userId: withdrawal.userId.toString(),
+              grossAmountMinor: withdrawal.amountMinor,
+              serviceChargeMinor,
+            },
+          },
+          session,
+        );
+
+        withdrawal.status = 'completed';
+        withdrawal.serviceChargeMinor = serviceChargeMinor;
+        withdrawal.netAmountMinor = netAmountMinor;
+        withdrawal.telebirrReference = input.telebirrReference.trim();
+        withdrawal.processedAt = new Date();
+        withdrawal.processedBy = objectAgentId;
+        await withdrawal.save({ session });
+        completed = withdrawal;
+
+        if (serviceChargeMinor > 0) {
+          await this.connection.collection('platformstats').updateOne(
+            { key: 'global' },
+            { $inc: { totalServiceChargesMinor: serviceChargeMinor } },
+            { upsert: true, session },
+          );
+        }
+
+        this.gameEventsGateway.emitWalletUpdated(withdrawal.userId.toString(), this.toWalletSummary(wallet));
+      });
+
+      if (!completed) {
+        throw new Error('Agent withdrawal completion transaction did not complete');
+      }
+      return completed;
+    } finally {
+      await session.endSession();
+    }
   }
 
   async getWagerLimit(userId: string): Promise<WagerLimit | null> {

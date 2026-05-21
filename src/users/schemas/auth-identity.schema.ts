@@ -23,6 +23,9 @@ export class AuthIdentity {
   @Prop({ trim: true, lowercase: true })
   normalizedEmail?: string;
 
+  @Prop({ select: false })
+  passwordHash?: string;
+
   @Prop({ type: Object, default: {} })
   profileSnapshot: Record<string, unknown>;
 

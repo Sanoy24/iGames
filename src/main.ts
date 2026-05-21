@@ -75,7 +75,10 @@ async function bootstrap() {
   }));
 
   // ── CORS ──────────────────────────────────────────────────────────
-  const allowedOrigin = configService.get<string>('ALLOWED_ORIGIN', '*');
+  const allowedOrigin = configService.get<string>('ALLOWED_ORIGIN', '');
+  if (!isDev && !allowedOrigin) {
+    throw new Error('ALLOWED_ORIGIN env var is required in production');
+  }
   app.enableCors({
     origin: isDev ? true : allowedOrigin,
     credentials: true,

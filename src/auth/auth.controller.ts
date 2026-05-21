@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { CredentialsAuthDto } from './dto/credentials-auth.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { TelegramMiniAppAuthDto } from './dto/telegram-mini-app-auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -30,6 +31,13 @@ export class AuthController {
     @Body() dto: TelegramMiniAppAuthDto
   ): Promise<AuthTokenResponse> {
     return this.authService.loginWithTelegramMiniApp(dto.initData);
+  }
+
+  @Post('credentials')
+  @Throttle({ strict: { ttl: 60_000, limit: 5 } })
+  @ApiOkResponse({ description: 'Agent/admin login with email and password' })
+  loginWithCredentials(@Body() dto: CredentialsAuthDto): Promise<AuthTokenResponse> {
+    return this.authService.loginWithCredentials(dto.email, dto.password);
   }
 
   @Post('refresh')

@@ -28,8 +28,12 @@
   font-size: 15px;
   font-weight: 700;
   color: var(--gold);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: border-color var(--transition), background var(--transition);
 }
-.wallet-bar-icon { font-size: 18px; }
+.wallet-bar:hover { border-color: var(--gold); background: var(--surface-2); }
 .wallet-bar-unit { font-weight: 400; color: var(--text-secondary); font-size: 13px; }
 
 /* ── Home Hero ────────────────────────────────────────────── */
@@ -170,12 +174,13 @@
   font-size: 12px;
   padding: 5px 8px;
 }
+.game-card-keno { border-top: 3px solid var(--gold); }
+.game-card-bingo { border-top: 3px solid var(--cyan, #22d3ee); }
 @media (min-width: 720px) {
   .games-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ── Key-value info card ──────────────────────────────────── */
-.info-card { }
 .key-value-list { display: flex; flex-direction: column; gap: 0; }
 .key-value-row {
   display: flex;
@@ -561,4 +566,111 @@
   font-weight: 500;
 }
 .form-field .input { font-size: 14px; }
+
+/* ── Agent page ──────────────────────────────────────────── */
+.agent-withdrawal-card { border-left: 3px solid var(--gold); }
+.agent-transfer-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.agent-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.agent-detail-row span { color: var(--text-muted); }
+.agent-net-row { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
+.agent-phone { font-size: 15px; font-family: monospace; letter-spacing: 0.5px; }
+.agent-net { color: var(--green); font-size: 15px; }
+.agent-action-strip { display: flex; flex-direction: column; gap: 8px; }
+.agent-confirm-label { font-size: 12px; color: var(--text-muted); margin: 0; }
+.agent-complete-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+@media (max-width: 480px) {
+  .agent-complete-row { grid-template-columns: 1fr auto; }
+  .agent-complete-row .btn-primary { grid-column: 1 / -1; }
+}
+
+/* ── Profile page ────────────────────────────────────────── */
+.profile-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 28px 20px;
+  background: linear-gradient(135deg, #1a1d2e 0%, #12141f 100%);
+}
+.profile-avatar {
+  color: var(--gold);
+  margin-bottom: 12px;
+  opacity: 0.85;
+}
+.profile-name {
+  font-size: 22px;
+  font-weight: 800;
+  margin: 0 0 10px;
+}
+.profile-role-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.profile-info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 4px;
+}
+.profile-info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border);
+}
+.profile-info-row:last-child { border-bottom: none; }
+.profile-info-icon { color: var(--text-muted); flex-shrink: 0; }
+.profile-info-body { display: flex; flex-direction: column; gap: 2px; }
+.profile-info-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.profile-info-value { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.profile-info-empty { font-size: 13px; color: var(--text-muted); font-style: italic; }
+
+/* ── Feature card eyebrow with icon ─────────────────────── */
+.feature-eyebrow-icon {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ── Ledger direction icon ───────────────────────────────── */
+.ledger-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ledger-icon-credit {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--green);
+}
+.ledger-icon-debit {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
 

@@ -8,6 +8,8 @@ import { Keno } from './pages/Keno';
 import { Bingo } from './pages/Bingo';
 import { Admin } from './pages/Admin';
 import { Wallet } from './pages/Wallet';
+import { Profile } from './pages/Profile';
+import { Agent } from './pages/Agent';
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
@@ -23,7 +25,7 @@ type TelegramWindow = Window &
   };
 
 export function App() {
-  const { authStatus, setAuth, setAuthLoading, setAuthError, setWallet } = useStore();
+  const { authStatus, authError, setAuth, setAuthLoading, setAuthError, setWallet } = useStore();
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const loginStarted = useRef(false);
 
@@ -36,6 +38,13 @@ export function App() {
     setAuthLoading();
 
     const tg = (window as TelegramWindow).Telegram?.WebApp;
+
+    if (!tg?.initData && !import.meta.env.DEV) {
+      loginStarted.current = false;
+      setAuthError('Open this app from the iGames Telegram bot to play.');
+      return;
+    }
+
     const loginPromise = tg?.initData
       ? authApi.loginWithTelegram(tg.initData)
       : authApi.devSeedAdmin('Dev Admin');
@@ -46,7 +55,7 @@ export function App() {
         const walletData = await walletApi.getWallet();
         setWallet(walletData);
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         loginStarted.current = false;
         setAuthError(err.message);
       });
@@ -64,8 +73,8 @@ export function App() {
     return (
       <div className="app-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
         <div className="card" style={{ textAlign: 'center', borderColor: 'var(--danger)' }}>
-          <h2 style={{ color: 'var(--danger)', marginBottom: 8 }}>Authentication Failed</h2>
-          <p className="text-muted">Could not connect to the server or authenticate your session.</p>
+          <h2 style={{ color: 'var(--danger)', marginBottom: 8 }}>Unable to Start</h2>
+          <p className="text-muted">{authError ?? 'Could not authenticate your session.'}</p>
         </div>
       </div>
     );
@@ -73,7 +82,7 @@ export function App() {
 
   return (
     <div className="app-container">
-      <WalletBar />
+      <WalletBar onNavigate={setActiveTab} />
       <main className="main-content">
         {activeTab === 'home' && <Home onNavigate={setActiveTab} />}
         {activeTab === 'games' && <Games onNavigate={setActiveTab} />}
@@ -81,6 +90,8 @@ export function App() {
         {activeTab === 'bingo' && <Bingo />}
         {activeTab === 'wallet' && <Wallet />}
         {activeTab === 'admin' && <Admin />}
+        {activeTab === 'profile' && <Profile />}
+        {activeTab === 'agent' && <Agent />}
       </main>
       <BottomNav active={activeTab} onChange={setActiveTab} />
       <Toasts />

@@ -8,6 +8,7 @@ import type {
   KenoDraw,
   KenoTicket,
   LedgerEntry,
+  User,
   Wallet,
   Withdrawal,
 } from './models';
@@ -84,6 +85,38 @@ export const bingoApi = {
       .then((r) => r.data as BingoTicket[]),
 };
 
+// ── Users / Profile ───────────────────────────────────────────────
+export const userApi = {
+  getMe: () => api.get<User>('/users/me').then((r) => r.data),
+  updateProfile: (dto: { displayName?: string; phoneNumber?: string }) =>
+    api.patch<User>('/users/me', dto).then((r) => r.data),
+};
+
+// ── Admin: Overview + Config ──────────────────────────────────────
+export type PlatformStats = {
+  ggrMinor: number;
+  totalVolumeMinor: number;
+  totalPayoutsMinor: number;
+  totalRefundsMinor: number;
+  totalLiabilitiesMinor: number;
+  breakdown: Record<string, number>;
+};
+
+export type SystemConfig = {
+  telebirrCreditMinorPerBirr: number;
+  welcomeBonusMinor: number;
+  withdrawalServiceChargePct: number;
+  withdrawalMinAmountMinor: number;
+  withdrawalMaxAmountMinor: number;
+  maxPendingWithdrawalsPerUser: number;
+};
+
+export const adminApi = {
+  getOverview: () => api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
+  getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
+  updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
+};
+
 // ── Admin: Keno ───────────────────────────────────────────────────
 export const adminKenoApi = {
   getConfig: () => api.get<KenoConfig>('/keno/config').then((r) => r.data),
@@ -138,6 +171,16 @@ export const adminWithdrawalsApi = {
   listWithdrawals: () => api.get<Withdrawal[]>('/admin/withdrawals').then((r) => r.data),
   processWithdrawal: (id: string, action: 'approve' | 'reject', adminNotes?: string) =>
     api.post<Withdrawal>(`/admin/withdrawals/${id}/process`, { action, adminNotes }).then((r) => r.data),
+};
+
+// ── Agent: Withdrawals ─────────────────────────────────────────────
+export const agentApi = {
+  getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
+  getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
+  claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
+  releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
+  completeWithdrawal: (id: string, telebirrReference: string) =>
+    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { telebirrReference }).then((r) => r.data),
 };
 
 export default api;

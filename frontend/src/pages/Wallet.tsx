@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import { formatCredits, useStore } from '../store/useStore';
-import { formatCreditsFull, getErrorMessage, titleCase } from '../lib/utils';
+import { formatCreditsFull, getErrorMessage } from '../lib/utils';
+
+const ENTRY_LABELS: Record<string, string> = {
+  ticket_purchase: 'Ticket Purchase',
+  ticket_win: 'Winnings',
+  ticket_refund: 'Ticket Refund',
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  bonus: 'Bonus Credit',
+  admin_adjustment: 'Balance Adjustment',
+  agent_receipt: 'Agent Transfer',
+  reserve: 'Hold',
+  release: 'Hold Released',
+};
 
 function formatLedgerTitle(entry: LedgerEntry): string {
-  const entryType = titleCase(entry.entryType);
-  const sourceType = titleCase(entry.sourceType);
-  return `${entryType} · ${sourceType}`;
+  return ENTRY_LABELS[entry.entryType] ?? ENTRY_LABELS[entry.sourceType] ?? 'Transaction';
 }
 
 export function Wallet() {
@@ -103,7 +115,7 @@ export function Wallet() {
         <div className="badge badge-green">Wallet</div>
         <h1 className="hero-title">{formatCredits(wallet?.availableMinor ?? 0)} Credits</h1>
         <p className="hero-copy">
-          Your wallet is the shared balance source for Keno stakes, Bingo tickets, deposits, and wins.
+          Your balance is shared across Keno stakes, Bingo tickets, deposits, and winnings.
         </p>
         <div className="stats-grid" style={{ marginBottom: 16 }}>
           <div className="stat-card">
@@ -116,27 +128,21 @@ export function Wallet() {
           </div>
           <div className="stat-card">
             <span className="stat-label">Status</span>
-            <strong>{wallet?.status ?? 'loading'}</strong>
+            <strong style={{ textTransform: 'capitalize' }}>{wallet?.status ?? 'loading'}</strong>
           </div>
         </div>
-        
+
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button 
-            className="btn btn-primary" 
-            onClick={() => {
-              setShowTopup(!showTopup);
-              setShowWithdraw(false);
-            }}
+          <button
+            className="btn btn-primary"
+            onClick={() => { setShowTopup(!showTopup); setShowWithdraw(false); }}
             style={{ flex: 1, minWidth: 160 }}
           >
             {showTopup ? '✕ Cancel Top-Up' : '↑ Top Up (Telebirr)'}
           </button>
-          <button 
-            className="btn btn-ghost" 
-            onClick={() => {
-              setShowWithdraw(!showWithdraw);
-              setShowTopup(false);
-            }}
+          <button
+            className="btn btn-ghost"
+            onClick={() => { setShowWithdraw(!showWithdraw); setShowTopup(false); }}
             style={{ flex: 1, minWidth: 160, backgroundColor: 'rgba(255,255,255,0.05)' }}
           >
             {showWithdraw ? '✕ Cancel Payout' : '↓ Request Payout'}
@@ -147,19 +153,20 @@ export function Wallet() {
           <div className="admin-form" style={{ marginTop: 16, backgroundColor: 'rgba(0,0,0,0.2)' }}>
             <h3 style={{ margin: '0 0 8px', fontSize: 16 }}>Telebirr Manual Deposit</h3>
             <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              Transfer the desired amount via your Telebirr app. Then paste the confirmation SMS message or Receipt URL here to instantly credit your account.
+              Transfer the desired amount via your Telebirr app. Then paste the confirmation SMS
+              message or Receipt URL here to instantly credit your account.
             </p>
-            <textarea 
-              className="input" 
+            <textarea
+              className="input"
               rows={4}
-              placeholder="Paste Telebirr SMS receipt..." 
+              placeholder="Paste Telebirr SMS receipt..."
               value={receiptInput}
               onChange={(e) => setReceiptInput(e.target.value)}
               style={{ width: '100%', marginBottom: 16, resize: 'vertical' }}
             />
-            <button 
-              className="btn btn-success btn-full" 
-              onClick={handleTopup} 
+            <button
+              className="btn btn-success btn-full"
+              onClick={handleTopup}
               disabled={isSubmitting || !receiptInput.trim()}
             >
               {isSubmitting ? 'Verifying Receipt...' : 'Verify & Claim Deposit'}
@@ -171,15 +178,16 @@ export function Wallet() {
           <div className="admin-form" style={{ marginTop: 16, backgroundColor: 'rgba(0,0,0,0.2)' }}>
             <h3 style={{ margin: '0 0 8px', fontSize: 16 }}>Telebirr Cashout Request</h3>
             <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              Request to withdraw your available credits. The requested amount will be reserved immediately, and an administrator will process the Telebirr transfer to your phone number.
+              Request to withdraw your available credits. The amount will be reserved immediately,
+              and an agent will process the Telebirr transfer to your phone number.
             </p>
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Amount (Credits)</label>
-              <input 
+              <input
                 type="number"
                 step="any"
-                className="input" 
-                placeholder="e.g. 50" 
+                className="input"
+                placeholder="e.g. 50"
                 value={withdrawAmount}
                 onChange={(e) => setWithdrawAmount(e.target.value)}
                 style={{ width: '100%' }}
@@ -187,21 +195,21 @@ export function Wallet() {
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Telebirr Phone Number</label>
-              <input 
+              <input
                 type="text"
-                className="input" 
-                placeholder="e.g. 0912345678" 
+                className="input"
+                placeholder="e.g. 0912345678"
                 value={withdrawPhone}
                 onChange={(e) => setWithdrawPhone(e.target.value)}
                 style={{ width: '100%' }}
               />
             </div>
-            <button 
-              className="btn btn-success btn-full" 
-              onClick={handleWithdraw} 
+            <button
+              className="btn btn-success btn-full"
+              onClick={handleWithdraw}
               disabled={isWithdrawing || !withdrawAmount || !withdrawPhone.trim()}
             >
-              {isWithdrawing ? 'Submitting Request...' : 'Verify & Submit Request'}
+              {isWithdrawing ? 'Submitting Request...' : 'Submit Withdrawal Request'}
             </button>
           </div>
         )}
@@ -212,7 +220,7 @@ export function Wallet() {
           <div className="section-header">
             <div>
               <div className="section-title">Withdrawal Requests</div>
-              <p className="section-copy">Review the processing status of your Telebirr cashout requests.</p>
+              <p className="section-copy">Review the status of your Telebirr cashout requests.</p>
             </div>
           </div>
           <div className="list-stack">
@@ -222,18 +230,25 @@ export function Wallet() {
                   <div>
                     <h3>Telebirr Cashout</h3>
                     <p style={{ margin: '4px 0 0', fontSize: 13 }}>Phone: {w.destinationAccount}</p>
-                    {w.adminNotes && <p style={{ color: 'var(--yellow-1)', fontSize: 12, marginTop: 4 }}>Note: {w.adminNotes}</p>}
+                    {w.adminNotes && (
+                      <p style={{ color: 'var(--yellow-1)', fontSize: 12, marginTop: 4 }}>
+                        Note: {w.adminNotes}
+                      </p>
+                    )}
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <span className="badge" style={{ display: 'block', marginBottom: 4 }}>
                       {formatCredits(w.amountMinor)}
                     </span>
                     <span className={`badge ${
-                      w.status === 'completed' ? 'badge-green' : 
-                      w.status === 'rejected' ? 'badge-red' : 
+                      w.status === 'completed' ? 'badge-green' :
+                      w.status === 'rejected' ? 'badge-red' :
                       w.status === 'processing' ? 'badge-violet' : 'badge-gold'
                     }`}>
-                      {w.status.toUpperCase()}
+                      {w.status === 'pending' ? 'Pending' :
+                       w.status === 'processing' ? 'Processing' :
+                       w.status === 'completed' ? 'Completed' :
+                       w.status === 'rejected' ? 'Rejected' : w.status}
                     </span>
                   </div>
                 </div>
@@ -250,8 +265,8 @@ export function Wallet() {
       <section className="card">
         <div className="section-header">
           <div>
-            <div className="section-title">Recent Ledger</div>
-            <p className="section-copy">Immutable financial activity from the backend ledger.</p>
+            <div className="section-title">Recent Activity</div>
+            <p className="section-copy">Your transactions and balance history.</p>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={() => void loadWallet()}>
             Refresh
@@ -259,17 +274,28 @@ export function Wallet() {
         </div>
 
         {loading && ledger.length === 0 ? (
-          <div className="card-muted">Loading wallet activity...</div>
+          <div className="card-muted">Loading activity...</div>
         ) : ledger.length === 0 ? (
-          <div className="card-muted">No ledger entries yet.</div>
+          <div className="card-muted">No activity yet. Play a game to get started.</div>
         ) : (
           <div className="list-stack">
             {ledger.map((entry) => (
               <article key={entry.id} className="list-card">
                 <div className="list-card-header">
-                  <div>
-                    <h3>{formatLedgerTitle(entry)}</h3>
-                    <p>{entry.sourceId}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span className={`ledger-icon ${entry.direction === 'credit' ? 'ledger-icon-credit' : 'ledger-icon-debit'}`}>
+                      {entry.direction === 'credit'
+                        ? <ArrowDownLeft size={14} />
+                        : <ArrowUpRight size={14} />}
+                    </span>
+                    <div>
+                      <h3>{formatLedgerTitle(entry)}</h3>
+                      {entry.createdAt && (
+                        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                          {new Date(entry.createdAt).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <span className={`badge ${entry.direction === 'credit' ? 'badge-green' : 'badge-red'}`}>
                     {entry.direction === 'credit' ? '+' : '-'}
@@ -277,9 +303,7 @@ export function Wallet() {
                   </span>
                 </div>
                 <div className="ticket-meta">
-                  <span>Balance After: {formatCreditsFull(entry.balanceAfterMinor)}</span>
-                  <span>Type: {entry.entryType}</span>
-                  <span>Source: {entry.sourceType}</span>
+                  <span>Balance after: {formatCreditsFull(entry.balanceAfterMinor)}</span>
                 </div>
               </article>
             ))}

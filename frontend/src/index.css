@@ -195,15 +195,11 @@ button { font-family: inherit; }
   padding: 6px 8px;
   transition: color var(--transition);
   gap: 3px;
-  min-width: 64px;
+  min-width: 0;
+  flex: 1;
 }
 .nav-item.active { color: var(--gold); }
-.nav-icon {
-  font-size: 10px;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
+.nav-item svg { flex-shrink: 0; }
 
 @media (min-width: 720px) {
   .bottom-nav {
@@ -283,24 +279,6 @@ button { font-family: inherit; }
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
-/* ── Status Badges (Admin) ────────────────────────────────── */
-.status-badge {
-  display: inline-block;
-  padding: 2px 6px;
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  border-radius: 3px;
-  letter-spacing: 0.5px;
-}
-.status-won {
-  background: rgba(16, 185, 129, 0.2);
-  color: var(--green);
-}
-.status-drawn {
-  background: rgba(139, 92, 246, 0.2);
-  color: #a78bfa;
-}
 
 /* ── Divider ──────────────────────────────────────────────── */
 .divider {

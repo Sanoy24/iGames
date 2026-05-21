@@ -9,6 +9,10 @@ import {
     getErrorMessage,
     titleCase,
 } from "../lib/utils";
+
+function formatPrizeTier(key: string): string {
+    return titleCase(key.replace(/minor$/i, '').trim());
+}
 import { formatCredits, useStore } from "../store/useStore";
 import { getSocket } from "../hooks/useSocketConnection";
 import { soundEngine } from "../lib/audio";
@@ -212,17 +216,23 @@ export function Bingo() {
                                     {selectedRoom.name}
                                 </div>
                                 <p className="section-copy">
-                                    Starts{" "}
-                                    {formatRelativeTime(
-                                        selectedRoom.scheduledStartAt,
-                                    )}{" "}
-                                    · {selectedRoom.status}
+                                    {selectedRoom.status === 'running'
+                                        ? 'In progress · drawing numbers now'
+                                        : selectedRoom.status === 'open'
+                                        ? `Starts ${formatRelativeTime(selectedRoom.scheduledStartAt)}`
+                                        : selectedRoom.status === 'settled'
+                                        ? 'Completed'
+                                        : selectedRoom.status}
                                 </p>
                             </div>
-                            <span
-                                className={`badge ${selectedRoom.status === "running" ? "badge-green" : "badge-violet"}`}
-                            >
-                                {selectedRoom.status}
+                            <span className={`badge ${
+                                selectedRoom.status === 'running' ? 'badge-green' :
+                                selectedRoom.status === 'settled' ? 'badge-violet' :
+                                selectedRoom.status === 'cancelled' ? 'badge-red' : 'badge-gold'
+                            }`}>
+                                {selectedRoom.status === 'running' ? 'Live' :
+                                 selectedRoom.status === 'open' ? 'Open' :
+                                 selectedRoom.status === 'settled' ? 'Settled' : selectedRoom.status}
                             </span>
                         </div>
 
@@ -259,8 +269,7 @@ export function Bingo() {
                             <div>
                                 <h3>Buy Tickets</h3>
                                 <p className="section-copy">
-                                    Each ticket uses the same backend purchase
-                                    flow as the API.
+                                    Each ticket is a unique 3×9 card with 15 numbers.
                                 </p>
                             </div>
                             <div className="purchase-controls">
@@ -290,12 +299,11 @@ export function Bingo() {
                     <section className="card">
                         <div className="section-header">
                             <div>
-                                <div className="section-title">
-                                    Drawn Numbers
-                                </div>
+                                <div className="section-title">Drawn Numbers</div>
                                 <p className="section-copy">
-                                    Live room state from `GET
-                                    /bingo/rooms/:id/state`.
+                                    {(roomState?.drawnNumbers.length ?? 0) > 0
+                                        ? `Ball ${roomState!.drawnNumbers.length} of 90 drawn`
+                                        : 'Waiting for first ball.'}
                                 </p>
                             </div>
                         </div>
@@ -331,7 +339,7 @@ export function Bingo() {
                                                 className="prize-card"
                                             >
                                                 <span className="prize-tier">
-                                                    {titleCase(tier)}
+                                                    {formatPrizeTier(tier)}
                                                 </span>
                                                 <strong>
                                                     {formatCreditsFull(amount)}{" "}
@@ -437,8 +445,8 @@ export function Bingo() {
                         ) : (
                             <div className="card-muted">
                                 {roomState
-                                    ? "Your room tickets are not available on this endpoint yet, but purchase flow is live."
-                                    : "Select a room to inspect ticket state."}
+                                    ? "Buy tickets for this room to see them here."
+                                    : "Select a room to see your tickets."}
                             </div>
                         )}
                     </section>

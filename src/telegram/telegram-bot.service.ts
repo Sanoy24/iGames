@@ -1,13 +1,20 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, Keyboard } from 'grammy';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramBotService.name);
   private bot: Bot | undefined;
 
-  constructor(private readonly configService: ConfigService) {}
+  // In-memory cache: telegramUserId → phone (avoids repeated DB writes on /start)
+  private readonly phoneCache = new Map<number, string>();
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
@@ -24,7 +31,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     this.bot = new Bot(token);
 
-    // Add global error handler to prevent bot from stopping on unhandled middleware errors
     this.bot.catch((err) => {
       this.logger.error(`Error in Telegram bot middleware: ${err.message}`, err.stack);
     });
@@ -41,7 +47,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       const isTelegramLink = miniAppUrl.includes('t.me/') || miniAppUrl.includes('telegram.me/');
 
       if (!isTelegramLink) {
-        // Set the menu button to open the Mini App directly
         await this.bot.api.setChatMenuButton({
           menu_button: {
             type: 'web_app',
@@ -83,20 +88,69 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     return new InlineKeyboard().webApp(text, miniAppUrl);
   }
 
+  private contactRequestKeyboard(): Keyboard {
+    return new Keyboard()
+      .requestContact('📱 Share My Phone Number')
+      .resized()
+      .oneTime();
+  }
+
   private registerCommands(miniAppUrl: string): void {
     if (!this.bot) return;
 
-    // /start — welcome message with Play button
+    // /start — request phone number before showing the Play button
     this.bot.command('start', async (ctx) => {
       const firstName = ctx.from?.first_name ?? 'Player';
+      const userId = ctx.from?.id;
+
+      if (userId && this.phoneCache.has(userId)) {
+        // Already shared — go straight to play
+        const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
+        await ctx.reply(
+          `Welcome back, ${firstName}! 🎰\n\nTap below to start playing.`,
+          { reply_markup: keyboard },
+        );
+        return;
+      }
+
+      await ctx.reply(
+        `Welcome to iGames, ${firstName}! 🎰\n\n` +
+        `Play Keno and 90-Ball Bingo right here in Telegram.\n\n` +
+        `To get started and enable Telebirr payouts, please share your phone number:`,
+        { reply_markup: this.contactRequestKeyboard() },
+      );
+    });
+
+    // Handle contact sharing
+    this.bot.on('message:contact', async (ctx) => {
+      const contact = ctx.message.contact;
+      const userId = ctx.from?.id;
+
+      // Telegram only allows users to share their own contact via the request button
+      if (!contact.phone_number || (contact.user_id && contact.user_id !== userId)) {
+        await ctx.reply('Please share your own phone number using the button provided.');
+        return;
+      }
+
+      if (userId) {
+        this.phoneCache.set(userId, contact.phone_number);
+        // Persist to DB — best-effort, do not block the reply
+        this.usersService
+          .updatePhoneByTelegramId(String(userId), contact.phone_number)
+          .catch((err) => this.logger.error(`Failed to persist phone for Telegram user ${userId}`, err));
+        this.logger.log(`Stored phone ${contact.phone_number} for Telegram user ${userId}`);
+      }
 
       const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
 
       await ctx.reply(
-        `Welcome to iGames, ${firstName}! 🎰\n\n` +
-          `Play Keno and 90-Ball Bingo right here in Telegram.\n\n` +
-          `Tap the button below to start playing — no signup needed!`,
-        { reply_markup: keyboard },
+        `Thanks! Your number has been saved for payouts.\n\nTap below to start playing:`,
+        {
+          reply_markup: {
+            remove_keyboard: true,
+            ...keyboard,
+          },
+        },
       );
     });
 

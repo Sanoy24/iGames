@@ -16,7 +16,6 @@ export function useSocketConnection() {
   const setWallet = useStore((s) => s.setWallet);
 
   useEffect(() => {
-    // Only connect if user is authenticated
     if (!isAuthenticated) return;
 
     if (!socketInstance) {
@@ -30,22 +29,10 @@ export function useSocketConnection() {
         timeout: 20000,
       });
 
-      socketInstance.on('connect', () => {
-        setSocketConnected(true);
-        console.log('WebSocket connected:', socketInstance?.id);
-      });
+      socketInstance.on('connect', () => setSocketConnected(true));
+      socketInstance.on('disconnect', () => setSocketConnected(false));
+      socketInstance.on('connect_error', () => setSocketConnected(false));
 
-      socketInstance.on('disconnect', (reason) => {
-        setSocketConnected(false);
-        console.log('WebSocket disconnected:', reason);
-      });
-
-      socketInstance.on('connect_error', (error) => {
-        setSocketConnected(false);
-        console.error('WebSocket connection error:', error.message);
-      });
-
-      // Add missing listeners
       socketInstance.on('system.maintenance', (data: MaintenancePayload) => {
         addToast('error', `Server going down for maintenance in ${data.etaSeconds} seconds.`);
       });

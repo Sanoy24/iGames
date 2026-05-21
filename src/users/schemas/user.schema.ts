@@ -24,6 +24,9 @@ export class User {
   @Prop({ required: true, enum: ['active', 'suspended', 'closed'], default: 'active' })
   status: UserStatus;
 
+  @Prop({ trim: true })
+  phoneNumber?: string;
+
   @Prop({ type: Date })
   lastLoginAt?: Date;
 

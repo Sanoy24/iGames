@@ -1,5 +1,5 @@
+import { Zap, Trophy, Wallet as WalletIcon } from 'lucide-react';
 import { formatCredits, useStore } from '../store/useStore';
-import { formatCreditsFull } from '../lib/utils';
 import type { AppTab } from '../lib/navigation';
 
 type Props = {
@@ -8,6 +8,7 @@ type Props = {
 
 const FEATURE_CARDS: Array<{
   id: 'keno' | 'bingo' | 'wallet';
+  icon: React.ReactNode;
   eyebrow: string;
   title: string;
   description: string;
@@ -15,6 +16,7 @@ const FEATURE_CARDS: Array<{
 }> = [
   {
     id: 'keno',
+    icon: <Zap size={18} />,
     eyebrow: 'Fast Picks',
     title: 'Play Keno',
     description: 'Choose your lucky numbers, join the next draw, and track results in real time.',
@@ -22,6 +24,7 @@ const FEATURE_CARDS: Array<{
   },
   {
     id: 'bingo',
+    icon: <Trophy size={18} />,
     eyebrow: 'Live Rooms',
     title: 'Join Bingo',
     description: 'Browse rooms, buy tickets, and follow live ball draws as prize tiers settle.',
@@ -29,8 +32,9 @@ const FEATURE_CARDS: Array<{
   },
   {
     id: 'wallet',
+    icon: <WalletIcon size={18} />,
     eyebrow: 'Balance',
-    title: 'Check Wallet',
+    title: 'Your Wallet',
     description: 'Review available credits, reserved funds, and your latest activity.',
     cta: 'Open Wallet',
   },
@@ -43,11 +47,9 @@ export function Home({ onNavigate }: Props) {
   return (
     <div className="stack-lg">
       <section className="hero-panel">
-        <div className="badge badge-gold">Telegram Mini App</div>
         <h1 className="hero-title">Welcome back, {user?.displayName ?? 'Player'}</h1>
         <p className="hero-copy">
-          The backend stays standalone and reusable, while this frontend gives you a Telegram-first
-          mini app experience for games, wallet activity, and live draw updates.
+          Play Keno and Bingo, top up your balance, and track live draw results — all in one place.
         </p>
         <div className="hero-stats">
           <div className="hero-stat">
@@ -72,47 +74,23 @@ export function Home({ onNavigate }: Props) {
       <section className="section-header">
         <div>
           <div className="section-title">Quick Actions</div>
-          <p className="section-copy">Tap into the core flows already available in the backend.</p>
+          <p className="section-copy">Jump into a game or check your balance.</p>
         </div>
       </section>
 
       <div className="feature-grid">
         {FEATURE_CARDS.map((card) => (
           <button key={card.id} className="feature-card" onClick={() => onNavigate(card.id)}>
-            <span className="feature-eyebrow">{card.eyebrow}</span>
+            <span className="feature-eyebrow feature-eyebrow-icon">
+              {card.icon}
+              {card.eyebrow}
+            </span>
             <h2>{card.title}</h2>
             <p>{card.description}</p>
             <span className="feature-cta">{card.cta}</span>
           </button>
         ))}
       </div>
-
-      <section className="card info-card">
-        <div className="section-header">
-          <div>
-            <div className="section-title">Session Summary</div>
-            <p className="section-copy">Current app identity and wallet snapshot.</p>
-          </div>
-        </div>
-        <div className="key-value-list">
-          <div className="key-value-row">
-            <span>Player</span>
-            <strong>{user?.displayName ?? 'Unknown'}</strong>
-          </div>
-          <div className="key-value-row">
-            <span>Roles</span>
-            <strong>{user?.roles.join(', ') ?? 'player'}</strong>
-          </div>
-          <div className="key-value-row">
-            <span>Spendable</span>
-            <strong>{formatCreditsFull(wallet?.availableMinor ?? 0)} Credits</strong>
-          </div>
-          <div className="key-value-row">
-            <span>Wallet Status</span>
-            <strong>{wallet?.status ?? 'loading'}</strong>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

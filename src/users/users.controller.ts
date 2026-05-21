@@ -1,10 +1,12 @@
-import { Controller, DefaultValuePipe, Get, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, ParseIntPipe, Patch, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { BingoService } from '../bingo/bingo.service';
 import { KenoService } from '../keno/keno.service';
+import { UsersService } from './users.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -13,8 +15,19 @@ import { KenoService } from '../keno/keno.service';
 export class UsersController {
   constructor(
     private readonly kenoService: KenoService,
-    private readonly bingoService: BingoService
+    private readonly bingoService: BingoService,
+    private readonly usersService: UsersService,
   ) {}
+
+  @Get('me')
+  getMe(@CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.getProfile(user.id);
+  }
+
+  @Patch('me')
+  updateMe(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateProfileDto) {
+    return this.usersService.updateProfile(user.id, dto);
+  }
 
   @Get('me/history')
   async getMyHistory(

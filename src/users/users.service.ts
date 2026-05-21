@@ -209,6 +209,28 @@ export class UsersService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  async getProfile(userId: string): Promise<UserDocument> {
+    return this.findById(userId);
+  }
+
+  async updateProfile(userId: string, update: { displayName?: string; phoneNumber?: string }): Promise<UserDocument> {
+    const sanitized: Record<string, string> = {};
+    if (update.displayName?.trim()) sanitized.displayName = update.displayName.trim();
+    if (update.phoneNumber?.trim()) sanitized.phoneNumber = update.phoneNumber.trim();
+
+    const user = await this.userModel.findByIdAndUpdate(userId, { $set: sanitized }, { new: true }).exec();
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
+  async updatePhoneByTelegramId(telegramUserId: string, phoneNumber: string): Promise<void> {
+    const identity = await this.authIdentityModel
+      .findOne({ provider: 'telegram', providerUserId: telegramUserId })
+      .exec();
+    if (!identity) return;
+    await this.userModel.findByIdAndUpdate(identity.userId, { $set: { phoneNumber } }).exec();
+  }
+
   async updateStatus(userId: string, status: 'active' | 'suspended' | 'banned') {
     const user = await this.userModel.findByIdAndUpdate(userId, { status }, { new: true }).exec();
     if (!user) throw new NotFoundException('User not found');

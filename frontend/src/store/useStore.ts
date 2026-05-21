@@ -17,6 +17,7 @@ type AppState = {
   authError: string | null;
   isSocketConnected: boolean;
   setAuth: (user: User, token: string) => void;
+  setUser: (user: User) => void;
   setAuthLoading: () => void;
   setAuthError: (message: string) => void;
   setSocketConnected: (connected: boolean) => void;
@@ -53,6 +54,8 @@ export const useStore = create<AppState>((set) => ({
       authError: null,
     });
   },
+
+  setUser: (user) => set({ user }),
 
   setAuthLoading: () => set({ authStatus: 'loading', isAuthLoading: true, authError: null }),
 

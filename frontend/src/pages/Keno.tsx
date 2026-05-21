@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoConfig, KenoDraw, KenoTicket } from '../lib/models';
 import {
@@ -18,6 +19,12 @@ const DEFAULT_ALLOWED_SPOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 type KenoDrawCompletedPayload = {
   drawId?: string;
   drawnNumbers?: number[];
+};
+
+const DRAW_STATUS_BADGE: Record<string, string> = {
+  settled: 'badge-green',
+  cancelled: 'badge-red',
+  pending: 'badge-violet',
 };
 
 export function Keno() {
@@ -52,9 +59,7 @@ export function Keno() {
       setDraws(nextDraws);
       setTickets(nextTickets);
       setSpotTarget((current) => {
-        if (nextConfig.allowedSpots.includes(current)) {
-          return current;
-        }
+        if (nextConfig.allowedSpots.includes(current)) return current;
         return nextConfig.allowedSpots[0] ?? 1;
       });
     } catch (error) {
@@ -73,53 +78,33 @@ export function Keno() {
         const drawn: number[] = payload.drawnNumbers || [];
         setAnimatingDrawId(payload.drawId ?? null);
         setRevealedNumbers([]);
-        
-        // Staggered reveal animation
+
         drawn.forEach((num: number, idx: number) => {
           setTimeout(() => {
             soundEngine.pop();
             setRevealedNumbers((prev) => [...prev, num]);
-          }, idx * 500); // Reveal one ball every 500ms
+          }, idx * 500);
         });
 
-        // Trigger confetti if they won in this draw
-        // We will check the tickets after loadKeno resolves, or we can just rely on the updated state.
-        void loadKeno().then(() => {
-          // It's a bit tricky to see if they won from just the payload, but loadKeno will update tickets.
-          // We'll check the tickets effect below for confetti.
-        });
-        
+        void loadKeno().then(() => {});
         addToast('info', `Draw ${payload.drawId?.slice(-6) || 'completed'} settled.`);
       };
-      
+
       socket.on('keno.draw.completed', handleDrawCompleted);
-      
-      return () => {
-        socket.off('keno.draw.completed', handleDrawCompleted);
-      };
+      return () => { socket.off('keno.draw.completed', handleDrawCompleted); };
     }
   }, [loadKeno, addToast]);
 
-  // Check for wins to trigger confetti
+  // Check all tickets for a win after a draw completes
   useEffect(() => {
-    if (tickets.length > 0) {
-      const latestTicket = tickets[0];
-      // Only trigger confetti if the ticket belongs to the draw that just finished, and it won
-      if (
-        latestTicket.payoutMinor > 0 &&
-        animatingDrawId &&
-        latestTicket.drawId === animatingDrawId
-      ) {
-        soundEngine.win();
-        confetti({
-          particleCount: 150,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#FFE600', '#00FF00', '#FF00FF']
-        });
-        // Clear animating draw ID to prevent re-firing
-        setAnimatingDrawId(null);
-      }
+    if (!animatingDrawId || tickets.length === 0) return;
+    const hasWin = tickets.some(
+      (t) => t.payoutMinor > 0 && t.drawId === animatingDrawId
+    );
+    if (hasWin) {
+      soundEngine.win();
+      confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#FFE600', '#00FF00', '#FF00FF'] });
+      setAnimatingDrawId(null);
     }
   }, [tickets, animatingDrawId]);
 
@@ -130,13 +115,9 @@ export function Keno() {
   const toggleNumber = (value: number) => {
     soundEngine.click();
     setSelectedNumbers((current) => {
-      if (current.includes(value)) {
-        return current.filter((item) => item !== value);
-      }
-      if (current.length >= spotTarget) {
-        return current;
-      }
-      return [...current, value].sort((left, right) => left - right);
+      if (current.includes(value)) return current.filter((item) => item !== value);
+      if (current.length >= spotTarget) return current;
+      return [...current, value].sort((a, b) => a - b);
     });
   };
 
@@ -145,7 +126,6 @@ export function Keno() {
       addToast('info', `Pick exactly ${spotTarget} numbers to place this ticket.`);
       return;
     }
-
     setSubmitting(true);
     try {
       await kenoApi.purchaseTicket(selectedNumbers, createIdempotencyKey('keno'));
@@ -170,8 +150,8 @@ export function Keno() {
               Choose your spot count, lock your numbers, and join the next scheduled draw.
             </p>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => void loadKeno()}>
-            Refresh
+          <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void loadKeno()}>
+            <RefreshCw size={14} />
           </button>
         </div>
 
@@ -187,7 +167,7 @@ export function Keno() {
             </div>
             <div className="stat-card">
               <span className="stat-label">Latest Draw</span>
-              <strong>{latestDraw ? formatRelativeTime(latestDraw.scheduledAt) : 'Waiting'}</strong>
+              <strong>{latestDraw ? formatRelativeTime(latestDraw.scheduledAt) : 'None yet'}</strong>
             </div>
           </div>
         ) : (
@@ -199,7 +179,11 @@ export function Keno() {
         <div className="section-header">
           <div>
             <div className="section-title">Build Your Ticket</div>
-            <p className="section-copy">Selected {selectedNumbers.length} of {spotTarget} spots.</p>
+            <p className="section-copy">
+              {selectedNumbers.length === spotTarget
+                ? `${spotTarget} numbers selected — ready to buy!`
+                : `Select ${spotTarget - selectedNumbers.length} more number${spotTarget - selectedNumbers.length === 1 ? '' : 's'}.`}
+            </p>
           </div>
         </div>
 
@@ -218,23 +202,19 @@ export function Keno() {
         <div className="selected-strip">
           {selectedNumbers.length > 0 ? (
             selectedNumbers.map((value) => (
-              <span key={value} className="ball ball-selected">
-                {value}
-              </span>
+              <span key={value} className="ball ball-selected">{value}</span>
             ))
           ) : (
-            <span className="text-muted">No numbers selected yet.</span>
+            <span className="text-muted">Tap numbers below to select them.</span>
           )}
         </div>
 
         <div className="number-grid">
           {numbers.map((value) => {
             const isSelected = selectedNumbers.includes(value);
-            const isDrawn =
-              animatingDrawId === latestDraw?.id
-                ? revealedNumbers.includes(value)
-                : latestDraw?.drawnNumbers.includes(value) ?? false;
-
+            const isDrawn = animatingDrawId === latestDraw?.id
+              ? revealedNumbers.includes(value)
+              : latestDraw?.drawnNumbers.includes(value) ?? false;
             const tone = isSelected ? 'ball-selected' : isDrawn ? 'ball-drawn' : 'ball-idle';
             return (
               <button key={value} className={`ball ${tone}`} onClick={() => toggleNumber(value)}>
@@ -248,7 +228,7 @@ export function Keno() {
           <button className="btn btn-secondary" onClick={() => setSelectedNumbers([])}>
             Clear
           </button>
-          <button className="btn btn-primary" disabled={submitting} onClick={submitTicket}>
+          <button className="btn btn-primary" disabled={submitting || selectedNumbers.length !== spotTarget} onClick={submitTicket}>
             {submitting ? 'Buying...' : `Buy for ${formatCredits(config?.ticketPriceMinor ?? 0)}`}
           </button>
         </div>
@@ -257,32 +237,34 @@ export function Keno() {
       <section className="card">
         <div className="section-header">
           <div>
-            <div className="section-title">Latest Draws</div>
-            <p className="section-copy">Recent Keno rounds and their settled numbers.</p>
+            <div className="section-title">Recent Draws</div>
+            <p className="section-copy">Latest Keno rounds and their results.</p>
           </div>
         </div>
         {loading && draws.length === 0 ? (
           <div className="card-muted">Fetching draw history...</div>
+        ) : draws.length === 0 ? (
+          <div className="card-muted">No draws yet.</div>
         ) : (
           <div className="list-stack">
-            {draws.slice(0, 4).map((draw) => (
+            {draws.map((draw) => (
               <article key={draw.id} className="list-card">
                 <div className="list-card-header">
                   <div>
-                    <h3>Draw {draw.id.slice(-6)}</h3>
+                    <h3>Draw #{draw.id.slice(-6)}</h3>
                     <p>{formatDateTime(draw.scheduledAt)}</p>
                   </div>
-                  <span className="badge badge-violet">{draw.status}</span>
+                  <span className={`badge ${DRAW_STATUS_BADGE[draw.status] ?? 'badge-violet'}`}>
+                    {draw.status}
+                  </span>
                 </div>
                 <div className="ball-row">
                   {draw.drawnNumbers.length > 0 ? (
                     draw.drawnNumbers.map((value) => (
-                      <span key={`${draw.id}-${value}`} className="ball ball-drawn">
-                        {value}
-                      </span>
+                      <span key={`${draw.id}-${value}`} className="ball ball-drawn">{value}</span>
                     ))
                   ) : (
-                    <span className="text-muted">Draw not settled yet.</span>
+                    <span className="text-muted">Not drawn yet.</span>
                   )}
                 </div>
               </article>
@@ -295,31 +277,44 @@ export function Keno() {
         <div className="section-header">
           <div>
             <div className="section-title">Your Tickets</div>
-            <p className="section-copy">Recent Keno bets and settlement results.</p>
+            <p className="section-copy">Recent Keno bets and results.</p>
           </div>
         </div>
         {tickets.length === 0 ? (
-          <div className="card-muted">No tickets yet. Your first ticket will show up here.</div>
+          <div className="card-muted">No tickets yet. Buy your first ticket above.</div>
         ) : (
           <div className="list-stack">
-            {tickets.map((ticket) => (
-              <article key={ticket.id} className="list-card">
-                <div className="list-card-header">
-                  <div>
-                    <h3>Ticket {ticket.id.slice(-6)}</h3>
-                    <p>{ticket.selectedNumbers.join(', ')}</p>
+            {tickets.map((ticket) => {
+              const settled = ticket.settlementStatus === 'settled';
+              const won = ticket.payoutMinor > 0;
+              return (
+                <article key={ticket.id} className="list-card">
+                  <div className="list-card-header">
+                    <div>
+                      <h3>Ticket #{ticket.id.slice(-6)}</h3>
+                      <div className="keno-ticket-numbers">
+                        {ticket.selectedNumbers.map((n) => (
+                          <span
+                            key={n}
+                            className={`keno-number-pip${settled && latestDraw?.drawnNumbers.includes(n) ? ' hit' : ''}`}
+                          >
+                            {n}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <span className={`badge ${won ? 'badge-green' : settled ? 'badge-red' : 'badge-gold'}`}>
+                      {won ? 'Win' : settled ? 'No win' : 'Pending'}
+                    </span>
                   </div>
-                  <span className={`badge ${ticket.payoutMinor > 0 ? 'badge-green' : 'badge-gold'}`}>
-                    {ticket.payoutMinor > 0 ? 'Winner' : ticket.settlementStatus}
-                  </span>
-                </div>
-                <div className="ticket-meta">
-                  <span>Stake: {formatCredits(ticket.stakeMinor)}</span>
-                  <span>Matches: {ticket.matches}</span>
-                  <span>Payout: {formatCreditsFull(ticket.payoutMinor)}</span>
-                </div>
-              </article>
-            ))}
+                  <div className="ticket-meta">
+                    <span>Stake: {formatCredits(ticket.stakeMinor)}</span>
+                    {settled && <span>Matches: {ticket.matches}</span>}
+                    {settled && won && <span style={{ color: 'var(--green)' }}>Payout: {formatCreditsFull(ticket.payoutMinor)}</span>}
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

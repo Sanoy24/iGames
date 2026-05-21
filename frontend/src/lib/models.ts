@@ -2,6 +2,10 @@ export type User = {
   id: string;
   displayName: string;
   roles: string[];
+  email?: string;
+  phoneNumber?: string;
+  status?: string;
+  lastLoginAt?: string;
 };
 
 export type AuthTokenResponse = {
@@ -33,6 +37,7 @@ export type LedgerEntry = {
   idempotencyKey?: string;
   balanceAfterMinor: number;
   metadata: Record<string, unknown>;
+  createdAt?: string;
 };
 
 export type KenoPaytableEntry = {
@@ -116,9 +121,15 @@ export type Withdrawal = {
   id: string;
   userId: string;
   amountMinor: number;
-  status: 'pending' | 'processing' | 'completed' | 'rejected';
+  status: 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
   destinationAccount: string;
+  agentId?: string;
+  claimedAt?: string;
+  serviceChargeMinor?: number;
+  netAmountMinor?: number;
+  telebirrReference?: string;
   adminNotes?: string;
+  processedBy?: string;
   processedAt?: string;
   createdAt: string;
 };

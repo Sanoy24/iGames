@@ -22,6 +22,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
+RUN mkdir -p logs
 
 ENV NODE_ENV=production
 EXPOSE 3000

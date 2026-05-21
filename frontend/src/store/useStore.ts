@@ -35,9 +35,9 @@ type AppState = {
 export const useStore = create<AppState>((set) => ({
   // Auth
   user: null,
-  accessToken: localStorage.getItem('accessToken'),
-  isAuthenticated: !!localStorage.getItem('accessToken'),
-  authStatus: localStorage.getItem('accessToken') ? 'loading' : 'idle',
+  accessToken: null,
+  isAuthenticated: false,
+  authStatus: 'idle',
   isAuthLoading: false,
   authError: null,
   isSocketConnected: false,
@@ -97,7 +97,7 @@ export const useStore = create<AppState>((set) => ({
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
-// Helper — format minor units to display string
+// Helper: format minor units to display string
 export const formatCredits = (minor: number) => {
   if (minor >= 1_000_000) return `${(minor / 1_000_000).toFixed(1)}M`;
   if (minor >= 1_000) return `${(minor / 1_000).toFixed(minor % 1000 === 0 ? 0 : 1)}K`;

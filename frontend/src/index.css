@@ -55,7 +55,7 @@ button { font-family: inherit; }
   flex-direction: column;
   height: 100vh;
   height: 100dvh;
-  max-width: 600px;
+  width: min(100%, 1040px);
   margin: 0 auto;
   position: relative;
   overflow: hidden;
@@ -76,6 +76,13 @@ button { font-family: inherit; }
   padding: 16px;
   padding-bottom: 80px;
   -webkit-overflow-scrolling: touch;
+}
+
+@media (min-width: 720px) {
+  .main-content {
+    padding: 24px;
+    padding-bottom: 90px;
+  }
 }
 
 /* ── Buttons ──────────────────────────────────────────────── */
@@ -170,6 +177,7 @@ button { font-family: inherit; }
   display: flex;
   justify-content: space-around;
   align-items: center;
+  gap: 4px;
   padding-bottom: env(safe-area-inset-bottom);
   z-index: 50;
 }
@@ -187,9 +195,35 @@ button { font-family: inherit; }
   padding: 6px 8px;
   transition: color var(--transition);
   gap: 3px;
+  min-width: 64px;
 }
 .nav-item.active { color: var(--gold); }
-.nav-icon { font-size: 20px; }
+.nav-icon {
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+@media (min-width: 720px) {
+  .bottom-nav {
+    left: 24px;
+    right: 24px;
+    bottom: 16px;
+    height: 58px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    max-width: 560px;
+    margin: 0 auto;
+  }
+
+  .nav-item {
+    flex-direction: row;
+    gap: 8px;
+    font-size: 12px;
+    padding: 8px 14px;
+  }
+}
 
 /* ── Typography & Sections ────────────────────────────────── */
 .section-header {

@@ -5,7 +5,7 @@ import {
   adminKenoApi,
   type BotUser,
 } from '../lib/api';
-import type { BingoRoom, KenoDraw } from '../lib/models';
+import type { BingoRoom, KenoConfig, KenoDraw } from '../lib/models';
 import {
   formatDateTime,
   formatRelativeTime,
@@ -23,7 +23,7 @@ type AdminTab = 'keno' | 'bingo' | 'bots';
 function KenoAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [draws, setDraws] = useState<KenoDraw[]>([]);
-  const [config, setConfig] = useState<any>(null);
+  const [config, setConfig] = useState<KenoConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
 

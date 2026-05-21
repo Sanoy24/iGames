@@ -7,6 +7,7 @@ import {
   AuthProvider
 } from './schemas/auth-identity.schema';
 import { User, UserDocument } from './schemas/user.schema';
+import { RefreshSession } from '../auth/schemas/refresh-session.schema';
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -29,7 +30,9 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(AuthIdentity.name)
-    private readonly authIdentityModel: Model<AuthIdentity>
+    private readonly authIdentityModel: Model<AuthIdentity>,
+    @InjectModel(RefreshSession.name)
+    private readonly refreshSessionModel: Model<RefreshSession>,
   ) {}
 
   async findById(userId: Types.ObjectId | string): Promise<UserDocument> {
@@ -126,6 +129,14 @@ export class UsersService {
   async updateStatus(userId: string, status: 'active' | 'suspended' | 'banned') {
     const user = await this.userModel.findByIdAndUpdate(userId, { status }, { new: true }).exec();
     if (!user) throw new NotFoundException('User not found');
+
+    if (status === 'suspended' || status === 'banned') {
+      await this.refreshSessionModel.updateMany(
+        { userId: new Types.ObjectId(userId), revokedAt: { $exists: false } },
+        { $set: { revokedAt: new Date() } }
+      ).exec();
+    }
+
     return user;
   }
 

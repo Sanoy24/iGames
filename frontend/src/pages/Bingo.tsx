@@ -14,6 +14,10 @@ import { getSocket } from "../hooks/useSocketConnection";
 import { soundEngine } from "../lib/audio";
 import confetti from "canvas-confetti";
 
+type BingoRoomEventPayload = {
+    roomId?: string;
+};
+
 export function Bingo() {
     const addToast = useStore((state) => state.addToast);
     const setWallet = useStore((state) => state.setWallet);
@@ -67,7 +71,7 @@ export function Bingo() {
 
         const socket = getSocket();
         if (socket) {
-            const handleRoomUpdate = (payload: any) => {
+            const handleRoomUpdate = (payload: BingoRoomEventPayload) => {
                 if (payload.roomId === selectedRoomId) {
                     void loadRoomState(selectedRoomId);
                 } else {
@@ -75,14 +79,14 @@ export function Bingo() {
                 }
             };
 
-            const handleNumberDrawn = (payload: any) => {
+            const handleNumberDrawn = (payload: BingoRoomEventPayload) => {
                 if (payload.roomId === selectedRoomId) {
                     soundEngine.pop();
                     void loadRoomState(selectedRoomId);
                 }
             };
 
-            const handleRoomCompleted = (payload: any) => {
+            const handleRoomCompleted = (payload: BingoRoomEventPayload) => {
                 if (payload.roomId === selectedRoomId) {
                     void loadRoomState(selectedRoomId);
                     addToast(
@@ -120,7 +124,7 @@ export function Bingo() {
                 });
             }
         }
-    }, [roomState?.status]); // Only run when status changes to completed
+    }, [roomState?.status, roomState?.tickets]); // Only run when status changes or tickets update
 
     const selectedRoom = useMemo(
         () =>

@@ -76,6 +76,39 @@ describe('RngService', () => {
       const result = await service.drawUniqueNumbers({ min: 1, max: 10, count: 10 });
       expect(result.numbers.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     });
+
+    it('always includes required mustInclude numbers', async () => {
+      const result = await service.drawUniqueNumbers({
+        min: 1,
+        max: 80,
+        count: 20,
+        mustInclude: [7, 13, 42]
+      });
+
+      expect(result.numbers).toEqual(expect.arrayContaining([7, 13, 42]));
+      expect(new Set(result.numbers).size).toBe(20);
+    });
+
+    it('includes mustInclude in the audited input hash', async () => {
+      const withSeven = await service.drawUniqueNumbers({
+        min: 1,
+        max: 80,
+        count: 20,
+        mustInclude: [7],
+        gameType: 'keno',
+        gameReference: 'draw-001'
+      });
+      const withEight = await service.drawUniqueNumbers({
+        min: 1,
+        max: 80,
+        count: 20,
+        mustInclude: [8],
+        gameType: 'keno',
+        gameReference: 'draw-001'
+      });
+
+      expect(withSeven.inputHash).not.toBe(withEight.inputHash);
+    });
   });
 
   // ─── input validation ─────────────────────────────────────────────────────
@@ -107,6 +140,12 @@ describe('RngService', () => {
     it('throws when gameType is provided without gameReference', async () => {
       await expect(
         service.drawUniqueNumbers({ min: 1, max: 80, count: 5, gameType: 'keno' })
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws when mustInclude contains duplicates', async () => {
+      await expect(
+        service.drawUniqueNumbers({ min: 1, max: 80, count: 5, mustInclude: [3, 3] })
       ).rejects.toThrow(BadRequestException);
     });
   });

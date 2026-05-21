@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSocketConnection } from './hooks/useSocketConnection';
 import { useStore } from './store/useStore';
 import { authApi, walletApi } from './lib/api';
 import { Home } from './pages/Home';
+import { Games } from './pages/Games';
 import { Keno } from './pages/Keno';
 import { Bingo } from './pages/Bingo';
 import { Admin } from './pages/Admin';
@@ -10,20 +11,34 @@ import { Wallet } from './pages/Wallet';
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
+import type { AppTab } from './lib/navigation';
+
+type TelegramWindow = Window &
+  typeof globalThis & {
+    Telegram?: {
+      WebApp?: {
+        initData?: string;
+      };
+    };
+  };
 
 export function App() {
-  const { authStatus, setAuth, setAuthError, setWallet } = useStore();
-  const [activeTab, setActiveTab] = useState<'home' | 'keno' | 'bingo' | 'wallet' | 'admin'>('home');
+  const { authStatus, setAuth, setAuthLoading, setAuthError, setWallet } = useStore();
+  const [activeTab, setActiveTab] = useState<AppTab>('home');
+  const loginStarted = useRef(false);
 
   useSocketConnection();
 
   useEffect(() => {
-    if (authStatus !== 'idle') return;
+    if (authStatus !== 'idle' || loginStarted.current) return;
 
-    const tg = (window as any).Telegram?.WebApp;
+    loginStarted.current = true;
+    setAuthLoading();
+
+    const tg = (window as TelegramWindow).Telegram?.WebApp;
     const loginPromise = tg?.initData
       ? authApi.loginWithTelegram(tg.initData)
-      : authApi.devSeedAdmin('Dev Admin'); // Fallback for local development
+      : authApi.devSeedAdmin('Dev Admin');
 
     loginPromise
       .then(async ({ user, accessToken }) => {
@@ -31,8 +46,11 @@ export function App() {
         const walletData = await walletApi.getWallet();
         setWallet(walletData);
       })
-      .catch((err) => setAuthError(err.message));
-  }, [authStatus, setAuth, setAuthError, setWallet]);
+      .catch((err) => {
+        loginStarted.current = false;
+        setAuthError(err.message);
+      });
+  }, [authStatus, setAuth, setAuthError, setAuthLoading, setWallet]);
 
   if (authStatus === 'idle' || authStatus === 'loading') {
     return (
@@ -58,6 +76,7 @@ export function App() {
       <WalletBar />
       <main className="main-content">
         {activeTab === 'home' && <Home onNavigate={setActiveTab} />}
+        {activeTab === 'games' && <Games onNavigate={setActiveTab} />}
         {activeTab === 'keno' && <Keno />}
         {activeTab === 'bingo' && <Bingo />}
         {activeTab === 'wallet' && <Wallet />}

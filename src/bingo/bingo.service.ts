@@ -138,8 +138,8 @@ export class BingoService {
     const thresholdDate = new Date(Date.now() - thresholdMinutes * 60000);
     const rooms = await this.bingoRoomModel
       .find({
-        status: { $in: ['open', 'locked'] },
-        scheduledAt: { $lt: thresholdDate }
+        status: { $in: ['open', 'running'] },
+        scheduledStartAt: { $lt: thresholdDate }
       })
       .exec();
     return rooms.map(r => r._id.toString());

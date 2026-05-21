@@ -8,7 +8,6 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
-import { DEFAULT_KENO_PAYTABLE } from './constants/default-keno-paytable';
 import { CreateKenoConfigDto } from './dto/create-keno-config.dto';
 import { KenoRulesService } from './keno-rules.service';
 import { KenoConfig, KenoConfigDocument } from './schemas/keno-config.schema';
@@ -57,11 +56,10 @@ export class KenoService {
 
   async getActiveConfig(): Promise<KenoConfigDocument> {
     const config = await this.kenoConfigModel.findOne({ status: 'active' }).exec();
-    if (config) {
-      return config;
+    if (!config) {
+      throw new NotFoundException('No active Keno config. Create one via POST /admin/keno/configs before tickets can be sold.');
     }
-
-    return this.createDefaultConfig();
+    return config;
   }
 
   async createConfig(dto: CreateKenoConfigDto): Promise<KenoConfigDocument> {
@@ -580,11 +578,10 @@ export class KenoService {
       .findOne({ status: 'active' })
       .session(session)
       .exec();
-    if (config) {
-      return config;
+    if (!config) {
+      throw new NotFoundException('No active Keno config. Create one via POST /admin/keno/configs before tickets can be sold.');
     }
-
-    throw new NotFoundException('Active Keno config not found');
+    return config;
   }
 
   private async getOrCreateOpenDraw(
@@ -617,29 +614,6 @@ export class KenoService {
     return draw;
   }
 
-  private async createDefaultConfig(): Promise<KenoConfigDocument> {
-    const existingConfig = await this.kenoConfigModel.findOne({ status: 'active' }).exec();
-    if (existingConfig) {
-      return existingConfig;
-    }
-
-    const [config] = await this.kenoConfigModel.create([
-      {
-        name: 'Default Keno',
-        version: await this.getNextConfigVersion(),
-        status: 'active',
-        numberMin: 1,
-        numberMax: 80,
-        drawSize: 20,
-        allowedSpots: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-        ticketPriceMinor: 100,
-        paytable: DEFAULT_KENO_PAYTABLE,
-        globalBotWinInterval: 0
-      }
-    ]);
-
-    return config;
-  }
 
   private async getNextConfigVersion(): Promise<number> {
     const latest = await this.kenoConfigModel.findOne().sort({ version: -1 }).exec();
@@ -659,6 +633,24 @@ export class KenoService {
     const allowedSpots = dto.allowedSpots ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     if (new Set(allowedSpots).size !== allowedSpots.length) {
       throw new BadRequestException('Keno allowedSpots must be unique');
+    }
+    const rangeSize = numberMax - numberMin + 1;
+    if (allowedSpots.some((spotCount) => spotCount > rangeSize)) {
+      throw new BadRequestException('Keno allowedSpots cannot exceed number range size');
+    }
+    const paytableKeys = new Set<string>();
+    for (const entry of dto.paytable) {
+      if (entry.matches > entry.spots) {
+        throw new BadRequestException('Keno paytable matches cannot exceed spots');
+      }
+      if (!allowedSpots.includes(entry.spots)) {
+        throw new BadRequestException('Keno paytable spots must be included in allowedSpots');
+      }
+      const key = `${entry.spots}:${entry.matches}`;
+      if (paytableKeys.has(key)) {
+        throw new BadRequestException('Keno paytable entries must be unique by spots and matches');
+      }
+      paytableKeys.add(key);
     }
   }
 

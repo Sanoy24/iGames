@@ -15,6 +15,11 @@ import confetti from 'canvas-confetti';
 
 const DEFAULT_ALLOWED_SPOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
+type KenoDrawCompletedPayload = {
+  drawId?: string;
+  drawnNumbers?: number[];
+};
+
 export function Keno() {
   const addToast = useStore((state) => state.addToast);
   const setWallet = useStore((state) => state.setWallet);
@@ -64,9 +69,9 @@ export function Keno() {
 
     const socket = getSocket();
     if (socket) {
-      const handleDrawCompleted = (payload: any) => {
+      const handleDrawCompleted = (payload: KenoDrawCompletedPayload) => {
         const drawn: number[] = payload.drawnNumbers || [];
-        setAnimatingDrawId(payload.drawId);
+        setAnimatingDrawId(payload.drawId ?? null);
         setRevealedNumbers([]);
         
         // Staggered reveal animation
@@ -225,14 +230,11 @@ export function Keno() {
         <div className="number-grid">
           {numbers.map((value) => {
             const isSelected = selectedNumbers.includes(value);
-            let isDrawn = false;
-            
-            if (animatingDrawId === latestDraw?.id) {
-              isDrawn = revealedNumbers.includes(value);
-            } else {
-              isDrawn = latestDraw?.drawnNumbers.includes(value) ?? false;
-            }
-            
+            const isDrawn =
+              animatingDrawId === latestDraw?.id
+                ? revealedNumbers.includes(value)
+                : latestDraw?.drawnNumbers.includes(value) ?? false;
+
             const tone = isSelected ? 'ball-selected' : isDrawn ? 'ball-drawn' : 'ball-idle';
             return (
               <button key={value} className={`ball ${tone}`} onClick={() => toggleNumber(value)}>

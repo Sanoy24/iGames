@@ -2,6 +2,10 @@ import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { RedisLockService } from '../redis/redis-lock.service';
+
+const BINGO_DRAW_LOCK_KEY = 'igames:bingo:draw-lock';
+const BINGO_DRAW_LOCK_TTL_MS = 120_000;
 
 @Injectable()
 export class BingoScheduler implements OnApplicationShutdown {
@@ -11,7 +15,8 @@ export class BingoScheduler implements OnApplicationShutdown {
 
   constructor(
     private readonly bingoService: BingoService,
-    private readonly gameEventsGateway: GameEventsGateway
+    private readonly gameEventsGateway: GameEventsGateway,
+    private readonly lockService: RedisLockService
   ) {}
 
   onApplicationShutdown() {
@@ -29,6 +34,11 @@ export class BingoScheduler implements OnApplicationShutdown {
       return;
     }
     this.isRunning = true;
+    const lock = await this.lockService.acquireLock(BINGO_DRAW_LOCK_KEY, BINGO_DRAW_LOCK_TTL_MS);
+    if (!lock) {
+      this.isRunning = false;
+      return;
+    }
 
     try {
       const runningRooms = await this.bingoService.listRunningRooms();
@@ -69,6 +79,7 @@ export class BingoScheduler implements OnApplicationShutdown {
     } catch (error) {
       this.logger.error('Bingo scheduler error', error instanceof Error ? error.stack : error);
     } finally {
+      await this.lockService.releaseLock(lock);
       this.isRunning = false;
     }
   }

@@ -2,6 +2,8 @@ import { Body, Controller, ForbiddenException, Logger, Post } from '@nestjs/comm
 import { ConfigService } from '@nestjs/config';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { AuthService, AuthTokenResponse } from '../auth/auth.service';
+import { KenoService } from '../keno/keno.service';
+import { DEFAULT_KENO_PAYTABLE } from '../keno/constants/default-keno-paytable';
 import { DevSeedDto } from './dto/dev-seed.dto';
 
 @ApiTags('dev')
@@ -11,7 +13,8 @@ export class DevController {
 
   constructor(
     private readonly authService: AuthService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly kenoService: KenoService,
   ) {}
 
   @Post('seed/admin')
@@ -53,6 +56,28 @@ export class DevController {
       );
     } catch (error) {
       this.logger.error('devSeedPlayer failed', error instanceof Error ? error.stack : error);
+      throw error;
+    }
+  }
+
+  @Post('seed/keno-config')
+  @ApiOkResponse({ description: 'Creates the default Keno config if none exists' })
+  async seedKenoConfig() {
+    this.guardProduction();
+    try {
+      return await this.kenoService.createConfig({
+        name: 'Default Keno',
+        ticketPriceMinor: 100,
+        paytable: DEFAULT_KENO_PAYTABLE,
+        numberMin: 1,
+        numberMax: 80,
+        drawSize: 20,
+        allowedSpots: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        globalBotWinInterval: 0,
+        autoScheduleIntervalMinutes: 3,
+      });
+    } catch (error) {
+      this.logger.error('seedKenoConfig failed', error instanceof Error ? error.stack : error);
       throw error;
     }
   }

@@ -8,7 +8,7 @@ export class RedisLockService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisLockService.name);
   private readonly redlock: Redlock;
 
-  constructor(@Inject(REDIS_CLIENT) private readonly redis: any) {
+  constructor(@Inject(REDIS_CLIENT) redis: Redis) {
     this.redlock = new Redlock([redis], {
       driftFactor: 0.01,
       retryCount: 3,

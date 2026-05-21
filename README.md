@@ -39,10 +39,10 @@ npm install
 cp .env.example .env
 ```
 
-3. Start MongoDB:
+3. Start MongoDB and Redis:
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.dev.yml up -d
 ```
 
 4. Start the API:

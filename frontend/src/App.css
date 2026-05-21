@@ -73,6 +73,11 @@
   margin-top: 8px;
 }
 
+@media (max-width: 420px) {
+  .hero-actions { grid-template-columns: 1fr; }
+  .hero-title { font-size: 23px; }
+}
+
 /* ── Feature Grid ─────────────────────────────────────────── */
 .feature-grid { display: flex; flex-direction: column; gap: 12px; }
 .feature-card {
@@ -108,6 +113,67 @@
   color: var(--gold);
 }
 
+@media (min-width: 720px) {
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.games-hero {
+  background: linear-gradient(135deg, #171b2d 0%, #111827 52%, #16211f 100%);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-xl);
+  padding: 28px 20px;
+}
+.games-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.game-card {
+  width: 100%;
+  min-height: 220px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color var(--transition), transform var(--transition), background var(--transition);
+}
+.game-card:hover {
+  border-color: var(--gold);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+.game-card h2 {
+  font-size: 22px;
+  margin: 8px 0;
+}
+.game-card p {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.game-detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.game-detail-row span {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 8px;
+}
+@media (min-width: 720px) {
+  .games-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* ── Key-value info card ──────────────────────────────────── */
 .info-card { }
 .key-value-list { display: flex; flex-direction: column; gap: 0; }
@@ -136,6 +202,10 @@
 }
 .stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
 .stat-card strong { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+
+@media (max-width: 520px) {
+  .stats-grid { grid-template-columns: 1fr; }
+}
 
 /* ── Hero sub-panel ───────────────────────────────────────── */
 .hero-subpanel {
@@ -190,6 +260,9 @@
 @media (max-width: 360px) {
   .number-grid { grid-template-columns: repeat(7, 1fr); }
 }
+@media (min-width: 720px) {
+  .number-grid { grid-template-columns: repeat(10, 1fr); }
+}
 
 /* ── Ball row (draws) ─────────────────────────────────────── */
 .ball-row {
@@ -206,6 +279,9 @@
   display: grid;
   grid-template-columns: 1fr 2fr;
   gap: 10px;
+}
+@media (max-width: 420px) {
+  .action-row { grid-template-columns: 1fr; }
 }
 
 /* ── List stack ───────────────────────────────────────────── */
@@ -284,6 +360,15 @@
   gap: 10px;
   flex-shrink: 0;
 }
+@media (max-width: 520px) {
+  .purchase-panel,
+  .purchase-controls {
+    align-items: stretch;
+    width: 100%;
+  }
+  .purchase-controls { flex-direction: column; }
+  .compact-input { width: 100%; }
+}
 .compact-input {
   width: 70px;
   padding: 10px 12px;
@@ -317,6 +402,9 @@
 }
 .prize-tier { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .prize-card strong { font-size: 13px; color: var(--gold); font-weight: 700; }
+@media (max-width: 520px) {
+  .prize-grid { grid-template-columns: 1fr; }
+}
 
 /* ── Bingo ticket grid ────────────────────────────────────── */
 .ticket-grid { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
@@ -437,6 +525,15 @@
   flex-shrink: 0;
   align-items: center;
   flex-wrap: wrap;
+}
+@media (max-width: 560px) {
+  .admin-action-bar,
+  .admin-row,
+  .admin-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .admin-row-actions .btn { width: 100%; }
 }
 
 /* ── Admin form ──────────────────────────────────────────── */

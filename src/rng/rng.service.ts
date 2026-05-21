@@ -47,6 +47,7 @@ export class RngService {
       min: input.min,
       max: input.max,
       count: input.count,
+      mustInclude: [...(input.mustInclude ?? [])].sort((left, right) => left - right),
       gameType: input.gameType,
       gameReference: input.gameReference,
       metadata: input.metadata ?? {}
@@ -165,6 +166,10 @@ export class RngService {
       throw new BadRequestException('RNG count cannot exceed range size');
     }
     if (input.mustInclude) {
+      const uniqueMustInclude = new Set(input.mustInclude);
+      if (uniqueMustInclude.size !== input.mustInclude.length) {
+        throw new BadRequestException('RNG mustInclude values must be unique');
+      }
       if (input.mustInclude.length > input.count) {
         throw new BadRequestException('RNG mustInclude exceeds count');
       }

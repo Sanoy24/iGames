@@ -5,7 +5,9 @@ import {
   UnauthorizedException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectConnection } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
+import { Connection, Types } from 'mongoose';
 import { Request } from 'express';
 import { AuthenticatedRequest } from '../types/authenticated-user';
 
@@ -19,7 +21,8 @@ type AccessTokenPayload = {
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly configService: ConfigService,
-    private readonly jwtService: JwtService
+    private readonly jwtService: JwtService,
+    @InjectConnection() private readonly connection: Connection,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -37,6 +40,17 @@ export class JwtAuthGuard implements CanActivate {
 
       if (!payload.sub || !Array.isArray(payload.roles)) {
         throw new UnauthorizedException('Access token payload is invalid');
+      }
+
+      const user = await this.connection
+        .collection('users')
+        .findOne(
+          { _id: new Types.ObjectId(payload.sub) },
+          { projection: { status: 1 } }
+        );
+
+      if (!user || user.status !== 'active') {
+        throw new UnauthorizedException('Account is not active');
       }
 
       request.user = {

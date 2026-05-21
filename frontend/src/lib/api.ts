@@ -51,11 +51,11 @@ export const walletApi = {
 
 // ── Payments ──────────────────────────────────────────────────────
 export const paymentsApi = {
-  submitTelebirrReceipt: (receipt: string) =>
-    api.post('/payments/telebirr/receipts', {
-      // Send as receiptUrl, backend parses it
-      receiptUrl: receipt,
-    }).then((r) => r.data),
+  submitTelebirrReceipt: (receipt: string) => {
+    const trimmed = receipt.trim();
+    const body = /^https?:\/\//i.test(trimmed) ? { receiptUrl: trimmed } : { receiptNo: trimmed };
+    return api.post('/payments/telebirr/receipts', body).then((r) => r.data);
+  },
 };
 
 // ── Keno ──────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ export const bingoApi = {
 export const adminKenoApi = {
   getConfig: () => api.get<KenoConfig>('/keno/config').then((r) => r.data),
   createConfig: (dto: Partial<KenoConfig>) =>
-    api.post<KenoConfig>('/admin/keno/config', dto).then((r) => r.data),
+    api.post<KenoConfig>('/admin/keno/configs', dto).then((r) => r.data),
   listDraws: (limit = 20) => api.get<KenoDraw[]>(`/keno/draws?limit=${limit}`).then((r) => r.data),
   scheduleDraw: (scheduledAt?: string) =>
     api.post<KenoDraw>('/admin/keno/draws', { scheduledAt }).then((r) => r.data),

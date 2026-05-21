@@ -1,8 +1,9 @@
 import { formatCredits, useStore } from '../store/useStore';
 import { formatCreditsFull } from '../lib/utils';
+import type { AppTab } from '../lib/navigation';
 
 type Props = {
-  onNavigate: (tab: 'home' | 'keno' | 'bingo' | 'wallet') => void;
+  onNavigate: (tab: AppTab) => void;
 };
 
 const FEATURE_CARDS: Array<{
@@ -46,7 +47,7 @@ export function Home({ onNavigate }: Props) {
         <h1 className="hero-title">Welcome back, {user?.displayName ?? 'Player'}</h1>
         <p className="hero-copy">
           The backend stays standalone and reusable, while this frontend gives you a Telegram-first
-          miniapp experience for Keno, Bingo, and wallet activity.
+          mini app experience for games, wallet activity, and live draw updates.
         </p>
         <div className="hero-stats">
           <div className="hero-stat">
@@ -59,8 +60,8 @@ export function Home({ onNavigate }: Props) {
           </div>
         </div>
         <div className="hero-actions">
-          <button className="btn btn-primary" onClick={() => onNavigate('keno')}>
-            Play Keno
+          <button className="btn btn-primary" onClick={() => onNavigate('games')}>
+            Browse Games
           </button>
           <button className="btn btn-secondary" onClick={() => onNavigate('bingo')}>
             Join Bingo

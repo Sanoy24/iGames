@@ -1,14 +1,19 @@
 import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useStore } from '../store/useStore';
+import type { Wallet } from '../lib/models';
 
 let socketInstance: Socket | null = null;
 
+type MaintenancePayload = {
+  etaSeconds: number;
+};
+
 export function useSocketConnection() {
-  const setSocketConnected = useStore((s: any) => s.setSocketConnected);
-  const isAuthenticated = useStore((s: any) => s.isAuthenticated);
-  const addToast = useStore((s: any) => s.addToast);
-  const setWallet = useStore((s: any) => s.setWallet);
+  const setSocketConnected = useStore((s) => s.setSocketConnected);
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const addToast = useStore((s) => s.addToast);
+  const setWallet = useStore((s) => s.setWallet);
 
   useEffect(() => {
     // Only connect if user is authenticated
@@ -41,11 +46,11 @@ export function useSocketConnection() {
       });
 
       // Add missing listeners
-      socketInstance.on('system.maintenance', (data) => {
+      socketInstance.on('system.maintenance', (data: MaintenancePayload) => {
         addToast('error', `Server going down for maintenance in ${data.etaSeconds} seconds.`);
       });
 
-      socketInstance.on('wallet.updated', (wallet) => {
+      socketInstance.on('wallet.updated', (wallet: Wallet) => {
         setWallet(wallet);
       });
     }

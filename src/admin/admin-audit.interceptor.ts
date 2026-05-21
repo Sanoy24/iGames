@@ -18,15 +18,22 @@ export class AdminAuditInterceptor implements NestInterceptor {
         adminUserId: user?.id || 'unknown',
         method,
         url,
-        body,
+        body: this.sanitizeBody(body),
         timestamp: new Date(),
       }).catch(err => console.error('Failed to write admin audit log:', err));
     }
 
-    return next.handle().pipe(
-      tap(() => {
-        // We could also log the response or success status here
-      }),
+    return next.handle().pipe(tap(() => {}));
+  }
+
+  private sanitizeBody(body: unknown): unknown {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+    const SENSITIVE = /password|secret|token/i;
+    return Object.fromEntries(
+      Object.entries(body as Record<string, unknown>).map(([k, v]) => [
+        k,
+        SENSITIVE.test(k) ? '[REDACTED]' : v,
+      ]),
     );
   }
 }

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { SystemConfig } from './schemas/system-config.schema';
+import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { AgentsService } from '../agents/agents.service';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
@@ -29,7 +30,7 @@ export class AdminService {
     return config;
   }
 
-  async updateSystemConfig(update: Partial<SystemConfig>): Promise<SystemConfig> {
+  async updateSystemConfig(update: UpdateSystemConfigDto): Promise<SystemConfig> {
     const config = await this.configModel.findOneAndUpdate(
       { key: 'global' },
       { $set: update },

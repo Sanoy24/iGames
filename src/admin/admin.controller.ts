@@ -6,6 +6,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminService } from './admin.service';
+import { CreateAgentDto } from './dto/create-agent.dto';
+import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -32,8 +34,8 @@ export class AdminController {
   }
 
   @Post('config')
-  updateConfig(@Body() update: any) {
-    return this.adminService.updateSystemConfig(update);
+  updateConfig(@Body() dto: UpdateSystemConfigDto) {
+    return this.adminService.updateSystemConfig(dto);
   }
 
   // ── Users ─────────────────────────────────────────────────────────
@@ -82,8 +84,8 @@ export class AdminController {
   // ── Agents ────────────────────────────────────────────────────────
 
   @Post('agents')
-  createAgent(@Body() body: { email: string; displayName: string; password: string }) {
-    return this.adminService.createAgent(body);
+  createAgent(@Body() dto: CreateAgentDto) {
+    return this.adminService.createAgent(dto);
   }
 
   @Get('agents')

@@ -659,4 +659,50 @@ export class WalletService {
       .sort({ createdAt: -1 })
       .exec();
   }
+
+  async getWagerLimit(userId: string): Promise<WagerLimit | null> {
+    const objectUserId = this.toObjectId(userId, 'userId');
+    return this.wagerLimitModel.findOne({ userId: objectUserId }).exec();
+  }
+
+  async upsertWagerLimit(
+    userId: string,
+    dailyLimitMinor: number,
+    weeklyLimitMinor: number,
+  ): Promise<WagerLimit> {
+    this.assertNonNegativeAmount(dailyLimitMinor, 'dailyLimitMinor');
+    this.assertNonNegativeAmount(weeklyLimitMinor, 'weeklyLimitMinor');
+    const objectUserId = this.toObjectId(userId, 'userId');
+    const now = new Date();
+    const dailyReset = new Date(now);
+    dailyReset.setUTCHours(24, 0, 0, 0);
+    const weeklyReset = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const limit = await this.wagerLimitModel.findOneAndUpdate(
+      { userId: objectUserId },
+      {
+        $set: { dailyLimitMinor, weeklyLimitMinor },
+        $setOnInsert: {
+          currentDailyWagerMinor: 0,
+          currentWeeklyWagerMinor: 0,
+          dailyResetAt: dailyReset,
+          weeklyResetAt: weeklyReset,
+        },
+      },
+      { new: true, upsert: true },
+    ).exec();
+
+    return limit!;
+  }
+
+  async deleteWagerLimit(userId: string): Promise<void> {
+    const objectUserId = this.toObjectId(userId, 'userId');
+    await this.wagerLimitModel.deleteOne({ userId: objectUserId }).exec();
+  }
+
+  private assertNonNegativeAmount(amount: number, field: string): void {
+    if (!Number.isInteger(amount) || amount < 0) {
+      throw new BadRequestException(`${field} must be a non-negative integer`);
+    }
+  }
 }

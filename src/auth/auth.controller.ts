@@ -1,4 +1,5 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -13,6 +14,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('telegram/miniapp')
+  @Throttle({ strict: { ttl: 60_000, limit: 5 } })
   @ApiCreatedResponse({
     schema: {
       example: {
@@ -31,6 +33,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Throttle({ strict: { ttl: 60_000, limit: 10 } })
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({
     schema: {

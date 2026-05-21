@@ -9,6 +9,7 @@ import {
   Req,
   UseGuards
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -59,6 +60,7 @@ export class BingoController {
   }
 
   @Post('rooms/:id/tickets')
+  @Throttle({ strict: { ttl: 60_000, limit: 10 } })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiCreatedResponse({

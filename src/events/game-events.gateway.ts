@@ -1,8 +1,10 @@
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { InjectConnection } from '@nestjs/mongoose';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis from 'ioredis';
+import { Connection, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { KenoDrawResponse } from '../keno/keno.service';
@@ -53,8 +55,9 @@ export class GameEventsGateway
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
+    @InjectConnection() private readonly connection: Connection,
     private readonly jwtService: JwtService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
   ) {}
 
   async onApplicationShutdown(signal?: string) {
@@ -83,8 +86,22 @@ export class GameEventsGateway
 
       const secret = this.configService.getOrThrow<string>('JWT_ACCESS_SECRET');
       const payload = await this.jwtService.verifyAsync(token, { secret });
-      
-      // Store user ID on socket if needed later
+
+      if (!payload.sub) {
+        throw new Error('Token payload missing sub');
+      }
+
+      const user = await this.connection
+        .collection('users')
+        .findOne(
+          { _id: new Types.ObjectId(payload.sub) },
+          { projection: { status: 1 } },
+        );
+
+      if (!user || user.status !== 'active') {
+        throw new Error('Account is not active');
+      }
+
       client.data.user = payload;
       await client.join(`user_${payload.sub}`);
       this.logger.debug(`Client authenticated & connected: ${client.id} (User: ${payload.sub})`);

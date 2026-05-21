@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, UseGuards, UseInterceptors, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Delete, UseGuards, UseInterceptors, Query, ParseIntPipe } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -70,5 +70,25 @@ export class AdminController {
     @CurrentUser() admin: AuthenticatedUser
   ) {
     return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
+  }
+
+  @Get('users/:id/wager-limit')
+  getWagerLimit(@Param('id') userId: string) {
+    return this.walletService.getWagerLimit(userId);
+  }
+
+  @Put('users/:id/wager-limit')
+  upsertWagerLimit(
+    @Param('id') userId: string,
+    @Body('dailyLimitMinor', ParseIntPipe) dailyLimitMinor: number,
+    @Body('weeklyLimitMinor', ParseIntPipe) weeklyLimitMinor: number,
+  ) {
+    return this.walletService.upsertWagerLimit(userId, dailyLimitMinor, weeklyLimitMinor);
+  }
+
+  @Delete('users/:id/wager-limit')
+  async deleteWagerLimit(@Param('id') userId: string) {
+    await this.walletService.deleteWagerLimit(userId);
+    return { deleted: true };
   }
 }

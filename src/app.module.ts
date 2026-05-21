@@ -40,8 +40,15 @@ const isDev = process.env.NODE_ENV !== "production";
             inject: [ConfigService],
             useFactory: (cfg: ConfigService) => [
                 {
+                    name: 'default',
                     ttl: cfg.get<number>("THROTTLE_TTL_SECONDS", 60) * 1000,
                     limit: cfg.get<number>("THROTTLE_MAX_REQUESTS", 120),
+                },
+                {
+                    // Tighter limit for ticket purchase and auth endpoints
+                    name: 'strict',
+                    ttl: 60_000,
+                    limit: 10,
                 },
             ],
         }),

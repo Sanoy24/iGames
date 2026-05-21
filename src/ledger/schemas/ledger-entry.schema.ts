@@ -10,7 +10,8 @@ export type LedgerEntryType =
   | 'adjustment'
   | 'bonus'
   | 'deposit'
-  | 'reversal';
+  | 'reversal'
+  | 'withdrawal';
 
 @Schema({ timestamps: true })
 export class LedgerEntry {
@@ -33,7 +34,7 @@ export class LedgerEntry {
 
   @Prop({
     required: true,
-    enum: ['stake', 'win', 'refund', 'adjustment', 'bonus', 'deposit', 'reversal']
+    enum: ['stake', 'win', 'refund', 'adjustment', 'bonus', 'deposit', 'reversal', 'withdrawal']
   })
   entryType: LedgerEntryType;
 

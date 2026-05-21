@@ -1,4 +1,4 @@
-import { Controller, DefaultValuePipe, Get, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -57,5 +57,45 @@ export class WalletController {
       userId: user.id,
       limit
     });
+  }
+
+  @Post('withdraw')
+  @ApiOkResponse({
+    schema: {
+      example: {
+        id: '665f...',
+        userId: '665f...',
+        amountMinor: 500,
+        status: 'pending',
+        destinationAccount: '0912345678',
+        createdAt: '2026-05-21T12:00:00Z'
+      }
+    }
+  })
+  requestWithdrawal(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body('amountMinor', ParseIntPipe) amountMinor: number,
+    @Body('destinationAccount') destinationAccount: string
+  ) {
+    return this.walletService.requestWithdrawal(user.id, amountMinor, destinationAccount);
+  }
+
+  @Get('withdrawals')
+  @ApiOkResponse({
+    schema: {
+      example: [
+        {
+          id: '665f...',
+          userId: '665f...',
+          amountMinor: 500,
+          status: 'pending',
+          destinationAccount: '0912345678',
+          createdAt: '2026-05-21T12:00:00Z'
+        }
+      ]
+    }
+  })
+  getWithdrawals(@CurrentUser() user: AuthenticatedUser) {
+    return this.walletService.getPlayerWithdrawals(user.id);
   }
 }

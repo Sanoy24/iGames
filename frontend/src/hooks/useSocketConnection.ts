@@ -7,6 +7,8 @@ let socketInstance: Socket | null = null;
 export function useSocketConnection() {
   const setSocketConnected = useStore((s: any) => s.setSocketConnected);
   const isAuthenticated = useStore((s: any) => s.isAuthenticated);
+  const addToast = useStore((s: any) => s.addToast);
+  const setWallet = useStore((s: any) => s.setWallet);
 
   useEffect(() => {
     // Only connect if user is authenticated
@@ -37,6 +39,15 @@ export function useSocketConnection() {
         setSocketConnected(false);
         console.error('WebSocket connection error:', error.message);
       });
+
+      // Add missing listeners
+      socketInstance.on('system.maintenance', (data) => {
+        addToast('error', `Server going down for maintenance in ${data.etaSeconds} seconds.`);
+      });
+
+      socketInstance.on('wallet.updated', (wallet) => {
+        setWallet(wallet);
+      });
     }
 
     return () => {
@@ -46,7 +57,7 @@ export function useSocketConnection() {
         setSocketConnected(false);
       }
     };
-  }, [isAuthenticated, setSocketConnected]);
+  }, [isAuthenticated, setSocketConnected, addToast, setWallet]);
 
   return socketInstance;
 }

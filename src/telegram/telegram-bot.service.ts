@@ -23,6 +23,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.bot = new Bot(token);
+
+    // Add global error handler to prevent bot from stopping on unhandled middleware errors
+    this.bot.catch((err) => {
+      this.logger.error(`Error in Telegram bot middleware: ${err.message}`, err.stack);
+    });
+
     this.registerCommands(miniAppUrl);
 
     try {
@@ -32,14 +38,24 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         { command: 'help', description: 'How to play' },
       ]);
 
-      // Set the menu button to open the Mini App directly
-      await this.bot.api.setChatMenuButton({
-        menu_button: {
-          type: 'web_app',
-          text: '🎮 Play',
-          web_app: { url: miniAppUrl },
-        },
-      });
+      const isTelegramLink = miniAppUrl.includes('t.me/') || miniAppUrl.includes('telegram.me/');
+
+      if (!isTelegramLink) {
+        // Set the menu button to open the Mini App directly
+        await this.bot.api.setChatMenuButton({
+          menu_button: {
+            type: 'web_app',
+            text: '🎮 Play',
+            web_app: { url: miniAppUrl },
+          },
+        });
+      } else {
+        this.logger.warn(
+          `TELEGRAM_MINIAPP_URL (${miniAppUrl}) is a Telegram redirect link. ` +
+          `Skipped setting the chat menu button of type 'web_app' as Telegram requires a direct HTTPS URL. ` +
+          `Please configure a direct HTTPS URL (e.g. via ngrok) to enable the web_app menu button.`
+        );
+      }
 
       this.bot.start({
         onStart: () => this.logger.log('Telegram bot started (long polling)'),
@@ -59,6 +75,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private getPlayKeyboard(text: string, miniAppUrl: string): InlineKeyboard {
+    const isTelegramLink = miniAppUrl.includes('t.me/') || miniAppUrl.includes('telegram.me/');
+    if (isTelegramLink) {
+      return new InlineKeyboard().url(text, miniAppUrl);
+    }
+    return new InlineKeyboard().webApp(text, miniAppUrl);
+  }
+
   private registerCommands(miniAppUrl: string): void {
     if (!this.bot) return;
 
@@ -66,7 +90,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     this.bot.command('start', async (ctx) => {
       const firstName = ctx.from?.first_name ?? 'Player';
 
-      const keyboard = new InlineKeyboard().webApp('🎮 Play Now', miniAppUrl);
+      const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
 
       await ctx.reply(
         `Welcome to iGames, ${firstName}! 🎰\n\n` +
@@ -78,7 +102,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // /play — quick shortcut to open the Mini App
     this.bot.command('play', async (ctx) => {
-      const keyboard = new InlineKeyboard().webApp('🎮 Open iGames', miniAppUrl);
+      const keyboard = this.getPlayKeyboard('🎮 Open iGames', miniAppUrl);
 
       await ctx.reply('Tap below to open the game:', {
         reply_markup: keyboard,
@@ -103,7 +127,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // Handle any other text message with a nudge to play
     this.bot.on('message:text', async (ctx) => {
-      const keyboard = new InlineKeyboard().webApp('🎮 Play Now', miniAppUrl);
+      const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
 
       await ctx.reply(
         `Tap the button below to open iGames:`,

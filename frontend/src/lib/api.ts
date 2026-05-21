@@ -9,6 +9,7 @@ import type {
   KenoTicket,
   LedgerEntry,
   Wallet,
+  Withdrawal,
 } from './models';
 
 const api = axios.create({
@@ -43,6 +44,9 @@ export const authApi = {
 export const walletApi = {
   getWallet: () => api.get<Wallet>('/wallet').then((r) => r.data),
   getLedger: (limit = 20) => api.get<LedgerEntry[]>(`/wallet/ledger?limit=${limit}`).then((r) => r.data),
+  requestWithdrawal: (amountMinor: number, destinationAccount: string) =>
+    api.post<Withdrawal>('/wallet/withdraw', { amountMinor, destinationAccount }).then((r) => r.data),
+  getWithdrawals: () => api.get<Withdrawal[]>('/wallet/withdrawals').then((r) => r.data),
 };
 
 // ── Payments ──────────────────────────────────────────────────────
@@ -127,6 +131,13 @@ export const adminBotsApi = {
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
   updateBot: (id: string, dto: Partial<{ active: boolean; ticketsPerRound: number; spotCount: number }>) =>
     api.patch<BotUser>(`/admin/bots/${id}`, dto).then((r) => r.data),
+};
+
+// ── Admin: Withdrawals ─────────────────────────────────────────────
+export const adminWithdrawalsApi = {
+  listWithdrawals: () => api.get<Withdrawal[]>('/admin/withdrawals').then((r) => r.data),
+  processWithdrawal: (id: string, action: 'approve' | 'reject', adminNotes?: string) =>
+    api.post<Withdrawal>(`/admin/withdrawals/${id}/process`, { action, adminNotes }).then((r) => r.data),
 };
 
 export default api;

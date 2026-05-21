@@ -26,7 +26,7 @@ export class IdempotencyRecord {
   @Prop({ type: Object })
   response?: Record<string, unknown>;
 
-  @Prop({ type: Date, required: true, index: true })
+  @Prop({ type: Date, required: true })
   expiresAt: Date;
 }
 

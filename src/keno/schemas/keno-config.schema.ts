@@ -28,7 +28,7 @@ export class KenoConfig {
   @Prop({ required: true, min: 1 })
   version: number;
 
-  @Prop({ required: true, enum: ['active', 'inactive'], default: 'inactive', index: true })
+  @Prop({ required: true, enum: ['active', 'inactive'], default: 'inactive' })
   status: KenoConfigStatus;
 
   @Prop({ required: true, default: 1 })

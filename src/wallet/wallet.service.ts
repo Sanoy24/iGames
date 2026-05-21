@@ -13,6 +13,7 @@ import { LedgerEntryType } from '../ledger/schemas/ledger-entry.schema';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { Wallet, WalletDocument } from './schemas/wallet.schema';
 import { WagerLimit } from './schemas/wager-limit.schema';
+import { Withdrawal, WithdrawalDocument } from './schemas/withdrawal.schema';
 
 export type WalletSummary = {
   id: string;
@@ -60,6 +61,7 @@ export class WalletService {
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(Wallet.name) private readonly walletModel: Model<Wallet>,
     @InjectModel(WagerLimit.name) private readonly wagerLimitModel: Model<WagerLimit>,
+    @InjectModel(Withdrawal.name) private readonly withdrawalModel: Model<Withdrawal>,
     private readonly ledgerService: LedgerService,
     private readonly gameEventsGateway: GameEventsGateway
   ) {}
@@ -415,5 +417,246 @@ export class WalletService {
     }
 
     return JSON.stringify(value);
+  }
+
+  async requestWithdrawal(
+    userId: string,
+    amountMinor: number,
+    destinationAccount: string
+  ): Promise<Withdrawal> {
+    this.assertPositiveAmount(amountMinor);
+    if (!destinationAccount || destinationAccount.trim() === '') {
+      throw new BadRequestException('Destination account is required');
+    }
+
+    const objectUserId = this.toObjectId(userId, 'userId');
+    const session = await this.connection.startSession();
+
+    try {
+      let createdWithdrawal: Withdrawal | undefined;
+
+      await session.withTransaction(async () => {
+        // Find user wallet
+        const wallet = await this.walletModel
+          .findOne({ userId: objectUserId, currencyCode: 'CREDIT' })
+          .session(session)
+          .exec();
+
+        if (!wallet) {
+          throw new NotFoundException('Wallet not found');
+        }
+
+        if (wallet.status !== 'active') {
+          throw new ConflictException('Wallet is not active');
+        }
+
+        if (wallet.availableMinor < amountMinor) {
+          throw new ConflictException('Insufficient available balance');
+        }
+
+        // Deduct from available and add to reserved
+        const updatedWallet = await this.walletModel.findOneAndUpdate(
+          { _id: wallet._id, availableMinor: { $gte: amountMinor } },
+          { $inc: { availableMinor: -amountMinor, reservedMinor: amountMinor } },
+          { new: true, session }
+        ).exec();
+
+        if (!updatedWallet) {
+          throw new ConflictException('Insufficient wallet balance or concurrent update failed');
+        }
+
+        // Create Withdrawal document
+        const [withdrawal] = await this.withdrawalModel.create(
+          [
+            {
+              userId: objectUserId,
+              amountMinor,
+              status: 'pending',
+              destinationAccount: destinationAccount.trim(),
+            }
+          ],
+          { session }
+        );
+
+        createdWithdrawal = withdrawal;
+
+        // Create ledger entry for the debit
+        await this.ledgerService.createEntry(
+          {
+            userId: objectUserId,
+            walletId: updatedWallet._id,
+            currencyCode: 'CREDIT',
+            amountMinor,
+            direction: 'debit',
+            entryType: 'withdrawal',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal._id.toString(),
+            balanceAfterMinor: updatedWallet.availableMinor,
+            metadata: { destinationAccount: destinationAccount.trim() }
+          },
+          session
+        );
+
+        // Notify client via websocket
+        this.gameEventsGateway.emitWalletUpdated(userId, this.toWalletSummary(updatedWallet));
+      });
+
+      if (!createdWithdrawal) {
+        throw new Error('Withdrawal request transaction did not complete');
+      }
+
+      return createdWithdrawal;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async processWithdrawal(
+    withdrawalId: string,
+    action: 'approve' | 'reject',
+    adminNotes?: string,
+    adminUserId?: string
+  ): Promise<Withdrawal> {
+    const objectWithdrawalId = this.toObjectId(withdrawalId, 'withdrawalId');
+    const objectAdminId = adminUserId ? this.toObjectId(adminUserId, 'adminUserId') : undefined;
+    const session = await this.connection.startSession();
+
+    try {
+      let updatedWithdrawal: WithdrawalDocument | null = null;
+
+      await session.withTransaction(async () => {
+        const withdrawal = await this.withdrawalModel
+          .findById(objectWithdrawalId)
+          .session(session)
+          .exec();
+
+        if (!withdrawal) {
+          throw new NotFoundException('Withdrawal request not found');
+        }
+
+        if (withdrawal.status !== 'pending' && withdrawal.status !== 'processing') {
+          throw new ConflictException(`Withdrawal is already in '${withdrawal.status}' status`);
+        }
+
+        const wallet = await this.walletModel
+          .findOne({ userId: withdrawal.userId, currencyCode: 'CREDIT' })
+          .session(session)
+          .exec();
+
+        if (!wallet) {
+          throw new NotFoundException('Wallet not found');
+        }
+
+        if (action === 'approve') {
+          // Finalize: Deduct from reserved balance
+          if (wallet.reservedMinor < withdrawal.amountMinor) {
+            throw new ConflictException('Insufficient reserved balance in wallet');
+          }
+
+          const updatedWallet = await this.walletModel.findOneAndUpdate(
+            { _id: wallet._id, reservedMinor: { $gte: withdrawal.amountMinor } },
+            { $inc: { reservedMinor: -withdrawal.amountMinor } },
+            { new: true, session }
+          ).exec();
+
+          if (!updatedWallet) {
+            throw new ConflictException('Failed to deduct reserved balance');
+          }
+
+          // Update withdrawal status
+          withdrawal.status = 'completed';
+          withdrawal.adminNotes = adminNotes;
+          withdrawal.processedAt = new Date();
+          withdrawal.processedBy = objectAdminId;
+          await withdrawal.save({ session });
+          updatedWithdrawal = withdrawal;
+
+          // Notify client via websocket
+          this.gameEventsGateway.emitWalletUpdated(withdrawal.userId.toString(), this.toWalletSummary(updatedWallet));
+        } else {
+          // Reject: Refund from reserved back to available
+          if (wallet.reservedMinor < withdrawal.amountMinor) {
+            throw new ConflictException('Insufficient reserved balance in wallet to refund');
+          }
+
+          const updatedWallet = await this.walletModel.findOneAndUpdate(
+            { _id: wallet._id, reservedMinor: { $gte: withdrawal.amountMinor } },
+            { $inc: { reservedMinor: -withdrawal.amountMinor, availableMinor: withdrawal.amountMinor } },
+            { new: true, session }
+          ).exec();
+
+          if (!updatedWallet) {
+            throw new ConflictException('Failed to refund reserved balance');
+          }
+
+          // Update withdrawal status
+          withdrawal.status = 'rejected';
+          withdrawal.adminNotes = adminNotes;
+          withdrawal.processedAt = new Date();
+          withdrawal.processedBy = objectAdminId;
+          await withdrawal.save({ session });
+          updatedWithdrawal = withdrawal;
+
+          // Create ledger entry for refund
+          await this.ledgerService.createEntry(
+            {
+              userId: withdrawal.userId,
+              walletId: updatedWallet._id,
+              currencyCode: 'CREDIT',
+              amountMinor: withdrawal.amountMinor,
+              direction: 'credit',
+              entryType: 'refund',
+              sourceType: 'withdrawal',
+              sourceId: withdrawal._id.toString(),
+              balanceAfterMinor: updatedWallet.availableMinor,
+              metadata: { action: 'reject', reason: adminNotes || 'Admin rejection' }
+            },
+            session
+          );
+
+          // Update stats for refund
+          await this.connection.collection('platformstats').updateOne(
+            { key: 'global' },
+            { $inc: { totalRefundsMinor: withdrawal.amountMinor } },
+            { upsert: true, session }
+          );
+
+          // Notify client via websocket
+          this.gameEventsGateway.emitWalletUpdated(withdrawal.userId.toString(), this.toWalletSummary(updatedWallet));
+        }
+      });
+
+      if (!updatedWithdrawal) {
+        throw new Error('Processing withdrawal transaction did not complete');
+      }
+
+      return updatedWithdrawal;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  async getPlayerWithdrawals(userId: string): Promise<Withdrawal[]> {
+    const objectUserId = this.toObjectId(userId, 'userId');
+    return this.withdrawalModel
+      .find({ userId: objectUserId })
+      .sort({ createdAt: -1 })
+      .exec();
+  }
+
+  async getPendingWithdrawals(): Promise<Withdrawal[]> {
+    return this.withdrawalModel
+      .find({ status: 'pending' })
+      .populate('userId', 'displayName email username')
+      .sort({ createdAt: 1 })
+      .exec();
+  }
+
+  async getAllWithdrawals(): Promise<Withdrawal[]> {
+    return this.withdrawalModel
+      .find()
+      .populate('userId', 'displayName email username')
+      .sort({ createdAt: -1 })
+      .exec();
   }
 }

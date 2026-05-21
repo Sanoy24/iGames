@@ -111,3 +111,14 @@ export type BingoTicket = {
 export type BingoRoomState = BingoRoom & {
   tickets?: BingoTicket[];
 };
+
+export type Withdrawal = {
+  id: string;
+  userId: string;
+  amountMinor: number;
+  status: 'pending' | 'processing' | 'completed' | 'rejected';
+  destinationAccount: string;
+  adminNotes?: string;
+  processedAt?: string;
+  createdAt: string;
+};

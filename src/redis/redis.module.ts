@@ -1,9 +1,8 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import IORedis from 'ioredis';
+import Redis from 'ioredis';
 import { RedisLockService } from './redis-lock.service';
-
-export const REDIS_CLIENT = 'REDIS_CLIENT';
+import { REDIS_CLIENT } from './redis.constants';
 
 @Global()
 @Module({
@@ -13,7 +12,7 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const url = configService.get<string>('REDIS_URL', 'redis://localhost:6379');
-        const client = new IORedis(url, {
+        const client = new Redis(url, {
           maxRetriesPerRequest: null,
           enableReadyCheck: false,
           lazyConnect: false,

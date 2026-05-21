@@ -4,6 +4,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AdminService } from './admin.service';
 import { UsersService } from '../users/users.service';
+import { WalletService } from '../wallet/wallet.service';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
 
 @Controller('admin')
@@ -13,7 +16,8 @@ import { AdminAuditInterceptor } from './admin-audit.interceptor';
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly usersService: UsersService
+    private readonly usersService: UsersService,
+    private readonly walletService: WalletService
   ) {}
 
   @Get('stats/overview')
@@ -52,5 +56,19 @@ export class AdminController {
     @Body() body: { amountMinor: number; direction: 'credit' | 'debit'; reason: string }
   ) {
     return this.adminService.adjustUserWallet(userId, body.amountMinor, body.direction, body.reason);
+  }
+
+  @Get('withdrawals')
+  async getWithdrawals() {
+    return this.walletService.getAllWithdrawals();
+  }
+
+  @Post('withdrawals/:id/process')
+  async processWithdrawal(
+    @Param('id') id: string,
+    @Body() body: { action: 'approve' | 'reject'; adminNotes?: string },
+    @CurrentUser() admin: AuthenticatedUser
+  ) {
+    return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
   }
 }

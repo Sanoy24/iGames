@@ -7,7 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { KenoDrawResponse } from '../keno/keno.service';
 import { BingoRoomResponse } from '../bingo/bingo.service';
-import { REDIS_CLIENT } from '../redis/redis.module';
+import { REDIS_CLIENT } from '../redis/redis.constants';
 
 export type KenoDrawStartedPayload = {
   drawId: string;

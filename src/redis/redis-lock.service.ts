@@ -1,14 +1,14 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import IORedis from 'ioredis';
+import Redis from 'ioredis';
 import Redlock, { Lock } from 'redlock';
-import { REDIS_CLIENT } from './redis.module';
+import { REDIS_CLIENT } from './redis.constants';
 
 @Injectable()
 export class RedisLockService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisLockService.name);
   private readonly redlock: Redlock;
 
-  constructor(@Inject(REDIS_CLIENT) private readonly redis: IORedis) {
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: any) {
     this.redlock = new Redlock([redis], {
       driftFactor: 0.01,
       retryCount: 3,

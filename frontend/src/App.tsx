@@ -1,0 +1,70 @@
+import { useEffect, useState } from 'react';
+import { useSocketConnection } from './hooks/useSocketConnection';
+import { useStore } from './store/useStore';
+import { authApi, walletApi } from './lib/api';
+import { Home } from './pages/Home';
+import { Keno } from './pages/Keno';
+import { Bingo } from './pages/Bingo';
+import { Admin } from './pages/Admin';
+import { Wallet } from './pages/Wallet';
+import { BottomNav } from './components/BottomNav';
+import { WalletBar } from './components/WalletBar';
+import { Toasts } from './components/Toasts';
+
+export function App() {
+  const { authStatus, setAuth, setAuthError, setWallet } = useStore();
+  const [activeTab, setActiveTab] = useState<'home' | 'keno' | 'bingo' | 'wallet' | 'admin'>('home');
+
+  useSocketConnection();
+
+  useEffect(() => {
+    if (authStatus !== 'idle') return;
+
+    const tg = (window as any).Telegram?.WebApp;
+    const loginPromise = tg?.initData
+      ? authApi.loginWithTelegram(tg.initData)
+      : authApi.devSeedAdmin('Dev Admin'); // Fallback for local development
+
+    loginPromise
+      .then(async ({ user, accessToken }) => {
+        setAuth(user, accessToken);
+        const walletData = await walletApi.getWallet();
+        setWallet(walletData);
+      })
+      .catch((err) => setAuthError(err.message));
+  }, [authStatus, setAuth, setAuthError, setWallet]);
+
+  if (authStatus === 'idle' || authStatus === 'loading') {
+    return (
+      <div className="app-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="spinner" />
+      </div>
+    );
+  }
+
+  if (authStatus === 'error') {
+    return (
+      <div className="app-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <div className="card" style={{ textAlign: 'center', borderColor: 'var(--danger)' }}>
+          <h2 style={{ color: 'var(--danger)', marginBottom: 8 }}>Authentication Failed</h2>
+          <p className="text-muted">Could not connect to the server or authenticate your session.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-container">
+      <WalletBar />
+      <main className="main-content">
+        {activeTab === 'home' && <Home onNavigate={setActiveTab} />}
+        {activeTab === 'keno' && <Keno />}
+        {activeTab === 'bingo' && <Bingo />}
+        {activeTab === 'wallet' && <Wallet />}
+        {activeTab === 'admin' && <Admin />}
+      </main>
+      <BottomNav active={activeTab} onChange={setActiveTab} />
+      <Toasts />
+    </div>
+  );
+}

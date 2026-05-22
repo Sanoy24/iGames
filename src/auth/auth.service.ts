@@ -102,8 +102,8 @@ export class AuthService {
     }
   }
 
-  async loginWithCredentials(email: string, password: string): Promise<AuthTokenResponse> {
-    const user = await this.usersService.findAgentByCredentials(email, password);
+  async loginWithCredentials(phoneNumber: string, password: string): Promise<AuthTokenResponse> {
+    const user = await this.usersService.findAgentByCredentials(phoneNumber, password);
     const session = await this.connection.startSession();
     try {
       let response: AuthTokenResponse | undefined;

@@ -13,6 +13,7 @@ import { Agent } from './pages/Agent';
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
+import { CredentialsLogin } from './components/CredentialsLogin';
 import type { AppTab } from './lib/navigation';
 
 type TelegramWindow = Window &
@@ -25,8 +26,9 @@ type TelegramWindow = Window &
   };
 
 export function App() {
-  const { authStatus, authError, setAuth, setAuthLoading, setAuthError, setWallet } = useStore();
+  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet } = useStore();
   const [activeTab, setActiveTab] = useState<AppTab>('home');
+  const [showCredLogin, setShowCredLogin] = useState(false);
   const loginStarted = useRef(false);
 
   useSocketConnection();
@@ -35,15 +37,16 @@ export function App() {
     if (authStatus !== 'idle' || loginStarted.current) return;
 
     loginStarted.current = true;
-    setAuthLoading();
 
     const tg = (window as TelegramWindow).Telegram?.WebApp;
 
     if (!tg?.initData && !import.meta.env.DEV) {
-      loginStarted.current = false;
-      setAuthError('Open this app from the iGames Telegram bot to play.');
+      // No Telegram context — show credentials login for agents/admins
+      setShowCredLogin(true);
       return;
     }
+
+    setAuthLoading();
 
     const loginPromise = tg?.initData
       ? authApi.loginWithTelegram(tg.initData)
@@ -55,27 +58,35 @@ export function App() {
         const walletData = await walletApi.getWallet();
         setWallet(walletData);
       })
-      .catch((err: Error) => {
+      .catch(() => {
         loginStarted.current = false;
-        setAuthError(err.message);
+        setShowCredLogin(true);
       });
-  }, [authStatus, setAuth, setAuthError, setAuthLoading, setWallet]);
+  }, [authStatus, setAuth, setAuthLoading, setWallet]);
 
-  if (authStatus === 'idle' || authStatus === 'loading') {
+  if (showCredLogin && !isAuthenticated) {
     return (
-      <div className="app-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div className="spinner" />
+      <div className="app-container">
+        <CredentialsLogin
+          onSuccess={async ({ user, accessToken }) => {
+            setAuth(user, accessToken);
+            const walletData = await walletApi.getWallet();
+            setWallet(walletData);
+            // Route to the appropriate default tab for the role
+            if (user.roles.includes('agent')) setActiveTab('agent');
+            else if (user.roles.includes('admin')) setActiveTab('admin');
+            setShowCredLogin(false);
+          }}
+        />
+        <Toasts />
       </div>
     );
   }
 
-  if (authStatus === 'error') {
+  if (!isAuthenticated) {
     return (
-      <div className="app-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-        <div className="card" style={{ textAlign: 'center', borderColor: 'var(--danger)' }}>
-          <h2 style={{ color: 'var(--danger)', marginBottom: 8 }}>Unable to Start</h2>
-          <p className="text-muted">{authError ?? 'Could not authenticate your session.'}</p>
-        </div>
+      <div className="app-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="spinner" />
       </div>
     );
   }

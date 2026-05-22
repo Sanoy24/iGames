@@ -144,7 +144,7 @@ export class AdminService {
 
   // ── Agent Users ───────────────────────────────────────────────────
 
-  async createAgent(input: { email: string; displayName: string; password: string }) {
+  async createAgent(input: { phoneNumber: string; displayName: string; password: string }) {
     return this.usersService.createAgentUser(input);
   }
 

@@ -37,7 +37,7 @@ export class AuthController {
   @Throttle({ strict: { ttl: 60_000, limit: 5 } })
   @ApiOkResponse({ description: 'Agent/admin login with email and password' })
   loginWithCredentials(@Body() dto: CredentialsAuthDto): Promise<AuthTokenResponse> {
-    return this.authService.loginWithCredentials(dto.email, dto.password);
+    return this.authService.loginWithCredentials(dto.phoneNumber, dto.password);
   }
 
   @Post('refresh')

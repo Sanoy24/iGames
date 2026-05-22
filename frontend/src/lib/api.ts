@@ -39,6 +39,11 @@ export const authApi = {
     api
       .post<AuthTokenResponse>('/dev/seed/admin', { displayName, initialBalanceMinor })
       .then((r) => r.data),
+
+  loginWithCredentials: (phoneNumber: string, password: string) =>
+    api
+      .post<AuthTokenResponse>('/auth/credentials', { phoneNumber, password })
+      .then((r) => r.data),
 };
 
 // ── Wallet ────────────────────────────────────────────────────────
@@ -62,6 +67,7 @@ export const paymentsApi = {
 // ── Keno ──────────────────────────────────────────────────────────
 export const kenoApi = {
   getConfig: () => api.get<KenoConfig>('/keno/config').then((r) => r.data),
+  getActiveDraw: () => api.get<KenoDraw | null>('/keno/active-draw').then((r) => r.data),
   purchaseTicket: (selectedNumbers: number[], idempotencyKey: string) =>
     api
       .post<KenoTicket>('/keno/tickets', { selectedNumbers }, { headers: { 'Idempotency-Key': idempotencyKey } })
@@ -164,6 +170,15 @@ export const adminBotsApi = {
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
   updateBot: (id: string, dto: Partial<{ active: boolean; ticketsPerRound: number; spotCount: number }>) =>
     api.patch<BotUser>(`/admin/bots/${id}`, dto).then((r) => r.data),
+};
+
+// ── Admin: Agents ─────────────────────────────────────────────────
+export const adminAgentsApi = {
+  listAgents: (page = 1, limit = 50) =>
+    api.get<{ data: User[]; total: number; page: number; limit: number }>(`/admin/agents?page=${page}&limit=${limit}`)
+      .then((r) => r.data.data),
+  createAgent: (dto: { phoneNumber: string; displayName: string; password: string }) =>
+    api.post<User>('/admin/agents', dto).then((r) => r.data),
 };
 
 // ── Admin: Withdrawals ─────────────────────────────────────────────

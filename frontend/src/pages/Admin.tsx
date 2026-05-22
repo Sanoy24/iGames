@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Play, X, Settings, BarChart3, Wallet, Bot, Dices, CircleDot, ChevronRight } from 'lucide-react';
 import {
+  Activity, Bot, ChevronDown, ChevronUp, CircleDot, Dices,
+  Play, Plus, RefreshCw, Settings, Shield, Users, Wallet, X,
+} from 'lucide-react';
+import {
+  adminAgentsApi,
   adminBingoApi,
   adminBotsApi,
   adminKenoApi,
@@ -10,27 +14,57 @@ import {
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
-import type { BingoRoom, KenoConfig, KenoDraw, Withdrawal } from '../lib/models';
-import {
-  formatDateTime,
-  formatRelativeTime,
-  getErrorMessage,
-  titleCase,
-} from '../lib/utils';
-import { formatCreditsFull } from '../lib/utils';
+import type { BingoRoom, KenoConfig, KenoDraw, User, Withdrawal } from '../lib/models';
+import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage, titleCase } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
-// ─── Sub-pages ────────────────────────────────────────────────────
-type AdminTab = 'overview' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config';
+type AdminTab = 'overview' | 'agents' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
-  { id: 'overview', label: 'Overview', icon: <BarChart3 size={14} /> },
-  { id: 'keno', label: 'Keno', icon: <Dices size={14} /> },
-  { id: 'bingo', label: 'Bingo', icon: <CircleDot size={14} /> },
-  { id: 'bots', label: 'Bots', icon: <Bot size={14} /> },
-  { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={14} /> },
-  { id: 'config', label: 'Config', icon: <Settings size={14} /> },
+  { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
+  { id: 'agents',      label: 'Agents',      icon: <Users size={15} /> },
+  { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
+  { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
+  { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
+  { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
+  { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
 ];
+
+// ── Shared helpers ────────────────────────────────────────────────
+
+function Kpi({ label, value, color = '#3b82f6' }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="adm-kpi" style={{ borderTopColor: color }}>
+      <span className="adm-kpi-label">{label}</span>
+      <strong className="adm-kpi-value" style={{ color }}>{value}</strong>
+    </div>
+  );
+}
+
+function Bar({ value, max, color = '#3b82f6' }: { value: number; max: number; color?: string }) {
+  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return (
+    <div className="adm-bar">
+      <div className="adm-bar-fill" style={{ width: `${pct.toFixed(1)}%`, background: color }} />
+    </div>
+  );
+}
+
+function SectionHead({
+  title, sub, children,
+}: {
+  title: string; sub?: string; children?: React.ReactNode;
+}) {
+  return (
+    <div className="adm-section-head">
+      <div>
+        <h2 className="adm-section-title">{title}</h2>
+        {sub && <p className="adm-section-sub">{sub}</p>}
+      </div>
+      {children && <div className="adm-section-actions">{children}</div>}
+    </div>
+  );
+}
 
 // ══════════════════════════════════════════════════════════════════
 // Overview
@@ -49,50 +83,156 @@ function OverviewAdmin() {
 
   useEffect(() => { void load(); }, [load]);
 
-  if (loading) return <div className="card-muted">Loading platform stats...</div>;
+  if (loading) return <div className="adm-empty">Loading platform stats…</div>;
   if (!stats) return null;
 
-  const toCredits = (v: number) => formatCreditsFull(v);
+  const bd = stats.breakdown as Record<string, number>;
+  const totalLiab = stats.totalLiabilitiesMinor || 1;
+  const metrics: Array<{ key: string; label: string; color: string }> = [
+    { key: 'walletAvailable',    label: 'Wallet (available)',   color: '#3b82f6' },
+    { key: 'walletReserved',     label: 'Wallet (reserved)',    color: '#8b5cf6' },
+    { key: 'kenoPendingStakes',  label: 'Keno pending stakes',  color: '#f59e0b' },
+    { key: 'bingoPendingStakes', label: 'Bingo pending stakes', color: '#ec4899' },
+    { key: 'ticketPurchases',    label: 'Ticket purchases',     color: '#10b981' },
+    { key: 'payouts',            label: 'Payouts',              color: '#ef4444' },
+    { key: 'refunds',            label: 'Refunds',              color: '#6b7280' },
+  ];
 
   return (
     <div className="stack-lg">
-      <div className="admin-action-bar">
-        <div>
-          <div className="section-title">Platform Overview</div>
-          <p className="section-copy">Live financial snapshot of the platform.</p>
-        </div>
-        <button className="btn btn-ghost btn-sm icon-btn" onClick={load}><RefreshCw size={14} /></button>
+      <SectionHead title="Platform Overview" sub="Live financial snapshot.">
+        <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
+      </SectionHead>
+
+      <div className="adm-kpi-grid">
+        <Kpi label="Gross Gaming Revenue" value={formatCreditsFull(stats.ggrMinor)} color="#10b981" />
+        <Kpi label="Total Volume"          value={formatCreditsFull(stats.totalVolumeMinor)} color="#3b82f6" />
+        <Kpi label="Total Payouts"         value={formatCreditsFull(stats.totalPayoutsMinor)} color="#ef4444" />
+        <Kpi label="Total Liabilities"     value={formatCreditsFull(stats.totalLiabilitiesMinor)} color="#f59e0b" />
       </div>
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-        <div className="stat-card">
-          <span className="stat-label">Gross Gaming Revenue</span>
-          <strong style={{ color: 'var(--green)' }}>{toCredits(stats.ggrMinor)}</strong>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Total Volume</span>
-          <strong>{toCredits(stats.totalVolumeMinor)}</strong>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Total Payouts</span>
-          <strong>{toCredits(stats.totalPayoutsMinor)}</strong>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Total Liabilities</span>
-          <strong style={{ color: stats.totalLiabilitiesMinor > 0 ? 'var(--gold)' : undefined }}>
-            {toCredits(stats.totalLiabilitiesMinor)}
-          </strong>
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Financial Breakdown</div>
+        <div className="adm-metric-list">
+          {metrics.map(({ key, label, color }) => {
+            const val = bd[key] ?? 0;
+            return (
+              <div key={key} className="adm-metric-row">
+                <span className="adm-metric-label">{label}</span>
+                <Bar value={val} max={totalLiab} color={color} />
+                <span className="adm-metric-val">{formatCredits(val)}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
-      <div className="card">
-        <div className="section-title" style={{ marginBottom: 12, fontSize: 15 }}>Breakdown</div>
-        <div className="key-value-list">
-          {Object.entries(stats.breakdown).map(([key, val]) => (
-            <div key={key} className="key-value-row">
-              <span>{titleCase(key.replace(/minor$/i, '').replace(/([A-Z])/g, ' $1').trim())}</span>
-              <strong>{toCredits(val)}</strong>
-            </div>
-          ))}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Agents
+// ══════════════════════════════════════════════════════════════════
+function AgentsAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [agents, setAgents] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ displayName: '', phoneNumber: '', password: '' });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setAgents(await adminAgentsApi.listAgents()); }
+    catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setLoading(false); }
+  }, [addToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const createAgent = async () => {
+    if (!form.displayName.trim() || !form.phoneNumber.trim() || form.password.length < 8) {
+      addToast('info', 'Fill in all fields. Password must be at least 8 characters.');
+      return;
+    }
+    setCreating(true);
+    try {
+      await adminAgentsApi.createAgent(form);
+      addToast('success', `Agent "${form.displayName}" created.`);
+      setForm({ displayName: '', phoneNumber: '', password: '' });
+      setShowForm(false);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setCreating(false); }
+  };
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="Agent Accounts" sub="Agents process player withdrawals.">
+        <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-primary" onClick={() => setShowForm((v) => !v)}>
+          {showForm ? <X size={13} /> : <Plus size={13} />}
+          {showForm ? 'Cancel' : 'New Agent'}
+        </button>
+      </SectionHead>
+
+      {showForm && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">Create Agent Account</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>Display Name</span>
+              <input className="input" placeholder="e.g. Agent Sara" value={form.displayName}
+                onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Phone Number</span>
+              <input className="input" type="tel" placeholder="09XXXXXXXX" value={form.phoneNumber}
+                onChange={(e) => setForm((f) => ({ ...f, phoneNumber: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Password (min 8 chars)</span>
+              <input className="input" type="password" placeholder="••••••••" value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+            </label>
+          </div>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={creating} onClick={createAgent}>
+              {creating ? 'Creating…' : 'Create Agent'}
+            </button>
+          </div>
         </div>
+      )}
+
+      <div className="adm-panel">
+        {loading && agents.length === 0 ? (
+          <div className="adm-empty">Loading agents…</div>
+        ) : agents.length === 0 ? (
+          <div className="adm-empty">No agents yet. Create one above.</div>
+        ) : (
+          <table className="adm-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Phone</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agents.map((a) => (
+                <tr key={a.id} className="adm-tr">
+                  <td><strong>{a.displayName}</strong></td>
+                  <td className="adm-td-muted">{a.phoneNumber ?? '—'}</td>
+                  <td>
+                    <span className={`badge ${a.status === 'active' || !a.status ? 'badge-green' : 'badge-red'}`}>
+                      {a.status ?? 'active'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -105,12 +245,9 @@ function ConfigAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
-    telebirrCreditMinorPerBirr: 100,
-    welcomeBonusMinor: 0,
-    withdrawalServiceChargePct: 0,
-    withdrawalMinAmountMinor: 0,
-    withdrawalMaxAmountMinor: 0,
-    maxPendingWithdrawalsPerUser: 1,
+    telebirrCreditMinorPerBirr: 100, welcomeBonusMinor: 0,
+    withdrawalServiceChargePct: 0, withdrawalMinAmountMinor: 0,
+    withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -126,55 +263,58 @@ function ConfigAdmin() {
     setSaving(true);
     try {
       const updated = await adminApi.updateConfig(form);
-      setConfig(updated);
-      setForm(updated);
-      addToast('success', 'System config saved.');
+      setConfig(updated); setForm(updated);
+      addToast('success', 'Configuration saved.');
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setSaving(false); }
   };
 
   const field = (key: keyof SystemConfig, label: string, hint?: string) => (
-    <label className="form-field">
-      <span>{label}{hint && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> — {hint}</span>}</span>
-      <input
-        className="input"
-        type="number"
-        min={0}
-        value={form[key]}
-        onChange={(e) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }))}
-      />
+    <label className="adm-field" key={key}>
+      <span>{label}{hint && <em className="adm-field-hint"> — {hint}</em>}</span>
+      <input className="input" type="number" min={0} value={form[key]}
+        onChange={(e) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }))} />
     </label>
   );
 
-  if (loading) return <div className="card-muted">Loading config...</div>;
+  if (loading) return <div className="adm-empty">Loading configuration…</div>;
 
   return (
     <div className="stack-lg">
-      <div className="admin-action-bar">
-        <div>
-          <div className="section-title">System Configuration</div>
-          <p className="section-copy">Platform-wide settings for payments and withdrawals.</p>
+      <SectionHead title="System Configuration" sub="Platform-wide game and payment settings." />
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Payments & Credits</div>
+        <div className="adm-field-grid">
+          {field('telebirrCreditMinorPerBirr', 'Credits per Birr', '100 = 1 Birr → 100 credits')}
+          {field('welcomeBonusMinor', 'Welcome Bonus (credits)', '0 = disabled')}
         </div>
       </div>
-      <div className="card admin-form">
-        <div className="admin-form-grid">
-          {field('telebirrCreditMinorPerBirr', 'Credits per Birr', 'e.g. 100 = 1 Birr → 100 credits')}
-          {field('welcomeBonusMinor', 'Welcome Bonus (credits)')}
-          {field('withdrawalServiceChargePct', 'Service Charge %', '0–100')}
-          {field('withdrawalMinAmountMinor', 'Min Withdrawal (credits)')}
-          {field('withdrawalMaxAmountMinor', 'Max Withdrawal (credits)', '0 = no limit')}
-          {field('maxPendingWithdrawalsPerUser', 'Max Pending Withdrawals per User')}
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Withdrawal Rules</div>
+        <div className="adm-field-grid">
+          {field('withdrawalServiceChargePct', 'Service Charge %', 'deducted from gross withdrawal')}
+          {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (credits)', '0 = no minimum')}
+          {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (credits)', '0 = no limit')}
+          {field('maxPendingWithdrawalsPerUser', 'Max Pending per User')}
         </div>
-        <button className="btn btn-primary btn-full" style={{ marginTop: 20 }} disabled={saving} onClick={save}>
-          {saving ? 'Saving...' : 'Save Configuration'}
-        </button>
       </div>
+
+      <button className="adm-btn adm-btn-primary adm-btn-full" disabled={saving} onClick={save}>
+        {saving ? 'Saving…' : 'Save Configuration'}
+      </button>
+      {config && (
+        <p className="adm-save-note">
+          Current: {config.withdrawalServiceChargePct}% charge · min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} credits
+        </p>
+      )}
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Withdrawals Admin
+// Withdrawals
 // ══════════════════════════════════════════════════════════════════
 function WithdrawalsAdmin() {
   const addToast = useStore((s) => s.addToast);
@@ -182,6 +322,7 @@ function WithdrawalsAdmin() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -202,92 +343,88 @@ function WithdrawalsAdmin() {
     finally { setBusy(null); }
   };
 
-  const pending = withdrawals.filter((w) => w.status === 'pending' || w.status === 'processing');
-  const completed = withdrawals.filter((w) => w.status === 'completed' || w.status === 'rejected');
+  const pending = withdrawals.filter((w) => w.status === 'pending' || (w.status as string) === 'processing');
+  const done = withdrawals.filter((w) => w.status === 'completed' || w.status === 'rejected');
+
+  const W_STATUS: Record<string, string> = { pending: 'badge-gold', claimed: 'badge-violet', processing: 'badge-violet', completed: 'badge-green', rejected: 'badge-red' };
 
   return (
     <div className="stack-lg">
-      <div className="admin-action-bar">
-        <div>
-          <div className="section-title">Withdrawal Requests</div>
-          <p className="section-copy">Review and process player Telebirr cashouts.</p>
-        </div>
-        <button className="btn btn-ghost btn-sm icon-btn" onClick={load}><RefreshCw size={14} /></button>
-      </div>
+      <SectionHead title="Withdrawal Requests" sub="Review and process player cashouts.">
+        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+      </SectionHead>
 
       {loading && withdrawals.length === 0 ? (
-        <div className="card-muted">Loading withdrawals...</div>
-      ) : pending.length === 0 && completed.length === 0 ? (
-        <div className="card-muted">No withdrawal requests yet.</div>
+        <div className="adm-empty">Loading withdrawals…</div>
       ) : (
         <>
-          {pending.length > 0 && (
-            <>
-              <div className="section-title" style={{ fontSize: 14, color: 'var(--text-muted)' }}>
-                Pending ({pending.length})
-              </div>
-              <div className="list-stack">
+          {/* Pending */}
+          <div className="adm-panel">
+            <div className="adm-panel-head">
+              Pending
+              <span className="adm-badge-count">{pending.length}</span>
+            </div>
+            {pending.length === 0 ? (
+              <div className="adm-empty">No pending withdrawals.</div>
+            ) : (
+              <div className="adm-list">
                 {pending.map((w) => (
-                  <article key={w.id} className="admin-row" style={{ flexDirection: 'column', gap: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-                      <div>
-                        <div className="admin-row-title">
-                          {formatCredits(w.amountMinor)} credits
-                          <span className={`badge ${w.status === 'processing' ? 'badge-violet' : 'badge-gold'}`}>{w.status}</span>
+                  <div key={w.id} className="adm-w-row">
+                    <div className="adm-w-main" onClick={() => setExpanded(expanded === w.id ? null : w.id)}>
+                      <div className="adm-w-info">
+                        <strong>{formatCredits(w.amountMinor)} credits</strong>
+                        <span className="adm-td-muted">{w.destinationAccount}</span>
+                        <span className="adm-td-muted">{formatDateTime(w.createdAt)}</span>
+                      </div>
+                      <div className="adm-w-right">
+                        <span className={`badge ${W_STATUS[w.status] ?? 'badge-gold'}`}>{w.status}</span>
+                        {expanded === w.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </div>
+                    </div>
+                    {expanded === w.id && (
+                      <div className="adm-w-expand">
+                        <input className="input" placeholder="Admin note (optional)"
+                          value={notes[w.id] ?? ''}
+                          onChange={(e) => setNotes((n) => ({ ...n, [w.id]: e.target.value }))} />
+                        <div className="adm-w-actions">
+                          <button className="adm-btn adm-btn-success" disabled={!!busy}
+                            onClick={() => process(w.id, 'approve')}>
+                            {busy === `approve-${w.id}` ? '…' : 'Approve'}
+                          </button>
+                          <button className="adm-btn adm-btn-danger" disabled={!!busy}
+                            onClick={() => process(w.id, 'reject')}>
+                            {busy === `reject-${w.id}` ? '…' : 'Reject'}
+                          </button>
                         </div>
-                        <div className="admin-row-meta">Phone: {w.destinationAccount}</div>
-                        <div className="admin-row-meta">{new Date(w.createdAt).toLocaleString()}</div>
                       </div>
-                      <div className="admin-row-actions">
-                        <button
-                          className="btn btn-success btn-sm"
-                          disabled={!!busy}
-                          onClick={() => process(w.id, 'approve')}
-                        >
-                          {busy === `approve-${w.id}` ? '...' : 'Approve'}
-                        </button>
-                        <button
-                          className="btn btn-danger btn-sm"
-                          disabled={!!busy}
-                          onClick={() => process(w.id, 'reject')}
-                        >
-                          {busy === `reject-${w.id}` ? '...' : 'Reject'}
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      className="input"
-                      placeholder="Admin note (optional)"
-                      value={notes[w.id] ?? ''}
-                      onChange={(e) => setNotes((n) => ({ ...n, [w.id]: e.target.value }))}
-                      style={{ fontSize: 13 }}
-                    />
-                  </article>
+                    )}
+                  </div>
                 ))}
               </div>
-            </>
-          )}
+            )}
+          </div>
 
-          {completed.length > 0 && (
-            <>
-              <div className="section-title" style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 8 }}>
-                Completed ({completed.length})
+          {/* History */}
+          {done.length > 0 && (
+            <div className="adm-panel">
+              <div className="adm-panel-head">
+                History
+                <span className="adm-badge-count">{done.length}</span>
               </div>
-              <div className="list-stack">
-                {completed.map((w) => (
-                  <article key={w.id} className="admin-row">
-                    <div className="admin-row-info">
-                      <div className="admin-row-title">
-                        {formatCredits(w.amountMinor)} credits
-                        <span className={`badge ${w.status === 'completed' ? 'badge-green' : 'badge-red'}`}>{w.status}</span>
-                      </div>
-                      <div className="admin-row-meta">Phone: {w.destinationAccount}</div>
-                      {w.adminNotes && <div className="admin-row-meta">Note: {w.adminNotes}</div>}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </>
+              <table className="adm-table">
+                <thead><tr><th>Amount</th><th>Phone</th><th>Status</th><th>Processed</th></tr></thead>
+                <tbody>
+                  {done.map((w) => (
+                    <tr key={w.id} className="adm-tr">
+                      <td><strong>{formatCredits(w.amountMinor)}</strong></td>
+                      <td className="adm-td-muted">{w.destinationAccount}</td>
+                      <td><span className={`badge ${W_STATUS[w.status] ?? 'badge-gold'}`}>{w.status}</span></td>
+                      <td className="adm-td-muted">{w.processedAt ? formatDateTime(w.processedAt) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}
@@ -296,7 +433,7 @@ function WithdrawalsAdmin() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Keno Admin
+// Keno
 // ══════════════════════════════════════════════════════════════════
 function KenoAdmin() {
   const addToast = useStore((s) => s.addToast);
@@ -304,16 +441,15 @@ function KenoAdmin() {
   const [config, setConfig] = useState<KenoConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [showConfigEdit, setShowConfigEdit] = useState(false);
-  const [configForm, setConfigForm] = useState({ ticketPriceMinor: 100, globalBotWinInterval: 0 });
+  const [showCfg, setShowCfg] = useState(false);
+  const [cfgForm, setCfgForm] = useState({ ticketPriceMinor: 100, globalBotWinInterval: 0, autoScheduleIntervalMinutes: 3 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [fetchedDraws, fetchedConfig] = await Promise.all([adminKenoApi.listDraws(20), adminKenoApi.getConfig()]);
-      setDraws(fetchedDraws);
-      setConfig(fetchedConfig);
-      setConfigForm({ ticketPriceMinor: fetchedConfig.ticketPriceMinor, globalBotWinInterval: fetchedConfig.globalBotWinInterval || 0 });
+      const [d, c] = await Promise.all([adminKenoApi.listDraws(20), adminKenoApi.getConfig()]);
+      setDraws(d); setConfig(c);
+      setCfgForm({ ticketPriceMinor: c.ticketPriceMinor, globalBotWinInterval: c.globalBotWinInterval || 0, autoScheduleIntervalMinutes: c.autoScheduleIntervalMinutes ?? 3 });
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
   }, [addToast]);
@@ -322,131 +458,108 @@ function KenoAdmin() {
 
   const updateConfig = async () => {
     if (!config) return;
-    setBusy('config');
-    try {
-      await adminKenoApi.createConfig({ ...config, ...configForm });
-      addToast('success', 'New Keno Config Version Activated.');
-      setShowConfigEdit(false);
-      await load();
-    } catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setBusy(null); }
-  };
-
-  const schedule = async () => {
-    setBusy('schedule');
-    try { await adminKenoApi.scheduleDraw(); addToast('success', 'Draw scheduled.'); await load(); }
+    setBusy('cfg');
+    try { await adminKenoApi.createConfig({ ...config, ...cfgForm }); addToast('success', 'Config updated.'); setShowCfg(false); await load(); }
     catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
 
-  const execute = async (id: string) => {
-    setBusy(id);
-    try { await adminKenoApi.executeDraw(id); addToast('success', 'Draw executed.'); await load(); }
-    catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setBusy(null); }
-  };
-
-  const cancel = async (id: string) => {
-    setBusy(`cancel-${id}`);
-    try { await adminKenoApi.cancelDraw(id); addToast('info', 'Draw cancelled.'); await load(); }
-    catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setBusy(null); }
-  };
+  const D_STATUS: Record<string, string> = { settled: 'badge-green', cancelled: 'badge-red', pending: 'badge-violet' };
 
   return (
     <div className="stack-lg">
-      <div className="admin-action-bar">
-        <div>
-          <div className="section-title">Keno Draws</div>
-          <p className="section-copy">Manage config and schedule rounds.</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm icon-btn" onClick={load}><RefreshCw size={14} /></button>
-          <button className="btn btn-secondary btn-sm" onClick={() => setShowConfigEdit(!showConfigEdit)}>
-            <Settings size={13} style={{ marginRight: 4 }} />{showConfigEdit ? 'Close' : 'Config'}
-          </button>
-          <button className="btn btn-primary btn-sm" disabled={busy === 'schedule'} onClick={schedule}>
-            {busy === 'schedule' ? '...' : '+ Schedule'}
-          </button>
-        </div>
-      </div>
+      <SectionHead title="Keno Draws" sub="Schedule and execute draw rounds.">
+        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-secondary" onClick={() => setShowCfg((v) => !v)}>
+          <Settings size={13} />{showCfg ? 'Close' : 'Config'}
+        </button>
+        <button className="adm-btn adm-btn-primary" disabled={busy === 'sched'}
+          onClick={async () => { setBusy('sched'); try { await adminKenoApi.scheduleDraw(); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
+          <Plus size={13} />Schedule
+        </button>
+      </SectionHead>
 
-      {config && !showConfigEdit && (
-        <div className="card" style={{ padding: 14, display: 'flex', gap: 20, fontSize: 13, flexWrap: 'wrap' }}>
-          <div><strong>v{config.version}</strong> &nbsp;·&nbsp; {formatCredits(config.ticketPriceMinor)} credits/ticket</div>
-          <div>Grid: {config.numberMin}–{config.numberMax} &nbsp;·&nbsp; Draw: {config.drawSize} numbers</div>
-          <div>Bot interval: {config.globalBotWinInterval || 'Disabled'}</div>
+      {config && (
+        <div className="adm-info-strip">
+          <span>v{config.version}</span>
+          <span>{formatCredits(config.ticketPriceMinor)} credits/ticket</span>
+          <span>{config.numberMin}–{config.numberMax}, draw {config.drawSize}</span>
+          <span>Bot interval: {config.globalBotWinInterval || 'off'}</span>
         </div>
       )}
 
-      {showConfigEdit && config && (
-        <div className="card admin-form">
-          <div className="section-title" style={{ marginBottom: 16, fontSize: 15 }}>New Config Version</div>
-          <div className="admin-form-grid">
-            <label className="form-field">
+      {showCfg && config && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">New Config Version</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
               <span>Ticket Price (credits)</span>
-              <input className="input" type="number" value={configForm.ticketPriceMinor}
-                onChange={(e) => setConfigForm((f) => ({ ...f, ticketPriceMinor: Number(e.target.value) }))} />
+              <input className="input" type="number" value={cfgForm.ticketPriceMinor}
+                onChange={(e) => setCfgForm((f) => ({ ...f, ticketPriceMinor: Number(e.target.value) }))} />
             </label>
-            <label className="form-field">
+            <label className="adm-field">
               <span>Bot Win Interval (0 = off)</span>
-              <input className="input" type="number" value={configForm.globalBotWinInterval}
-                onChange={(e) => setConfigForm((f) => ({ ...f, globalBotWinInterval: Number(e.target.value) }))} />
+              <input className="input" type="number" value={cfgForm.globalBotWinInterval}
+                onChange={(e) => setCfgForm((f) => ({ ...f, globalBotWinInterval: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Auto-schedule Interval (minutes, 0 = manual)</span>
+              <input className="input" type="number" min={0} max={60} value={cfgForm.autoScheduleIntervalMinutes}
+                onChange={(e) => setCfgForm((f) => ({ ...f, autoScheduleIntervalMinutes: Number(e.target.value) }))} />
             </label>
           </div>
-          <button className="btn btn-primary btn-full" style={{ marginTop: 16 }} disabled={busy === 'config'} onClick={updateConfig}>
-            {busy === 'config' ? 'Saving...' : 'Activate New Config'}
-          </button>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={busy === 'cfg'} onClick={updateConfig}>
+              {busy === 'cfg' ? 'Saving…' : 'Activate Config'}
+            </button>
+          </div>
         </div>
       )}
 
-      {loading && draws.length === 0 ? <div className="card-muted">Loading draws...</div>
-        : draws.length === 0 ? <div className="card-muted">No draws yet.</div>
-        : (
-          <div className="list-stack">
-            {draws.map((draw) => {
-              const isPending = draw.status === 'pending';
-              const isSettled = draw.status === 'settled' || draw.status === 'cancelled';
-              return (
-                <article key={draw.id} className="admin-row">
-                  <div className="admin-row-info">
-                    <div className="admin-row-title">
-                      Draw <code>{draw.id.slice(-8)}</code>
-                      <span className={`badge badge-${draw.status === 'settled' ? 'green' : draw.status === 'cancelled' ? 'red' : 'violet'}`}>
-                        {draw.status}
-                      </span>
-                    </div>
-                    <div className="admin-row-meta">{formatDateTime(draw.scheduledAt)}</div>
-                    {draw.drawnNumbers.length > 0 && (
-                      <div className="ball-row" style={{ marginTop: 6 }}>
-                        {draw.drawnNumbers.slice(0, 12).map((n) => <span key={n} className="ball ball-drawn">{n}</span>)}
-                        {draw.drawnNumbers.length > 12 && <span className="text-muted">+{draw.drawnNumbers.length - 12} more</span>}
-                      </div>
-                    )}
-                  </div>
-                  {!isSettled && (
-                    <div className="admin-row-actions">
-                      {isPending && (
-                        <button className="btn btn-primary btn-sm" disabled={busy === draw.id} onClick={() => execute(draw.id)}>
-                          <Play size={12} style={{ marginRight: 4 }} />{busy === draw.id ? '...' : 'Execute'}
-                        </button>
-                      )}
-                      <button className="btn btn-danger btn-sm" disabled={busy === `cancel-${draw.id}`} onClick={() => cancel(draw.id)}>
-                        <X size={12} style={{ marginRight: 4 }} />{busy === `cancel-${draw.id}` ? '...' : 'Cancel'}
-                      </button>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
+      <div className="adm-panel">
+        {loading && draws.length === 0 ? <div className="adm-empty">Loading draws…</div>
+          : draws.length === 0 ? <div className="adm-empty">No draws yet.</div>
+          : (
+            <table className="adm-table">
+              <thead><tr><th>Draw ID</th><th>Scheduled</th><th>Status</th><th>Numbers</th><th></th></tr></thead>
+              <tbody>
+                {draws.map((draw) => {
+                  const active = draw.status === 'pending';
+                  return (
+                    <tr key={draw.id} className="adm-tr">
+                      <td><code className="adm-mono">{draw.id.slice(-8)}</code></td>
+                      <td className="adm-td-muted">{formatDateTime(draw.scheduledAt)}</td>
+                      <td><span className={`badge ${D_STATUS[draw.status] ?? 'badge-violet'}`}>{draw.status}</span></td>
+                      <td className="adm-td-muted">{draw.drawnNumbers.length > 0 ? `${draw.drawnNumbers.length} drawn` : '—'}</td>
+                      <td>
+                        {active && (
+                          <div className="adm-cell-actions">
+                            <button className="adm-btn adm-btn-primary adm-btn-xs"
+                              disabled={!!busy}
+                              onClick={async () => { setBusy(draw.id); try { await adminKenoApi.executeDraw(draw.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
+                              <Play size={11} />Execute
+                            </button>
+                            <button className="adm-btn adm-btn-danger adm-btn-xs"
+                              disabled={!!busy}
+                              onClick={async () => { setBusy(`c-${draw.id}`); try { await adminKenoApi.cancelDraw(draw.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
+                              <X size={11} />Cancel
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+      </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Bingo Admin
+// Bingo
 // ══════════════════════════════════════════════════════════════════
 function BingoAdmin() {
   const addToast = useStore((s) => s.addToast);
@@ -454,10 +567,7 @@ function BingoAdmin() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({
-    name: 'Room Alpha', ticketPriceMinor: 500, maxTickets: 100, minutesFromNow: 5,
-    oneLine: 20000, twoLines: 50000, fullHouse: 100000,
-  });
+  const [form, setForm] = useState({ name: 'Room Alpha', ticketPriceMinor: 500, maxTickets: 100, minutesFromNow: 5, oneLine: 20000, twoLines: 50000, fullHouse: 100000 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -471,112 +581,98 @@ function BingoAdmin() {
   const createRoom = async () => {
     setBusy('create');
     try {
-      const scheduledStartAt = new Date(Date.now() + form.minutesFromNow * 60 * 1000).toISOString();
       await adminBingoApi.createRoom({
         name: form.name, ticketPriceMinor: form.ticketPriceMinor, maxTickets: form.maxTickets,
-        scheduledStartAt, prizes: { oneLineMinor: form.oneLine, twoLinesMinor: form.twoLines, fullHouseMinor: form.fullHouse },
+        scheduledStartAt: new Date(Date.now() + form.minutesFromNow * 60_000).toISOString(),
+        prizes: { oneLineMinor: form.oneLine, twoLinesMinor: form.twoLines, fullHouseMinor: form.fullHouse },
       });
       addToast('success', `Room "${form.name}" created.`);
-      setShowCreate(false);
-      await load();
+      setShowCreate(false); await load();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
 
-  const drawNext = async (roomId: string) => {
-    setBusy(`draw-${roomId}`);
-    try { await adminBingoApi.drawNext(roomId); addToast('success', 'Ball drawn.'); await load(); }
-    catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setBusy(null); }
-  };
-
-  const cancelRoom = async (roomId: string) => {
-    setBusy(`cancel-${roomId}`);
-    try { await adminBingoApi.cancelRoom(roomId); addToast('info', 'Room cancelled.'); await load(); }
-    catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setBusy(null); }
-  };
-
-  const field = (key: keyof typeof form) => ({
+  const f = (key: keyof typeof form) => ({
     value: form[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-      setForm((f) => ({ ...f, [key]: typeof f[key] === 'number' ? Number(e.target.value) : e.target.value })),
+      setForm((prev) => ({ ...prev, [key]: typeof prev[key] === 'number' ? Number(e.target.value) : e.target.value })),
   });
+
+  const R_STATUS: Record<string, string> = { open: 'badge-gold', running: 'badge-violet', settled: 'badge-green', cancelled: 'badge-red' };
 
   return (
     <div className="stack-lg">
-      <div className="admin-action-bar">
-        <div>
-          <div className="section-title">Bingo Rooms</div>
-          <p className="section-copy">Create rooms, draw balls, and manage settlements.</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm icon-btn" onClick={load}><RefreshCw size={14} /></button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? 'Close' : '+ New Room'}
-          </button>
-        </div>
-      </div>
+      <SectionHead title="Bingo Rooms" sub="Create rooms and manage live draws.">
+        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-primary" onClick={() => setShowCreate((v) => !v)}>
+          {showCreate ? <X size={13} /> : <Plus size={13} />}{showCreate ? 'Cancel' : 'New Room'}
+        </button>
+      </SectionHead>
 
       {showCreate && (
-        <div className="card admin-form">
-          <div className="section-title" style={{ marginBottom: 16, fontSize: 15 }}>Create Bingo Room</div>
-          <div className="admin-form-grid">
-            <label className="form-field"><span>Room Name</span><input className="input" {...field('name')} /></label>
-            <label className="form-field"><span>Ticket Price</span><input className="input" type="number" min={1} {...field('ticketPriceMinor')} /></label>
-            <label className="form-field"><span>Max Tickets</span><input className="input" type="number" min={1} {...field('maxTickets')} /></label>
-            <label className="form-field"><span>Start In (minutes)</span><input className="input" type="number" min={1} {...field('minutesFromNow')} /></label>
-            <label className="form-field"><span>One Line Prize</span><input className="input" type="number" min={0} {...field('oneLine')} /></label>
-            <label className="form-field"><span>Two Lines Prize</span><input className="input" type="number" min={0} {...field('twoLines')} /></label>
-            <label className="form-field"><span>Full House Prize</span><input className="input" type="number" min={0} {...field('fullHouse')} /></label>
+        <div className="adm-panel">
+          <div className="adm-panel-head">Create Bingo Room</div>
+          <div className="adm-field-grid">
+            <label className="adm-field"><span>Room Name</span><input className="input" {...f('name')} /></label>
+            <label className="adm-field"><span>Ticket Price (credits)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
+            <label className="adm-field"><span>Max Tickets</span><input className="input" type="number" min={1} {...f('maxTickets')} /></label>
+            <label className="adm-field"><span>Starts In (minutes)</span><input className="input" type="number" min={1} {...f('minutesFromNow')} /></label>
+            <label className="adm-field"><span>One Line Prize</span><input className="input" type="number" min={0} {...f('oneLine')} /></label>
+            <label className="adm-field"><span>Two Lines Prize</span><input className="input" type="number" min={0} {...f('twoLines')} /></label>
+            <label className="adm-field"><span>Full House Prize</span><input className="input" type="number" min={0} {...f('fullHouse')} /></label>
           </div>
-          <button className="btn btn-primary btn-full" style={{ marginTop: 16 }} disabled={busy === 'create'} onClick={createRoom}>
-            {busy === 'create' ? 'Creating...' : 'Create Room'}
-          </button>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createRoom}>
+              {busy === 'create' ? 'Creating…' : 'Create Room'}
+            </button>
+          </div>
         </div>
       )}
 
-      {loading && rooms.length === 0 ? <div className="card-muted">Loading rooms...</div>
-        : rooms.length === 0 ? <div className="card-muted">No rooms yet.</div>
-        : (
-          <div className="list-stack">
-            {rooms.map((room) => {
-              const isActive = room.status === 'open' || room.status === 'running';
-              return (
-                <article key={room.id} className="admin-row">
-                  <div className="admin-row-info">
-                    <div className="admin-row-title">
-                      {room.name}
-                      <span className={`badge badge-${room.status === 'settled' ? 'green' : room.status === 'cancelled' ? 'red' : room.status === 'running' ? 'violet' : 'gold'}`}>
-                        {room.status}
-                      </span>
-                    </div>
-                    <div className="admin-row-meta">
-                      {room.soldTickets}/{room.maxTickets} tickets · {formatCredits(room.ticketPriceMinor)} credits · Starts {formatRelativeTime(room.scheduledStartAt)}
-                    </div>
-                    <div className="admin-row-meta">{room.drawnNumbers.length} balls drawn</div>
-                  </div>
-                  {isActive && (
-                    <div className="admin-row-actions">
-                      <button className="btn btn-primary btn-sm" disabled={busy === `draw-${room.id}`} onClick={() => drawNext(room.id)}>
-                        <CircleDot size={12} style={{ marginRight: 4 }} />{busy === `draw-${room.id}` ? '...' : 'Draw Ball'}
-                      </button>
-                      <button className="btn btn-danger btn-sm" disabled={busy === `cancel-${room.id}`} onClick={() => cancelRoom(room.id)}>
-                        <X size={12} style={{ marginRight: 4 }} />{busy === `cancel-${room.id}` ? '...' : 'Cancel'}
-                      </button>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
+      <div className="adm-panel">
+        {loading && rooms.length === 0 ? <div className="adm-empty">Loading rooms…</div>
+          : rooms.length === 0 ? <div className="adm-empty">No rooms yet.</div>
+          : (
+            <table className="adm-table">
+              <thead><tr><th>Room</th><th>Tickets</th><th>Status</th><th>Starts</th><th></th></tr></thead>
+              <tbody>
+                {rooms.map((room) => {
+                  const isActive = room.status === 'open' || room.status === 'running';
+                  return (
+                    <tr key={room.id} className="adm-tr">
+                      <td><strong>{room.name}</strong></td>
+                      <td className="adm-td-muted">{room.soldTickets}/{room.maxTickets}</td>
+                      <td><span className={`badge ${R_STATUS[room.status] ?? 'badge-gold'}`}>{room.status}</span></td>
+                      <td className="adm-td-muted">{formatRelativeTime(room.scheduledStartAt)}</td>
+                      <td>
+                        {isActive && (
+                          <div className="adm-cell-actions">
+                            <button className="adm-btn adm-btn-primary adm-btn-xs"
+                              disabled={!!busy}
+                              onClick={async () => { setBusy(`d-${room.id}`); try { await adminBingoApi.drawNext(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
+                              <CircleDot size={11} />Draw
+                            </button>
+                            <button className="adm-btn adm-btn-danger adm-btn-xs"
+                              disabled={!!busy}
+                              onClick={async () => { setBusy(`c-${room.id}`); try { await adminBingoApi.cancelRoom(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
+                              <X size={11} />Cancel
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+      </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Bots Admin
+// Bots
 // ══════════════════════════════════════════════════════════════════
 function BotsAdmin() {
   const addToast = useStore((s) => s.addToast);
@@ -602,85 +698,87 @@ function BotsAdmin() {
     finally { setBusy(null); }
   };
 
-  const toggleActive = async (bot: BotUser) => {
-    setBusy(bot.id);
-    try { await adminBotsApi.updateBot(bot.id, { active: !bot.botPolicy.active }); addToast('success', `Bot ${bot.botPolicy.active ? 'paused' : 'activated'}.`); await load(); }
-    catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setBusy(null); }
-  };
-
-  const field = (key: keyof typeof form) => ({
+  const f = (key: keyof typeof form) => ({
     value: form[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-      setForm((f) => ({ ...f, [key]: typeof f[key] === 'number' ? Number(e.target.value) : e.target.value })),
+      setForm((prev) => ({ ...prev, [key]: typeof prev[key] === 'number' ? Number(e.target.value) : e.target.value })),
   });
 
   return (
     <div className="stack-lg">
-      <div className="admin-action-bar">
-        <div>
-          <div className="section-title">Keno Bots</div>
-          <p className="section-copy">Auto-playing bots that simulate player activity.</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm icon-btn" onClick={load}><RefreshCw size={14} /></button>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate((v) => !v)}>{showCreate ? 'Close' : '+ New Bot'}</button>
-        </div>
-      </div>
+      <SectionHead title="Keno Bots" sub="Auto-playing bots that simulate player activity.">
+        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-primary" onClick={() => setShowCreate((v) => !v)}>
+          {showCreate ? <X size={13} /> : <Plus size={13} />}{showCreate ? 'Cancel' : 'New Bot'}
+        </button>
+      </SectionHead>
 
       {showCreate && (
-        <div className="card admin-form">
-          <div className="section-title" style={{ marginBottom: 16, fontSize: 15 }}>Create Bot</div>
-          <div className="admin-form-grid">
-            <label className="form-field"><span>Display Name</span><input className="input" {...field('displayName')} /></label>
-            <label className="form-field"><span>Starting Balance</span><input className="input" type="number" min={0} {...field('initialBalanceMinor')} /></label>
-            <label className="form-field"><span>Tickets/Round</span><input className="input" type="number" min={0} max={10} {...field('ticketsPerRound')} /></label>
-            <label className="form-field"><span>Spot Count (1–12)</span><input className="input" type="number" min={1} max={12} {...field('spotCount')} /></label>
+        <div className="adm-panel">
+          <div className="adm-panel-head">Create Bot</div>
+          <div className="adm-field-grid">
+            <label className="adm-field"><span>Display Name</span><input className="input" {...f('displayName')} /></label>
+            <label className="adm-field"><span>Starting Balance (credits)</span><input className="input" type="number" min={0} {...f('initialBalanceMinor')} /></label>
+            <label className="adm-field"><span>Tickets per Round</span><input className="input" type="number" min={0} max={10} {...f('ticketsPerRound')} /></label>
+            <label className="adm-field"><span>Spot Count (1–12)</span><input className="input" type="number" min={1} max={12} {...f('spotCount')} /></label>
           </div>
-          <button className="btn btn-primary btn-full" style={{ marginTop: 16 }} disabled={busy === 'create'} onClick={createBot}>
-            {busy === 'create' ? 'Creating...' : 'Create Bot'}
-          </button>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createBot}>
+              {busy === 'create' ? 'Creating…' : 'Create Bot'}
+            </button>
+          </div>
         </div>
       )}
 
-      {loading && bots.length === 0 ? <div className="card-muted">Loading bots...</div>
-        : bots.length === 0 ? <div className="card-muted">No bots yet.</div>
-        : (
-          <div className="list-stack">
-            {bots.map((bot) => (
-              <article key={bot.id} className="admin-row">
-                <div className="admin-row-info">
-                  <div className="admin-row-title">
-                    {bot.displayName}
-                    <span className={`badge ${bot.botPolicy?.active ? 'badge-green' : 'badge-red'}`}>
-                      {bot.botPolicy?.active ? 'Active' : 'Paused'}
-                    </span>
-                  </div>
-                  <div className="admin-row-meta">{bot.botPolicy?.ticketsPerRound} ticket/round · {bot.botPolicy?.spotCount}-spot</div>
-                </div>
-                <div className="admin-row-actions">
-                  <button className={`btn btn-sm ${bot.botPolicy?.active ? 'btn-danger' : 'btn-secondary'}`}
-                    disabled={busy === bot.id} onClick={() => toggleActive(bot)}>
-                    {busy === bot.id ? '...' : bot.botPolicy?.active ? 'Pause' : 'Activate'}
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
+      <div className="adm-panel">
+        {loading && bots.length === 0 ? <div className="adm-empty">Loading bots…</div>
+          : bots.length === 0 ? <div className="adm-empty">No bots yet.</div>
+          : (
+            <table className="adm-table">
+              <thead><tr><th>Name</th><th>Tickets/round</th><th>Spots</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {bots.map((bot) => (
+                  <tr key={bot.id} className="adm-tr">
+                    <td><strong>{bot.displayName}</strong></td>
+                    <td className="adm-td-muted">{bot.botPolicy?.ticketsPerRound}</td>
+                    <td className="adm-td-muted">{bot.botPolicy?.spotCount}-spot</td>
+                    <td>
+                      <span className={`badge ${bot.botPolicy?.active ? 'badge-green' : 'badge-red'}`}>
+                        {bot.botPolicy?.active ? 'Active' : 'Paused'}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        className={`adm-btn adm-btn-xs ${bot.botPolicy?.active ? 'adm-btn-danger' : 'adm-btn-secondary'}`}
+                        disabled={busy === bot.id}
+                        onClick={async () => {
+                          setBusy(bot.id);
+                          try { await adminBotsApi.updateBot(bot.id, { active: !bot.botPolicy.active }); await load(); }
+                          catch (e) { addToast('error', getErrorMessage(e)); }
+                          finally { setBusy(null); }
+                        }}>
+                        {busy === bot.id ? '…' : bot.botPolicy?.active ? 'Pause' : 'Activate'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+      </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Main Admin Page
+// Root Admin
 // ══════════════════════════════════════════════════════════════════
 export function Admin() {
   const user = useStore((s) => s.user);
   const setAuth = useStore((s) => s.setAuth);
   const setWallet = useStore((s) => s.setWallet);
   const addToast = useStore((s) => s.addToast);
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [tab, setTab] = useState<AdminTab>('overview');
 
   if (!user?.roles.includes('admin')) {
     const handleDevLogin = async () => {
@@ -688,16 +786,13 @@ export function Admin() {
         const { authApi, walletApi } = await import('../lib/api');
         const data = await authApi.devSeedAdmin();
         setAuth(data.user, data.accessToken);
-        const wallet = await walletApi.getWallet();
-        setWallet(wallet);
-        addToast('success', 'Logged in as Admin');
-      } catch (err) {
-        addToast('error', getErrorMessage(err));
-      }
+        setWallet(await walletApi.getWallet());
+        addToast('success', 'Logged in as Dev Admin');
+      } catch (err) { addToast('error', getErrorMessage(err)); }
     };
-
     return (
       <div className="centered-loader" style={{ flex: 1, gap: 16 }}>
+        <Shield size={32} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
         <p style={{ color: 'var(--text-muted)' }}>Admin access required.</p>
         {import.meta.env.DEV && (
           <button className="btn btn-primary" onClick={handleDevLogin}>Login as Dev Admin</button>
@@ -707,31 +802,36 @@ export function Admin() {
   }
 
   return (
-    <div className="stack-lg">
-      <div className="admin-header">
-        <Settings size={24} strokeWidth={1.8} style={{ color: 'var(--gold)' }} />
+    <div className="adm-root">
+      {/* Header */}
+      <div className="adm-header">
+        <Shield size={18} strokeWidth={1.8} />
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>Admin Panel</h1>
-          <p className="section-copy">Platform management and financial controls.</p>
+          <span className="adm-header-title">Admin Panel</span>
+          <span className="adm-header-sub">iGames Platform</span>
         </div>
       </div>
 
-      <div className="admin-tabs" style={{ overflowX: 'auto' }}>
-        {TABS.map((tab) => (
-          <button key={tab.id} className={`admin-tab${activeTab === tab.id ? ' active' : ''}`} onClick={() => setActiveTab(tab.id)}>
-            {tab.icon}
-            <span style={{ marginLeft: 5 }}>{tab.label}</span>
-            {tab.id === 'withdrawals' && <ChevronRight size={11} style={{ marginLeft: 2, opacity: 0.5 }} />}
+      {/* Tab bar */}
+      <div className="adm-tab-bar">
+        {TABS.map((t) => (
+          <button key={t.id} className={`adm-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
+            {t.icon}
+            <span>{t.label}</span>
           </button>
         ))}
       </div>
 
-      {activeTab === 'overview' && <OverviewAdmin />}
-      {activeTab === 'keno' && <KenoAdmin />}
-      {activeTab === 'bingo' && <BingoAdmin />}
-      {activeTab === 'bots' && <BotsAdmin />}
-      {activeTab === 'withdrawals' && <WithdrawalsAdmin />}
-      {activeTab === 'config' && <ConfigAdmin />}
+      {/* Content */}
+      <div className="adm-content">
+        {tab === 'overview'    && <OverviewAdmin />}
+        {tab === 'agents'      && <AgentsAdmin />}
+        {tab === 'keno'        && <KenoAdmin />}
+        {tab === 'bingo'       && <BingoAdmin />}
+        {tab === 'bots'        && <BotsAdmin />}
+        {tab === 'withdrawals' && <WithdrawalsAdmin />}
+        {tab === 'config'      && <ConfigAdmin />}
+      </div>
     </div>
   );
 }

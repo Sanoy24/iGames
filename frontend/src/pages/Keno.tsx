@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoConfig, KenoDraw, KenoTicket } from '../lib/models';
@@ -13,6 +13,42 @@ import { formatCredits, useStore } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
 import { soundEngine } from '../lib/audio';
 import confetti from 'canvas-confetti';
+
+function useCountdown(targetIso: string | null | undefined) {
+  const [display, setDisplay] = useState('--:--');
+  const [urgent, setUrgent] = useState(false);
+  const [expired, setExpired] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setExpired(false);
+    if (!targetIso) { setDisplay('--:--'); setUrgent(false); return; }
+
+    const tick = () => {
+      const ms = new Date(targetIso).getTime() - Date.now();
+      if (ms <= 0) {
+        setDisplay('00:00');
+        setUrgent(false);
+        setExpired(true);
+        if (timerRef.current) clearInterval(timerRef.current);
+        return;
+      }
+      const totalSec = Math.floor(ms / 1000);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      setDisplay(`${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+      setUrgent(totalSec < 15);
+      setExpired(false);
+    };
+
+    tick();
+    timerRef.current = setInterval(tick, 500);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [targetIso]);
+
+  return { display, urgent, expired };
+}
 
 const DEFAULT_ALLOWED_SPOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
@@ -33,12 +69,16 @@ export function Keno() {
   const [config, setConfig] = useState<KenoConfig | null>(null);
   const [draws, setDraws] = useState<KenoDraw[]>([]);
   const [tickets, setTickets] = useState<KenoTicket[]>([]);
+  const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [spotTarget, setSpotTarget] = useState(4);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [animatingDrawId, setAnimatingDrawId] = useState<string | null>(null);
   const [revealedNumbers, setRevealedNumbers] = useState<number[]>([]);
+
+  const scheduledAt = activeDraw?.status === 'open' ? activeDraw.scheduledAt : null;
+  const { display: countdown, urgent: countdownUrgent, expired: countdownExpired } = useCountdown(scheduledAt);
 
   const allowedSpots = config?.allowedSpots?.length ? config.allowedSpots : DEFAULT_ALLOWED_SPOTS;
   const numbers = useMemo(() => {
@@ -50,14 +90,16 @@ export function Keno() {
 
   const loadKeno = useCallback(async () => {
     try {
-      const [nextConfig, nextDraws, nextTickets] = await Promise.all([
+      const [nextConfig, nextDraws, nextTickets, nextActiveDraw] = await Promise.all([
         kenoApi.getConfig(),
         kenoApi.listDraws(8),
         kenoApi.listTickets(12),
+        kenoApi.getActiveDraw(),
       ]);
       setConfig(nextConfig);
       setDraws(nextDraws);
       setTickets(nextTickets);
+      setActiveDraw(nextActiveDraw);
       setSpotTarget((current) => {
         if (nextConfig.allowedSpots.includes(current)) return current;
         return nextConfig.allowedSpots[0] ?? 1;
@@ -74,14 +116,19 @@ export function Keno() {
 
     const socket = getSocket();
     if (socket) {
+      const handleDrawStarted = () => {
+        setActiveDraw((prev) => prev ? { ...prev, status: 'locked' } : prev);
+      };
+
       const handleDrawCompleted = (payload: KenoDrawCompletedPayload) => {
         const drawn: number[] = payload.drawnNumbers || [];
+        const userHasTicket = tickets.some((t) => t.drawId === payload.drawId);
         setAnimatingDrawId(payload.drawId ?? null);
         setRevealedNumbers([]);
 
         drawn.forEach((num: number, idx: number) => {
           setTimeout(() => {
-            soundEngine.pop();
+            if (userHasTicket) soundEngine.pop();
             setRevealedNumbers((prev) => [...prev, num]);
           }, idx * 500);
         });
@@ -90,10 +137,28 @@ export function Keno() {
         addToast('info', `Draw ${payload.drawId?.slice(-6) || 'completed'} settled.`);
       };
 
+      socket.on('keno.draw.started', handleDrawStarted);
       socket.on('keno.draw.completed', handleDrawCompleted);
-      return () => { socket.off('keno.draw.completed', handleDrawCompleted); };
+      return () => {
+        socket.off('keno.draw.started', handleDrawStarted);
+        socket.off('keno.draw.completed', handleDrawCompleted);
+      };
     }
   }, [loadKeno, addToast]);
+
+  // Poll every 5 s while the draw is overdue (countdown expired but scheduler hasn't fired yet)
+  useEffect(() => {
+    if (!countdownExpired || !activeDraw || activeDraw.status !== 'open') return;
+    const id = setInterval(async () => {
+      try {
+        const next = await kenoApi.getActiveDraw();
+        if (!next || next.id !== activeDraw.id) {
+          setActiveDraw(next);
+        }
+      } catch { /* ignore */ }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [countdownExpired, activeDraw]);
 
   // Check all tickets for a win after a draw completes
   useEffect(() => {
@@ -166,12 +231,36 @@ export function Keno() {
               <strong>{config.drawSize} Numbers</strong>
             </div>
             <div className="stat-card">
-              <span className="stat-label">Latest Draw</span>
-              <strong>{latestDraw ? formatRelativeTime(latestDraw.scheduledAt) : 'None yet'}</strong>
+              <span className="stat-label">Interval</span>
+              <strong>{config.autoScheduleIntervalMinutes > 0 ? `${config.autoScheduleIntervalMinutes}m` : 'Manual'}</strong>
             </div>
           </div>
         ) : (
           <div className="card-muted">Loading Keno configuration...</div>
+        )}
+      </section>
+
+      {/* ── Countdown ── */}
+      <section className="card keno-countdown-card">
+        {activeDraw && activeDraw.status !== 'open' ? (
+          <div className="keno-countdown-inner">
+            <div className="keno-countdown-value keno-countdown-drawing">Drawing…</div>
+            <div className="keno-countdown-label">Numbers being drawn now</div>
+          </div>
+        ) : countdownExpired ? (
+          <div className="keno-countdown-inner">
+            <div className="keno-countdown-value keno-countdown-drawing">Starting…</div>
+            <div className="keno-countdown-label">Draw executing, new round coming</div>
+          </div>
+        ) : (
+          <div className="keno-countdown-inner">
+            <div className={`keno-countdown-value${countdownUrgent ? ' keno-countdown-urgent' : ''}`}>
+              {countdown}
+            </div>
+            <div className="keno-countdown-label">
+              {activeDraw ? 'until next draw' : 'No draw scheduled'}
+            </div>
+          </div>
         )}
       </section>
 

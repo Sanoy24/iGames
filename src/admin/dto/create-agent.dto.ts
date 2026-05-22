@@ -1,8 +1,9 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsString, Matches, MinLength } from 'class-validator';
 
 export class CreateAgentDto {
-  @IsEmail()
-  email: string;
+  @IsString()
+  @Matches(/^(\+?251|0)[79]\d{8}$/, { message: 'Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX or +2519XXXXXXXX)' })
+  phoneNumber: string;
 
   @IsString()
   @MinLength(2)

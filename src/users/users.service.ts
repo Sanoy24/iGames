@@ -128,18 +128,18 @@ export class UsersService {
   }
 
   async createAgentUser(input: {
-    email: string;
+    phoneNumber: string;
     displayName: string;
     password: string;
   }): Promise<UserDocument> {
-    const normalizedEmail = input.email.trim().toLowerCase();
-    if (!normalizedEmail) throw new BadRequestException('Email is required');
+    const normalizedPhone = input.phoneNumber.trim();
+    if (!normalizedPhone) throw new BadRequestException('Phone number is required');
 
     const existing = await this.authIdentityModel
-      .findOne({ provider: 'password', normalizedEmail })
+      .findOne({ provider: 'password', providerUserId: normalizedPhone })
       .exec();
     if (existing) {
-      throw new ConflictException('An agent with that email already exists');
+      throw new ConflictException('An agent with that phone number already exists');
     }
 
     const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
@@ -147,7 +147,7 @@ export class UsersService {
     const [user] = await this.userModel.create([
       {
         displayName: input.displayName.trim(),
-        email: normalizedEmail,
+        phoneNumber: normalizedPhone,
         roles: ['agent'],
         status: 'active',
       },
@@ -157,10 +157,9 @@ export class UsersService {
       {
         userId: user._id,
         provider: 'password',
-        providerUserId: normalizedEmail,
-        normalizedEmail,
+        providerUserId: normalizedPhone,
         passwordHash,
-        profileSnapshot: { email: normalizedEmail },
+        profileSnapshot: { phoneNumber: normalizedPhone },
         linkedAt: new Date(),
         lastAuthAt: new Date(),
       },
@@ -170,22 +169,22 @@ export class UsersService {
   }
 
   async findAgentByCredentials(
-    email: string,
+    phoneNumber: string,
     password: string,
   ): Promise<UserDocument> {
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedPhone = phoneNumber.trim();
     const identity = await this.authIdentityModel
-      .findOne({ provider: 'password', normalizedEmail })
+      .findOne({ provider: 'password', providerUserId: normalizedPhone })
       .select('+passwordHash')
       .exec();
 
     if (!identity || !identity.passwordHash) {
-      throw new BadRequestException('Invalid email or password');
+      throw new BadRequestException('Invalid phone number or password');
     }
 
     const valid = await argon2.verify(identity.passwordHash, password);
     if (!valid) {
-      throw new BadRequestException('Invalid email or password');
+      throw new BadRequestException('Invalid phone number or password');
     }
 
     const user = await this.userModel.findById(identity.userId).exec();

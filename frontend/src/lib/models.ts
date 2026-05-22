@@ -56,6 +56,7 @@ export type KenoConfig = {
   allowedSpots: number[];
   ticketPriceMinor: number;
   globalBotWinInterval: number;
+  autoScheduleIntervalMinutes: number;
   paytable?: KenoPaytableEntry[];
 };
 

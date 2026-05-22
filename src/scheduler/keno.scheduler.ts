@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationShutdown } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { BotsService } from "../bots/bots.service";
 import { KenoService } from "../keno/keno.service";
@@ -9,7 +9,7 @@ const DRAW_LOCK_KEY = "igames:keno:draw-lock";
 const DRAW_LOCK_TTL_MS = 300_000; // 5 minutes — prevents lock expiration during long settlements
 
 @Injectable()
-export class KenoScheduler implements OnApplicationShutdown {
+export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
     private readonly logger = new Logger(KenoScheduler.name);
     private shuttingDown = false;
 
@@ -19,6 +19,21 @@ export class KenoScheduler implements OnApplicationShutdown {
         private readonly botsService: BotsService,
         private readonly lockService: RedisLockService,
     ) {}
+
+    async onApplicationBootstrap(): Promise<void> {
+        try {
+            const config = await this.kenoService.getActiveConfig().catch(() => null);
+            if (!config || config.autoScheduleIntervalMinutes <= 0) return;
+            const activeDraw = await this.kenoService.getActiveDraw();
+            if (!activeDraw) {
+                const scheduledAt = new Date(Date.now() + config.autoScheduleIntervalMinutes * 60_000);
+                await this.kenoService.scheduleDraw(scheduledAt);
+                this.logger.log(`Bootstrapped first Keno draw at ${scheduledAt.toISOString()}`);
+            }
+        } catch (error) {
+            this.logger.warn(`Keno bootstrap skipped: ${error instanceof Error ? error.message : error}`);
+        }
+    }
 
     onApplicationShutdown() {
         this.shuttingDown = true;

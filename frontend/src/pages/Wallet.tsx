@@ -21,6 +21,42 @@ function formatLedgerTitle(entry: LedgerEntry): string {
   return ENTRY_LABELS[entry.entryType] ?? ENTRY_LABELS[entry.sourceType] ?? 'Transaction';
 }
 
+function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
+  const addToast = useStore((s) => s.addToast);
+  const setWallet = useStore((s) => s.setWallet);
+  const user = useStore((s) => s.user);
+  const [loading, setLoading] = useState(false);
+
+  const topup = async (amountMinor: number) => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const { authApi, walletApi } = await import('../lib/api');
+      await authApi.devTopup(user.id, amountMinor);
+      const w = await walletApi.getWallet();
+      setWallet(w);
+      await onSuccess();
+      addToast('success', `Added ${amountMinor / 100} credits to your wallet.`);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(250,204,21,0.08)', border: '1px dashed rgba(250,204,21,0.3)', borderRadius: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>DEV — add test credits:</span>
+      {[1000, 10000, 100000].map((amt) => (
+        <button key={amt} className="btn btn-ghost" disabled={loading} onClick={() => topup(amt)}
+          style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid rgba(250,204,21,0.4)' }}>
+          +{amt / 100}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Wallet() {
   const wallet = useStore((state) => state.wallet);
   const setWallet = useStore((state) => state.setWallet);
@@ -148,6 +184,8 @@ export function Wallet() {
             {showWithdraw ? '✕ Cancel Payout' : '↓ Request Payout'}
           </button>
         </div>
+
+        {import.meta.env.DEV && <DevTopup onSuccess={loadWallet} />}
 
         {showTopup && (
           <div className="admin-form" style={{ marginTop: 16, backgroundColor: 'rgba(0,0,0,0.2)' }}>

@@ -1,8 +1,11 @@
-import { Body, Controller, ForbiddenException, Logger, Post } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, HttpCode, HttpStatus, Logger, Post } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectConnection } from '@nestjs/mongoose';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Connection, Types } from 'mongoose';
 import { AuthService, AuthTokenResponse } from '../auth/auth.service';
 import { KenoService } from '../keno/keno.service';
+import { WalletService } from '../wallet/wallet.service';
 import { DEFAULT_KENO_PAYTABLE } from '../keno/constants/default-keno-paytable';
 import { DevSeedDto } from './dto/dev-seed.dto';
 
@@ -12,9 +15,11 @@ export class DevController {
   private readonly logger = new Logger(DevController.name);
 
   constructor(
+    @InjectConnection() private readonly connection: Connection,
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly kenoService: KenoService,
+    private readonly walletService: WalletService,
   ) {}
 
   @Post('seed/admin')
@@ -79,6 +84,40 @@ export class DevController {
     } catch (error) {
       this.logger.error('seedKenoConfig failed', error instanceof Error ? error.stack : error);
       throw error;
+    }
+  }
+
+  @Post('topup')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Adds test credits to a user wallet by userId' })
+  async topup(@Body() body: { userId: string; amountMinor?: number }) {
+    this.guardProduction();
+    if (!body?.userId || !Types.ObjectId.isValid(body.userId)) {
+      throw new ForbiddenException('Valid userId is required');
+    }
+    const amount = Math.max(1, body.amountMinor ?? 100_000);
+    const userObjectId = new Types.ObjectId(body.userId);
+    const session = await this.connection.startSession();
+    try {
+      let result: unknown;
+      await session.withTransaction(async () => {
+        await this.walletService.ensureDefaultWallet(userObjectId, session);
+        result = await this.walletService.creditInSession(
+          {
+            userId: body.userId,
+            amountMinor: amount,
+            entryType: 'deposit',
+            sourceType: 'dev_topup',
+            sourceId: `dev-topup-${Date.now()}`,
+            idempotencyKey: `dev-topup-${body.userId}-${Date.now()}`,
+            metadata: { reason: 'dev_topup' },
+          },
+          session,
+        );
+      });
+      return { ok: true, amountMinor: amount, ledgerEntry: result };
+    } finally {
+      await session.endSession();
     }
   }
 

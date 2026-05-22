@@ -40,6 +40,9 @@ export const authApi = {
       .post<AuthTokenResponse>('/dev/seed/admin', { displayName, initialBalanceMinor })
       .then((r) => r.data),
 
+  devTopup: (userId: string, amountMinor = 100_000) =>
+    api.post<{ ok: boolean; amountMinor: number }>('/dev/topup', { userId, amountMinor }).then((r) => r.data),
+
   loginWithCredentials: (phoneNumber: string, password: string) =>
     api
       .post<AuthTokenResponse>('/auth/credentials', { phoneNumber, password })

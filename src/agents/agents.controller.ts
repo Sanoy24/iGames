@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -10,6 +11,7 @@ import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
 
 @ApiTags('agent')
 @ApiBearerAuth()
+@SkipThrottle()
 @Controller('agent')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('agent')

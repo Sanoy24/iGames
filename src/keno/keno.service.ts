@@ -508,6 +508,7 @@ export class KenoService {
     let totalStakeMinor = 0;
     let totalPayoutMinor = 0;
     let winners = 0;
+    const maxWinners = config.maxWinnersPerDraw ?? 0;
 
     for (const ticket of tickets) {
       totalStakeMinor += ticket.stakeMinor;
@@ -515,12 +516,14 @@ export class KenoService {
         ticket.selectedNumbers,
         draw.drawnNumbers
       );
-      ticket.payoutMinor = this.kenoRulesService.calculatePayoutMinor({
+      const rawPayout = this.kenoRulesService.calculatePayoutMinor({
         stakeMinor: ticket.stakeMinor,
         spotCount: ticket.selectedNumbers.length,
         matches: ticket.matches,
         config
       });
+      const cappedOut = maxWinners > 0 && rawPayout > 0 && winners >= maxWinners ? 0 : rawPayout;
+      ticket.payoutMinor = cappedOut;
       ticket.status = ticket.payoutMinor > 0 ? 'won' : 'lost';
       ticket.settlementStatus = 'settled';
 

@@ -442,14 +442,14 @@ function KenoAdmin() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showCfg, setShowCfg] = useState(false);
-  const [cfgForm, setCfgForm] = useState({ ticketPriceMinor: 100, globalBotWinInterval: 0, autoScheduleIntervalMinutes: 3 });
+  const [cfgForm, setCfgForm] = useState({ ticketPriceMinor: 100, globalBotWinInterval: 0, autoScheduleIntervalMinutes: 3, maxWinnersPerDraw: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [d, c] = await Promise.all([adminKenoApi.listDraws(20), adminKenoApi.getConfig()]);
       setDraws(d); setConfig(c);
-      setCfgForm({ ticketPriceMinor: c.ticketPriceMinor, globalBotWinInterval: c.globalBotWinInterval || 0, autoScheduleIntervalMinutes: c.autoScheduleIntervalMinutes ?? 3 });
+      setCfgForm({ ticketPriceMinor: c.ticketPriceMinor, globalBotWinInterval: c.globalBotWinInterval || 0, autoScheduleIntervalMinutes: c.autoScheduleIntervalMinutes ?? 3, maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0 });
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
   }, [addToast]);
@@ -506,6 +506,11 @@ function KenoAdmin() {
               <span>Auto-schedule Interval (minutes, 0 = manual)</span>
               <input className="input" type="number" min={0} max={60} value={cfgForm.autoScheduleIntervalMinutes}
                 onChange={(e) => setCfgForm((f) => ({ ...f, autoScheduleIntervalMinutes: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Max Winners Per Draw (0 = unlimited)</span>
+              <input className="input" type="number" min={0} value={cfgForm.maxWinnersPerDraw}
+                onChange={(e) => setCfgForm((f) => ({ ...f, maxWinnersPerDraw: Number(e.target.value) }))} />
             </label>
           </div>
           <div className="adm-panel-footer">

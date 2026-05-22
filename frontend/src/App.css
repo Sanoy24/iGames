@@ -476,6 +476,147 @@
   to   { opacity: 0.5; }
 }
 
+/* ── Keno step UI ─────────────────────────────────────────── */
+.keno-step-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.keno-step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent, #facc15);
+  color: #000;
+  font-weight: 800;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.keno-paytable {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+}
+.keno-paytable-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.keno-paytable-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.keno-paytable-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+.keno-paytable-mult {
+  font-weight: 700;
+  color: var(--accent, #facc15);
+}
+.keno-paytable-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+.ball-dimmed {
+  opacity: 0.3;
+  cursor: default;
+}
+.ball-hit {
+  background: var(--green, #22c55e);
+  color: #000;
+  font-weight: 800;
+  box-shadow: 0 0 8px rgba(34,197,94,0.6);
+}
+.ball-miss {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* ── Draw result panel ────────────────────────────────────── */
+.keno-result-panel {
+  border: 2px solid transparent;
+  animation: resultFadeIn 0.4s ease-out;
+}
+.keno-result-win {
+  border-color: rgba(34,197,94,0.4);
+  background: linear-gradient(135deg, rgba(34,197,94,0.06) 0%, transparent 60%);
+}
+.keno-result-loss {
+  border-color: rgba(255,255,255,0.1);
+}
+@keyframes resultFadeIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.keno-result-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  margin-bottom: 14px;
+}
+.keno-result-icon {
+  margin-bottom: 2px;
+}
+.keno-result-icon-win { color: var(--green, #22c55e); }
+.keno-result-icon-loss { color: var(--text-muted); }
+.keno-result-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.keno-result-amount {
+  font-size: 2rem;
+  font-weight: 900;
+  color: var(--green, #22c55e);
+  letter-spacing: -0.03em;
+}
+.keno-result-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+.keno-result-ticket {
+  margin-bottom: 12px;
+}
+.keno-result-ticket-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.keno-result-payout {
+  color: var(--green, #22c55e);
+  font-weight: 700;
+}
+.keno-result-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* ── Ticket meta ──────────────────────────────────────────── */
 .ticket-meta {
   display: flex;

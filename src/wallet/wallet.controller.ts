@@ -1,4 +1,5 @@
 import { Body, Controller, DefaultValuePipe, Get, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -7,6 +8,7 @@ import { WalletService } from './wallet.service';
 
 @ApiTags('wallet')
 @ApiBearerAuth()
+@SkipThrottle({ default: true })
 @UseGuards(JwtAuthGuard)
 @Controller('wallet')
 export class WalletController {

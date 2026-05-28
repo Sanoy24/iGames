@@ -15,7 +15,7 @@ import {
   type SystemConfig,
 } from '../lib/api';
 import type { BingoRoom, KenoConfig, KenoDraw, User, Withdrawal } from '../lib/models';
-import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage, titleCase } from '../lib/utils';
+import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
 type AdminTab = 'overview' | 'agents' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config';

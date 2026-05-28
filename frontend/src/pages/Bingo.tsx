@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { GameTabs, type GameTabOption } from "../components/GameTabs";
+import { Gamepad2, Hash, Ticket } from 'lucide-react';
 import { bingoApi, walletApi } from "../lib/api";
 import type { BingoRoom, BingoRoomState } from "../lib/models";
 import {
@@ -22,7 +24,19 @@ type BingoRoomEventPayload = {
     roomId?: string;
 };
 
-export function Bingo() {
+type BingoProps = {
+    onBack: () => void;
+};
+
+type BingoTab = "active" | "draws" | "tickets";
+
+const BINGO_TABS: Array<GameTabOption<BingoTab>> = [
+    { id: "active", label: "Active Game", description: "Rooms, status, and ticket purchase.", icon: <Gamepad2 size={20} /> },
+    { id: "draws", label: "Drawn Numbers", description: "Live Bingo balls for the selected room.", icon: <Hash size={20} /> },
+    { id: "tickets", label: "Your Tickets", description: "Your Bingo cards and results.", icon: <Ticket size={20} /> },
+];
+
+export function Bingo({ onBack }: BingoProps) {
     const addToast = useStore((state) => state.addToast);
     const setWallet = useStore((state) => state.setWallet);
     const [rooms, setRooms] = useState<BingoRoom[]>([]);
@@ -32,6 +46,7 @@ export function Bingo() {
     const [loadingRooms, setLoadingRooms] = useState(true);
     const [loadingRoomState, setLoadingRoomState] = useState(false);
     const [buying, setBuying] = useState(false);
+    const [activeTab, setActiveTab] = useState<BingoTab>("active");
 
     const loadRooms = useCallback(async () => {
         setLoadingRooms(true);
@@ -170,6 +185,14 @@ export function Bingo() {
 
     return (
         <div className="stack-lg">
+            <GameTabs
+                tabs={BINGO_TABS}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                onBack={onBack}
+                ariaLabel="Bingo sections"
+            />
+
             <section className="card hero-subpanel">
                 <div className="section-header">
                     <div>
@@ -209,6 +232,8 @@ export function Bingo() {
 
             {selectedRoom ? (
                 <>
+                    {activeTab === 'active' && (
+                    <div className="game-tab-panel" role="tabpanel" aria-label="Active Game">
                     <section className="card">
                         <div className="section-header">
                             <div>
@@ -295,8 +320,11 @@ export function Bingo() {
                             </div>
                         </div>
                     </section>
+                    </div>
+                    )}
 
-                    <section className="card">
+                    {activeTab === 'draws' && (
+                    <section className="card" role="tabpanel" aria-label="Drawn Numbers">
                         <div className="section-header">
                             <div>
                                 <div className="section-title">Drawn Numbers</div>
@@ -352,8 +380,10 @@ export function Bingo() {
                             </>
                         )}
                     </section>
+                    )}
 
-                    <section className="card">
+                    {activeTab === 'tickets' && (
+                    <section className="card" role="tabpanel" aria-label="Your Tickets">
                         <div className="section-header">
                             <div>
                                 <div className="section-title">
@@ -450,6 +480,7 @@ export function Bingo() {
                             </div>
                         )}
                     </section>
+                    )}
                 </>
             ) : (
                 <section className="card">

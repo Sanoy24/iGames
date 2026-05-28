@@ -7,13 +7,6 @@ import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils
 import { formatCredits, useStore } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
 
-type WithdrawalPendingPayload = {
-  withdrawalId?: string;
-  userId?: string;
-  amountMinor?: number;
-  destinationAccount?: string;
-};
-
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gold',
   claimed: 'badge-violet',
@@ -55,7 +48,7 @@ export function Agent() {
 
     const socket = getSocket();
     if (socket) {
-      const handlePending = (_payload: WithdrawalPendingPayload) => {
+      const handlePending = () => {
         void load();
         addToast('info', 'New withdrawal request arrived.');
       };

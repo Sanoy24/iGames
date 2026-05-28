@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Trophy, CircleDashed } from 'lucide-react';
+import { RefreshCw, Trophy, CircleDashed, Gamepad2, History, Ticket } from 'lucide-react';
+import { GameTabs, type GameTabOption } from '../components/GameTabs';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoConfig, KenoDraw, KenoTicket } from '../lib/models';
 import {
   createIdempotencyKey,
   formatCreditsFull,
   formatDateTime,
-  formatRelativeTime,
   getErrorMessage,
 } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -57,13 +57,25 @@ type KenoDrawCompletedPayload = {
   drawnNumbers?: number[];
 };
 
+type KenoProps = {
+  onBack: () => void;
+};
+
+type KenoTab = 'active' | 'draws' | 'tickets';
+
+const KENO_TABS: Array<GameTabOption<KenoTab>> = [
+  { id: 'active', label: 'Active Game', description: 'Countdown, picks, and ticket purchase.', icon: <Gamepad2 size={20} /> },
+  { id: 'draws', label: 'Recent Draws', description: 'Latest Keno rounds and their results.', icon: <History size={20} /> },
+  { id: 'tickets', label: 'Your Tickets', description: 'Recent Keno bets and results.', icon: <Ticket size={20} /> },
+];
+
 const DRAW_STATUS_BADGE: Record<string, string> = {
   settled: 'badge-green',
   cancelled: 'badge-red',
   pending: 'badge-violet',
 };
 
-export function Keno() {
+export function Keno({ onBack }: KenoProps) {
   const addToast = useStore((state) => state.addToast);
   const setWallet = useStore((state) => state.setWallet);
   const [config, setConfig] = useState<KenoConfig | null>(null);
@@ -75,6 +87,7 @@ export function Keno() {
   const [ticketPhase, setTicketPhase] = useState<'buy' | 'pick'>('buy');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<KenoTab>('active');
   const [animatingDrawId, setAnimatingDrawId] = useState<string | null>(null);
   const [revealedNumbers, setRevealedNumbers] = useState<number[]>([]);
   const [drawResult, setDrawResult] = useState<{
@@ -83,6 +96,7 @@ export function Keno() {
     userTickets: KenoTicket[];
     totalPayout: number;
   } | null>(null);
+  const ticketsRef = useRef<KenoTicket[]>([]);
 
   const scheduledAt = activeDraw?.status === 'open' ? activeDraw.scheduledAt : null;
   const { display: countdown, urgent: countdownUrgent, expired: countdownExpired } = useCountdown(scheduledAt);
@@ -94,6 +108,19 @@ export function Keno() {
     return Array.from({ length: max - min + 1 }, (_, index) => min + index);
   }, [config]);
   const latestDraw = draws[0];
+  const ticketsByDrawId = useMemo(() => {
+    const map = new Map<string, KenoTicket[]>();
+    for (const ticket of tickets) {
+      const list = map.get(ticket.drawId) ?? [];
+      list.push(ticket);
+      map.set(ticket.drawId, list);
+    }
+    return map;
+  }, [tickets]);
+
+  useEffect(() => {
+    ticketsRef.current = tickets;
+  }, [tickets]);
 
   const loadKeno = useCallback(async () => {
     try {
@@ -129,7 +156,7 @@ export function Keno() {
 
       const handleDrawCompleted = (payload: KenoDrawCompletedPayload) => {
         const drawn: number[] = payload.drawnNumbers || [];
-        const userHasTicket = tickets.some((t) => t.drawId === payload.drawId);
+        const userHasTicket = ticketsRef.current.some((t) => t.drawId === payload.drawId);
         setAnimatingDrawId(payload.drawId ?? null);
         setRevealedNumbers([]);
 
@@ -174,14 +201,15 @@ export function Keno() {
       (t) => t.drawId === animatingDrawId && t.settlementStatus === 'settled'
     );
     if (relevant.length === 0) return;
+    const resultDraw = draws.find((d) => d.id === animatingDrawId);
+    if (!resultDraw?.drawnNumbers.length) return;
     const totalPayout = relevant.reduce((sum, t) => sum + t.payoutMinor, 0);
-    const drawnNumbers = draws.find((d) => d.id === animatingDrawId)?.drawnNumbers ?? [];
     const timer = setTimeout(() => {
       if (totalPayout > 0) {
         soundEngine.win();
         confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#FFE600', '#00FF00', '#FF00FF'] });
       }
-      setDrawResult({ drawId: animatingDrawId, drawnNumbers, userTickets: relevant, totalPayout });
+      setDrawResult({ drawId: animatingDrawId, drawnNumbers: resultDraw.drawnNumbers, userTickets: relevant, totalPayout });
       setAnimatingDrawId(null);
     }, 1500);
     return () => clearTimeout(timer);
@@ -222,6 +250,14 @@ export function Keno() {
 
   return (
     <div className="stack-lg">
+      <GameTabs
+        tabs={KENO_TABS}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onBack={onBack}
+        ariaLabel="Keno sections"
+      />
+
       <section className="card hero-subpanel">
         <div className="section-header">
           <div>
@@ -282,6 +318,7 @@ export function Keno() {
                 <div className="keno-result-ticket-meta">
                   <span>{ticket.selectedNumbers.length}-Spot</span>
                   <span>{ticket.matches} match{ticket.matches !== 1 ? 'es' : ''}</span>
+                  {hits.length > 0 && <span>Hit: {hits.join(', ')}</span>}
                   {ticket.payoutMinor > 0 && (
                     <span className="keno-result-payout">+{formatCredits(ticket.payoutMinor)}</span>
                   )}
@@ -300,6 +337,20 @@ export function Keno() {
             );
           })}
 
+          <div className="keno-result-drawn">
+            <div className="keno-result-ticket-meta">Drawn numbers</div>
+            <div className="ball-row">
+              {drawResult.drawnNumbers.map((number) => {
+                const selectedHit = drawResult.userTickets.some((ticket) => ticket.selectedNumbers.includes(number));
+                return (
+                  <span key={number} className={`ball ${selectedHit ? 'ball-hit' : 'ball-drawn'}`}>
+                    {number}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
           <button
             className="btn btn-primary btn-full"
             style={{ marginTop: 16 }}
@@ -311,6 +362,8 @@ export function Keno() {
       )}
 
       {/* ── Countdown ── */}
+      {activeTab === 'active' && (
+        <div className="game-tab-panel" role="tabpanel" aria-label="Active Game">
       <section className="card keno-countdown-card">
         {activeDraw && activeDraw.status !== 'open' ? (
           <div className="keno-countdown-inner">
@@ -463,9 +516,12 @@ export function Keno() {
             </div>
           </>
         )}
-      </section>
+          </section>
+        </div>
+      )}
 
-      <section className="card">
+      {activeTab === 'draws' && (
+      <section className="card" role="tabpanel" aria-label="Recent Draws">
         <div className="section-header">
           <div>
             <div className="section-title">Recent Draws</div>
@@ -478,33 +534,59 @@ export function Keno() {
           <div className="card-muted">No draws yet.</div>
         ) : (
           <div className="list-stack">
-            {draws.map((draw) => (
-              <article key={draw.id} className="list-card">
-                <div className="list-card-header">
-                  <div>
-                    <h3>Draw #{draw.id.slice(-6)}</h3>
-                    <p>{formatDateTime(draw.scheduledAt)}</p>
-                  </div>
-                  <span className={`badge ${DRAW_STATUS_BADGE[draw.status] ?? 'badge-violet'}`}>
-                    {draw.status}
-                  </span>
-                </div>
-                <div className="ball-row">
-                  {draw.drawnNumbers.length > 0 ? (
-                    draw.drawnNumbers.map((value) => (
-                      <span key={`${draw.id}-${value}`} className="ball ball-drawn">{value}</span>
-                    ))
-                  ) : (
-                    <span className="text-muted">Not drawn yet.</span>
-                  )}
-                </div>
-              </article>
-            ))}
+            {draws.map((draw) => {
+                const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
+                const selectedForDraw = new Set(drawTickets.flatMap((ticket) => ticket.selectedNumbers));
+                return (
+                  <article key={draw.id} className="list-card">
+                    <div className="list-card-header">
+                      <div>
+                        <h3>Draw #{draw.id.slice(-6)}</h3>
+                        <p>{formatDateTime(draw.scheduledAt)}</p>
+                      </div>
+                      <span className={`badge ${DRAW_STATUS_BADGE[draw.status] ?? 'badge-violet'}`}>
+                        {draw.status}
+                      </span>
+                    </div>
+                    {drawTickets.length > 0 && (
+                      <div className="keno-draw-picks">
+                        <span className="text-muted">Your selected numbers</span>
+                        <div className="keno-ticket-numbers">
+                          {[...selectedForDraw].sort((left, right) => left - right).map((number) => (
+                            <span
+                              key={`${draw.id}-pick-${number}`}
+                              className={`keno-number-pip${draw.drawnNumbers.includes(number) ? ' hit' : ''}`}
+                            >
+                              {number}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="ball-row">
+                      {draw.drawnNumbers.length > 0 ? (
+                        draw.drawnNumbers.map((value) => (
+                          <span
+                            key={`${draw.id}-${value}`}
+                            className={`ball ${selectedForDraw.has(value) ? 'ball-hit' : 'ball-drawn'}`}
+                          >
+                            {value}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-muted">Not drawn yet.</span>
+                      )}
+                    </div>
+                  </article>
+                );
+            })}
           </div>
         )}
       </section>
+      )}
 
-      <section className="card">
+      {activeTab === 'tickets' && (
+      <section className="card" role="tabpanel" aria-label="Your Tickets">
         <div className="section-header">
           <div>
             <div className="section-title">Your Tickets</div>
@@ -512,12 +594,14 @@ export function Keno() {
           </div>
         </div>
         {tickets.length === 0 ? (
-          <div className="card-muted">No tickets yet. Buy your first ticket above.</div>
+          <div className="card-muted">No tickets yet. Use Active Game to buy your first ticket.</div>
         ) : (
           <div className="list-stack">
             {tickets.map((ticket) => {
               const settled = ticket.settlementStatus === 'settled';
               const won = ticket.payoutMinor > 0;
+              const ticketDraw = draws.find((draw) => draw.id === ticket.drawId);
+              const ticketDrawnNumbers = ticketDraw?.drawnNumbers ?? [];
               return (
                 <article key={ticket.id} className="list-card">
                   <div className="list-card-header">
@@ -527,7 +611,7 @@ export function Keno() {
                         {ticket.selectedNumbers.map((n) => (
                           <span
                             key={n}
-                            className={`keno-number-pip${settled && latestDraw?.drawnNumbers.includes(n) ? ' hit' : ''}`}
+                            className={`keno-number-pip${settled && ticketDrawnNumbers.includes(n) ? ' hit' : ''}`}
                           >
                             {n}
                           </span>
@@ -549,6 +633,7 @@ export function Keno() {
           </div>
         )}
       </section>
+      )}
     </div>
   );
 }

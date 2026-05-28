@@ -97,8 +97,8 @@ export function App() {
       <main className="main-content">
         {activeTab === 'home' && <Home onNavigate={setActiveTab} />}
         {activeTab === 'games' && <Games onNavigate={setActiveTab} />}
-        {activeTab === 'keno' && <Keno />}
-        {activeTab === 'bingo' && <Bingo />}
+        {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
+        {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
         {activeTab === 'wallet' && <Wallet />}
         {activeTab === 'admin' && <Admin />}
         {activeTab === 'profile' && <Profile />}

@@ -46,10 +46,10 @@ const isDev = process.env.NODE_ENV !== "production";
                     limit: cfg.get<number>("THROTTLE_MAX_REQUESTS", 120),
                 },
                 {
-                    // Tighter limit for ticket purchase and auth endpoints
+                    // High default so this bucket only becomes strict where @Throttle({ strict: ... }) overrides it.
                     name: 'strict',
                     ttl: 60_000,
-                    limit: 10,
+                    limit: 10_000,
                 },
             ],
         }),

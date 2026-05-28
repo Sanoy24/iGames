@@ -9,7 +9,7 @@ import {
   Req,
   UseGuards
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -19,6 +19,7 @@ import { PurchaseBingoTicketsDto } from './dto/purchase-bingo-tickets.dto';
 import { BingoService } from './bingo.service';
 
 @ApiTags('bingo')
+@SkipThrottle({ default: true })
 @Controller('bingo')
 export class BingoController {
   constructor(private readonly bingoService: BingoService) {}

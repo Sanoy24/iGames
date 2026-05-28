@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards
 } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -20,6 +20,7 @@ import { PurchaseKenoTicketDto } from './dto/purchase-keno-ticket.dto';
 import { KenoService } from './keno.service';
 
 @ApiTags('keno')
+@SkipThrottle({ default: true })
 @Controller('keno')
 export class KenoController {
   constructor(private readonly kenoService: KenoService) {}

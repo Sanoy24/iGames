@@ -55,6 +55,9 @@ export class KenoConfig {
   @Prop({ required: true, default: 3, min: 0 })
   autoScheduleIntervalMinutes: number;
 
+  @Prop({ required: true, default: 40, min: 0 })
+  autoScheduleIntervalSeconds: number;
+
   @Prop({ required: true, default: 0, min: 0 })
   maxWinnersPerDraw: number;
 }

@@ -78,5 +78,10 @@ export class CreateKenoConfigDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  autoScheduleIntervalSeconds?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
   maxWinnersPerDraw?: number;
 }

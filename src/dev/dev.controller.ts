@@ -79,7 +79,7 @@ export class DevController {
         drawSize: 20,
         allowedSpots: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         globalBotWinInterval: 0,
-        autoScheduleIntervalMinutes: 3,
+        autoScheduleIntervalSeconds: 40,
       });
     } catch (error) {
       this.logger.error('seedKenoConfig failed', error instanceof Error ? error.stack : error);

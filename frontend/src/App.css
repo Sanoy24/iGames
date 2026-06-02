@@ -1118,6 +1118,41 @@
 .adm-field .input { font-size: 13px; }
 .adm-field-hint { font-weight: 400; color: var(--text-muted); font-style: normal; }
 
+.adm-paytable-editor {
+  padding: 0 16px 14px;
+}
+.adm-paytable-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.adm-paytable-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+.adm-paytable-entry {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 32px;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+@media (max-width: 480px) {
+  .adm-paytable-entry { grid-template-columns: 1fr 1fr; }
+  .adm-paytable-entry .adm-icon-btn { width: 100%; }
+}
+
 /* Info strip */
 .adm-info-strip {
   display: flex;

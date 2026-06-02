@@ -14,6 +14,8 @@ import { KenoConfig, KenoConfigDocument } from './schemas/keno-config.schema';
 import { KenoDraw, KenoDrawDocument } from './schemas/keno-draw.schema';
 import { KenoTicket, KenoTicketDocument } from './schemas/keno-ticket.schema';
 
+const DEFAULT_AUTO_SCHEDULE_INTERVAL_SECONDS = 40;
+
 export type KenoTicketResponse = {
   id: string;
   userId: string;
@@ -64,6 +66,7 @@ export class KenoService {
 
   async createConfig(dto: CreateKenoConfigDto): Promise<KenoConfigDocument> {
     this.validateConfigDto(dto);
+    const autoScheduleIntervalSeconds = this.normalizeAutoScheduleIntervalSeconds(dto);
     const nextVersion = await this.getNextConfigVersion();
     const session = await this.connection.startSession();
 
@@ -90,7 +93,9 @@ export class KenoService {
               ticketPriceMinor: dto.ticketPriceMinor,
               paytable: dto.paytable,
               globalBotWinInterval: dto.globalBotWinInterval ?? 0,
-              autoScheduleIntervalMinutes: dto.autoScheduleIntervalMinutes ?? 3
+              autoScheduleIntervalMinutes: Math.floor(autoScheduleIntervalSeconds / 60),
+              autoScheduleIntervalSeconds,
+              maxWinnersPerDraw: dto.maxWinnersPerDraw ?? 0
             }
           ],
           { session }
@@ -349,10 +354,11 @@ export class KenoService {
         draw.settledAt = new Date();
         await draw.save({ session });
 
-        if (config.autoScheduleIntervalMinutes > 0) {
+        const autoScheduleIntervalMs = this.getAutoScheduleIntervalMs(config);
+        if (autoScheduleIntervalMs > 0) {
           const existingOpen = await this.kenoDrawModel.findOne({ status: 'open' }).session(session).exec();
           if (!existingOpen) {
-            const nextDrawDate = new Date(Date.now() + config.autoScheduleIntervalMinutes * 60000);
+            const nextDrawDate = new Date(Date.now() + autoScheduleIntervalMs);
             await this.kenoDrawModel.create([{
               configId: config._id,
               configVersion: config.version,
@@ -408,7 +414,8 @@ export class KenoService {
 
   async scheduleDraw(scheduledAt?: Date): Promise<KenoDrawResponse> {
     const config = await this.getActiveConfig();
-    const date = scheduledAt || new Date(Date.now() + 60_000); // Default to 1 minute from now
+    const autoScheduleIntervalMs = this.getAutoScheduleIntervalMs(config);
+    const date = scheduledAt || new Date(Date.now() + (autoScheduleIntervalMs > 0 ? autoScheduleIntervalMs : DEFAULT_AUTO_SCHEDULE_INTERVAL_SECONDS * 1000));
 
     const [draw] = await this.kenoDrawModel.create([{
       configId: config._id,
@@ -606,7 +613,7 @@ export class KenoService {
           configId: config._id,
           configVersion: config.version,
           status: 'open',
-          scheduledAt: new Date(),
+          scheduledAt: new Date(Date.now() + this.getAutoScheduleIntervalMs(config)),
           drawnNumbers: [],
           settlementSummary: {}
         }
@@ -621,6 +628,38 @@ export class KenoService {
   private async getNextConfigVersion(): Promise<number> {
     const latest = await this.kenoConfigModel.findOne().sort({ version: -1 }).exec();
     return latest ? latest.version + 1 : 1;
+  }
+
+  getAutoScheduleIntervalMs(config: Pick<KenoConfig, 'autoScheduleIntervalMinutes' | 'autoScheduleIntervalSeconds'>): number {
+    return this.getAutoScheduleIntervalSeconds(config) * 1000;
+  }
+
+  getAutoScheduleIntervalSeconds(
+    config: Pick<KenoConfig, 'autoScheduleIntervalMinutes' | 'autoScheduleIntervalSeconds'>
+  ): number {
+    const seconds = Number(config.autoScheduleIntervalSeconds);
+    if (Number.isInteger(seconds) && seconds >= 0) {
+      return seconds;
+    }
+
+    const minutes = Number(config.autoScheduleIntervalMinutes);
+    if (Number.isInteger(minutes) && minutes === 0) {
+      return 0;
+    }
+
+    return DEFAULT_AUTO_SCHEDULE_INTERVAL_SECONDS;
+  }
+
+  private normalizeAutoScheduleIntervalSeconds(dto: CreateKenoConfigDto): number {
+    if (dto.autoScheduleIntervalSeconds !== undefined) {
+      return dto.autoScheduleIntervalSeconds;
+    }
+
+    if (dto.autoScheduleIntervalMinutes !== undefined) {
+      return dto.autoScheduleIntervalMinutes * 60;
+    }
+
+    return DEFAULT_AUTO_SCHEDULE_INTERVAL_SECONDS;
   }
 
   private validateConfigDto(dto: CreateKenoConfigDto): void {

@@ -14,7 +14,7 @@ import {
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
-import type { BingoRoom, KenoConfig, KenoDraw, User, Withdrawal } from '../lib/models';
+import type { BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
 import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
@@ -435,6 +435,40 @@ function WithdrawalsAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Keno
 // ══════════════════════════════════════════════════════════════════
+type KenoConfigForm = {
+  ticketPriceMinor: number;
+  globalBotWinInterval: number;
+  autoScheduleIntervalSeconds: number;
+  maxWinnersPerDraw: number;
+  paytable: KenoPaytableEntry[];
+};
+
+const DEFAULT_KENO_CONFIG_FORM: KenoConfigForm = {
+  ticketPriceMinor: 100,
+  globalBotWinInterval: 0,
+  autoScheduleIntervalSeconds: 40,
+  maxWinnersPerDraw: 0,
+  paytable: [],
+};
+
+function getKenoIntervalSeconds(config: KenoConfig) {
+  if (config.autoScheduleIntervalSeconds !== undefined) {
+    return config.autoScheduleIntervalSeconds;
+  }
+  if (config.autoScheduleIntervalMinutes === 0) {
+    return 0;
+  }
+  return DEFAULT_KENO_CONFIG_FORM.autoScheduleIntervalSeconds;
+}
+
+function formatKenoInterval(config: KenoConfig) {
+  const seconds = getKenoIntervalSeconds(config);
+  if (seconds <= 0) return 'manual';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = seconds / 60;
+  return Number.isInteger(minutes) ? `${minutes}m` : `${seconds}s`;
+}
+
 function KenoAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [draws, setDraws] = useState<KenoDraw[]>([]);
@@ -442,14 +476,20 @@ function KenoAdmin() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showCfg, setShowCfg] = useState(false);
-  const [cfgForm, setCfgForm] = useState({ ticketPriceMinor: 100, globalBotWinInterval: 0, autoScheduleIntervalMinutes: 3, maxWinnersPerDraw: 0 });
+  const [cfgForm, setCfgForm] = useState<KenoConfigForm>(DEFAULT_KENO_CONFIG_FORM);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [d, c] = await Promise.all([adminKenoApi.listDraws(20), adminKenoApi.getConfig()]);
       setDraws(d); setConfig(c);
-      setCfgForm({ ticketPriceMinor: c.ticketPriceMinor, globalBotWinInterval: c.globalBotWinInterval || 0, autoScheduleIntervalMinutes: c.autoScheduleIntervalMinutes ?? 3, maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0 });
+      setCfgForm({
+        ticketPriceMinor: c.ticketPriceMinor,
+        globalBotWinInterval: c.globalBotWinInterval || 0,
+        autoScheduleIntervalSeconds: getKenoIntervalSeconds(c),
+        maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0,
+        paytable: (c.paytable ?? []).map((entry) => ({ ...entry })),
+      });
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
   }, [addToast]);
@@ -459,12 +499,55 @@ function KenoAdmin() {
   const updateConfig = async () => {
     if (!config) return;
     setBusy('cfg');
-    try { await adminKenoApi.createConfig({ ...config, ...cfgForm }); addToast('success', 'Config updated.'); setShowCfg(false); await load(); }
+    try {
+      await adminKenoApi.createConfig({
+        name: config.name,
+        numberMin: config.numberMin,
+        numberMax: config.numberMax,
+        drawSize: config.drawSize,
+        allowedSpots: config.allowedSpots,
+        ticketPriceMinor: cfgForm.ticketPriceMinor,
+        globalBotWinInterval: cfgForm.globalBotWinInterval,
+        autoScheduleIntervalSeconds: cfgForm.autoScheduleIntervalSeconds,
+        maxWinnersPerDraw: cfgForm.maxWinnersPerDraw,
+        paytable: cfgForm.paytable,
+      });
+      addToast('success', 'Config updated.');
+      setShowCfg(false);
+      await load();
+    }
     catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
 
-  const D_STATUS: Record<string, string> = { settled: 'badge-green', cancelled: 'badge-red', pending: 'badge-violet' };
+  const updatePaytableEntry = (index: number, key: keyof KenoPaytableEntry, value: number) => {
+    setCfgForm((form) => ({
+      ...form,
+      paytable: form.paytable.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, [key]: value } : entry
+      ),
+    }));
+  };
+
+  const addPaytableEntry = () => {
+    setCfgForm((form) => ({
+      ...form,
+      paytable: [...form.paytable, { spots: 4, matches: 2, payoutMultiplier: 1 }],
+    }));
+  };
+
+  const removePaytableEntry = (index: number) => {
+    setCfgForm((form) => ({
+      ...form,
+      paytable: form.paytable.filter((_, entryIndex) => entryIndex !== index),
+    }));
+  };
+
+  const paytableRows = cfgForm.paytable
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => a.entry.spots - b.entry.spots || a.entry.matches - b.entry.matches);
+
+  const D_STATUS: Record<string, string> = { open: 'badge-gold', locked: 'badge-violet', drawn: 'badge-violet', settled: 'badge-green', cancelled: 'badge-red' };
 
   return (
     <div className="stack-lg">
@@ -484,6 +567,7 @@ function KenoAdmin() {
           <span>v{config.version}</span>
           <span>{formatCredits(config.ticketPriceMinor)} credits/ticket</span>
           <span>{config.numberMin}–{config.numberMax}, draw {config.drawSize}</span>
+          <span>Draw interval: {formatKenoInterval(config)}</span>
           <span>Bot interval: {config.globalBotWinInterval || 'off'}</span>
         </div>
       )}
@@ -503,15 +587,47 @@ function KenoAdmin() {
                 onChange={(e) => setCfgForm((f) => ({ ...f, globalBotWinInterval: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Auto-schedule Interval (minutes, 0 = manual)</span>
-              <input className="input" type="number" min={0} max={60} value={cfgForm.autoScheduleIntervalMinutes}
-                onChange={(e) => setCfgForm((f) => ({ ...f, autoScheduleIntervalMinutes: Number(e.target.value) }))} />
+              <span>Auto-schedule Interval (seconds, 0 = manual)</span>
+              <input className="input" type="number" min={0} max={3600} value={cfgForm.autoScheduleIntervalSeconds}
+                onChange={(e) => setCfgForm((f) => ({ ...f, autoScheduleIntervalSeconds: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
               <span>Max Winners Per Draw (0 = unlimited)</span>
               <input className="input" type="number" min={0} value={cfgForm.maxWinnersPerDraw}
                 onChange={(e) => setCfgForm((f) => ({ ...f, maxWinnersPerDraw: Number(e.target.value) }))} />
             </label>
+          </div>
+          <div className="adm-paytable-editor">
+            <div className="adm-paytable-head">
+              <span>Payout Multipliers</span>
+              <button className="adm-btn adm-btn-secondary adm-btn-xs" type="button" onClick={addPaytableEntry}>
+                <Plus size={11} />Add Payout
+              </button>
+            </div>
+            <div className="adm-paytable-grid">
+              {paytableRows.map(({ entry, index }) => (
+                <div key={`${index}-${entry.spots}-${entry.matches}`} className="adm-paytable-entry">
+                  <label className="adm-field">
+                    <span>Spots</span>
+                    <input className="input" type="number" min={1} max={12} value={entry.spots}
+                      onChange={(e) => updatePaytableEntry(index, 'spots', Number(e.target.value))} />
+                  </label>
+                  <label className="adm-field">
+                    <span>Matches</span>
+                    <input className="input" type="number" min={0} max={12} value={entry.matches}
+                      onChange={(e) => updatePaytableEntry(index, 'matches', Number(e.target.value))} />
+                  </label>
+                  <label className="adm-field">
+                    <span>Multiplier</span>
+                    <input className="input" type="number" min={0} value={entry.payoutMultiplier}
+                      onChange={(e) => updatePaytableEntry(index, 'payoutMultiplier', Number(e.target.value))} />
+                  </label>
+                  <button className="adm-icon-btn" type="button" title="Remove payout" onClick={() => removePaytableEntry(index)}>
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'cfg'} onClick={updateConfig}>
@@ -529,7 +645,7 @@ function KenoAdmin() {
               <thead><tr><th>Draw ID</th><th>Scheduled</th><th>Status</th><th>Numbers</th><th></th></tr></thead>
               <tbody>
                 {draws.map((draw) => {
-                  const active = draw.status === 'pending';
+                  const active = draw.status === 'open';
                   return (
                     <tr key={draw.id} className="adm-tr">
                       <td><code className="adm-mono">{draw.id.slice(-8)}</code></td>

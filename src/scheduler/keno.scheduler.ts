@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
-import { Cron, CronExpression } from "@nestjs/schedule";
+import { Cron } from "@nestjs/schedule";
 import { BotsService } from "../bots/bots.service";
 import { KenoService } from "../keno/keno.service";
 import { GameEventsGateway } from "../events/game-events.gateway";
@@ -23,10 +23,11 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
     async onApplicationBootstrap(): Promise<void> {
         try {
             const config = await this.kenoService.getActiveConfig().catch(() => null);
-            if (!config || config.autoScheduleIntervalMinutes <= 0) return;
+            const autoScheduleIntervalMs = config ? this.kenoService.getAutoScheduleIntervalMs(config) : 0;
+            if (!config || autoScheduleIntervalMs <= 0) return;
             const activeDraw = await this.kenoService.getActiveDraw();
             if (!activeDraw) {
-                const scheduledAt = new Date(Date.now() + config.autoScheduleIntervalMinutes * 60_000);
+                const scheduledAt = new Date(Date.now() + autoScheduleIntervalMs);
                 await this.kenoService.scheduleDraw(scheduledAt);
                 this.logger.log(`Bootstrapped first Keno draw at ${scheduledAt.toISOString()}`);
             }
@@ -40,13 +41,16 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
     }
 
     /**
-     * Runs every minute. Uses a Redis distributed lock so that only ONE
+     * Runs every 5 seconds. Uses a Redis distributed lock so that only ONE
      * backend instance executes a draw even when running behind a load balancer.
      * The draw status transition to "locked" acts as a second DB-level guard.
      */
-    @Cron(CronExpression.EVERY_MINUTE)
+    @Cron('*/5 * * * * *')
     async executeScheduledDraws(): Promise<void> {
         if (this.shuttingDown) return;
+        const config = await this.kenoService.getActiveConfig().catch(() => null);
+        if (!config || this.kenoService.getAutoScheduleIntervalMs(config) <= 0) return;
+
         const lock = await this.lockService.acquireLock(
             DRAW_LOCK_KEY,
             DRAW_LOCK_TTL_MS,

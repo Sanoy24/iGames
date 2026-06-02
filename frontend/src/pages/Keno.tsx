@@ -51,6 +51,26 @@ function useCountdown(targetIso: string | null | undefined) {
 }
 
 const DEFAULT_ALLOWED_SPOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+const DEFAULT_KENO_INTERVAL_SECONDS = 40;
+const KENO_REVEAL_DELAY_MS = 150;
+
+function getKenoIntervalSeconds(config: KenoConfig) {
+  if (config.autoScheduleIntervalSeconds !== undefined) {
+    return config.autoScheduleIntervalSeconds;
+  }
+  if (config.autoScheduleIntervalMinutes === 0) {
+    return 0;
+  }
+  return DEFAULT_KENO_INTERVAL_SECONDS;
+}
+
+function formatKenoInterval(config: KenoConfig) {
+  const seconds = getKenoIntervalSeconds(config);
+  if (seconds <= 0) return 'Manual';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = seconds / 60;
+  return Number.isInteger(minutes) ? `${minutes}m` : `${seconds}s`;
+}
 
 type KenoDrawCompletedPayload = {
   drawId?: string;
@@ -164,7 +184,7 @@ export function Keno({ onBack }: KenoProps) {
           setTimeout(() => {
             if (userHasTicket) soundEngine.pop();
             setRevealedNumbers((prev) => [...prev, num]);
-          }, idx * 500);
+          }, idx * KENO_REVEAL_DELAY_MS);
         });
 
         void loadKeno().then(() => {});
@@ -180,7 +200,7 @@ export function Keno({ onBack }: KenoProps) {
     }
   }, [loadKeno, addToast]);
 
-  // Poll every 5 s while the draw is overdue (countdown expired but scheduler hasn't fired yet)
+  // Poll while the draw is overdue (countdown expired but scheduler hasn't fired yet)
   useEffect(() => {
     if (!countdownExpired || !activeDraw || activeDraw.status !== 'open') return;
     const id = setInterval(async () => {
@@ -190,7 +210,7 @@ export function Keno({ onBack }: KenoProps) {
           setActiveDraw(next);
         }
       } catch { /* ignore */ }
-    }, 5000);
+    }, 2000);
     return () => clearInterval(id);
   }, [countdownExpired, activeDraw]);
 
@@ -283,7 +303,7 @@ export function Keno({ onBack }: KenoProps) {
             </div>
             <div className="stat-card">
               <span className="stat-label">Interval</span>
-              <strong>{config.autoScheduleIntervalMinutes > 0 ? `${config.autoScheduleIntervalMinutes}m` : 'Manual'}</strong>
+              <strong>{formatKenoInterval(config)}</strong>
             </div>
           </div>
         ) : (

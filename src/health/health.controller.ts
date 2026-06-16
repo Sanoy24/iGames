@@ -3,7 +3,7 @@ import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
   HealthCheck,
   HealthCheckService,
-  MongooseHealthIndicator
+  TypeOrmHealthIndicator
 } from '@nestjs/terminus';
 
 @ApiTags('health')
@@ -11,7 +11,7 @@ import {
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,
-    private readonly mongooseIndicator: MongooseHealthIndicator
+    private readonly db: TypeOrmHealthIndicator
   ) {}
 
   @Get()
@@ -20,15 +20,15 @@ export class HealthController {
     schema: {
       example: {
         status: 'ok',
-        info: { mongodb: { status: 'up' } },
+        info: { database: { status: 'up' } },
         error: {},
-        details: { mongodb: { status: 'up' } }
+        details: { database: { status: 'up' } }
       }
     }
   })
   check() {
     return this.health.check([
-      () => this.mongooseIndicator.pingCheck('mongodb')
+      () => this.db.pingCheck('database')
     ]);
   }
 

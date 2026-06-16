@@ -4,15 +4,15 @@ import {
   Injectable,
   NotFoundException
 } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Connection, Model, Types } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, DataSource, EntityManager, In, LessThanOrEqual } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { CreateKenoConfigDto } from './dto/create-keno-config.dto';
 import { KenoRulesService } from './keno-rules.service';
-import { KenoConfig, KenoConfigDocument } from './schemas/keno-config.schema';
-import { KenoDraw, KenoDrawDocument } from './schemas/keno-draw.schema';
-import { KenoTicket, KenoTicketDocument } from './schemas/keno-ticket.schema';
+import { KenoConfig } from './entities/keno-config.entity';
+import { KenoDraw, KenoDrawStatus } from './entities/keno-draw.entity';
+import { KenoTicket, KenoTicketStatus, KenoSettlementStatus } from './entities/keno-ticket.entity';
 
 const DEFAULT_AUTO_SCHEDULE_INTERVAL_SECONDS = 40;
 
@@ -44,74 +44,54 @@ export type KenoDrawResponse = {
 @Injectable()
 export class KenoService {
   constructor(
-    @InjectConnection() private readonly connection: Connection,
-    @InjectModel(KenoConfig.name)
-    private readonly kenoConfigModel: Model<KenoConfig>,
-    @InjectModel(KenoDraw.name)
-    private readonly kenoDrawModel: Model<KenoDraw>,
-    @InjectModel(KenoTicket.name)
-    private readonly kenoTicketModel: Model<KenoTicket>,
+    private readonly dataSource: DataSource,
+    @InjectRepository(KenoConfig)
+    private readonly kenoConfigRepository: Repository<KenoConfig>,
+    @InjectRepository(KenoDraw)
+    private readonly kenoDrawRepository: Repository<KenoDraw>,
+    @InjectRepository(KenoTicket)
+    private readonly kenoTicketRepository: Repository<KenoTicket>,
     private readonly kenoRulesService: KenoRulesService,
     private readonly rngService: RngService,
     private readonly walletService: WalletService
   ) {}
 
-  async getActiveConfig(): Promise<KenoConfigDocument> {
-    const config = await this.kenoConfigModel.findOne({ status: 'active' }).exec();
+  async getActiveConfig(): Promise<KenoConfig> {
+    const config = await this.kenoConfigRepository.findOneBy({ status: 'active' });
     if (!config) {
       throw new NotFoundException('No active Keno config. Create one via POST /admin/keno/configs before tickets can be sold.');
     }
     return config;
   }
 
-  async createConfig(dto: CreateKenoConfigDto): Promise<KenoConfigDocument> {
+  async createConfig(dto: CreateKenoConfigDto): Promise<KenoConfig> {
     this.validateConfigDto(dto);
     const autoScheduleIntervalSeconds = this.normalizeAutoScheduleIntervalSeconds(dto);
     const nextVersion = await this.getNextConfigVersion();
-    const session = await this.connection.startSession();
 
-    try {
-      let config: KenoConfigDocument | undefined;
+    return this.dataSource.transaction(async (manager) => {
+      const configRepo = manager.getRepository(KenoConfig);
+      await configRepo.update({ status: 'active' }, { status: 'inactive' });
 
-      await session.withTransaction(async () => {
-        await this.kenoConfigModel.updateMany(
-          { status: 'active' },
-          { $set: { status: 'inactive' } },
-          { session }
-        );
-
-        const [created] = await this.kenoConfigModel.create(
-          [
-            {
-              name: dto.name,
-              version: nextVersion,
-              status: 'active',
-              numberMin: dto.numberMin ?? 1,
-              numberMax: dto.numberMax ?? 80,
-              drawSize: dto.drawSize ?? 20,
-              allowedSpots: dto.allowedSpots ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-              ticketPriceMinor: dto.ticketPriceMinor,
-              paytable: dto.paytable,
-              globalBotWinInterval: dto.globalBotWinInterval ?? 0,
-              autoScheduleIntervalMinutes: Math.floor(autoScheduleIntervalSeconds / 60),
-              autoScheduleIntervalSeconds,
-              maxWinnersPerDraw: dto.maxWinnersPerDraw ?? 0,
-              winChancePct: dto.winChancePct ?? 100
-            }
-          ],
-          { session }
-        );
-        config = created;
+      const config = configRepo.create({
+        name: dto.name,
+        version: nextVersion,
+        status: 'active',
+        numberMin: dto.numberMin ?? 1,
+        numberMax: dto.numberMax ?? 80,
+        drawSize: dto.drawSize ?? 20,
+        allowedSpots: dto.allowedSpots ?? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        ticketPriceMinor: dto.ticketPriceMinor,
+        paytable: dto.paytable,
+        globalBotWinInterval: dto.globalBotWinInterval ?? 0,
+        autoScheduleIntervalMinutes: Math.floor(autoScheduleIntervalSeconds / 60),
+        autoScheduleIntervalSeconds,
+        maxWinnersPerDraw: dto.maxWinnersPerDraw ?? 0,
+        winChancePct: dto.winChancePct ?? 100
       });
 
-      if (!config) {
-        throw new Error('Keno config transaction did not complete');
-      }
-
-      return config;
-    } finally {
-      await session.endSession();
-    }
+      return await configRepo.save(config);
+    });
   }
 
   async purchaseTicketForDraw(input: {
@@ -137,91 +117,68 @@ export class KenoService {
     overrideDrawId?: string;
     isForcedWin?: boolean;
   }): Promise<KenoTicketResponse> {
-    const userId = this.toObjectId(input.userId, 'userId');
-    const session = await this.connection.startSession();
+    return this.dataSource.transaction(async (manager) => {
+      const ticketRepo = manager.getRepository(KenoTicket);
+      const existingTicket = await ticketRepo.findOneBy({ userId: input.userId, idempotencyKey: input.idempotencyKey });
 
-    try {
-      let response: KenoTicketResponse | undefined;
-
-      await session.withTransaction(async () => {
-        const existingTicket = await this.kenoTicketModel
-          .findOne({ userId, idempotencyKey: input.idempotencyKey })
-          .session(session)
-          .exec();
-
-        if (existingTicket) {
-          response = this.toTicketResponse(existingTicket);
-          return;
-        }
-
-        const config = await this.getActiveConfigInSession(session);
-        this.kenoRulesService.validateSelectedNumbers(input.selectedNumbers, config);
-
-        const draw = input.overrideDrawId
-          ? await this.getOpenDrawById(input.overrideDrawId, session)
-          : await this.getOrCreateOpenDraw(config, session);
-        const [ticket] = await this.kenoTicketModel.create(
-          [
-            {
-              userId,
-              drawId: draw._id,
-              configId: config._id,
-              configVersion: config.version,
-              selectedNumbers: [...input.selectedNumbers].sort((left, right) => left - right),
-              stakeMinor: config.ticketPriceMinor,
-              matches: 0,
-              payoutMinor: 0,
-              status: 'pending',
-              settlementStatus: 'pending',
-              idempotencyKey: input.idempotencyKey,
-              isForcedWin: input.isForcedWin ?? false
-            }
-          ],
-          { session }
-        );
-
-        const walletDebit = await this.walletService.debitInSession(
-          {
-            userId: input.userId,
-            amountMinor: config.ticketPriceMinor,
-            entryType: 'stake',
-            sourceType: 'keno_ticket',
-            sourceId: ticket._id.toString(),
-            idempotencyKey: `keno-ticket:${input.idempotencyKey}`,
-            metadata: {
-              drawId: draw._id.toString(),
-              selectedNumbers: ticket.selectedNumbers,
-              configVersion: config.version
-            }
-          },
-          session
-        );
-
-        ticket.walletDebit = walletDebit;
-        await ticket.save({ session });
-        response = this.toTicketResponse(ticket);
-      });
-
-      if (!response) {
-        throw new Error('Keno ticket purchase transaction did not complete');
+      if (existingTicket) {
+        return this.toTicketResponse(existingTicket);
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      const config = await this.getActiveConfigInSession(manager);
+      this.kenoRulesService.validateSelectedNumbers(input.selectedNumbers, config);
+
+      const draw = input.overrideDrawId
+        ? await this.getOpenDrawById(input.overrideDrawId, manager)
+        : await this.getOrCreateOpenDraw(config, manager);
+
+      const ticket = ticketRepo.create({
+        userId: input.userId,
+        drawId: draw.id,
+        configId: config.id,
+        configVersion: config.version,
+        selectedNumbers: [...input.selectedNumbers].sort((left, right) => left - right),
+        stakeMinor: config.ticketPriceMinor,
+        matches: 0,
+        payoutMinor: 0,
+        status: 'pending',
+        settlementStatus: 'pending',
+        idempotencyKey: input.idempotencyKey,
+        isForcedWin: input.isForcedWin ?? false
+      });
+      await ticketRepo.save(ticket);
+
+      const walletDebit = await this.walletService.debitInSession(
+        {
+          userId: input.userId,
+          amountMinor: config.ticketPriceMinor,
+          entryType: 'stake',
+          sourceType: 'keno_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `keno-ticket:${input.idempotencyKey}`,
+          metadata: {
+            drawId: draw.id,
+            selectedNumbers: ticket.selectedNumbers,
+            configVersion: config.version
+          }
+        },
+        manager
+      );
+
+      ticket.walletDebit = walletDebit;
+      const saved = await ticketRepo.save(ticket);
+      return this.toTicketResponse(saved);
+    });
   }
 
   async getTicketForUser(input: {
     ticketId: string;
     userId: string;
   }): Promise<KenoTicketResponse> {
-    const ticket = await this.kenoTicketModel
-      .findOne({
-        _id: this.toObjectId(input.ticketId, 'ticketId'),
-        userId: this.toObjectId(input.userId, 'userId')
-      })
-      .exec();
+    const ticket = await this.kenoTicketRepository.findOneBy({
+      id: input.ticketId,
+      userId: input.userId
+    });
 
     if (!ticket) {
       throw new NotFoundException('Keno ticket not found');
@@ -235,45 +192,42 @@ export class KenoService {
     limit: number;
   }): Promise<KenoTicketResponse[]> {
     const limit = Math.min(Math.max(input.limit || 50, 1), 100);
-    const tickets = await this.kenoTicketModel
-      .find({ userId: this.toObjectId(input.userId, 'userId') })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .exec();
+    const tickets = await this.kenoTicketRepository.find({
+      where: { userId: input.userId },
+      order: { createdAt: 'DESC' },
+      take: limit
+    });
 
     return tickets.map((ticket) => this.toTicketResponse(ticket));
   }
 
   async listDraws(input: { limit: number }): Promise<KenoDrawResponse[]> {
     const limit = Math.min(Math.max(input.limit || 50, 1), 100);
-    const draws = await this.kenoDrawModel
-      .find()
-      .sort({ scheduledAt: -1 })
-      .limit(limit)
-      .exec();
+    const draws = await this.kenoDrawRepository.find({
+      order: { scheduledAt: 'DESC' },
+      take: limit
+    });
 
     return draws.map((draw) => this.toDrawResponse(draw));
   }
 
   async findStuckDraws(thresholdMinutes = 10): Promise<string[]> {
     const thresholdDate = new Date(Date.now() - thresholdMinutes * 60000);
-    const draws = await this.kenoDrawModel
-      .find({
-        status: { $in: ['open', 'locked'] },
-        scheduledAt: { $lt: thresholdDate }
-      })
-      .exec();
-    return draws.map(d => d._id.toString());
+    const draws = await this.kenoDrawRepository.createQueryBuilder('draw')
+      .where('draw.status IN (:...statuses)', { statuses: ['open', 'locked'] })
+      .andWhere('draw.scheduledAt < :thresholdDate', { thresholdDate })
+      .getMany();
+    return draws.map(d => d.id);
   }
 
-  async listConfigs(): Promise<KenoConfigDocument[]> {
-    return this.kenoConfigModel.find().sort({ version: -1 }).exec();
+  async listConfigs(): Promise<KenoConfig[]> {
+    return this.kenoConfigRepository.find({
+      order: { version: 'DESC' }
+    });
   }
 
   async getDraw(drawId: string): Promise<KenoDrawResponse> {
-    const draw = await this.kenoDrawModel
-      .findById(this.toObjectId(drawId, 'drawId'))
-      .exec();
+    const draw = await this.kenoDrawRepository.findOneBy({ id: drawId });
     if (!draw) {
       throw new NotFoundException('Keno draw not found');
     }
@@ -281,190 +235,179 @@ export class KenoService {
   }
 
   async executeDraw(drawId: string): Promise<KenoDrawResponse> {
-    const objectDrawId = this.toObjectId(drawId, 'drawId');
-    const session = await this.connection.startSession();
+    return this.dataSource.transaction(async (manager) => {
+      const drawRepo = manager.getRepository(KenoDraw);
+      const configRepo = manager.getRepository(KenoConfig);
+      const ticketRepo = manager.getRepository(KenoTicket);
 
-    try {
-      let response: KenoDrawResponse | undefined;
+      const draw = await drawRepo.findOneBy({ id: drawId });
 
-      await session.withTransaction(async () => {
-        const draw = await this.kenoDrawModel
-          .findOne({ _id: objectDrawId })
-          .session(session)
-          .exec();
+      if (!draw) {
+        throw new NotFoundException('Keno draw not found');
+      }
+      if (draw.status === 'settled') {
+        return this.toDrawResponse(draw);
+      }
+      if (draw.status !== 'open') {
+        throw new ConflictException('Keno draw is not open');
+      }
 
-        if (!draw) {
-          throw new NotFoundException('Keno draw not found');
-        }
-        if (draw.status === 'settled') {
-          response = this.toDrawResponse(draw);
-          return;
-        }
-        if (draw.status !== 'open') {
-          throw new ConflictException('Keno draw is not open');
-        }
+      draw.status = 'locked';
+      await drawRepo.save(draw);
 
-        draw.status = 'locked';
-        await draw.save({ session });
+      const config = await configRepo.findOneBy({ version: draw.configVersion });
+      if (!config) {
+        throw new NotFoundException('Keno config not found for draw');
+      }
 
-        const config = await this.kenoConfigModel
-          .findOne({ version: draw.configVersion })
-          .session(session)
-          .exec();
-        if (!config) {
-          throw new NotFoundException('Keno config not found for draw');
-        }
+      const tickets = await ticketRepo.find({
+        where: { drawId: draw.id, settlementStatus: 'pending' }
+      });
 
-        const tickets = await this.kenoTicketModel
-          .find({ drawId: draw._id, settlementStatus: 'pending' })
-          .session(session)
-          .exec();
-
-        const forcedTickets = tickets.filter((t) => t.isForcedWin);
-          
-        const mustIncludeSet = new Set<number>();
-        for (const ft of forcedTickets) {
-          ft.selectedNumbers.forEach((n) => mustIncludeSet.add(n));
-        }
+      const forcedTickets = tickets.filter((t) => t.isForcedWin);
         
-        let mustInclude = Array.from(mustIncludeSet);
-        if (mustInclude.length > config.drawSize) {
-          mustInclude = mustInclude.slice(0, config.drawSize);
-        }
+      const mustIncludeSet = new Set<number>();
+      for (const ft of forcedTickets) {
+        ft.selectedNumbers.forEach((n) => mustIncludeSet.add(n));
+      }
+      
+      let mustInclude = Array.from(mustIncludeSet);
+      if (mustInclude.length > config.drawSize) {
+        mustInclude = mustInclude.slice(0, config.drawSize);
+      }
 
-        const userStreaks: Record<string, boolean> = {};
-        const uniqueUserIds = Array.from(new Set(tickets.map((t) => t.userId.toString())));
-        for (const uid of uniqueUserIds) {
-          userStreaks[uid] = await this.isContinuousWinner(new Types.ObjectId(uid), session);
-        }
+      const userStreaks: Record<string, boolean> = {};
+      const uniqueUserIds = Array.from(new Set(tickets.map((t) => t.userId)));
+      for (const uid of uniqueUserIds) {
+        userStreaks[uid] = await this.isContinuousWinner(uid, manager);
+      }
 
-        let rngResult;
-        let attempts = 0;
-        const maxAttempts = 15;
-        const winChancePct = config.winChancePct ?? 100;
+      let rngResult;
+      let attempts = 0;
+      const maxAttempts = 15;
+      const winChancePct = config.winChancePct ?? 100;
 
-        do {
-          rngResult = await this.rngService.drawUniqueNumbers({
-            min: config.numberMin,
-            max: config.numberMax,
-            count: config.drawSize,
-            mustInclude,
-            gameType: 'keno',
-            gameReference: draw._id.toString(),
-            metadata: {
-              configVersion: config.version,
-              forcedWinsCount: forcedTickets.length,
-              attempt: attempts + 1
-            },
-            session
+      do {
+        rngResult = await this.rngService.drawUniqueNumbers({
+          min: config.numberMin,
+          max: config.numberMax,
+          count: config.drawSize,
+          mustInclude,
+          gameType: 'keno',
+          gameReference: draw.id,
+          metadata: {
+            configVersion: config.version,
+            forcedWinsCount: forcedTickets.length,
+            attempt: attempts + 1
+          },
+          manager
+        });
+
+        let hasWins = false;
+        let hasCheaterWins = false;
+
+        for (const ticket of tickets) {
+          const matches = this.kenoRulesService.countMatches(
+            ticket.selectedNumbers,
+            rngResult.numbers
+          );
+          const payout = this.kenoRulesService.calculatePayoutMinor({
+            stakeMinor: ticket.stakeMinor,
+            spotCount: ticket.selectedNumbers.length,
+            matches,
+            config
           });
 
-          let hasWins = false;
-          let hasCheaterWins = false;
-
-          for (const ticket of tickets) {
-            const matches = this.kenoRulesService.countMatches(
-              ticket.selectedNumbers,
-              rngResult.numbers
-            );
-            const payout = this.kenoRulesService.calculatePayoutMinor({
-              stakeMinor: ticket.stakeMinor,
-              spotCount: ticket.selectedNumbers.length,
-              matches,
-              config
-            });
-
-            if (payout > 0) {
-              hasWins = true;
-              if (userStreaks[ticket.userId.toString()]) {
-                hasCheaterWins = true;
-              }
+          if (payout > 0) {
+            hasWins = true;
+            if (userStreaks[ticket.userId]) {
+              hasCheaterWins = true;
             }
           }
+        }
 
-          if (hasCheaterWins) {
+        if (hasCheaterWins) {
+          attempts++;
+          continue;
+        }
+
+        if (hasWins && winChancePct < 100) {
+          const roll = Math.random() * 100;
+          if (roll > winChancePct) {
             attempts++;
             continue;
           }
-
-          if (hasWins && winChancePct < 100) {
-            const roll = Math.random() * 100;
-            if (roll > winChancePct) {
-              attempts++;
-              continue;
-            }
-          }
-
-          break;
-        } while (attempts < maxAttempts);
-
-        draw.drawnNumbers = rngResult.numbers;
-        draw.rngAuditLogId = rngResult.auditLogId;
-        draw.executedAt = new Date();
-        draw.status = 'drawn';
-        await draw.save({ session });
-
-        await this.settleDrawTickets(draw, config, session);
-        draw.status = 'settled';
-        draw.settledAt = new Date();
-        await draw.save({ session });
-
-        const autoScheduleIntervalMs = this.getAutoScheduleIntervalMs(config);
-        if (autoScheduleIntervalMs > 0) {
-          const existingOpen = await this.kenoDrawModel.findOne({ status: 'open' }).session(session).exec();
-          if (!existingOpen) {
-            const nextDrawDate = new Date(Date.now() + autoScheduleIntervalMs);
-            await this.kenoDrawModel.create([{
-              configId: config._id,
-              configVersion: config.version,
-              status: 'open',
-              scheduledAt: nextDrawDate,
-              drawnNumbers: [],
-              settlementSummary: {}
-            }], { session });
-          }
         }
 
-        response = this.toDrawResponse(draw);
-      });
+        break;
+      } while (attempts < maxAttempts);
 
-      if (!response) {
-        throw new Error('Keno draw execution transaction did not complete');
+      draw.drawnNumbers = rngResult.numbers;
+      draw.rngAuditLogId = rngResult.auditLogId;
+      draw.executedAt = new Date();
+      draw.status = 'drawn';
+      await drawRepo.save(draw);
+
+      await this.settleDrawTickets(draw, config, manager);
+      draw.status = 'settled';
+      draw.settledAt = new Date();
+      await drawRepo.save(draw);
+
+      const autoScheduleIntervalMs = this.getAutoScheduleIntervalMs(config);
+      if (autoScheduleIntervalMs > 0) {
+        const existingOpen = await drawRepo.findOneBy({ status: 'open' });
+        if (!existingOpen) {
+          const nextDrawDate = new Date(Date.now() + autoScheduleIntervalMs);
+          const nextDraw = drawRepo.create({
+            configId: config.id,
+            configVersion: config.version,
+            status: 'open',
+            scheduledAt: nextDrawDate,
+            drawnNumbers: [],
+            settlementSummary: {}
+          });
+          await drawRepo.save(nextDraw);
+        }
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      return this.toDrawResponse(draw);
+    });
   }
 
   async findNextScheduledDraw(): Promise<KenoDrawResponse | null> {
-    const draw = await this.kenoDrawModel
-      .findOne({ status: 'open', scheduledAt: { $lte: new Date() } })
-      .sort({ scheduledAt: 1 })
-      .exec();
+    const draw = await this.kenoDrawRepository.findOne({
+      where: {
+        status: 'open',
+        scheduledAt: LessThanOrEqual(new Date())
+      },
+      order: {
+        scheduledAt: 'ASC'
+      }
+    });
+
     return draw ? this.toDrawResponse(draw) : null;
   }
 
   async getActiveDraw(): Promise<KenoDrawResponse | null> {
-    const draw = await this.kenoDrawModel
-      .findOne({ status: { $in: ['open', 'locked', 'drawn'] } })
-      .sort({ scheduledAt: 1 })
-      .exec();
-    return draw ? this.toDrawResponse(draw) : null;
+    const draw = await this.kenoDrawRepository.find({
+      where: { status: In(['open', 'locked', 'drawn']) },
+      order: { scheduledAt: 'ASC' },
+      take: 1
+    });
+    return draw.length > 0 ? this.toDrawResponse(draw[0]) : null;
   }
 
   async executeNextOpenDraw(): Promise<KenoDrawResponse> {
-    const draw = await this.kenoDrawModel
-      .findOne({ status: 'open' })
-      .sort({ scheduledAt: 1 })
-      .exec();
+    const draw = await this.kenoDrawRepository.findOne({
+      where: { status: 'open' },
+      order: { scheduledAt: 'ASC' }
+    });
 
     if (!draw) {
       throw new NotFoundException('No open Keno draw found');
     }
 
-    return this.executeDraw(draw._id.toString());
+    return this.executeDraw(draw.id);
   }
 
   async scheduleDraw(scheduledAt?: Date): Promise<KenoDrawResponse> {
@@ -472,100 +415,84 @@ export class KenoService {
     const autoScheduleIntervalMs = this.getAutoScheduleIntervalMs(config);
     const date = scheduledAt || new Date(Date.now() + (autoScheduleIntervalMs > 0 ? autoScheduleIntervalMs : DEFAULT_AUTO_SCHEDULE_INTERVAL_SECONDS * 1000));
 
-    const [draw] = await this.kenoDrawModel.create([{
-      configId: config._id,
+    const draw = this.kenoDrawRepository.create({
+      configId: config.id,
       configVersion: config.version,
       status: 'open',
       scheduledAt: date,
       drawnNumbers: [],
       settlementSummary: {}
-    }]);
+    });
+    const saved = await this.kenoDrawRepository.save(draw);
 
-    return this.toDrawResponse(draw);
+    return this.toDrawResponse(saved);
   }
 
   async cancelDraw(drawId: string): Promise<KenoDrawResponse> {
-    const objectDrawId = this.toObjectId(drawId, 'drawId');
-    const session = await this.connection.startSession();
+    return this.dataSource.transaction(async (manager) => {
+      const drawRepo = manager.getRepository(KenoDraw);
+      const ticketRepo = manager.getRepository(KenoTicket);
 
-    try {
-      let response: KenoDrawResponse | undefined;
-
-      await session.withTransaction(async () => {
-        const draw = await this.kenoDrawModel
-          .findById(objectDrawId)
-          .session(session)
-          .exec();
-        if (!draw) {
-          throw new NotFoundException('Keno draw not found');
-        }
-        if (draw.status === 'settled') {
-          throw new ConflictException('Settled Keno draws cannot be cancelled');
-        }
-        if (draw.status === 'cancelled') {
-          response = this.toDrawResponse(draw);
-          return;
-        }
-
-        const tickets = await this.kenoTicketModel
-          .find({ drawId: draw._id, settlementStatus: 'pending' })
-          .session(session)
-          .exec();
-
-        let totalRefundMinor = 0;
-        for (const ticket of tickets) {
-          totalRefundMinor += ticket.stakeMinor;
-          ticket.status = 'cancelled';
-          ticket.settlementStatus = 'settled';
-          ticket.payoutMinor = 0;
-          ticket.walletCredit = await this.walletService.creditInSession(
-            {
-              userId: ticket.userId.toString(),
-              amountMinor: ticket.stakeMinor,
-              entryType: 'refund',
-              sourceType: 'keno_ticket',
-              sourceId: ticket._id.toString(),
-              idempotencyKey: `keno-refund:${ticket._id.toString()}`,
-              metadata: {
-                drawId: draw._id.toString(),
-                reason: 'keno_draw_cancelled'
-              }
-            },
-            session
-          );
-          await ticket.save({ session });
-        }
-
-        draw.status = 'cancelled';
-        draw.settledAt = new Date();
-        draw.settlementSummary = {
-          ticketCount: tickets.length,
-          totalRefundMinor,
-          reason: 'keno_draw_cancelled'
-        };
-        await draw.save({ session });
-        response = this.toDrawResponse(draw);
-      });
-
-      if (!response) {
-        throw new Error('Keno draw cancellation transaction did not complete');
+      const draw = await drawRepo.findOneBy({ id: drawId });
+      if (!draw) {
+        throw new NotFoundException('Keno draw not found');
+      }
+      if (draw.status === 'settled') {
+        throw new ConflictException('Settled Keno draws cannot be cancelled');
+      }
+      if (draw.status === 'cancelled') {
+        return this.toDrawResponse(draw);
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      const tickets = await ticketRepo.find({
+        where: { drawId: draw.id, settlementStatus: 'pending' }
+      });
+
+      let totalRefundMinor = 0;
+      for (const ticket of tickets) {
+        totalRefundMinor += ticket.stakeMinor;
+        ticket.status = 'cancelled';
+        ticket.settlementStatus = 'settled';
+        ticket.payoutMinor = 0;
+        ticket.walletCredit = await this.walletService.creditInSession(
+          {
+            userId: ticket.userId,
+            amountMinor: ticket.stakeMinor,
+            entryType: 'refund',
+            sourceType: 'keno_ticket',
+            sourceId: ticket.id,
+            idempotencyKey: `keno-refund:${ticket.id}`,
+            metadata: {
+              drawId: draw.id,
+              reason: 'keno_draw_cancelled'
+            }
+          },
+          manager
+        );
+        await ticketRepo.save(ticket);
+      }
+
+      draw.status = 'cancelled';
+      draw.settledAt = new Date();
+      draw.settlementSummary = {
+        ticketCount: tickets.length,
+        totalRefundMinor,
+        reason: 'keno_draw_cancelled'
+      };
+      await drawRepo.save(draw);
+      return this.toDrawResponse(draw);
+    });
   }
 
   private async settleDrawTickets(
-    draw: KenoDrawDocument,
-    config: KenoConfigDocument,
-    session: ClientSession
+    draw: KenoDraw,
+    config: KenoConfig,
+    manager: EntityManager
   ): Promise<void> {
-    const tickets = await this.kenoTicketModel
-      .find({ drawId: draw._id, settlementStatus: 'pending' })
-      .session(session)
-      .exec();
+    const ticketRepo = manager.getRepository(KenoTicket);
+    const tickets = await ticketRepo.find({
+      where: { drawId: draw.id, settlementStatus: 'pending' }
+    });
 
     let totalStakeMinor = 0;
     let totalPayoutMinor = 0;
@@ -594,24 +521,24 @@ export class KenoService {
         totalPayoutMinor += ticket.payoutMinor;
         ticket.walletCredit = await this.walletService.creditInSession(
           {
-            userId: ticket.userId.toString(),
+            userId: ticket.userId,
             amountMinor: ticket.payoutMinor,
             entryType: 'win',
             sourceType: 'keno_ticket',
-            sourceId: ticket._id.toString(),
-            idempotencyKey: `keno-settlement:${ticket._id.toString()}`,
+            sourceId: ticket.id,
+            idempotencyKey: `keno-settlement:${ticket.id}`,
             metadata: {
-              drawId: draw._id.toString(),
+              drawId: draw.id,
               matches: ticket.matches,
               drawnNumbers: draw.drawnNumbers,
               selectedNumbers: ticket.selectedNumbers
             }
           },
-          session
+          manager
         );
       }
 
-      await ticket.save({ session });
+      await ticketRepo.save(ticket);
     }
 
     draw.settlementSummary = {
@@ -624,12 +551,9 @@ export class KenoService {
 
   private async getOpenDrawById(
     drawId: string,
-    session: ClientSession
-  ): Promise<KenoDrawDocument> {
-    const draw = await this.kenoDrawModel
-      .findOne({ _id: this.toObjectId(drawId, 'drawId'), status: 'open' })
-      .session(session)
-      .exec();
+    manager: EntityManager
+  ): Promise<KenoDraw> {
+    const draw = await manager.getRepository(KenoDraw).findOneBy({ id: drawId, status: 'open' });
     if (!draw) {
       throw new NotFoundException('Open Keno draw not found');
     }
@@ -637,12 +561,9 @@ export class KenoService {
   }
 
   private async getActiveConfigInSession(
-    session: ClientSession
-  ): Promise<KenoConfigDocument> {
-    const config = await this.kenoConfigModel
-      .findOne({ status: 'active' })
-      .session(session)
-      .exec();
+    manager: EntityManager
+  ): Promise<KenoConfig> {
+    const config = await manager.getRepository(KenoConfig).findOneBy({ status: 'active' });
     if (!config) {
       throw new NotFoundException('No active Keno config. Create one via POST /admin/keno/configs before tickets can be sold.');
     }
@@ -650,38 +571,33 @@ export class KenoService {
   }
 
   private async getOrCreateOpenDraw(
-    config: KenoConfigDocument,
-    session: ClientSession
-  ): Promise<KenoDrawDocument> {
-    const existingDraw = await this.kenoDrawModel
-      .findOne({ status: 'open', configVersion: config.version })
-      .session(session)
-      .exec();
+    config: KenoConfig,
+    manager: EntityManager
+  ): Promise<KenoDraw> {
+    const drawRepo = manager.getRepository(KenoDraw);
+    const existingDraw = await drawRepo.findOneBy({ status: 'open', configVersion: config.version });
 
     if (existingDraw) {
       return existingDraw;
     }
 
-    const [draw] = await this.kenoDrawModel.create(
-      [
-        {
-          configId: config._id,
-          configVersion: config.version,
-          status: 'open',
-          scheduledAt: new Date(Date.now() + this.getAutoScheduleIntervalMs(config)),
-          drawnNumbers: [],
-          settlementSummary: {}
-        }
-      ],
-      { session }
-    );
+    const draw = drawRepo.create({
+      configId: config.id,
+      configVersion: config.version,
+      status: 'open',
+      scheduledAt: new Date(Date.now() + this.getAutoScheduleIntervalMs(config)),
+      drawnNumbers: [],
+      settlementSummary: {}
+    });
 
-    return draw;
+    return await drawRepo.save(draw);
   }
 
-
   private async getNextConfigVersion(): Promise<number> {
-    const latest = await this.kenoConfigModel.findOne().sort({ version: -1 }).exec();
+    const latest = await this.kenoConfigRepository.findOne({
+      where: {},
+      order: { version: 'DESC' }
+    });
     return latest ? latest.version + 1 : 1;
   }
 
@@ -751,11 +667,11 @@ export class KenoService {
     }
   }
 
-  private toTicketResponse(ticket: KenoTicketDocument): KenoTicketResponse {
+  private toTicketResponse(ticket: KenoTicket): KenoTicketResponse {
     return {
-      id: ticket._id.toString(),
-      userId: ticket.userId.toString(),
-      drawId: ticket.drawId.toString(),
+      id: ticket.id,
+      userId: ticket.userId,
+      drawId: ticket.drawId,
       selectedNumbers: ticket.selectedNumbers,
       stakeMinor: ticket.stakeMinor,
       matches: ticket.matches,
@@ -763,30 +679,30 @@ export class KenoService {
       status: ticket.status,
       settlementStatus: ticket.settlementStatus,
       configVersion: ticket.configVersion,
-      walletDebit: ticket.walletDebit,
-      walletCredit: ticket.walletCredit
+      walletDebit: ticket.walletDebit || {},
+      walletCredit: ticket.walletCredit || {}
     };
   }
 
-  private toDrawResponse(draw: KenoDrawDocument): KenoDrawResponse {
+  private toDrawResponse(draw: KenoDraw): KenoDrawResponse {
     return {
-      id: draw._id.toString(),
+      id: draw.id,
       configVersion: draw.configVersion,
       status: draw.status,
       scheduledAt: draw.scheduledAt,
       drawnNumbers: draw.drawnNumbers,
       rngAuditLogId: draw.rngAuditLogId,
-      settlementSummary: draw.settlementSummary
+      settlementSummary: draw.settlementSummary || {}
     };
   }
 
-  async isContinuousWinner(userId: Types.ObjectId, session?: ClientSession): Promise<boolean> {
-    const recentTickets = await this.kenoTicketModel
-      .find({ userId, status: { $in: ['won', 'lost'] } })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .session(session || null)
-      .exec();
+  async isContinuousWinner(userId: string, manager?: EntityManager): Promise<boolean> {
+    const repo = manager ? manager.getRepository(KenoTicket) : this.kenoTicketRepository;
+    const recentTickets = await repo.find({
+      where: { userId, status: In(['won', 'lost']) },
+      order: { createdAt: 'DESC' },
+      take: 5
+    });
 
     if (recentTickets.length < 3) {
       return false;
@@ -798,12 +714,5 @@ export class KenoService {
     if (recentTickets.length === 5 && wins >= 4) return true;
 
     return false;
-  }
-
-  private toObjectId(value: string, name: string): Types.ObjectId {
-    if (!Types.ObjectId.isValid(value)) {
-      throw new BadRequestException(`${name} must be a valid ObjectId`);
-    }
-    return new Types.ObjectId(value);
   }
 }

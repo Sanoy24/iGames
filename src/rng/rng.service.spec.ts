@@ -1,23 +1,24 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { RngService, RNG_ALGORITHM_VERSION } from './rng.service';
-import { RngAuditLog } from './schemas/rng-audit-log.schema';
+import { RngAuditLog } from './entities/rng-audit-log.entity';
 
-const mockAuditLogModel = () => ({
-  create: jest.fn().mockResolvedValue([{ _id: 'audit-id-123' }])
+const mockRepository = () => ({
+  create: jest.fn().mockImplementation((dto) => dto),
+  save: jest.fn().mockImplementation((entity) => Promise.resolve({ id: 'audit-id-123', ...entity }))
 });
 
 describe('RngService', () => {
   let service: RngService;
-  let auditLogModel: ReturnType<typeof mockAuditLogModel>;
+  let auditLogRepository: any;
 
   beforeEach(async () => {
-    auditLogModel = mockAuditLogModel();
+    auditLogRepository = mockRepository();
     const module = await Test.createTestingModule({
       providers: [
         RngService,
-        { provide: getModelToken(RngAuditLog.name), useValue: auditLogModel }
+        { provide: getRepositoryToken(RngAuditLog), useValue: auditLogRepository }
       ]
     }).compile();
     service = module.get(RngService);
@@ -62,13 +63,14 @@ describe('RngService', () => {
         gameType: 'keno',
         gameReference: 'draw-001'
       });
-      expect(auditLogModel.create).toHaveBeenCalledTimes(1);
+      expect(auditLogRepository.create).toHaveBeenCalledTimes(1);
+      expect(auditLogRepository.save).toHaveBeenCalledTimes(1);
       expect(result.auditLogId).toBe('audit-id-123');
     });
 
     it('does NOT create an audit log when gameType is omitted', async () => {
       const result = await service.drawUniqueNumbers({ min: 1, max: 80, count: 20 });
-      expect(auditLogModel.create).not.toHaveBeenCalled();
+      expect(auditLogRepository.create).not.toHaveBeenCalled();
       expect(result.auditLogId).toBeUndefined();
     });
 

@@ -1,12 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes, randomInt } from 'crypto';
-import { ClientSession, Model } from 'mongoose';
-import {
-  RngAuditLog,
-  RngAuditLogDocument,
-  RngGameType
-} from './schemas/rng-audit-log.schema';
+import { Repository, EntityManager } from 'typeorm';
+import { RngAuditLog, RngGameType } from './entities/rng-audit-log.entity';
 
 export const RNG_ALGORITHM_VERSION = 'crypto-random-int-without-replacement-v1';
 
@@ -18,7 +14,7 @@ export type DrawUniqueNumbersInput = {
   gameReference?: string;
   metadata?: Record<string, unknown>;
   mustInclude?: number[];
-  session?: ClientSession;
+  manager?: EntityManager;
 };
 
 export type DrawUniqueNumbersResult = {
@@ -32,8 +28,8 @@ export type DrawUniqueNumbersResult = {
 @Injectable()
 export class RngService {
   constructor(
-    @InjectModel(RngAuditLog.name)
-    private readonly rngAuditLogModel: Model<RngAuditLog>
+    @InjectRepository(RngAuditLog)
+    private readonly rngAuditLogRepository: Repository<RngAuditLog>
   ) {}
 
   async drawUniqueNumbers(
@@ -74,9 +70,9 @@ export class RngService {
         inputHash,
         randomnessMaterialHash,
         metadata: input.metadata ?? {},
-        session: input.session
+        manager: input.manager
       });
-      result.auditLogId = auditLog._id.toString();
+      result.auditLogId = auditLog.id;
     }
 
     return result;
@@ -92,27 +88,23 @@ export class RngService {
     inputHash: string;
     randomnessMaterialHash: string;
     metadata: Record<string, unknown>;
-    session?: ClientSession;
-  }): Promise<RngAuditLogDocument> {
-    const [auditLog] = await this.rngAuditLogModel.create(
-      [
-        {
-          gameType: input.gameType,
-          gameReference: input.gameReference,
-          algorithmVersion: RNG_ALGORITHM_VERSION,
-          inputHash: input.inputHash,
-          randomnessMaterialHash: input.randomnessMaterialHash,
-          outputNumbers: input.numbers,
-          min: input.min,
-          max: input.max,
-          count: input.count,
-          metadata: input.metadata
-        }
-      ],
-      { session: input.session }
-    );
+    manager?: EntityManager;
+  }): Promise<RngAuditLog> {
+    const repo = input.manager ? input.manager.getRepository(RngAuditLog) : this.rngAuditLogRepository;
+    const auditLog = repo.create({
+      gameType: input.gameType,
+      gameReference: input.gameReference,
+      algorithmVersion: RNG_ALGORITHM_VERSION,
+      inputHash: input.inputHash,
+      randomnessMaterialHash: input.randomnessMaterialHash,
+      outputNumbers: input.numbers,
+      min: input.min,
+      max: input.max,
+      count: input.count,
+      metadata: input.metadata
+    });
 
-    return auditLog;
+    return await repo.save(auditLog);
   }
 
   private drawWithoutReplacement(min: number, max: number, count: number, mustInclude?: number[], seedMaterial?: Buffer): number[] {

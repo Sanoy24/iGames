@@ -4,14 +4,14 @@ import {
   Injectable,
   NotFoundException
 } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Connection, Model, Types } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, EntityManager, DataSource, In, LessThan, LessThanOrEqual, Not } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BingoRulesService } from './bingo-rules.service';
 import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
-import { BingoPrizeTier, BingoRoom, BingoRoomDocument } from './schemas/bingo-room.schema';
-import { BingoTicket, BingoTicketDocument } from './schemas/bingo-ticket.schema';
+import { BingoRoom, BingoPrizeTier } from './entities/bingo-room.entity';
+import { BingoTicket } from './entities/bingo-ticket.entity';
 
 export type BingoRoomResponse = {
   id: string;
@@ -45,78 +45,94 @@ export type BingoTicketResponse = {
 @Injectable()
 export class BingoService {
   constructor(
-    @InjectConnection() private readonly connection: Connection,
-    @InjectModel(BingoRoom.name)
-    private readonly bingoRoomModel: Model<BingoRoom>,
-    @InjectModel(BingoTicket.name)
-    private readonly bingoTicketModel: Model<BingoTicket>,
+    private readonly dataSource: DataSource,
+    @InjectRepository(BingoRoom)
+    private readonly bingoRoomRepository: Repository<BingoRoom>,
+    @InjectRepository(BingoTicket)
+    private readonly bingoTicketRepository: Repository<BingoTicket>,
     private readonly bingoRulesService: BingoRulesService,
     private readonly rngService: RngService,
     private readonly walletService: WalletService
   ) {}
 
   async listRunningRooms(): Promise<BingoRoomResponse[]> {
-    const rooms = await this.bingoRoomModel.find({ status: 'running' }).exec();
-    const roomIds = rooms.map((r) => r._id);
-    const counts = await this.bingoTicketModel.aggregate<{ _id: Types.ObjectId; count: number }>([
-      { $match: { roomId: { $in: roomIds } } },
-      { $group: { _id: '$roomId', count: { $sum: 1 } } }
-    ]);
-    const countMap = new Map(counts.map((c) => [c._id.toString(), c.count]));
-    return rooms.map((room) => this.toRoomResponse(room, countMap.get(room._id.toString()) ?? 0));
+    const rooms = await this.bingoRoomRepository.findBy({ status: 'running' });
+    if (rooms.length === 0) return [];
+    
+    const roomIds = rooms.map((r) => r.id);
+    const counts = await this.bingoTicketRepository
+      .createQueryBuilder('ticket')
+      .select('ticket.roomId', 'roomId')
+      .addSelect('COUNT(ticket.id)', 'count')
+      .where('ticket.roomId IN (:...roomIds)', { roomIds })
+      .groupBy('ticket.roomId')
+      .getRawMany();
+
+    const countMap = new Map(counts.map((c) => [c.roomId, Number(c.count)]));
+    return rooms.map((room) => this.toRoomResponse(room, countMap.get(room.id) ?? 0));
   }
 
   async findRoomsToStart(): Promise<BingoRoomResponse[]> {
-    const rooms = await this.bingoRoomModel
-      .find({ status: 'open', scheduledStartAt: { $lte: new Date() } })
-      .exec();
-    const roomIds = rooms.map((r) => r._id);
-    const counts = await this.bingoTicketModel.aggregate<{ _id: Types.ObjectId; count: number }>([
-      { $match: { roomId: { $in: roomIds } } },
-      { $group: { _id: '$roomId', count: { $sum: 1 } } }
-    ]);
-    const countMap = new Map(counts.map((c) => [c._id.toString(), c.count]));
-    return rooms.map((room) => this.toRoomResponse(room, countMap.get(room._id.toString()) ?? 0));
+    const rooms = await this.bingoRoomRepository.find({
+      where: {
+        status: 'open',
+        scheduledStartAt: LessThanOrEqual(new Date())
+      }
+    });
+    if (rooms.length === 0) return [];
+
+    const roomIds = rooms.map((r) => r.id);
+    const counts = await this.bingoTicketRepository
+      .createQueryBuilder('ticket')
+      .select('ticket.roomId', 'roomId')
+      .addSelect('COUNT(ticket.id)', 'count')
+      .where('ticket.roomId IN (:...roomIds)', { roomIds })
+      .groupBy('ticket.roomId')
+      .getRawMany();
+
+    const countMap = new Map(counts.map((c) => [c.roomId, Number(c.count)]));
+    return rooms.map((room) => this.toRoomResponse(room, countMap.get(room.id) ?? 0));
   }
 
   async createRoom(dto: CreateBingoRoomDto): Promise<BingoRoomResponse> {
-    const [room] = await this.bingoRoomModel.create([
-      {
-        name: dto.name,
-        status: 'open',
-        ticketPriceMinor: dto.ticketPriceMinor,
-        maxTickets: dto.maxTickets,
-        prizes: dto.prizes,
-        scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : new Date(),
-        drawnNumbers: [],
-        rngAuditLogIds: [],
-        settledTiers: [],
-        winnersByTier: {},
-        settlementSummary: {}
-      }
-    ]);
+    const room = this.bingoRoomRepository.create({
+      name: dto.name,
+      status: 'open',
+      ticketPriceMinor: dto.ticketPriceMinor,
+      maxTickets: dto.maxTickets,
+      prizes: dto.prizes,
+      scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : new Date(),
+      drawnNumbers: [],
+      rngAuditLogIds: [],
+      settledTiers: [],
+      winnersByTier: {},
+      settlementSummary: {}
+    });
 
+    await this.bingoRoomRepository.save(room);
     return this.toRoomResponse(room, 0);
   }
 
   async listRooms(): Promise<BingoRoomResponse[]> {
-    const rooms = await this.bingoRoomModel
-      .find()
-      .sort({ scheduledStartAt: -1 })
-      .limit(100)
-      .exec();
-    const roomIds = rooms.map((room) => room._id);
-    const counts = await this.bingoTicketModel.aggregate<{
-      _id: Types.ObjectId;
-      count: number;
-    }>([
-      { $match: { roomId: { $in: roomIds } } },
-      { $group: { _id: '$roomId', count: { $sum: 1 } } }
-    ]);
-    const countsByRoomId = new Map(counts.map((count) => [count._id.toString(), count.count]));
+    const rooms = await this.bingoRoomRepository.find({
+      order: { scheduledStartAt: 'DESC' },
+      take: 100
+    });
+    if (rooms.length === 0) return [];
+
+    const roomIds = rooms.map((room) => room.id);
+    const counts = await this.bingoTicketRepository
+      .createQueryBuilder('ticket')
+      .select('ticket.roomId', 'roomId')
+      .addSelect('COUNT(ticket.id)', 'count')
+      .where('ticket.roomId IN (:...roomIds)', { roomIds })
+      .groupBy('ticket.roomId')
+      .getRawMany();
+
+    const countsByRoomId = new Map(counts.map((count) => [count.roomId, Number(count.count)]));
 
     return rooms.map((room) =>
-      this.toRoomResponse(room, countsByRoomId.get(room._id.toString()) ?? 0)
+      this.toRoomResponse(room, countsByRoomId.get(room.id) ?? 0)
     );
   }
 
@@ -124,44 +140,47 @@ export class BingoService {
     userId: string;
     limit: number;
   }): Promise<BingoTicketResponse[]> {
+    this.validateUuid(input.userId, 'userId');
     const limit = Math.min(Math.max(input.limit || 50, 1), 100);
-    const tickets = await this.bingoTicketModel
-      .find({ userId: this.toObjectId(input.userId, 'userId') })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .exec();
+    const tickets = await this.bingoTicketRepository.find({
+      where: { userId: input.userId },
+      order: { createdAt: 'DESC' },
+      take: limit
+    });
 
     return tickets.map((ticket) => this.toTicketResponse(ticket));
   }
 
   async findStuckRooms(thresholdMinutes = 10): Promise<string[]> {
     const thresholdDate = new Date(Date.now() - thresholdMinutes * 60000);
-    const rooms = await this.bingoRoomModel
-      .find({
-        status: { $in: ['open', 'running'] },
-        scheduledStartAt: { $lt: thresholdDate }
-      })
-      .exec();
-    return rooms.map(r => r._id.toString());
+    const rooms = await this.bingoRoomRepository.find({
+      where: {
+        status: In(['open', 'running']),
+        scheduledStartAt: LessThan(thresholdDate)
+      }
+    });
+    return rooms.map(r => r.id);
   }
 
   async getRoomState(input: {
     roomId: string;
     userId?: string;
   }): Promise<BingoRoomResponse & { tickets?: BingoTicketResponse[] }> {
+    this.validateUuid(input.roomId, 'roomId');
     const room = await this.findRoom(input.roomId);
-    const soldTickets = await this.bingoTicketModel.countDocuments({ roomId: room._id });
+    const soldTickets = await this.bingoTicketRepository.countBy({ roomId: room.id });
     const response: BingoRoomResponse & { tickets?: BingoTicketResponse[] } =
       this.toRoomResponse(room, soldTickets);
 
     if (input.userId) {
-      const tickets = await this.bingoTicketModel
-        .find({
-          roomId: room._id,
-          userId: this.toObjectId(input.userId, 'userId')
-        })
-        .sort({ createdAt: -1 })
-        .exec();
+      this.validateUuid(input.userId, 'userId');
+      const tickets = await this.bingoTicketRepository.find({
+        where: {
+          roomId: room.id,
+          userId: input.userId
+        },
+        order: { createdAt: 'DESC' }
+      });
       response.tickets = tickets.map((ticket) => this.toTicketResponse(ticket));
     }
 
@@ -178,247 +197,215 @@ export class BingoService {
       throw new BadRequestException('Bingo ticket count must be between 1 and 24');
     }
 
-    const userId = this.toObjectId(input.userId, 'userId');
-    const roomId = this.toObjectId(input.roomId, 'roomId');
-    const session = await this.connection.startSession();
+    const userId = this.validateUuid(input.userId, 'userId');
+    const roomId = this.validateUuid(input.roomId, 'roomId');
 
-    try {
-      let response: BingoTicketResponse[] | undefined;
-
-      await session.withTransaction(async () => {
-        const existingTickets = await this.bingoTicketModel
-          .find({ userId, roomId, purchaseIdempotencyKey: input.idempotencyKey })
-          .session(session)
-          .exec();
-        if (existingTickets.length > 0) {
-          response = existingTickets.map((ticket) => this.toTicketResponse(ticket));
-          return;
-        }
-
-        // Atomically claim ticket slots: only succeeds if room is open AND soldTickets + count <= maxTickets.
-        // This prevents the race where two concurrent transactions both pass a countDocuments check
-        // and both insert, exceeding maxTickets.
-        const room = await this.bingoRoomModel.findOneAndUpdate(
-          {
-            _id: roomId,
-            status: 'open',
-            $expr: { $lte: [{ $add: ['$soldTickets', input.count] }, '$maxTickets'] },
-          },
-          { $inc: { soldTickets: input.count } },
-          { session, new: true },
-        ).exec();
-        if (!room) {
-          const exists = await this.bingoRoomModel.exists({ _id: roomId }).session(session).exec();
-          throw exists
-            ? new ConflictException('Bingo room is full or not open for ticket sales')
-            : new NotFoundException('Bingo room not found');
-        }
-
-        const createdTickets: BingoTicketDocument[] = [];
-        for (let index = 0; index < input.count; index += 1) {
-          const [ticket] = await this.bingoTicketModel.create(
-            [
-              {
-                userId,
-                roomId,
-                grid: this.bingoRulesService.generateTicket(),
-                markedNumbers: [],
-                completedLines: [],
-                wonTiers: [],
-                stakeMinor: room.ticketPriceMinor,
-                payoutMinor: 0,
-                status: 'active',
-                settlementStatus: 'pending',
-                purchaseIdempotencyKey: input.idempotencyKey,
-                walletCredits: []
-              }
-            ],
-            { session }
-          );
-          const walletDebit = await this.walletService.debitInSession(
-            {
-              userId: input.userId,
-              amountMinor: room.ticketPriceMinor,
-              entryType: 'stake',
-              sourceType: 'bingo_ticket',
-              sourceId: ticket._id.toString(),
-              idempotencyKey: `bingo-ticket:${input.idempotencyKey}:${index}`,
-              metadata: {
-                roomId: room._id.toString(),
-                ticketIndex: index
-              }
-            },
-            session
-          );
-          ticket.walletDebit = walletDebit;
-          await ticket.save({ session });
-          createdTickets.push(ticket);
-        }
-
-        response = createdTickets.map((ticket) => this.toTicketResponse(ticket));
+    return await this.dataSource.transaction(async (manager) => {
+      const existingTickets = await manager.find(BingoTicket, {
+        where: { userId, roomId, purchaseIdempotencyKey: input.idempotencyKey }
       });
-
-      if (!response) {
-        throw new Error('Bingo ticket purchase transaction did not complete');
+      if (existingTickets.length > 0) {
+        return existingTickets.map((ticket) => this.toTicketResponse(ticket));
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      // Pessimistic write lock the room to check and modify sold tickets safely
+      const room = await manager.findOne(BingoRoom, {
+        where: { id: roomId },
+        lock: { mode: 'pessimistic_write' }
+      });
+
+      if (!room) {
+        throw new NotFoundException('Bingo room not found');
+      }
+
+      if (room.status !== 'open') {
+        throw new ConflictException('Bingo room is full or not open for ticket sales');
+      }
+
+      if (room.soldTickets + input.count > room.maxTickets) {
+        throw new ConflictException('Bingo room is full or not open for ticket sales');
+      }
+
+      room.soldTickets += input.count;
+      await manager.save(room);
+
+      const createdTickets: BingoTicket[] = [];
+      for (let index = 0; index < input.count; index += 1) {
+        const ticket = manager.create(BingoTicket, {
+          userId,
+          roomId,
+          grid: this.bingoRulesService.generateTicket(),
+          markedNumbers: [],
+          completedLines: [],
+          wonTiers: [],
+          stakeMinor: room.ticketPriceMinor,
+          payoutMinor: 0,
+          status: 'active',
+          settlementStatus: 'pending',
+          purchaseIdempotencyKey: input.idempotencyKey,
+          walletCredits: []
+        });
+
+        await manager.save(ticket);
+
+        const walletDebit = await this.walletService.debitInSession(
+          {
+            userId: input.userId,
+            amountMinor: room.ticketPriceMinor,
+            entryType: 'stake',
+            sourceType: 'bingo_ticket',
+            sourceId: ticket.id,
+            idempotencyKey: `bingo-ticket:${input.idempotencyKey}:${index}`,
+            metadata: {
+              roomId: room.id,
+              ticketIndex: index
+            }
+          },
+          manager
+        );
+
+        ticket.walletDebit = walletDebit;
+        await manager.save(ticket);
+        createdTickets.push(ticket);
+      }
+
+      return createdTickets.map((ticket) => this.toTicketResponse(ticket));
+    });
   }
 
   async drawNextNumber(roomId: string): Promise<BingoRoomResponse> {
-    const objectRoomId = this.toObjectId(roomId, 'roomId');
-    const session = await this.connection.startSession();
+    const validRoomId = this.validateUuid(roomId, 'roomId');
 
-    try {
-      let response: BingoRoomResponse | undefined;
-
-      await session.withTransaction(async () => {
-        const room = await this.bingoRoomModel.findById(objectRoomId).session(session).exec();
-        if (!room) {
-          throw new NotFoundException('Bingo room not found');
-        }
-        if (room.status === 'completed' || room.status === 'cancelled') {
-          response = this.toRoomResponse(
-            room,
-            await this.bingoTicketModel.countDocuments({ roomId: objectRoomId }).session(session)
-          );
-          return;
-        }
-        if (room.drawnNumbers.length >= 90) {
-          throw new ConflictException('All Bingo numbers have already been drawn');
-        }
-
-        room.status = 'running';
-        const remainingNumbers = Array.from({ length: 90 }, (_, index) => index + 1).filter(
-          (number) => !room.drawnNumbers.includes(number)
-        );
-        const rngResult = await this.rngService.drawUniqueNumbers({
-          min: 1,
-          max: remainingNumbers.length,
-          count: 1,
-          gameType: 'bingo',
-          gameReference: `${room._id.toString()}:${room.drawnNumbers.length + 1}`,
-          metadata: {
-            roomId: room._id.toString(),
-            remainingNumbers
-          },
-          session
-        });
-        const drawnNumber = remainingNumbers[rngResult.numbers[0] - 1];
-        room.drawnNumbers.push(drawnNumber);
-        if (rngResult.auditLogId) {
-          room.rngAuditLogIds.push(rngResult.auditLogId);
-        }
-
-        await this.evaluateAndSettleTiers(room, session);
-
-        if (room.settledTiers.includes('full_house')) {
-          room.status = 'completed';
-          await this.markRemainingTicketsLost(room, session);
-        }
-
-        await room.save({ session });
-        const soldTickets = await this.bingoTicketModel
-          .countDocuments({ roomId: objectRoomId })
-          .session(session);
-        response = this.toRoomResponse(room, soldTickets);
+    return await this.dataSource.transaction(async (manager) => {
+      const room = await manager.findOne(BingoRoom, {
+        where: { id: validRoomId },
+        lock: { mode: 'pessimistic_write' }
       });
 
-      if (!response) {
-        throw new Error('Bingo draw transaction did not complete');
+      if (!room) {
+        throw new NotFoundException('Bingo room not found');
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      if (room.status === 'completed' || room.status === 'cancelled') {
+        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        return this.toRoomResponse(room, soldTickets);
+      }
+
+      if (room.drawnNumbers.length >= 90) {
+        throw new ConflictException('All Bingo numbers have already been drawn');
+      }
+
+      room.status = 'running';
+      const remainingNumbers = Array.from({ length: 90 }, (_, index) => index + 1).filter(
+        (number) => !room.drawnNumbers.includes(number)
+      );
+
+      const rngResult = await this.rngService.drawUniqueNumbers({
+        min: 1,
+        max: remainingNumbers.length,
+        count: 1,
+        gameType: 'bingo',
+        gameReference: `${room.id}:${room.drawnNumbers.length + 1}`,
+        metadata: {
+          roomId: room.id,
+          remainingNumbers
+        },
+        manager
+      });
+
+      const drawnNumber = remainingNumbers[rngResult.numbers[0] - 1];
+      room.drawnNumbers.push(drawnNumber);
+      if (rngResult.auditLogId) {
+        room.rngAuditLogIds.push(rngResult.auditLogId);
+      }
+
+      await this.evaluateAndSettleTiers(room, manager);
+
+      if (room.settledTiers.includes('full_house')) {
+        room.status = 'completed';
+        await this.markRemainingTicketsLost(room, manager);
+      }
+
+      await manager.save(room);
+      const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+      return this.toRoomResponse(room, soldTickets);
+    });
   }
 
   async cancelRoom(roomId: string): Promise<BingoRoomResponse> {
-    const objectRoomId = this.toObjectId(roomId, 'roomId');
-    const session = await this.connection.startSession();
+    const validRoomId = this.validateUuid(roomId, 'roomId');
 
-    try {
-      let response: BingoRoomResponse | undefined;
-
-      await session.withTransaction(async () => {
-        const room = await this.bingoRoomModel.findById(objectRoomId).session(session).exec();
-        if (!room) {
-          throw new NotFoundException('Bingo room not found');
-        }
-        if (room.status === 'completed') {
-          throw new ConflictException('Completed Bingo rooms cannot be cancelled');
-        }
-        if (room.status === 'cancelled') {
-          response = this.toRoomResponse(
-            room,
-            await this.bingoTicketModel.countDocuments({ roomId: objectRoomId }).session(session)
-          );
-          return;
-        }
-
-        const tickets = await this.bingoTicketModel
-          .find({ roomId: room._id, settlementStatus: 'pending' })
-          .session(session)
-          .exec();
-        let totalRefundMinor = 0;
-        for (const ticket of tickets) {
-          totalRefundMinor += ticket.stakeMinor;
-          ticket.status = 'cancelled';
-          ticket.settlementStatus = 'settled';
-          ticket.walletCredits.push(
-            await this.walletService.creditInSession(
-              {
-                userId: ticket.userId.toString(),
-                amountMinor: ticket.stakeMinor,
-                entryType: 'refund',
-                sourceType: 'bingo_ticket',
-                sourceId: ticket._id.toString(),
-                idempotencyKey: `bingo-refund:${ticket._id.toString()}`,
-                metadata: {
-                  roomId: room._id.toString(),
-                  reason: 'bingo_room_cancelled'
-                }
-              },
-              session
-            )
-          );
-          await ticket.save({ session });
-        }
-
-        room.status = 'cancelled';
-        room.settlementSummary = {
-          ticketCount: tickets.length,
-          totalRefundMinor,
-          reason: 'bingo_room_cancelled'
-        };
-        await room.save({ session });
-        response = this.toRoomResponse(room, tickets.length);
+    return await this.dataSource.transaction(async (manager) => {
+      const room = await manager.findOne(BingoRoom, {
+        where: { id: validRoomId },
+        lock: { mode: 'pessimistic_write' }
       });
 
-      if (!response) {
-        throw new Error('Bingo cancellation transaction did not complete');
+      if (!room) {
+        throw new NotFoundException('Bingo room not found');
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      if (room.status === 'completed') {
+        throw new ConflictException('Completed Bingo rooms cannot be cancelled');
+      }
+
+      if (room.status === 'cancelled') {
+        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        return this.toRoomResponse(room, soldTickets);
+      }
+
+      const tickets = await manager.find(BingoTicket, {
+        where: { roomId: room.id, settlementStatus: 'pending' }
+      });
+
+      let totalRefundMinor = 0;
+      for (const ticket of tickets) {
+        totalRefundMinor += ticket.stakeMinor;
+        ticket.status = 'cancelled';
+        ticket.settlementStatus = 'settled';
+
+        const refundCredit = await this.walletService.creditInSession(
+          {
+            userId: ticket.userId,
+            amountMinor: ticket.stakeMinor,
+            entryType: 'refund',
+            sourceType: 'bingo_ticket',
+            sourceId: ticket.id,
+            idempotencyKey: `bingo-refund:${ticket.id}`,
+            metadata: {
+              roomId: room.id,
+              reason: 'bingo_room_cancelled'
+            }
+          },
+          manager
+        );
+
+        ticket.walletCredits.push(refundCredit);
+        await manager.save(ticket);
+      }
+
+      room.status = 'cancelled';
+      room.settlementSummary = {
+        ticketCount: tickets.length,
+        totalRefundMinor,
+        reason: 'bingo_room_cancelled'
+      };
+
+      await manager.save(room);
+      return this.toRoomResponse(room, tickets.length);
+    });
   }
 
   private async evaluateAndSettleTiers(
-    room: BingoRoomDocument,
-    session: ClientSession
+    room: BingoRoom,
+    manager: EntityManager
   ): Promise<void> {
-    const tickets = await this.bingoTicketModel
-      .find({ roomId: room._id, status: { $ne: 'cancelled' } })
-      .sort({ createdAt: 1 })
-      .session(session)
-      .exec();
-    const newlyQualifiedByTier = new Map<BingoPrizeTier, BingoTicketDocument[]>([
+    const tickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: Not('cancelled') },
+      order: { createdAt: 'ASC' }
+    });
+
+    const newlyQualifiedByTier = new Map<BingoPrizeTier, BingoTicket[]>([
       ['one_line', []],
       ['two_lines', []],
       ['full_house', []]
@@ -434,7 +421,7 @@ export class BingoService {
           newlyQualifiedByTier.get(tier)?.push(ticket);
         }
       }
-      await ticket.save({ session });
+      await manager.save(ticket);
     }
 
     for (const tier of ['one_line', 'two_lines', 'full_house'] as BingoPrizeTier[]) {
@@ -453,33 +440,32 @@ export class BingoService {
           ticket.settlementStatus = 'settled';
         }
         if (share > 0) {
-          ticket.walletCredits.push(
-            await this.walletService.creditInSession(
-              {
-                userId: ticket.userId.toString(),
-                amountMinor: share,
-                entryType: 'win',
-                sourceType: 'bingo_ticket',
-                sourceId: ticket._id.toString(),
-                idempotencyKey: `bingo-settlement:${tier}:${ticket._id.toString()}`,
-                metadata: {
-                  roomId: room._id.toString(),
-                  tier,
-                  drawnNumbers: room.drawnNumbers,
-                  completedLines: ticket.completedLines
-                }
-              },
-              session
-            )
+          const winCredit = await this.walletService.creditInSession(
+            {
+              userId: ticket.userId,
+              amountMinor: share,
+              entryType: 'win',
+              sourceType: 'bingo_ticket',
+              sourceId: ticket.id,
+              idempotencyKey: `bingo-settlement:${tier}:${ticket.id}`,
+              metadata: {
+                roomId: room.id,
+                tier,
+                drawnNumbers: room.drawnNumbers,
+                completedLines: ticket.completedLines
+              }
+            },
+            manager
           );
+          ticket.walletCredits.push(winCredit);
         }
-        await ticket.save({ session });
+        await manager.save(ticket);
       }
 
       room.settledTiers.push(tier);
       room.winnersByTier = {
         ...room.winnersByTier,
-        [tier]: winners.map((ticket) => ticket._id.toString())
+        [tier]: winners.map((ticket) => ticket.id)
       };
       room.settlementSummary = {
         ...room.settlementSummary,
@@ -493,17 +479,17 @@ export class BingoService {
   }
 
   private async markRemainingTicketsLost(
-    room: BingoRoomDocument,
-    session: ClientSession
+    room: BingoRoom,
+    manager: EntityManager
   ): Promise<void> {
-    await this.bingoTicketModel.updateMany(
-      { roomId: room._id, status: 'active' },
-      { $set: { status: 'lost', settlementStatus: 'settled' } },
-      { session }
+    await manager.update(
+      BingoTicket,
+      { roomId: room.id, status: 'active' },
+      { status: 'lost', settlementStatus: 'settled' }
     );
   }
 
-  private getPrizeMinor(room: BingoRoomDocument, tier: BingoPrizeTier): number {
+  private getPrizeMinor(room: BingoRoom, tier: BingoPrizeTier): number {
     if (tier === 'one_line') {
       return room.prizes.oneLineMinor;
     }
@@ -513,19 +499,17 @@ export class BingoService {
     return room.prizes.fullHouseMinor;
   }
 
-  private async findRoom(roomId: string): Promise<BingoRoomDocument> {
-    const room = await this.bingoRoomModel
-      .findById(this.toObjectId(roomId, 'roomId'))
-      .exec();
+  private async findRoom(roomId: string): Promise<BingoRoom> {
+    const room = await this.bingoRoomRepository.findOneBy({ id: roomId });
     if (!room) {
       throw new NotFoundException('Bingo room not found');
     }
     return room;
   }
 
-  private toRoomResponse(room: BingoRoomDocument, soldTickets: number): BingoRoomResponse {
+  private toRoomResponse(room: BingoRoom, soldTickets: number): BingoRoomResponse {
     return {
-      id: room._id.toString(),
+      id: room.id,
       name: room.name,
       status: room.status,
       ticketPriceMinor: room.ticketPriceMinor,
@@ -540,15 +524,15 @@ export class BingoService {
       drawnNumbers: room.drawnNumbers,
       settledTiers: room.settledTiers,
       winnersByTier: room.winnersByTier,
-      settlementSummary: room.settlementSummary
+      settlementSummary: room.settlementSummary || {}
     };
   }
 
-  private toTicketResponse(ticket: BingoTicketDocument): BingoTicketResponse {
+  private toTicketResponse(ticket: BingoTicket): BingoTicketResponse {
     return {
-      id: ticket._id.toString(),
-      userId: ticket.userId.toString(),
-      roomId: ticket.roomId.toString(),
+      id: ticket.id,
+      userId: ticket.userId,
+      roomId: ticket.roomId,
       grid: ticket.grid,
       markedNumbers: ticket.markedNumbers,
       completedLines: ticket.completedLines,
@@ -560,10 +544,11 @@ export class BingoService {
     };
   }
 
-  private toObjectId(value: string, name: string): Types.ObjectId {
-    if (!Types.ObjectId.isValid(value)) {
-      throw new BadRequestException(`${name} must be a valid ObjectId`);
+  private validateUuid(value: string, name: string): string {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(value)) {
+      throw new BadRequestException(`${name} must be a valid UUID`);
     }
-    return new Types.ObjectId(value);
+    return value;
   }
 }

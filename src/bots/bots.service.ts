@@ -4,14 +4,16 @@ import {
   Logger,
   NotFoundException
 } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomInt } from 'crypto';
-import { Connection, Model, Types } from 'mongoose';
+import { Repository, DataSource, EntityManager, In, MoreThan } from 'typeorm';
 import { KenoService } from '../keno/keno.service';
-import { User, UserDocument } from '../users/schemas/user.schema';
+import { User } from '../users/entities/user.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { CreateBotDto } from './dto/create-bot.dto';
 import { UpdateBotPolicyDto } from './dto/update-bot-policy.dto';
+import { KenoTicket } from '../keno/entities/keno-ticket.entity';
+import { KenoDraw } from '../keno/entities/keno-draw.entity';
 
 export type BotPolicy = {
   ticketsPerRound: number;
@@ -31,8 +33,9 @@ export class BotsService {
   private readonly logger = new Logger(BotsService.name);
 
   constructor(
-    @InjectConnection() private readonly connection: Connection,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
+    private readonly dataSource: DataSource,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly walletService: WalletService,
     private readonly kenoService: KenoService
   ) {}
@@ -45,59 +48,47 @@ export class BotsService {
       active: true
     };
 
-    const session = await this.connection.startSession();
-    try {
-      let created: UserDocument | undefined;
-
-      await session.withTransaction(async () => {
-        const [user] = await this.userModel.create(
-          [
-            {
-              displayName: dto.displayName,
-              roles: ['player'],
-              status: 'active',
-              productMetadata: { botPolicy: policy }
-            }
-          ],
-          { session }
-        );
-        created = user;
-
-        await this.walletService.ensureDefaultWallet(user._id, session);
-
-        const initialBalance = dto.initialBalanceMinor ?? 100000;
-        await this.walletService.creditInSession(
-          {
-            userId: user._id.toString(),
-            amountMinor: initialBalance,
-            entryType: 'bonus',
-            sourceType: 'bot_init',
-            sourceId: user._id.toString(),
-            idempotencyKey: `bot-init:${user._id.toString()}`,
-            metadata: { reason: 'bot_initial_balance' }
-          },
-          session
-        );
+    return await this.dataSource.transaction(async (manager) => {
+      const userRepo = manager.getRepository(User);
+      const user = userRepo.create({
+        displayName: dto.displayName,
+        roles: ['player'],
+        status: 'active',
+        productMetadata: { botPolicy: policy }
       });
+      await userRepo.save(user);
 
-      if (!created) throw new Error('Bot creation transaction did not complete');
-      return this.toBotResponse(created);
-    } finally {
-      await session.endSession();
-    }
+      await this.walletService.ensureDefaultWallet(user.id, manager);
+
+      const initialBalance = dto.initialBalanceMinor ?? 100000;
+      await this.walletService.creditInSession(
+        {
+          userId: user.id,
+          amountMinor: initialBalance,
+          entryType: 'bonus',
+          sourceType: 'bot_init',
+          sourceId: user.id,
+          idempotencyKey: `bot-init:${user.id}`,
+          metadata: { reason: 'bot_initial_balance' }
+        },
+        manager
+      );
+
+      return this.toBotResponse(user);
+    });
   }
 
   async listBots(): Promise<BotResponse[]> {
-    const bots = await this.userModel
-      .find({ 'productMetadata.botPolicy': { $exists: true } })
-      .sort({ createdAt: -1 })
-      .exec();
+    const bots = await this.userRepository.createQueryBuilder('user')
+      .where("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
+      .orderBy('user.createdAt', 'DESC')
+      .getMany();
     return bots.map((b) => this.toBotResponse(b));
   }
 
   async updatePolicy(botId: string, dto: UpdateBotPolicyDto): Promise<BotResponse> {
     const bot = await this.findBot(botId);
-    const current = bot.productMetadata.botPolicy as BotPolicy;
+    const current = bot.productMetadata!.botPolicy as BotPolicy;
 
     const updated: BotPolicy = {
       ...current,
@@ -106,9 +97,8 @@ export class BotsService {
       ...(dto.active !== undefined && { active: dto.active })
     };
 
-    bot.productMetadata = { ...bot.productMetadata, botPolicy: updated };
-    bot.markModified('productMetadata');
-    await bot.save();
+    bot.productMetadata = { ...bot.productMetadata!, botPolicy: updated };
+    await this.userRepository.save(bot);
 
     return this.toBotResponse(bot);
   }
@@ -118,12 +108,10 @@ export class BotsService {
    * Each active bot buys tickets for the given open draw.
    */
   async buyTicketsForDraw(drawId: string): Promise<void> {
-    const bots = await this.userModel
-      .find({
-        'productMetadata.botPolicy': { $exists: true },
-        'productMetadata.botPolicy.active': true
-      })
-      .exec();
+    const bots = await this.userRepository.createQueryBuilder('user')
+      .where("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
+      .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy.active') = true")
+      .getMany();
 
     if (bots.length === 0) return;
 
@@ -132,20 +120,20 @@ export class BotsService {
 
     let forcedBotId: string | null = null;
     if (interval > 0) {
-      const kenoTicketModel = this.connection.model('KenoTicket');
-      const kenoDrawModel = this.connection.model('KenoDraw');
-      const lastForcedTicket = await kenoTicketModel
-        .findOne({ isForcedWin: true })
-        .sort({ createdAt: -1 })
-        .exec();
+      const kenoTicketRepo = this.dataSource.getRepository(KenoTicket);
+      const kenoDrawRepo = this.dataSource.getRepository(KenoDraw);
+      const lastForcedTicket = await kenoTicketRepo.findOne({
+        where: { isForcedWin: true },
+        order: { createdAt: 'DESC' }
+      });
 
       let drawsSinceLast = 0;
       if (lastForcedTicket) {
-        const lastDraw = await kenoDrawModel.findById(lastForcedTicket.drawId).exec();
+        const lastDraw = await kenoDrawRepo.findOneBy({ id: lastForcedTicket.drawId });
         if (lastDraw) {
-          drawsSinceLast = await kenoDrawModel.countDocuments({
-            scheduledAt: { $gt: lastDraw.scheduledAt },
-            status: { $in: ['open', 'locked', 'drawn', 'settled'] }
+          drawsSinceLast = await kenoDrawRepo.countBy({
+            scheduledAt: MoreThan(lastDraw.scheduledAt),
+            status: In(['open', 'locked', 'drawn', 'settled'])
           });
         }
       } else {
@@ -154,26 +142,26 @@ export class BotsService {
 
       if (drawsSinceLast >= interval - 1) {
         const luckyIndex = randomInt(0, bots.length);
-        forcedBotId = bots[luckyIndex]._id.toString();
+        forcedBotId = bots[luckyIndex].id;
         this.logger.log(`Global interval reached (${interval}). Bot ${forcedBotId} chosen for forced win.`);
       }
     }
 
     for (const bot of bots) {
       try {
-        const isWinRound = bot._id.toString() === forcedBotId;
+        const isWinRound = bot.id === forcedBotId;
         await this.buyTicketsForSingleBot(bot, drawId, isWinRound);
       } catch (error) {
         this.logger.error(
-          `Bot ${bot._id} ticket purchase error`,
+          `Bot ${bot.id} ticket purchase error`,
           error instanceof Error ? error.stack : error
         );
       }
     }
   }
 
-  private async buyTicketsForSingleBot(bot: UserDocument, drawId: string, isForcedWin: boolean): Promise<void> {
-    const policy = bot.productMetadata.botPolicy as BotPolicy;
+  private async buyTicketsForSingleBot(bot: User, drawId: string, isForcedWin: boolean): Promise<void> {
+    const policy = bot.productMetadata!.botPolicy as BotPolicy;
     const config = await this.kenoService.getActiveConfig();
     const { numberMin, numberMax, allowedSpots } = config;
 
@@ -183,10 +171,10 @@ export class BotsService {
 
     for (let i = 0; i < policy.ticketsPerRound; i++) {
       const selectedNumbers = this.pickRandomNumbers(numberMin, numberMax, spotCount);
-      const idempotencyKey = `bot-ticket:${drawId}:${bot._id.toString()}:${i}`;
+      const idempotencyKey = `bot-ticket:${drawId}:${bot.id}:${i}`;
       try {
         await this.kenoService.purchaseTicketForDraw({
-          userId: bot._id.toString(),
+          userId: bot.id,
           drawId,
           selectedNumbers,
           idempotencyKey,
@@ -198,9 +186,8 @@ export class BotsService {
     }
 
     policy.drawParticipationCount += 1;
-    bot.productMetadata = { ...bot.productMetadata, botPolicy: policy };
-    bot.markModified('productMetadata');
-    await bot.save();
+    bot.productMetadata = { ...bot.productMetadata!, botPolicy: policy };
+    await this.userRepository.save(bot);
   }
 
   private pickRandomNumbers(min: number, max: number, count: number): number[] {
@@ -214,22 +201,29 @@ export class BotsService {
     return picked.sort((a, b) => a - b);
   }
 
-  private async findBot(botId: string): Promise<UserDocument> {
-    if (!Types.ObjectId.isValid(botId)) {
-      throw new BadRequestException('botId must be a valid ObjectId');
-    }
-    const bot = await this.userModel
-      .findOne({ _id: botId, 'productMetadata.botPolicy': { $exists: true } })
-      .exec();
+  private async findBot(botId: string): Promise<User> {
+    this.validateUuid(botId, 'botId');
+    const bot = await this.userRepository.createQueryBuilder('user')
+      .where('user.id = :botId', { botId })
+      .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
+      .getOne();
     if (!bot) throw new NotFoundException('Bot not found');
     return bot;
   }
 
-  private toBotResponse(user: UserDocument): BotResponse {
+  private toBotResponse(user: User): BotResponse {
     return {
-      id: user._id.toString(),
+      id: user.id,
       displayName: user.displayName,
-      botPolicy: user.productMetadata.botPolicy as BotPolicy
+      botPolicy: user.productMetadata!.botPolicy as BotPolicy
     };
+  }
+
+  private validateUuid(value: string, name: string): string {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(value)) {
+      throw new BadRequestException(`${name} must be a valid UUID`);
+    }
+    return value;
   }
 }

@@ -1,16 +1,17 @@
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
-import { InjectConnection } from '@nestjs/mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis from 'ioredis';
-import { Connection, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { KenoDrawResponse } from '../keno/keno.service';
 import { BingoRoomResponse } from '../bingo/bingo.service';
 import { WalletSummary } from '../wallet/wallet.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
+import { User } from '../users/entities/user.entity';
 
 export type KenoDrawStartedPayload = {
   drawId: string;
@@ -63,7 +64,8 @@ export class GameEventsGateway
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
-    @InjectConnection() private readonly connection: Connection,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
@@ -95,12 +97,10 @@ export class GameEventsGateway
         throw new Error('Token payload missing sub');
       }
 
-      const user = await this.connection
-        .collection('users')
-        .findOne(
-          { _id: new Types.ObjectId(payload.sub) },
-          { projection: { status: 1, roles: 1 } },
-        );
+      const user = await this.userRepository.findOne({
+        where: { id: payload.sub },
+        select: ['id', 'status', 'roles']
+      });
 
       if (!user || user.status !== 'active') {
         throw new Error('Account is not active');

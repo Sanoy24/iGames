@@ -1,9 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { KenoConfigDocument } from './schemas/keno-config.schema';
+import { KenoConfig } from './entities/keno-config.entity';
 
 @Injectable()
 export class KenoRulesService {
-  validateSelectedNumbers(selectedNumbers: number[], config: KenoConfigDocument): void {
+  validateSelectedNumbers(selectedNumbers: number[], config: KenoConfig): void {
     const spotCount = selectedNumbers.length;
     if (!config.allowedSpots.includes(spotCount)) {
       throw new BadRequestException('Selected spot count is not allowed');
@@ -31,7 +31,7 @@ export class KenoRulesService {
     stakeMinor: number;
     spotCount: number;
     matches: number;
-    config: KenoConfigDocument;
+    config: KenoConfig;
   }): number {
     const entry = input.config.paytable.find(
       (paytableEntry) =>

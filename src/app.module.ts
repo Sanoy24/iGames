@@ -1,7 +1,7 @@
 import { APP_GUARD } from "@nestjs/core";
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { MongooseModule } from "@nestjs/mongoose";
+import { TypeOrmModule } from "@nestjs/typeorm";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { AuthModule } from "./auth/auth.module";
@@ -31,10 +31,19 @@ const isDev = process.env.NODE_ENV !== "production";
             isGlobal: true,
             validate: validateEnv,
         }),
-        MongooseModule.forRootAsync({
+        TypeOrmModule.forRootAsync({
             inject: [ConfigService],
             useFactory: (configService: ConfigService) => ({
-                uri: configService.getOrThrow<string>("MONGODB_URI"),
+                type: 'mysql',
+                host: configService.getOrThrow<string>('DB_HOST'),
+                port: configService.getOrThrow<number>('DB_PORT'),
+                username: configService.getOrThrow<string>('DB_USERNAME'),
+                password: configService.get<string>('DB_PASSWORD', ''),
+                database: configService.getOrThrow<string>('DB_DATABASE'),
+                autoLoadEntities: true,
+                synchronize: true,
+                timezone: 'Z',
+                charset: 'utf8mb4_unicode_ci',
             }),
         }),
         ThrottlerModule.forRootAsync({

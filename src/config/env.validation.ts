@@ -3,7 +3,11 @@ type AuthMode = 'telegram_only' | 'standalone' | 'hybrid';
 type EnvConfig = {
   NODE_ENV: string;
   PORT: number;
-  MONGODB_URI: string;
+  DB_HOST: string;
+  DB_PORT: number;
+  DB_USERNAME: string;
+  DB_PASSWORD?: string;
+  DB_DATABASE: string;
   REDIS_URL: string;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
@@ -28,7 +32,11 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
   const config = {
     NODE_ENV: readString(raw, 'NODE_ENV', 'development'),
     PORT: readNumber(raw, 'PORT', 3000),
-    MONGODB_URI: readString(raw, 'MONGODB_URI'),
+    DB_HOST: readString(raw, 'DB_HOST', 'localhost'),
+    DB_PORT: readNumber(raw, 'DB_PORT', 3306),
+    DB_USERNAME: readString(raw, 'DB_USERNAME'),
+    DB_PASSWORD: readString(raw, 'DB_PASSWORD', ''),
+    DB_DATABASE: readString(raw, 'DB_DATABASE'),
     REDIS_URL: readString(raw, 'REDIS_URL', 'redis://localhost:6379'),
     JWT_ACCESS_SECRET: readString(raw, 'JWT_ACCESS_SECRET'),
     JWT_REFRESH_SECRET: readString(raw, 'JWT_REFRESH_SECRET'),

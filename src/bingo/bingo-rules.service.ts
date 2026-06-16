@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomInt } from 'crypto';
-import { BingoGrid } from './schemas/bingo-ticket.schema';
-import { BingoPrizeTier } from './schemas/bingo-room.schema';
+import { BingoGrid } from './entities/bingo-ticket.entity';
+import { BingoPrizeTier } from './entities/bingo-room.entity';
 
 export type BingoTicketState = {
   markedNumbers: number[];

@@ -1,12 +1,9 @@
 import { ConflictException, Injectable } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model, Types } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
-import {
-  TelebirrDeposit,
-  TelebirrDepositDocument
-} from './schemas/telebirr-deposit.schema';
+import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
 
 export type TelebirrDepositResponse = {
@@ -24,9 +21,9 @@ export type TelebirrDepositResponse = {
 @Injectable()
 export class PaymentsService {
   constructor(
-    @InjectConnection() private readonly connection: Connection,
-    @InjectModel(TelebirrDeposit.name)
-    private readonly telebirrDepositModel: Model<TelebirrDeposit>,
+    private readonly dataSource: DataSource,
+    @InjectRepository(TelebirrDeposit)
+    private readonly telebirrDepositRepository: Repository<TelebirrDeposit>,
     private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
     private readonly walletService: WalletService
   ) {}
@@ -44,95 +41,74 @@ export class PaymentsService {
       submittedReceipt,
       userId
     );
-    const objectUserId = new Types.ObjectId(userId);
-    const session = await this.connection.startSession();
 
-    try {
-      let response: TelebirrDepositResponse | undefined;
+    return await this.dataSource.transaction(async (manager) => {
+      const depositRepo = manager.getRepository(TelebirrDeposit);
+      const existingDeposit = await depositRepo.findOneBy({ receiptNo: verified.receiptNo });
 
-      await session.withTransaction(async () => {
-        const existingDeposit = await this.telebirrDepositModel
-          .findOne({ receiptNo: verified.receiptNo })
-          .session(session)
-          .exec();
-
-        if (existingDeposit) {
-          if (existingDeposit.status === 'rejected') {
-            throw new ConflictException('Telebirr receipt was already rejected');
-          }
-          if (existingDeposit.userId.toString() !== userId) {
-            throw new ConflictException('Telebirr receipt was already used');
-          }
-          response = this.toResponse(existingDeposit);
-          return;
+      if (existingDeposit) {
+        if (existingDeposit.status === 'rejected') {
+          throw new ConflictException('Telebirr receipt was already rejected');
         }
-
-        const [deposit] = await this.telebirrDepositModel.create(
-          [
-            {
-              userId: objectUserId,
-              agentId: verified.agentId ? new Types.ObjectId(verified.agentId) : undefined,
-              receiptNo: verified.receiptNo,
-              amountMinor: verified.amountMinor,
-              currencyCode: 'CREDIT',
-              status: 'credited',
-              payerName: verified.parsedReceipt.payer_name,
-              payerPhone: verified.parsedReceipt.payer_phone,
-              creditedPartyName: verified.parsedReceipt.credited_party_name,
-              creditedPartyAccount: verified.parsedReceipt.credited_party_acc_no,
-              transactionStatus: verified.parsedReceipt.transaction_status,
-              parsedReceipt: verified.parsedReceipt,
-              verification: verified.verification
-            }
-          ],
-          { session }
-        );
-
-        const walletCredit = await this.walletService.creditInSession(
-          {
-            userId,
-            amountMinor: verified.amountMinor,
-            entryType: 'deposit',
-            sourceType: 'telebirr_receipt',
-            sourceId: verified.receiptNo,
-            idempotencyKey: `telebirr:${verified.receiptNo}`,
-            metadata: {
-              receiptNo: verified.receiptNo,
-              payerName: verified.parsedReceipt.payer_name,
-              payerPhone: verified.parsedReceipt.payer_phone,
-              transactionStatus: verified.parsedReceipt.transaction_status
-            }
-          },
-          session
-        );
-
-        deposit.walletCredit = walletCredit;
-        await deposit.save({ session });
-
-        response = this.toResponse(deposit);
-      });
-
-      if (!response) {
-        throw new Error('Telebirr deposit transaction did not complete');
+        if (existingDeposit.userId !== userId) {
+          throw new ConflictException('Telebirr receipt was already used');
+        }
+        return this.toResponse(existingDeposit);
       }
 
-      return response;
-    } finally {
-      await session.endSession();
-    }
+      const deposit = depositRepo.create({
+        userId,
+        agentId: verified.agentId || undefined,
+        receiptNo: verified.receiptNo,
+        amountMinor: verified.amountMinor,
+        currencyCode: 'CREDIT',
+        status: 'credited',
+        payerName: verified.parsedReceipt.payer_name,
+        payerPhone: verified.parsedReceipt.payer_phone,
+        creditedPartyName: verified.parsedReceipt.credited_party_name,
+        creditedPartyAccount: verified.parsedReceipt.credited_party_acc_no,
+        transactionStatus: verified.parsedReceipt.transaction_status,
+        parsedReceipt: verified.parsedReceipt,
+        verification: verified.verification
+      });
+      await depositRepo.save(deposit);
+
+      const walletCredit = await this.walletService.creditInSession(
+        {
+          userId,
+          amountMinor: verified.amountMinor,
+          entryType: 'deposit',
+          sourceType: 'telebirr_receipt',
+          sourceId: verified.receiptNo,
+          idempotencyKey: `telebirr:${verified.receiptNo}`,
+          metadata: {
+            receiptNo: verified.receiptNo,
+            payerName: verified.parsedReceipt.payer_name,
+            payerPhone: verified.parsedReceipt.payer_phone,
+            transactionStatus: verified.parsedReceipt.transaction_status
+          }
+        },
+        manager
+      );
+
+      deposit.walletCredit = walletCredit;
+      await depositRepo.save(deposit);
+
+      return this.toResponse(deposit);
+    });
   }
 
-  private toResponse(deposit: TelebirrDepositDocument): TelebirrDepositResponse {
+  private toResponse(deposit: TelebirrDeposit): TelebirrDepositResponse {
     return {
-      id: deposit._id.toString(),
+      id: deposit.id,
       receiptNo: deposit.receiptNo,
       amountMinor: deposit.amountMinor,
       currencyCode: deposit.currencyCode,
       status: deposit.status,
-      agentId: deposit.agentId?.toString(),
-      walletCredit: deposit.walletCredit,
+      agentId: deposit.agentId,
+      walletCredit: deposit.walletCredit || {},
       parsedReceipt: deposit.parsedReceipt,
-      verification: deposit.verification
+      verification: deposit.verification || {}
     };
   }
 }

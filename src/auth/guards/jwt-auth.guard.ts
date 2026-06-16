@@ -5,11 +5,12 @@ import {
   UnauthorizedException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectConnection } from '@nestjs/mongoose';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
-import { Connection, Types } from 'mongoose';
+import { DataSource } from 'typeorm';
 import { Request } from 'express';
 import { AuthenticatedRequest } from '../types/authenticated-user';
+import { User } from '../../users/entities/user.entity';
 
 type AccessTokenPayload = {
   sub?: string;
@@ -22,7 +23,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
-    @InjectConnection() private readonly connection: Connection,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -42,12 +43,10 @@ export class JwtAuthGuard implements CanActivate {
         throw new UnauthorizedException('Access token payload is invalid');
       }
 
-      const user = await this.connection
-        .collection('users')
-        .findOne(
-          { _id: new Types.ObjectId(payload.sub) },
-          { projection: { status: 1 } }
-        );
+      const user = await this.dataSource.getRepository(User).findOne({
+        where: { id: payload.sub },
+        select: ['status']
+      });
 
       if (!user || user.status !== 'active') {
         throw new UnauthorizedException('Account is not active');

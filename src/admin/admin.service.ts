@@ -1,80 +1,92 @@
 import { Injectable } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model, Types } from 'mongoose';
-import { SystemConfig } from './schemas/system-config.schema';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
+import { randomUUID } from 'crypto';
+import { SystemConfig } from './entities/system-config.entity';
+import { PlatformStats } from './entities/platform-stats.entity';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { AgentsService } from '../agents/agents.service';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
+import { Wallet } from '../wallet/entities/wallet.entity';
+import { KenoTicket } from '../keno/entities/keno-ticket.entity';
+import { BingoTicket } from '../bingo/entities/bingo-ticket.entity';
+import { RngAuditLog } from '../rng/entities/rng-audit-log.entity';
 
 @Injectable()
 export class AdminService {
   constructor(
-    @InjectConnection() private readonly connection: Connection,
-    @InjectModel(SystemConfig.name) private readonly configModel: Model<SystemConfig>,
+    private readonly dataSource: DataSource,
+    @InjectRepository(SystemConfig)
+    private readonly systemConfigRepository: Repository<SystemConfig>,
+    @InjectRepository(PlatformStats)
+    private readonly platformStatsRepository: Repository<PlatformStats>,
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
     private readonly agentsService: AgentsService,
   ) {}
 
   async getSystemConfig(): Promise<SystemConfig> {
-    const config = await this.configModel.findOne({ key: 'global' }).exec();
+    let config = await this.systemConfigRepository.findOneBy({ key: 'global' });
     if (!config) {
-      return this.configModel.create({
+      config = this.systemConfigRepository.create({
         key: 'global',
         telebirrCreditMinorPerBirr: 100,
         welcomeBonusMinor: 0
       });
+      await this.systemConfigRepository.save(config);
     }
     return config;
   }
 
   async updateSystemConfig(update: UpdateSystemConfigDto): Promise<SystemConfig> {
-    const config = await this.configModel.findOneAndUpdate(
-      { key: 'global' },
-      { $set: update },
-      { new: true, upsert: true }
-    ).exec();
-    return config;
+    let config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    if (!config) {
+      config = this.systemConfigRepository.create({
+        key: 'global',
+        ...update
+      });
+    } else {
+      Object.assign(config, update);
+    }
+    return await this.systemConfigRepository.save(config);
   }
 
   async getPlatformStats() {
     // 1. Total active liabilities (money in wallets)
-    const walletStats = await this.connection.collection('wallets').aggregate([
-      {
-        $group: {
-          _id: null,
-          totalAvailable: { $sum: '$availableMinor' },
-          totalReserved: { $sum: '$reservedMinor' }
-        }
-      }
-    ]).toArray();
+    const walletStats = await this.dataSource.getRepository(Wallet)
+      .createQueryBuilder('wallet')
+      .select('SUM(wallet.availableMinor)', 'totalAvailable')
+      .addSelect('SUM(wallet.reservedMinor)', 'totalReserved')
+      .getRawOne();
 
     // 2. Keno Pending Tickets (liability)
-    const kenoLiability = await this.connection.collection('kenotickets').aggregate([
-      { $match: { settlementStatus: 'pending' } },
-      { $group: { _id: null, totalStake: { $sum: '$stakeMinor' } } }
-    ]).toArray();
+    const kenoLiability = await this.dataSource.getRepository(KenoTicket)
+      .createQueryBuilder('ticket')
+      .select('SUM(ticket.stakeMinor)', 'totalStake')
+      .where('ticket.settlementStatus = :status', { status: 'pending' })
+      .getRawOne();
 
     // 3. Bingo Pending Tickets (liability)
-    const bingoLiability = await this.connection.collection('bingotickets').aggregate([
-      { $match: { settlementStatus: 'pending' } },
-      { $group: { _id: null, totalStake: { $sum: '$stakeMinor' } } }
-    ]).toArray();
+    const bingoLiability = await this.dataSource.getRepository(BingoTicket)
+      .createQueryBuilder('ticket')
+      .select('SUM(ticket.stakeMinor)', 'totalStake')
+      .where('ticket.settlementStatus = :status', { status: 'pending' })
+      .getRawOne();
 
     // 4. Ledger Stats (Total Volume & GGR)
-    const platformStatsDoc = await this.connection.collection('platformstats').findOne({ key: 'global' });
-    const ticketPurchases = platformStatsDoc?.totalTicketVolumeMinor || 0;
-    const payouts = platformStatsDoc?.totalPayoutsMinor || 0;
-    const refunds = platformStatsDoc?.totalRefundsMinor || 0;
+    const platformStatsDoc = await this.platformStatsRepository.findOneBy({ key: 'global' });
+    const ticketPurchases = platformStatsDoc ? Number(platformStatsDoc.totalTicketVolumeMinor) : 0;
+    const payouts = platformStatsDoc ? Number(platformStatsDoc.totalPayoutsMinor) : 0;
+    const refunds = platformStatsDoc ? Number(platformStatsDoc.totalRefundsMinor) : 0;
 
     const totals = {
-      walletAvailable: walletStats[0]?.totalAvailable || 0,
-      walletReserved: walletStats[0]?.totalReserved || 0,
-      kenoPendingStakes: kenoLiability[0]?.totalStake || 0,
-      bingoPendingStakes: bingoLiability[0]?.totalStake || 0,
+      walletAvailable: walletStats?.totalAvailable ? Number(walletStats.totalAvailable) : 0,
+      walletReserved: walletStats?.totalReserved ? Number(walletStats.totalReserved) : 0,
+      kenoPendingStakes: kenoLiability?.totalStake ? Number(kenoLiability.totalStake) : 0,
+      bingoPendingStakes: bingoLiability?.totalStake ? Number(bingoLiability.totalStake) : 0,
       ticketPurchases,
       payouts,
       refunds,
@@ -94,31 +106,24 @@ export class AdminService {
   }
 
   async adjustUserWallet(userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) {
-    const session = await this.connection.startSession();
-    try {
-      let result;
-      await session.withTransaction(async () => {
-        const payload = {
-          userId,
-          amountMinor,
-          direction,
-          entryType: 'bonus' as const,
-          sourceType: 'admin_adjustment',
-          sourceId: new Types.ObjectId().toString(),
-          idempotencyKey: `admin-adj:${new Types.ObjectId().toString()}`,
-          metadata: { reason }
-        };
-        
-        if (direction === 'credit') {
-          result = await this.walletService.creditInSession(payload, session);
-        } else {
-          result = await this.walletService.debitInSession(payload, session);
-        }
-      });
-      return result;
-    } finally {
-      await session.endSession();
-    }
+    return this.dataSource.transaction(async (manager) => {
+      const payload = {
+        userId,
+        amountMinor,
+        direction,
+        entryType: 'bonus' as const,
+        sourceType: 'admin_adjustment',
+        sourceId: randomUUID(),
+        idempotencyKey: `admin-adj:${randomUUID()}`,
+        metadata: { reason }
+      };
+      
+      if (direction === 'credit') {
+        return await this.walletService.creditInSession(payload, manager);
+      } else {
+        return await this.walletService.debitInSession(payload, manager);
+      }
+    });
   }
 
   // ── Agent Shifts ──────────────────────────────────────────────────
@@ -159,21 +164,17 @@ export class AdminService {
     page: number;
     limit: number;
   }) {
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, any> = {};
     if (input.gameType) filter.gameType = input.gameType;
     if (input.gameReference) filter.gameReference = input.gameReference;
 
     const skip = (input.page - 1) * input.limit;
-    const [data, total] = await Promise.all([
-      this.connection
-        .collection('rngauditlogs')
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(input.limit)
-        .toArray(),
-      this.connection.collection('rngauditlogs').countDocuments(filter),
-    ]);
+    const [data, total] = await this.dataSource.getRepository(RngAuditLog).findAndCount({
+      where: filter,
+      order: { createdAt: 'DESC' },
+      skip,
+      take: input.limit
+    });
 
     return { data, total, page: input.page, limit: input.limit, totalPages: Math.ceil(total / input.limit) };
   }

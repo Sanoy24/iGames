@@ -1,15 +1,13 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { RngAuditLog, RngAuditLogSchema } from './schemas/rng-audit-log.schema';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { RngAuditLog } from './entities/rng-audit-log.entity';
 import { RngService } from './rng.service';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: RngAuditLog.name, schema: RngAuditLogSchema }
-    ])
+    TypeOrmModule.forFeature([RngAuditLog])
   ],
   providers: [RngService],
-  exports: [RngService, MongooseModule]
+  exports: [RngService, TypeOrmModule]
 })
 export class RngModule {}

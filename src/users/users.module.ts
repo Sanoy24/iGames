@@ -1,8 +1,8 @@
 import { forwardRef, Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { AuthIdentity, AuthIdentitySchema } from './schemas/auth-identity.schema';
-import { User, UserSchema } from './schemas/user.schema';
-import { RefreshSession, RefreshSessionSchema } from '../auth/schemas/refresh-session.schema';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from './entities/user.entity';
+import { AuthIdentity } from './entities/auth-identity.entity';
+import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { KenoModule } from '../keno/keno.module';
@@ -15,16 +15,12 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 @Module({
   imports: [
     JwtModule.register({}),
-    MongooseModule.forFeature([
-      { name: User.name, schema: UserSchema },
-      { name: AuthIdentity.name, schema: AuthIdentitySchema },
-      { name: RefreshSession.name, schema: RefreshSessionSchema }
-    ]),
+    TypeOrmModule.forFeature([User, AuthIdentity, RefreshSession]),
     forwardRef(() => KenoModule),
     forwardRef(() => BingoModule)
   ],
   controllers: [UsersController],
   providers: [UsersService, JwtAuthGuard, RolesGuard],
-  exports: [UsersService, MongooseModule]
+  exports: [UsersService, TypeOrmModule]
 })
 export class UsersModule {}

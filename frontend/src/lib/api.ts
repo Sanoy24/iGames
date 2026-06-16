@@ -25,6 +25,58 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Silent token refresh on 401 ─────────────────────────────────────
+let _refreshing: Promise<string | null> | null = null;
+
+function doRefresh(): Promise<string | null> {
+  if (_refreshing) return _refreshing;
+  _refreshing = (async () => {
+    try {
+      const rt = localStorage.getItem('refreshToken');
+      if (!rt) return null;
+      const res = await axios.post<{ accessToken: string; refreshToken?: string }>(
+        `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000'}/auth/refresh`,
+        { refreshToken: rt },
+      );
+      const { accessToken, refreshToken } = res.data;
+      localStorage.setItem('accessToken', accessToken);
+      if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
+      return accessToken;
+    } catch {
+      return null;
+    } finally {
+      _refreshing = null;
+    }
+  })();
+  return _refreshing;
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error: import('axios').AxiosError) => {
+    const original = error.config as import('axios').InternalAxiosRequestConfig & { _retry?: boolean };
+    // Only attempt refresh once, and only for 401s on non-auth endpoints
+    if (
+      error.response?.status === 401 &&
+      !original._retry &&
+      original.url &&
+      !original.url.includes('/auth/')
+    ) {
+      original._retry = true;
+      const newToken = await doRefresh();
+      if (newToken) {
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return api(original);
+      }
+      // Refresh failed — clear stored tokens so the UI can re-authenticate
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+    }
+    return Promise.reject(error);
+  },
+);
+
+
 // ── Auth ──────────────────────────────────────────────────────────
 export const authApi = {
   loginWithTelegram: (initData: string) =>

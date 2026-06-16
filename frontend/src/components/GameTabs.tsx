@@ -26,29 +26,38 @@ export function GameTabs<T extends string>({
 }: GameTabsProps<T>) {
   return (
     <div className="game-tabs-header">
-      <button className="btn btn-ghost btn-sm page-back-button" onClick={onBack} type="button" title={backLabel}>
+      <button
+        className="btn btn-ghost btn-sm page-back-button"
+        onClick={onBack}
+        type="button"
+        title={`Back to ${backLabel}`}
+        aria-label={`Back to ${backLabel}`}
+      >
         <ArrowLeft size={16} />
         <span className="back-btn-text">{backLabel}</span>
       </button>
 
       <div className="game-tab-bar" role="tablist" aria-label={ariaLabel}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            className={`game-tab${activeTab === tab.id ? ' active' : ''}`}
-            onClick={() => onTabChange(tab.id)}
-            title={tab.label}
-          >
-            {tab.icon && <div className="game-tab-icon">{tab.icon}</div>}
-            <div className="game-tab-content">
-              <span>{tab.label}</span>
-              <small>{tab.description}</small>
-            </div>
-          </button>
-        ))}
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-label={tab.label}
+              title={tab.description}
+              className={`game-tab${isActive ? ' active' : ''}`}
+              onClick={() => onTabChange(tab.id)}
+            >
+              {tab.icon && <div className="game-tab-icon">{tab.icon}</div>}
+              <div className="game-tab-content">
+                <span>{tab.label}</span>
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

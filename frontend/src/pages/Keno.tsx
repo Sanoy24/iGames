@@ -95,6 +95,31 @@ const DRAW_STATUS_BADGE: Record<string, string> = {
   pending: 'badge-violet',
 };
 
+// ── Pull-to-refresh hook ──────────────────────────────────────────
+function usePullToRefresh(onRefresh: () => Promise<void>) {
+  const [refreshing, setRefreshing] = useState(false);
+  const startY = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    startY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = async (e: React.TouchEvent) => {
+    const deltaY = e.changedTouches[0].clientY - startY.current;
+    if (deltaY > 80 && !refreshing) {
+      setRefreshing(true);
+      try {
+        await onRefresh();
+      } finally {
+        setRefreshing(false);
+      }
+    }
+  };
+
+  return { containerRef, handleTouchStart, handleTouchEnd, refreshing };
+}
+
 export function Keno({ onBack }: KenoProps) {
   const addToast = useStore((state) => state.addToast);
   const setWallet = useStore((state) => state.setWallet);
@@ -268,6 +293,13 @@ export function Keno({ onBack }: KenoProps) {
     }
   };
 
+  // Pull-to-refresh for draws tab
+  const drawsPullToRefresh = usePullToRefresh(loadKeno);
+  // Pull-to-refresh for tickets tab
+  const ticketsPullToRefresh = usePullToRefresh(loadKeno);
+
+  const isActiveGame = !!activeDraw && activeDraw.status === 'open';
+
   return (
     <div className="stack-lg">
       <GameTabs
@@ -277,39 +309,6 @@ export function Keno({ onBack }: KenoProps) {
         onBack={onBack}
         ariaLabel="Keno sections"
       />
-
-      <section className="card hero-subpanel">
-        <div className="section-header">
-          <div>
-            <div className="section-title">Keno</div>
-            <p className="section-copy">
-              Choose your spot count, lock your numbers, and join the next scheduled draw.
-            </p>
-          </div>
-          <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void loadKeno()}>
-            <RefreshCw size={14} />
-          </button>
-        </div>
-
-        {config ? (
-          <div className="stats-grid">
-            <div className="stat-card">
-              <span className="stat-label">Ticket Price</span>
-              <strong>{formatCredits(config.ticketPriceMinor)} Credits</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">Draw Size</span>
-              <strong>{config.drawSize} Numbers</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">Interval</span>
-              <strong>{formatKenoInterval(config)}</strong>
-            </div>
-          </div>
-        ) : (
-          <div className="card-muted">Loading Keno configuration...</div>
-        )}
-      </section>
 
       {/* ── Draw result panel ── */}
       {drawResult && (
@@ -325,8 +324,29 @@ export function Keno({ onBack }: KenoProps) {
             ) : (
               <>
                 <CircleDashed className="keno-result-icon keno-result-icon-loss" size={32} />
-                <div className="keno-result-title">No Win This Draw</div>
-                <p className="keno-result-sub">The numbers weren't in your favour — try again!</p>
+                <div className="keno-result-title">Better luck next time!</div>
+                <p className="keno-result-sub">
+                  {(() => {
+                    const ticket = drawResult.userTickets[0];
+                    const spotCount = ticket?.selectedNumbers.length ?? 0;
+                    const hits = ticket?.selectedNumbers.filter((n) => drawResult.drawnNumbers.includes(n)) ?? [];
+                    const minToWin = config?.paytable
+                      ?.filter((e) => e.spots === spotCount && e.payoutMultiplier > 0)
+                      .sort((a, b) => a.matches - b.matches)[0]?.matches ?? 0;
+                    return (
+                      <>
+                        You picked <strong>{spotCount} numbers</strong> — {hits.length === 0
+                          ? 'none of them'
+                          : `only ${hits.length} of them (${hits.join(', ')})`}
+                        {' '}appeared in the {drawResult.drawnNumbers.length} drawn numbers this round.
+                        {minToWin > 0 && hits.length < minToWin && (
+                          <> You needed at least <strong>{minToWin} match{minToWin !== 1 ? 'es' : ''}</strong> to win on a {spotCount}-spot ticket.</>  
+                        )}
+                        {' '}Your odds reset completely every draw — try again!
+                      </>
+                    );
+                  })()}
+                </p>
               </>
             )}
           </div>
@@ -381,278 +401,348 @@ export function Keno({ onBack }: KenoProps) {
         </section>
       )}
 
-      {/* ── Countdown ── */}
+      {/* ── Active Game tab ── */}
       {activeTab === 'active' && (
         <div className="game-tab-panel" role="tabpanel" aria-label="Active Game">
-      <section className="card keno-countdown-card">
-        {activeDraw && activeDraw.status !== 'open' ? (
-          <div className="keno-countdown-inner">
-            <div className="keno-countdown-value keno-countdown-drawing">Drawing…</div>
-            <div className="keno-countdown-label">Numbers being drawn now</div>
-          </div>
-        ) : countdownExpired ? (
-          <div className="keno-countdown-inner">
-            <div className="keno-countdown-value keno-countdown-drawing">Starting…</div>
-            <div className="keno-countdown-label">Draw executing, new round coming</div>
-          </div>
-        ) : (
-          <div className="keno-countdown-inner">
-            <div className={`keno-countdown-value${countdownUrgent ? ' keno-countdown-urgent' : ''}`}>
-              {countdown}
-            </div>
-            <div className="keno-countdown-label">
-              {activeDraw ? 'until next draw' : 'No draw scheduled'}
-            </div>
-          </div>
-        )}
-      </section>
 
-      <section className="card">
-        {ticketPhase === 'buy' ? (
-          <>
-            <div className="section-header" style={{ marginBottom: 12 }}>
-              <div>
-                <div className="section-title">Buy a Keno Ticket</div>
-                <p className="section-copy">Choose how many spots, then pick your lucky numbers.</p>
+          {/* Countdown always on top */}
+          <section className="card keno-countdown-card">
+            {activeDraw && activeDraw.status !== 'open' ? (
+              <div className="keno-countdown-inner">
+                <div className="keno-countdown-value keno-countdown-drawing">Drawing…</div>
+                <div className="keno-countdown-label">Numbers being drawn now</div>
               </div>
-            </div>
+            ) : countdownExpired ? (
+              <div className="keno-countdown-inner">
+                <div className="keno-countdown-value keno-countdown-drawing">Starting…</div>
+                <div className="keno-countdown-label">Draw executing, new round coming</div>
+              </div>
+            ) : (
+              <div className="keno-countdown-inner">
+                <div className={`keno-countdown-value${countdownUrgent ? ' keno-countdown-urgent' : ''}`}>
+                  {countdown}
+                </div>
+                <div className="keno-countdown-label">
+                  {activeDraw ? 'until next draw' : 'No draw scheduled'}
+                </div>
+              </div>
+            )}
+          </section>
 
-            <div className="chip-row">
-              {allowedSpots.map((spots) => (
-                <button
-                  key={spots}
-                  className={`choice-chip${spots === spotTarget ? ' active' : ''}`}
-                  onClick={() => setSpotTarget(spots)}
-                >
-                  {spots} Spot
-                </button>
-              ))}
-            </div>
-
-            {config?.paytable && (() => {
-              const entries = config.paytable
-                .filter((e) => e.spots === spotTarget && e.payoutMultiplier > 0)
-                .sort((a, b) => a.matches - b.matches);
-              if (entries.length === 0) return null;
-              return (
-                <div className="keno-paytable">
-                  <div className="keno-paytable-title">{spotTarget}-Spot Payouts</div>
-                  <div className="keno-paytable-rows">
-                    {entries.map((e) => (
-                      <div key={`${e.spots}-${e.matches}`} className="keno-paytable-row">
-                        <span>{e.matches} match{e.matches !== 1 ? 'es' : ''}</span>
-                        <span className="keno-paytable-mult">{e.payoutMultiplier}×</span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="keno-paytable-hint">
-                    Need at least {entries[0].matches} match{entries[0].matches !== 1 ? 'es' : ''} to win
+          {/* Intro panel — only shown when there is an active open draw */}
+          {isActiveGame && (
+            <section className="card hero-subpanel">
+              <div className="section-header">
+                <div>
+                  <div className="section-title">Keno</div>
+                  <p className="section-copy">
+                    Choose your spot count, lock your numbers, and join the next scheduled draw.
                   </p>
                 </div>
-              );
-            })()}
-
-            <button
-              className="btn btn-primary btn-full"
-              style={{ marginTop: 16 }}
-              disabled={!activeDraw || activeDraw.status !== 'open'}
-              onClick={() => { setSelectedNumbers([]); setTicketPhase('pick'); }}
-            >
-              {!activeDraw || activeDraw.status !== 'open'
-                ? 'Waiting for draw...'
-                : `Buy ${spotTarget}-Spot Ticket — ${formatCredits(config?.ticketPriceMinor ?? 0)} credits`}
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="section-header" style={{ marginBottom: 12 }}>
-              <div>
-                <div className="section-title">Pick Your {spotTarget} Numbers</div>
-                <p className="section-copy">
-                  {selectedNumbers.length >= spotTarget
-                    ? `All ${spotTarget} picked — tap a number to swap it out.`
-                    : `${selectedNumbers.length} / ${spotTarget} selected. Tap a number to pick it; tap again to remove.`}
-                </p>
+                <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void loadKeno()}>
+                  <RefreshCw size={14} />
+                </button>
               </div>
-            </div>
 
-            <div className="selected-strip">
-              {selectedNumbers.length > 0 ? (
-                selectedNumbers.map((value) => (
-                  <span
-                    key={value}
-                    className="ball ball-selected"
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => toggleNumber(value)}
-                  >
-                    {value}
-                  </span>
-                ))
+              {config ? (
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <span className="stat-label">Ticket Price</span>
+                    <strong>{formatCredits(config.ticketPriceMinor)} e‑Birr</strong>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-label">Draw Size</span>
+                    <strong>{config.drawSize} Numbers</strong>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-label">Interval</span>
+                    <strong>{formatKenoInterval(config)}</strong>
+                  </div>
+                </div>
               ) : (
-                <span className="text-muted">Tap numbers below to start picking.</span>
+                <div className="card-muted">Loading Keno configuration...</div>
               )}
-            </div>
+            </section>
+          )}
 
-            <div className="number-grid">
-              {numbers.map((value) => {
-                const isSelected = selectedNumbers.includes(value);
-                const isFull = selectedNumbers.length >= spotTarget && !isSelected;
-                const isDrawn = animatingDrawId === latestDraw?.id
-                  ? revealedNumbers.includes(value)
-                  : latestDraw?.drawnNumbers.includes(value) ?? false;
-                const tone = isSelected ? 'ball-selected' : isDrawn ? 'ball-drawn' : 'ball-idle';
-                return (
+          <section className="card">
+            {ticketPhase === 'buy' ? (
+              <>
+                <div className="section-header" style={{ marginBottom: 12 }}>
+                  <div>
+                    <div className="section-title">Buy a Keno Ticket</div>
+                    <p className="section-copy">Choose how many spots, then pick your lucky numbers.</p>
+                  </div>
+                </div>
+
+                <div className="chip-row">
+                  {allowedSpots.map((spots) => (
+                    <button
+                      key={spots}
+                      className={`choice-chip${spots === spotTarget ? ' active' : ''}`}
+                      onClick={() => setSpotTarget(spots)}
+                    >
+                      {spots} Spot
+                    </button>
+                  ))}
+                </div>
+
+                {config?.paytable && (() => {
+                  const entries = config.paytable
+                    .filter((e) => e.spots === spotTarget && e.payoutMultiplier > 0)
+                    .sort((a, b) => a.matches - b.matches);
+                  if (entries.length === 0) return null;
+                  return (
+                    <div className="keno-paytable">
+                      <div className="keno-paytable-title">{spotTarget}-Spot Payouts</div>
+                      <div className="keno-paytable-rows">
+                        {entries.map((e) => (
+                          <div key={`${e.spots}-${e.matches}`} className="keno-paytable-row">
+                            <span>{e.matches} match{e.matches !== 1 ? 'es' : ''}</span>
+                            <span className="keno-paytable-mult">{e.payoutMultiplier}×</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="keno-paytable-hint">
+                        Need at least {entries[0].matches} match{entries[0].matches !== 1 ? 'es' : ''} to win
+                      </p>
+                    </div>
+                  );
+                })()}
+
+                <button
+                  className="btn btn-primary btn-full"
+                  style={{ marginTop: 16 }}
+                  disabled={!activeDraw || activeDraw.status !== 'open'}
+                  onClick={() => { setSelectedNumbers([]); setTicketPhase('pick'); }}
+                >
+                  {!activeDraw || activeDraw.status !== 'open'
+                    ? 'Waiting for draw...'
+                    : `Buy ${spotTarget}-Spot Ticket — ${formatCredits(config?.ticketPriceMinor ?? 0)} e‑Birr`}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="section-header" style={{ marginBottom: 12 }}>
+                  <div>
+                    <div className="section-title">Pick Your {spotTarget} Numbers</div>
+                    <p className="section-copy">
+                      {selectedNumbers.length >= spotTarget
+                        ? `All ${spotTarget} picked — tap a number to swap it out.`
+                        : `${selectedNumbers.length} / ${spotTarget} selected. Tap a number to pick it; tap again to remove.`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Selected numbers as comma-separated text */}
+                <div className="selected-strip">
+                  {selectedNumbers.length > 0 ? (
+                    <span className="keno-selected-csv">
+                      {selectedNumbers.join(', ')}
+                    </span>
+                  ) : (
+                    <span className="text-muted">Tap numbers below to start picking.</span>
+                  )}
+                </div>
+
+                <div className="number-grid">
+                  {numbers.map((value) => {
+                    const isSelected = selectedNumbers.includes(value);
+                    const isFull = selectedNumbers.length >= spotTarget && !isSelected;
+                    const isDrawn = animatingDrawId === latestDraw?.id
+                      ? revealedNumbers.includes(value)
+                      : latestDraw?.drawnNumbers.includes(value) ?? false;
+                    const tone = isSelected ? 'ball-selected' : isDrawn ? 'ball-drawn' : 'ball-idle';
+                    return (
+                      <button
+                        key={value}
+                        className={`ball ${tone}${isFull ? ' ball-dimmed' : ''}`}
+                        onClick={() => toggleNumber(value)}
+                        title={isSelected ? 'Tap to remove' : isFull ? 'Remove a number first' : undefined}
+                      >
+                        {value}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="action-row" style={{ marginTop: 16 }}>
                   <button
-                    key={value}
-                    className={`ball ${tone}${isFull ? ' ball-dimmed' : ''}`}
-                    onClick={() => toggleNumber(value)}
-                    title={isSelected ? 'Tap to remove' : isFull ? 'Remove a number first' : undefined}
+                    className="btn btn-ghost"
+                    disabled={submitting}
+                    onClick={() => { setSelectedNumbers([]); setTicketPhase('buy'); }}
                   >
-                    {value}
+                    Cancel
                   </button>
-                );
-              })}
-            </div>
-
-            <div className="action-row" style={{ marginTop: 16 }}>
-              <button
-                className="btn btn-ghost"
-                disabled={submitting}
-                onClick={() => { setSelectedNumbers([]); setTicketPhase('buy'); }}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                disabled={submitting || selectedNumbers.length !== spotTarget}
-                onClick={submitTicket}
-              >
-                {submitting
-                  ? 'Confirming...'
-                  : selectedNumbers.length === spotTarget
-                  ? `Confirm — ${formatCredits(config?.ticketPriceMinor ?? 0)} credits`
-                  : `Pick ${spotTarget - selectedNumbers.length} more`}
-              </button>
-            </div>
-          </>
-        )}
+                  <button
+                    className="btn btn-primary"
+                    disabled={submitting || selectedNumbers.length !== spotTarget}
+                    onClick={submitTicket}
+                  >
+                    {submitting
+                      ? 'Confirming...'
+                      : selectedNumbers.length === spotTarget
+                      ? `Confirm — ${formatCredits(config?.ticketPriceMinor ?? 0)} e‑Birr`
+                      : `Pick ${spotTarget - selectedNumbers.length} more`}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         </div>
       )}
 
+      {/* ── Recent Draws tab ── */}
       {activeTab === 'draws' && (
-      <section className="card" role="tabpanel" aria-label="Recent Draws">
-        <div className="section-header">
-          <div>
-            <div className="section-title">Recent Draws</div>
-            <p className="section-copy">Latest Keno rounds and their results.</p>
-          </div>
-        </div>
-        {loading && draws.length === 0 ? (
-          <div className="card-muted">Fetching draw history...</div>
-        ) : draws.length === 0 ? (
-          <div className="card-muted">No draws yet.</div>
-        ) : (
-          <div className="list-stack">
-            {draws.map((draw) => {
-                const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
-                const selectedForDraw = new Set(drawTickets.flatMap((ticket) => ticket.selectedNumbers));
-                return (
-                  <article key={draw.id} className="list-card">
-                    <div className="list-card-header">
-                      <div>
-                        <h3>Draw #{draw.id.slice(-6)}</h3>
-                        <p>{formatDateTime(draw.scheduledAt)}</p>
-                      </div>
-                      <span className={`badge ${DRAW_STATUS_BADGE[draw.status] ?? 'badge-violet'}`}>
-                        {draw.status}
-                      </span>
-                    </div>
-                    {drawTickets.length > 0 && (
-                      <div className="keno-draw-picks">
-                        <span className="text-muted">Your selected numbers</span>
-                        <div className="keno-ticket-numbers">
-                          {[...selectedForDraw].sort((left, right) => left - right).map((number) => (
-                            <span
-                              key={`${draw.id}-pick-${number}`}
-                              className={`keno-number-pip${draw.drawnNumbers.includes(number) ? ' hit' : ''}`}
-                            >
-                              {number}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="ball-row">
-                      {draw.drawnNumbers.length > 0 ? (
-                        draw.drawnNumbers.map((value) => (
-                          <span
-                            key={`${draw.id}-${value}`}
-                            className={`ball ${selectedForDraw.has(value) ? 'ball-hit' : 'ball-drawn'}`}
-                          >
-                            {value}
+        <div
+          ref={drawsPullToRefresh.containerRef}
+          onTouchStart={drawsPullToRefresh.handleTouchStart}
+          onTouchEnd={drawsPullToRefresh.handleTouchEnd}
+        >
+          {drawsPullToRefresh.refreshing && (
+            <div className="pull-refresh-indicator">
+              <RefreshCw size={16} className="spin" /> Refreshing…
+            </div>
+          )}
+          <section className="card" role="tabpanel" aria-label="Recent Draws">
+            <div className="section-header">
+              <div>
+                <div className="section-title">Recent Draws</div>
+                <p className="section-copy">Latest Keno rounds and their results.</p>
+              </div>
+              <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void loadKeno()}>
+                <RefreshCw size={14} />
+              </button>
+            </div>
+            {loading && draws.length === 0 ? (
+              <div className="card-muted">Fetching draw history...</div>
+            ) : draws.length === 0 ? (
+              <div className="card-muted">No draws yet.</div>
+            ) : (
+              <div className="list-stack">
+                {draws.map((draw) => {
+                    const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
+                    const selectedForDraw = new Set(drawTickets.flatMap((ticket) => ticket.selectedNumbers));
+                    const myNumbers = [...selectedForDraw].sort((a, b) => a - b);
+                    return (
+                      <article key={draw.id} className="list-card">
+                        <div className="list-card-header">
+                          <div>
+                            <h3>Draw #{draw.id.slice(-6)}</h3>
+                            <p>{formatDateTime(draw.scheduledAt)}</p>
+                          </div>
+                          <span className={`badge ${DRAW_STATUS_BADGE[draw.status] ?? 'badge-violet'}`}>
+                            {draw.status}
                           </span>
-                        ))
-                      ) : (
-                        <span className="text-muted">Not drawn yet.</span>
-                      )}
-                    </div>
-                  </article>
-                );
-            })}
-          </div>
-        )}
-      </section>
+                        </div>
+                        {drawTickets.length > 0 && (
+                          <div className="keno-draw-picks">
+                            <span className="text-muted" style={{ fontSize: 11 }}>
+                              Your picks: <strong style={{ color: 'var(--text-primary)' }}>{myNumbers.join(', ')}</strong>
+                            </span>
+                            <div className="keno-ticket-numbers">
+                              {myNumbers.map((number) => (
+                                <span
+                                  key={`${draw.id}-pick-${number}`}
+                                  className={`keno-number-pip${draw.drawnNumbers.includes(number) ? ' hit' : ''}`}
+                                >
+                                  {number}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div className="ball-row">
+                          {draw.drawnNumbers.length > 0 ? (
+                            draw.drawnNumbers.map((value) => (
+                              <span
+                                key={`${draw.id}-${value}`}
+                                className={`ball ${selectedForDraw.has(value) ? 'ball-hit' : 'ball-drawn'}`}
+                              >
+                                {value}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-muted">Not drawn yet.</span>
+                          )}
+                        </div>
+                      </article>
+                    );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
+      {/* ── Your Tickets tab ── */}
       {activeTab === 'tickets' && (
-      <section className="card" role="tabpanel" aria-label="Your Tickets">
-        <div className="section-header">
-          <div>
-            <div className="section-title">Your Tickets</div>
-            <p className="section-copy">Recent Keno bets and results.</p>
-          </div>
-        </div>
-        {tickets.length === 0 ? (
-          <div className="card-muted">No tickets yet. Use Active Game to buy your first ticket.</div>
-        ) : (
-          <div className="list-stack">
-            {tickets.map((ticket) => {
-              const settled = ticket.settlementStatus === 'settled';
-              const won = ticket.payoutMinor > 0;
-              const ticketDraw = draws.find((draw) => draw.id === ticket.drawId);
-              const ticketDrawnNumbers = ticketDraw?.drawnNumbers ?? [];
-              return (
-                <article key={ticket.id} className="list-card">
-                  <div className="list-card-header">
-                    <div>
-                      <h3>Ticket #{ticket.id.slice(-6)}</h3>
-                      <div className="keno-ticket-numbers">
-                        {ticket.selectedNumbers.map((n) => (
-                          <span
-                            key={n}
-                            className={`keno-number-pip${settled && ticketDrawnNumbers.includes(n) ? ' hit' : ''}`}
-                          >
-                            {n}
-                          </span>
-                        ))}
+        <div
+          ref={ticketsPullToRefresh.containerRef}
+          onTouchStart={ticketsPullToRefresh.handleTouchStart}
+          onTouchEnd={ticketsPullToRefresh.handleTouchEnd}
+        >
+          {ticketsPullToRefresh.refreshing && (
+            <div className="pull-refresh-indicator">
+              <RefreshCw size={16} className="spin" /> Refreshing…
+            </div>
+          )}
+          <section className="card" role="tabpanel" aria-label="Your Tickets">
+            <div className="section-header">
+              <div>
+                <div className="section-title">Your Tickets</div>
+                <p className="section-copy">Recent Keno bets and results.</p>
+              </div>
+              <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void loadKeno()}>
+                <RefreshCw size={14} />
+              </button>
+            </div>
+            {tickets.length === 0 ? (
+              <div className="card-muted">No tickets yet. Use Active Game to buy your first ticket.</div>
+            ) : (
+              <div className="list-stack">
+                {tickets.map((ticket) => {
+                  const settled = ticket.settlementStatus === 'settled';
+                  const won = ticket.payoutMinor > 0;
+                  const ticketDraw = draws.find((draw) => draw.id === ticket.drawId);
+                  const ticketDrawnNumbers = ticketDraw?.drawnNumbers ?? [];
+                  return (
+                    <article key={ticket.id} className="list-card">
+                      <div className="list-card-header">
+                        <div>
+                          <h3>Ticket #{ticket.id.slice(-6)}</h3>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                            Picks: <strong style={{ color: 'var(--text-primary)' }}>
+                              {ticket.selectedNumbers.join(', ')}
+                            </strong>
+                          </div>
+                          <div className="keno-ticket-numbers" style={{ marginTop: 4 }}>
+                            {ticket.selectedNumbers.map((n) => (
+                              <span
+                                key={n}
+                                className={`keno-number-pip${settled && ticketDrawnNumbers.includes(n) ? ' hit' : ''}`}
+                              >
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <span className={`badge ${won ? 'badge-green' : settled ? 'badge-red' : 'badge-gold'}`}>
+                          {won ? 'Win' : settled ? 'No win' : 'Pending'}
+                        </span>
                       </div>
-                    </div>
-                    <span className={`badge ${won ? 'badge-green' : settled ? 'badge-red' : 'badge-gold'}`}>
-                      {won ? 'Win' : settled ? 'No win' : 'Pending'}
-                    </span>
-                  </div>
-                  <div className="ticket-meta">
-                    <span>Stake: {formatCredits(ticket.stakeMinor)}</span>
-                    {settled && <span>Matches: {ticket.matches}</span>}
-                    {settled && won && <span style={{ color: 'var(--green)' }}>Payout: {formatCreditsFull(ticket.payoutMinor)}</span>}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                      <div className="ticket-meta">
+                        <span>Stake: {formatCredits(ticket.stakeMinor)} e‑Birr</span>
+                        {settled && <span>Matches: {ticket.matches}</span>}
+                        {settled && won && <span style={{ color: 'var(--green)' }}>Payout: {formatCreditsFull(ticket.payoutMinor)} e‑Birr</span>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
       )}
     </div>
   );

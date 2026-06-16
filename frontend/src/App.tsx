@@ -53,8 +53,8 @@ export function App() {
       : authApi.devSeedAdmin('Dev Admin');
 
     loginPromise
-      .then(async ({ user, accessToken }) => {
-        setAuth(user, accessToken);
+      .then(async ({ user, accessToken, refreshToken }) => {
+        setAuth(user, accessToken, refreshToken);
         const walletData = await walletApi.getWallet();
         setWallet(walletData);
       })
@@ -68,8 +68,8 @@ export function App() {
     return (
       <div className="app-container">
         <CredentialsLogin
-          onSuccess={async ({ user, accessToken }) => {
-            setAuth(user, accessToken);
+          onSuccess={async ({ user, accessToken, refreshToken }) => {
+            setAuth(user, accessToken, refreshToken);
             const walletData = await walletApi.getWallet();
             setWallet(walletData);
             // Route to the appropriate default tab for the role

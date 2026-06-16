@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, X, RefreshCw } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import { formatCredits, useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
@@ -119,9 +119,14 @@ export function Wallet() {
       addToast('error', 'Please enter a valid amount');
       return;
     }
-    const amountMinor = Math.round(credits * 100);
-    if (amountMinor > (wallet?.availableMinor ?? 0)) {
-      addToast('error', 'Insufficient available balance');
+    // withdrawAmount is in e-Birr units (minor); user types the minor amount directly
+    const amountMinor = Math.round(credits);
+    const available = wallet?.availableMinor ?? 0;
+    if (amountMinor > available) {
+      addToast(
+        'error',
+        `Insufficient balance — your available balance is ${new Intl.NumberFormat().format(available)} e\u2011Birr`,
+      );
       return;
     }
     if (!withdrawPhone.trim()) {
@@ -149,7 +154,7 @@ export function Wallet() {
     <div className="stack-lg">
       <section className="card wallet-hero">
         <div className="badge badge-green">Wallet</div>
-        <h1 className="hero-title">{formatCredits(wallet?.availableMinor ?? 0)} Credits</h1>
+        <h1 className="hero-title">{new Intl.NumberFormat().format(wallet?.availableMinor ?? 0)} e‑Birr</h1>
         <p className="hero-copy">
           Your balance is shared across Keno stakes, Bingo tickets, deposits, and winnings.
         </p>
@@ -172,16 +177,16 @@ export function Wallet() {
           <button
             className="btn btn-primary"
             onClick={() => { setShowTopup(!showTopup); setShowWithdraw(false); }}
-            style={{ flex: 1, minWidth: 160 }}
+            style={{ flex: 1, minWidth: 140 }}
           >
-            {showTopup ? '✕ Cancel Top-Up' : '↑ Top Up (Telebirr)'}
+            {showTopup ? <><X size={15} /> Cancel</> : <><ArrowUpToLine size={15} /> Top Up</>}
           </button>
           <button
-            className="btn btn-ghost"
+            className="btn btn-secondary"
             onClick={() => { setShowWithdraw(!showWithdraw); setShowTopup(false); }}
-            style={{ flex: 1, minWidth: 160, backgroundColor: 'rgba(255,255,255,0.05)' }}
+            style={{ flex: 1, minWidth: 140 }}
           >
-            {showWithdraw ? '✕ Cancel Payout' : '↓ Request Payout'}
+            {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Payout</>}
           </button>
         </div>
 
@@ -215,17 +220,22 @@ export function Wallet() {
         {showWithdraw && (
           <div className="admin-form" style={{ marginTop: 16, backgroundColor: 'rgba(0,0,0,0.2)' }}>
             <h3 style={{ margin: '0 0 8px', fontSize: 16 }}>Telebirr Cashout Request</h3>
-            <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              Request to withdraw your available credits. The amount will be reserved immediately,
+            <p className="text-muted" style={{ fontSize: 13, marginBottom: 8 }}>
+              Request to withdraw your available e‑Birr. The amount will be reserved immediately,
               and an agent will process the Telebirr transfer to your phone number.
             </p>
+            <p style={{ fontSize: 12, color: 'var(--green)', marginBottom: 16 }}>
+              Available: <strong>{new Intl.NumberFormat().format(wallet?.availableMinor ?? 0)} e&#x2011;Birr</strong>
+            </p>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Amount (Credits)</label>
+              <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Amount (e‑Birr)</label>
               <input
                 type="number"
-                step="any"
+                step="1"
+                min="1"
+                max={wallet?.availableMinor ?? undefined}
                 className="input"
-                placeholder="e.g. 50"
+                placeholder={`e.g. ${Math.floor((wallet?.availableMinor ?? 1000) / 2)}`}
                 value={withdrawAmount}
                 onChange={(e) => setWithdrawAmount(e.target.value)}
                 style={{ width: '100%' }}
@@ -276,7 +286,7 @@ export function Wallet() {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <span className="badge" style={{ display: 'block', marginBottom: 4 }}>
-                      {formatCredits(w.amountMinor)}
+                      {new Intl.NumberFormat().format(w.amountMinor)} e‑Birr
                     </span>
                     <span className={`badge ${
                       w.status === 'completed' ? 'badge-green' :
@@ -306,8 +316,8 @@ export function Wallet() {
             <div className="section-title">Recent Activity</div>
             <p className="section-copy">Your transactions and balance history.</p>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => void loadWallet()}>
-            Refresh
+          <button className="btn btn-ghost btn-sm" onClick={() => void loadWallet()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <RefreshCw size={13} /> Refresh
           </button>
         </div>
 
@@ -337,7 +347,7 @@ export function Wallet() {
                   </div>
                   <span className={`badge ${entry.direction === 'credit' ? 'badge-green' : 'badge-red'}`}>
                     {entry.direction === 'credit' ? '+' : '-'}
-                    {formatCredits(entry.amountMinor)}
+                    {new Intl.NumberFormat().format(entry.amountMinor)}
                   </span>
                 </div>
                 <div className="ticket-meta">

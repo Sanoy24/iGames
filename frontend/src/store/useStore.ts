@@ -16,7 +16,7 @@ type AppState = {
   isAuthLoading: boolean;
   authError: string | null;
   isSocketConnected: boolean;
-  setAuth: (user: User, token: string) => void;
+  setAuth: (user: User, token: string, refreshToken?: string) => void;
   setUser: (user: User) => void;
   setAuthLoading: () => void;
   setAuthError: (message: string) => void;
@@ -43,8 +43,9 @@ export const useStore = create<AppState>((set) => ({
   authError: null,
   isSocketConnected: false,
 
-  setAuth: (user, token) => {
+  setAuth: (user, token, refreshToken?: string) => {
     localStorage.setItem('accessToken', token);
+    if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     set({
       user,
       accessToken: token,
@@ -74,6 +75,7 @@ export const useStore = create<AppState>((set) => ({
 
   clearAuth: () => {
     localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
     set({
       user: null,
       accessToken: null,

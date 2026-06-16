@@ -7,6 +7,7 @@ import { AgentsService } from '../agents/agents.service';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
+import { CreateAgentDto } from './dto/create-agent.dto';
 
 @Injectable()
 export class AdminService {
@@ -144,7 +145,7 @@ export class AdminService {
 
   // ── Agent Users ───────────────────────────────────────────────────
 
-  async createAgent(input: { phoneNumber: string; displayName: string; password: string }) {
+  async createAgent(input: CreateAgentDto) {
     return this.usersService.createAgentUser(input);
   }
 

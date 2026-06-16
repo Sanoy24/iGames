@@ -232,8 +232,10 @@ export const adminAgentsApi = {
   listAgents: (page = 1, limit = 50) =>
     api.get<{ data: User[]; total: number; page: number; limit: number }>(`/admin/agents?page=${page}&limit=${limit}`)
       .then((r) => r.data.data),
-  createAgent: (dto: { phoneNumber: string; displayName: string; password: string }) =>
+  createAgent: (dto: Partial<User & { password?: string }>) =>
     api.post<User>('/admin/agents', dto).then((r) => r.data),
+  updateAgent: (id: string, dto: Partial<User & { password?: string }>) =>
+    api.patch<User>(`/admin/agents/${id}`, dto).then((r) => r.data),
 };
 
 // ── Admin: Withdrawals ─────────────────────────────────────────────

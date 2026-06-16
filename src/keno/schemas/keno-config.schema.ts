@@ -60,6 +60,9 @@ export class KenoConfig {
 
   @Prop({ required: true, default: 0, min: 0 })
   maxWinnersPerDraw: number;
+
+  @Prop({ required: true, default: 100, min: 0, max: 100 })
+  winChancePct: number;
 }
 
 export const KenoConfigSchema = SchemaFactory.createForClass(KenoConfig);

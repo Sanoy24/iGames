@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -8,6 +8,7 @@ import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminService } from './admin.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
+import { UpdateAgentDto } from './dto/update-agent.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
@@ -96,6 +97,14 @@ export class AdminController {
     @Query('limit') limit: string = '50',
   ) {
     return this.adminService.listAgents(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+  }
+
+  @Patch('agents/:id')
+  updateAgent(
+    @Param('id') id: string,
+    @Body() dto: UpdateAgentDto,
+  ) {
+    return this.usersService.updateAgentUser(id, dto);
   }
 
   // ── Withdrawals ───────────────────────────────────────────────────

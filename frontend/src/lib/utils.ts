@@ -58,21 +58,54 @@ export function formatRelativeTime(value: string | Date | undefined): string {
 
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
+    if (!error.response) {
+      return 'Unable to connect to the server. Please check your internet connection and try again.';
+    }
+
     const serverMessage = error.response?.data?.message;
     if (typeof serverMessage === 'string') {
-      return serverMessage;
+      return sanitizeServerMessage(serverMessage);
     }
     if (Array.isArray(serverMessage) && serverMessage.every((item) => typeof item === 'string')) {
-      return serverMessage.join(', ');
+      return serverMessage.map(sanitizeServerMessage).join(', ');
     }
-    return error.message || 'Network request failed';
+    return 'Connection problem occurred. Please try again later.';
   }
 
   if (error instanceof Error) {
-    return error.message;
+    return sanitizeServerMessage(error.message);
   }
 
   return 'Something went wrong';
+}
+
+function sanitizeServerMessage(msg: string): string {
+  const lower = msg.toLowerCase();
+  const indicators = [
+    'localhost',
+    '127.0.0.1',
+    'mongodb',
+    'mongo',
+    'database',
+    'db:',
+    'connection refused',
+    'network error',
+    'nest',
+    'stack',
+    'internal server error',
+    'exception',
+    'query',
+    'mongoose',
+    'axios',
+    'http://',
+    'https://'
+  ];
+
+  if (indicators.some((ind) => lower.includes(ind))) {
+    return 'A service error occurred. Please try again later.';
+  }
+
+  return msg;
 }
 
 export function titleCase(value: string): string {

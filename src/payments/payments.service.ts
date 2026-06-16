@@ -15,6 +15,7 @@ export type TelebirrDepositResponse = {
   amountMinor: number;
   currencyCode: string;
   status: string;
+  agentId?: string;
   walletCredit?: Record<string, unknown>;
   parsedReceipt: Record<string, unknown>;
   verification: Record<string, unknown>;
@@ -40,7 +41,8 @@ export class PaymentsService {
     }
 
     const verified = await this.telebirrReceiptVerifierService.verifyReceipt(
-      submittedReceipt
+      submittedReceipt,
+      userId
     );
     const objectUserId = new Types.ObjectId(userId);
     const session = await this.connection.startSession();
@@ -55,6 +57,9 @@ export class PaymentsService {
           .exec();
 
         if (existingDeposit) {
+          if (existingDeposit.status === 'rejected') {
+            throw new ConflictException('Telebirr receipt was already rejected');
+          }
           if (existingDeposit.userId.toString() !== userId) {
             throw new ConflictException('Telebirr receipt was already used');
           }
@@ -66,6 +71,7 @@ export class PaymentsService {
           [
             {
               userId: objectUserId,
+              agentId: verified.agentId ? new Types.ObjectId(verified.agentId) : undefined,
               receiptNo: verified.receiptNo,
               amountMinor: verified.amountMinor,
               currencyCode: 'CREDIT',
@@ -123,6 +129,7 @@ export class PaymentsService {
       amountMinor: deposit.amountMinor,
       currencyCode: deposit.currencyCode,
       status: deposit.status,
+      agentId: deposit.agentId?.toString(),
       walletCredit: deposit.walletCredit,
       parsedReceipt: deposit.parsedReceipt,
       verification: deposit.verification

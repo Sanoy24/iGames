@@ -95,7 +95,8 @@ export class KenoService {
               globalBotWinInterval: dto.globalBotWinInterval ?? 0,
               autoScheduleIntervalMinutes: Math.floor(autoScheduleIntervalSeconds / 60),
               autoScheduleIntervalSeconds,
-              maxWinnersPerDraw: dto.maxWinnersPerDraw ?? 0
+              maxWinnersPerDraw: dto.maxWinnersPerDraw ?? 0,
+              winChancePct: dto.winChancePct ?? 100
             }
           ],
           { session }
@@ -314,10 +315,12 @@ export class KenoService {
           throw new NotFoundException('Keno config not found for draw');
         }
 
-        const forcedTickets = await this.kenoTicketModel
-          .find({ drawId: draw._id, isForcedWin: true })
+        const tickets = await this.kenoTicketModel
+          .find({ drawId: draw._id, settlementStatus: 'pending' })
           .session(session)
           .exec();
+
+        const forcedTickets = tickets.filter((t) => t.isForcedWin);
           
         const mustIncludeSet = new Set<number>();
         for (const ft of forcedTickets) {
@@ -329,19 +332,71 @@ export class KenoService {
           mustInclude = mustInclude.slice(0, config.drawSize);
         }
 
-        const rngResult = await this.rngService.drawUniqueNumbers({
-          min: config.numberMin,
-          max: config.numberMax,
-          count: config.drawSize,
-          mustInclude,
-          gameType: 'keno',
-          gameReference: draw._id.toString(),
-          metadata: {
-            configVersion: config.version,
-            forcedWinsCount: forcedTickets.length
-          },
-          session
-        });
+        const userStreaks: Record<string, boolean> = {};
+        const uniqueUserIds = Array.from(new Set(tickets.map((t) => t.userId.toString())));
+        for (const uid of uniqueUserIds) {
+          userStreaks[uid] = await this.isContinuousWinner(new Types.ObjectId(uid), session);
+        }
+
+        let rngResult;
+        let attempts = 0;
+        const maxAttempts = 15;
+        const winChancePct = config.winChancePct ?? 100;
+
+        do {
+          rngResult = await this.rngService.drawUniqueNumbers({
+            min: config.numberMin,
+            max: config.numberMax,
+            count: config.drawSize,
+            mustInclude,
+            gameType: 'keno',
+            gameReference: draw._id.toString(),
+            metadata: {
+              configVersion: config.version,
+              forcedWinsCount: forcedTickets.length,
+              attempt: attempts + 1
+            },
+            session
+          });
+
+          let hasWins = false;
+          let hasCheaterWins = false;
+
+          for (const ticket of tickets) {
+            const matches = this.kenoRulesService.countMatches(
+              ticket.selectedNumbers,
+              rngResult.numbers
+            );
+            const payout = this.kenoRulesService.calculatePayoutMinor({
+              stakeMinor: ticket.stakeMinor,
+              spotCount: ticket.selectedNumbers.length,
+              matches,
+              config
+            });
+
+            if (payout > 0) {
+              hasWins = true;
+              if (userStreaks[ticket.userId.toString()]) {
+                hasCheaterWins = true;
+              }
+            }
+          }
+
+          if (hasCheaterWins) {
+            attempts++;
+            continue;
+          }
+
+          if (hasWins && winChancePct < 100) {
+            const roll = Math.random() * 100;
+            if (roll > winChancePct) {
+              attempts++;
+              continue;
+            }
+          }
+
+          break;
+        } while (attempts < maxAttempts);
 
         draw.drawnNumbers = rngResult.numbers;
         draw.rngAuditLogId = rngResult.auditLogId;
@@ -723,6 +778,26 @@ export class KenoService {
       rngAuditLogId: draw.rngAuditLogId,
       settlementSummary: draw.settlementSummary
     };
+  }
+
+  async isContinuousWinner(userId: Types.ObjectId, session?: ClientSession): Promise<boolean> {
+    const recentTickets = await this.kenoTicketModel
+      .find({ userId, status: { $in: ['won', 'lost'] } })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .session(session || null)
+      .exec();
+
+    if (recentTickets.length < 3) {
+      return false;
+    }
+
+    const wins = recentTickets.filter((t) => t.status === 'won').length;
+    if (recentTickets.length === 3 && wins === 3) return true;
+    if (recentTickets.length === 4 && wins >= 3) return true;
+    if (recentTickets.length === 5 && wins >= 4) return true;
+
+    return false;
   }
 
   private toObjectId(value: string, name: string): Types.ObjectId {

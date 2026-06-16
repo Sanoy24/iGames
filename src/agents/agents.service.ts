@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { WalletService } from '../wallet/wallet.service';
 import { AgentShift, AgentShiftDocument } from './schemas/agent-shift.schema';
 import { CreateShiftDto } from './dto/create-shift.dto';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class AgentsService {
@@ -11,6 +12,7 @@ export class AgentsService {
     @InjectConnection() private readonly connection: Connection,
     @InjectModel(AgentShift.name) private readonly shiftModel: Model<AgentShift>,
     private readonly walletService: WalletService,
+    private readonly usersService: UsersService,
   ) {}
 
   // ── Withdrawals ────────────────────────────────────────────────────
@@ -23,15 +25,48 @@ export class AgentsService {
     return this.walletService.getAgentWithdrawals(agentId);
   }
 
-  claimWithdrawal(withdrawalId: string, agentId: string) {
+  verifyAgentWorkingHoursAndPermission(agent: any, permission: 'deposit' | 'withdraw') {
+    // 1. Check permission
+    if (agent.agentPermissions && agent.agentPermissions[permission] === false) {
+      throw new BadRequestException(`Agent does not have ${permission} permission`);
+    }
+
+    // 2. Check working hours if they are set
+    if (agent.workStartHour !== undefined && agent.workEndHour !== undefined) {
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const startMinutes = agent.workStartHour * 60 + (agent.workStartMinute || 0);
+      const endMinutes = agent.workEndHour * 60 + (agent.workEndMinute || 0);
+
+      const isOvernight = endMinutes <= startMinutes;
+      const inWindow = isOvernight
+        ? currentMinutes >= startMinutes || currentMinutes < endMinutes
+        : currentMinutes >= startMinutes && currentMinutes < endMinutes;
+
+      if (!inWindow) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        throw new BadRequestException(
+          `Action outside working hours (${pad(agent.workStartHour)}:${pad(agent.workStartMinute || 0)} - ${pad(agent.workEndHour)}:${pad(agent.workEndMinute || 0)})`
+        );
+      }
+    }
+  }
+
+  async claimWithdrawal(withdrawalId: string, agentId: string) {
+    const agent = await this.usersService.findById(agentId);
+    this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
     return this.walletService.claimWithdrawal(withdrawalId, agentId);
   }
 
-  releaseWithdrawal(withdrawalId: string, agentId: string) {
+  async releaseWithdrawal(withdrawalId: string, agentId: string) {
+    const agent = await this.usersService.findById(agentId);
+    this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
     return this.walletService.releaseWithdrawal(withdrawalId, agentId);
   }
 
   async completeWithdrawal(withdrawalId: string, agentId: string, telebirrReference: string) {
+    const agent = await this.usersService.findById(agentId);
+    this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
     // Read service charge from system config directly to avoid circular module deps.
     const config = await this.connection
       .collection('systemconfigs')

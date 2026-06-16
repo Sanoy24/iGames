@@ -6,6 +6,14 @@ export type User = {
   phoneNumber?: string;
   status?: string;
   lastLoginAt?: string;
+  workStartHour?: number;
+  workStartMinute?: number;
+  workEndHour?: number;
+  workEndMinute?: number;
+  agentPermissions?: {
+    deposit: boolean;
+    withdraw: boolean;
+  };
 };
 
 export type AuthTokenResponse = {
@@ -60,6 +68,7 @@ export type KenoConfig = {
   autoScheduleIntervalSeconds?: number;
   maxWinnersPerDraw: number;
   paytable?: KenoPaytableEntry[];
+  winChancePct?: number;
 };
 
 export type KenoDraw = {

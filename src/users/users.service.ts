@@ -131,6 +131,11 @@ export class UsersService {
     phoneNumber: string;
     displayName: string;
     password: string;
+    workStartHour?: number;
+    workStartMinute?: number;
+    workEndHour?: number;
+    workEndMinute?: number;
+    agentPermissions?: { deposit: boolean; withdraw: boolean };
   }): Promise<UserDocument> {
     const normalizedPhone = input.phoneNumber.trim();
     if (!normalizedPhone) throw new BadRequestException('Phone number is required');
@@ -150,6 +155,11 @@ export class UsersService {
         phoneNumber: normalizedPhone,
         roles: ['agent'],
         status: 'active',
+        workStartHour: input.workStartHour,
+        workStartMinute: input.workStartMinute,
+        workEndHour: input.workEndHour,
+        workEndMinute: input.workEndMinute,
+        agentPermissions: input.agentPermissions ?? { deposit: true, withdraw: true },
       },
     ]);
 
@@ -166,6 +176,62 @@ export class UsersService {
     ]);
 
     return user;
+  }
+
+  async updateAgentUser(
+    agentId: string,
+    update: {
+      displayName?: string;
+      phoneNumber?: string;
+      password?: string;
+      workStartHour?: number;
+      workStartMinute?: number;
+      workEndHour?: number;
+      workEndMinute?: number;
+      agentPermissions?: { deposit: boolean; withdraw: boolean };
+      status?: 'active' | 'suspended' | 'closed';
+    }
+  ): Promise<UserDocument> {
+    const user = await this.userModel.findById(agentId).exec();
+    if (!user || !user.roles.includes('agent')) {
+      throw new NotFoundException('Agent not found');
+    }
+
+    const setObj: Record<string, any> = {};
+    if (update.displayName !== undefined) setObj.displayName = update.displayName.trim();
+    if (update.status !== undefined) setObj.status = update.status;
+    if (update.phoneNumber !== undefined) {
+      const normalizedPhone = update.phoneNumber.trim();
+      setObj.phoneNumber = normalizedPhone;
+      await this.authIdentityModel.updateOne(
+        { userId: user._id, provider: 'password' },
+        { $set: { providerUserId: normalizedPhone, 'profileSnapshot.phoneNumber': normalizedPhone } }
+      ).exec();
+    }
+    if (update.password !== undefined && update.password.trim() !== '') {
+      const passwordHash = await argon2.hash(update.password, { type: argon2.argon2id });
+      await this.authIdentityModel.updateOne(
+        { userId: user._id, provider: 'password' },
+        { $set: { passwordHash } }
+      ).exec();
+    }
+    setObj.workStartHour = update.workStartHour;
+    setObj.workStartMinute = update.workStartMinute;
+    setObj.workEndHour = update.workEndHour;
+    setObj.workEndMinute = update.workEndMinute;
+    if (update.agentPermissions !== undefined) setObj.agentPermissions = update.agentPermissions;
+
+    const updatedUser = await this.userModel.findByIdAndUpdate(
+      agentId,
+      { $set: setObj },
+      { new: true }
+    ).exec();
+
+    if (!updatedUser) {
+      throw new NotFoundException('Agent not found after update');
+    }
+
+    return updatedUser;
   }
 
   async findAgentByCredentials(

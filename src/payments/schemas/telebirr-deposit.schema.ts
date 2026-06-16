@@ -12,6 +12,9 @@ export class TelebirrDeposit {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   userId: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
+  agentId?: Types.ObjectId;
+
   @Prop({ required: true, trim: true, unique: true })
   receiptNo: string;
 

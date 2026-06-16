@@ -35,6 +35,30 @@ export class User {
 
   @Prop({ type: Object, default: {} })
   productMetadata: Record<string, unknown>;
+
+  @Prop({ type: Number })
+  workStartHour?: number;
+
+  @Prop({ type: Number })
+  workStartMinute?: number;
+
+  @Prop({ type: Number })
+  workEndHour?: number;
+
+  @Prop({ type: Number })
+  workEndMinute?: number;
+
+  @Prop({
+    type: {
+      deposit: { type: Boolean, default: true },
+      withdraw: { type: Boolean, default: true }
+    },
+    default: { deposit: true, withdraw: true }
+  })
+  agentPermissions?: {
+    deposit: boolean;
+    withdraw: boolean;
+  };
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

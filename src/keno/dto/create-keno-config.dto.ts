@@ -84,4 +84,10 @@ export class CreateKenoConfigDto {
   @IsInt()
   @Min(0)
   maxWinnersPerDraw?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  winChancePct?: number;
 }

@@ -1,17 +1,20 @@
 import { IsString, Matches, MinLength, IsOptional, IsNumber, Min, Max, IsObject } from 'class-validator';
 
-export class CreateAgentDto {
+export class UpdateAgentDto {
+  @IsOptional()
   @IsString()
   @Matches(/^(\+?251|0)[79]\d{8}$/, { message: 'Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX or +2519XXXXXXXX)' })
-  phoneNumber: string;
+  phoneNumber?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  displayName: string;
+  displayName?: string;
 
+  @IsOptional()
   @IsString()
-  @MinLength(8)
-  password: string;
+  @IsOptional()
+  password?: string;
 
   @IsOptional()
   @IsNumber()
@@ -43,4 +46,8 @@ export class CreateAgentDto {
     deposit: boolean;
     withdraw: boolean;
   };
+
+  @IsOptional()
+  @IsString()
+  status?: 'active' | 'suspended' | 'closed';
 }

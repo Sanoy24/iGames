@@ -138,8 +138,34 @@ function AgentsAdmin() {
   const [agents, setAgents] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ displayName: '', phoneNumber: '', password: '' });
+  
+  const [form, setForm] = useState({
+    displayName: '',
+    phoneNumber: '',
+    password: '',
+    workStartHour: 8,
+    workStartMinute: 0,
+    workEndHour: 17,
+    workEndMinute: 0,
+    deposit: true,
+    withdraw: true,
+  });
+
+  const [editingAgent, setEditingAgent] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({
+    displayName: '',
+    phoneNumber: '',
+    password: '',
+    workStartHour: 8,
+    workStartMinute: 0,
+    workEndHour: 17,
+    workEndMinute: 0,
+    deposit: true,
+    withdraw: true,
+    status: 'active'
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,20 +183,94 @@ function AgentsAdmin() {
     }
     setCreating(true);
     try {
-      await adminAgentsApi.createAgent(form);
+      await adminAgentsApi.createAgent({
+        displayName: form.displayName,
+        phoneNumber: form.phoneNumber,
+        password: form.password,
+        workStartHour: form.workStartHour,
+        workStartMinute: form.workStartMinute,
+        workEndHour: form.workEndHour,
+        workEndMinute: form.workEndMinute,
+        agentPermissions: {
+          deposit: form.deposit,
+          withdraw: form.withdraw,
+        }
+      });
       addToast('success', `Agent "${form.displayName}" created.`);
-      setForm({ displayName: '', phoneNumber: '', password: '' });
+      setForm({
+        displayName: '',
+        phoneNumber: '',
+        password: '',
+        workStartHour: 8,
+        workStartMinute: 0,
+        workEndHour: 17,
+        workEndMinute: 0,
+        deposit: true,
+        withdraw: true,
+      });
       setShowForm(false);
       await load();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setCreating(false); }
   };
 
+  const startEdit = (agent: User) => {
+    setEditingAgent(agent);
+    setEditForm({
+      displayName: agent.displayName,
+      phoneNumber: agent.phoneNumber || '',
+      password: '',
+      workStartHour: agent.workStartHour !== undefined ? agent.workStartHour : 8,
+      workStartMinute: agent.workStartMinute !== undefined ? agent.workStartMinute : 0,
+      workEndHour: agent.workEndHour !== undefined ? agent.workEndHour : 17,
+      workEndMinute: agent.workEndMinute !== undefined ? agent.workEndMinute : 0,
+      deposit: agent.agentPermissions ? agent.agentPermissions.deposit : true,
+      withdraw: agent.agentPermissions ? agent.agentPermissions.withdraw : true,
+      status: agent.status || 'active'
+    });
+  };
+
+  const updateAgent = async () => {
+    if (!editingAgent) return;
+    if (!editForm.displayName.trim() || !editForm.phoneNumber.trim()) {
+      addToast('info', 'Name and Phone number are required.');
+      return;
+    }
+    if (editForm.password && editForm.password.length < 8) {
+      addToast('info', 'Password must be at least 8 characters.');
+      return;
+    }
+    setUpdating(true);
+    try {
+      const payload: any = {
+        displayName: editForm.displayName,
+        phoneNumber: editForm.phoneNumber,
+        workStartHour: editForm.workStartHour,
+        workStartMinute: editForm.workStartMinute,
+        workEndHour: editForm.workEndHour,
+        workEndMinute: editForm.workEndMinute,
+        agentPermissions: {
+          deposit: editForm.deposit,
+          withdraw: editForm.withdraw,
+        },
+        status: editForm.status
+      };
+      if (editForm.password.trim() !== '') {
+        payload.password = editForm.password;
+      }
+      await adminAgentsApi.updateAgent(editingAgent.id, payload);
+      addToast('success', `Agent "${editForm.displayName}" updated.`);
+      setEditingAgent(null);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setUpdating(false); }
+  };
+
   return (
     <div className="stack-lg">
       <SectionHead title="Agent Accounts" sub="Agents process player withdrawals.">
         <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
-        <button className="adm-btn adm-btn-primary" onClick={() => setShowForm((v) => !v)}>
+        <button className="adm-btn adm-btn-primary" onClick={() => { setShowForm((v) => !v); setEditingAgent(null); }}>
           {showForm ? <X size={13} /> : <Plus size={13} />}
           {showForm ? 'Cancel' : 'New Agent'}
         </button>
@@ -195,10 +295,107 @@ function AgentsAdmin() {
               <input className="input" type="password" placeholder="••••••••" value={form.password}
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
             </label>
+            <label className="adm-field">
+              <span>Work Hours Timeframe</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input className="input" type="number" min={0} max={23} placeholder="Start Hr" value={form.workStartHour} style={{ width: 80 }}
+                  onChange={(e) => setForm((f) => ({ ...f, workStartHour: Number(e.target.value) }))} />
+                <span>:</span>
+                <input className="input" type="number" min={0} max={59} placeholder="Min" value={form.workStartMinute} style={{ width: 80 }}
+                  onChange={(e) => setForm((f) => ({ ...f, workStartMinute: Number(e.target.value) }))} />
+                <span>to</span>
+                <input className="input" type="number" min={0} max={23} placeholder="End Hr" value={form.workEndHour} style={{ width: 80 }}
+                  onChange={(e) => setForm((f) => ({ ...f, workEndHour: Number(e.target.value) }))} />
+                <span>:</span>
+                <input className="input" type="number" min={0} max={59} placeholder="Min" value={form.workEndMinute} style={{ width: 80 }}
+                  onChange={(e) => setForm((f) => ({ ...f, workEndMinute: Number(e.target.value) }))} />
+              </div>
+            </label>
+            <div className="adm-field" style={{ flexDirection: 'row', gap: 16, alignItems: 'center', gridColumn: 'span 2' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.deposit}
+                  onChange={(e) => setForm((f) => ({ ...f, deposit: e.target.checked }))} />
+                <span>Deposit Permission</span>
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.withdraw}
+                  onChange={(e) => setForm((f) => ({ ...f, withdraw: e.target.checked }))} />
+                <span>Withdrawal Permission</span>
+              </label>
+            </div>
           </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={creating} onClick={createAgent}>
               {creating ? 'Creating…' : 'Create Agent'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {editingAgent && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">Edit Agent: {editingAgent.displayName}</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>Display Name</span>
+              <input className="input" placeholder="e.g. Agent Sara" value={editForm.displayName}
+                onChange={(e) => setEditForm((f) => ({ ...f, displayName: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Phone Number</span>
+              <input className="input" type="tel" placeholder="09XXXXXXXX" value={editForm.phoneNumber}
+                onChange={(e) => setEditForm((f) => ({ ...f, phoneNumber: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>New Password (optional, min 8 chars)</span>
+              <input className="input" type="password" placeholder="Leave blank to keep current" value={editForm.password}
+                onChange={(e) => setEditForm((f) => ({ ...f, password: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Status</span>
+              <select className="input" value={editForm.status}
+                onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as any }))}
+                style={{ background: 'var(--bg-2)', color: 'var(--text-primary)' }}>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+                <option value="closed">Closed</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Work Hours Timeframe</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input className="input" type="number" min={0} max={23} placeholder="Start Hr" value={editForm.workStartHour} style={{ width: 80 }}
+                  onChange={(e) => setEditForm((f) => ({ ...f, workStartHour: Number(e.target.value) }))} />
+                <span>:</span>
+                <input className="input" type="number" min={0} max={59} placeholder="Min" value={editForm.workStartMinute} style={{ width: 80 }}
+                  onChange={(e) => setEditForm((f) => ({ ...f, workStartMinute: Number(e.target.value) }))} />
+                <span>to</span>
+                <input className="input" type="number" min={0} max={23} placeholder="End Hr" value={editForm.workEndHour} style={{ width: 80 }}
+                  onChange={(e) => setEditForm((f) => ({ ...f, workEndHour: Number(e.target.value) }))} />
+                <span>:</span>
+                <input className="input" type="number" min={0} max={59} placeholder="Min" value={editForm.workEndMinute} style={{ width: 80 }}
+                  onChange={(e) => setEditForm((f) => ({ ...f, workEndMinute: Number(e.target.value) }))} />
+              </div>
+            </label>
+            <div className="adm-field" style={{ flexDirection: 'row', gap: 16, alignItems: 'center', gridColumn: 'span 2' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={editForm.deposit}
+                  onChange={(e) => setEditForm((f) => ({ ...f, deposit: e.target.checked }))} />
+                <span>Deposit Permission</span>
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={editForm.withdraw}
+                  onChange={(e) => setEditForm((f) => ({ ...f, withdraw: e.target.checked }))} />
+                <span>Withdrawal Permission</span>
+              </label>
+            </div>
+          </div>
+          <div className="adm-panel-footer" style={{ display: 'flex', gap: 8 }}>
+            <button className="adm-btn adm-btn-primary" disabled={updating} onClick={updateAgent}>
+              {updating ? 'Saving…' : 'Save Changes'}
+            </button>
+            <button className="adm-btn adm-btn-secondary" onClick={() => setEditingAgent(null)}>
+              Cancel
             </button>
           </div>
         </div>
@@ -215,21 +412,43 @@ function AgentsAdmin() {
               <tr>
                 <th>Name</th>
                 <th>Phone</th>
+                <th>Working Hours</th>
+                <th>Permissions</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {agents.map((a) => (
-                <tr key={a.id} className="adm-tr">
-                  <td><strong>{a.displayName}</strong></td>
-                  <td className="adm-td-muted">{a.phoneNumber ?? '—'}</td>
-                  <td>
-                    <span className={`badge ${a.status === 'active' || !a.status ? 'badge-green' : 'badge-red'}`}>
-                      {a.status ?? 'active'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {agents.map((a) => {
+                const pad = (n?: number) => n !== undefined ? String(n).padStart(2, '0') : '--';
+                const timeStr = a.workStartHour !== undefined && a.workEndHour !== undefined
+                  ? `${pad(a.workStartHour)}:${pad(a.workStartMinute)} - ${pad(a.workEndHour)}:${pad(a.workEndMinute)}`
+                  : 'All day';
+                
+                const permissionsList: string[] = [];
+                if (a.agentPermissions?.deposit !== false) permissionsList.push('Deposit');
+                if (a.agentPermissions?.withdraw !== false) permissionsList.push('Withdraw');
+                const permStr = permissionsList.length > 0 ? permissionsList.join(', ') : 'None';
+
+                return (
+                  <tr key={a.id} className="adm-tr">
+                    <td><strong>{a.displayName}</strong></td>
+                    <td className="adm-td-muted">{a.phoneNumber ?? '—'}</td>
+                    <td className="adm-td-muted">{timeStr}</td>
+                    <td className="adm-td-muted">{permStr}</td>
+                    <td>
+                      <span className={`badge ${a.status === 'active' || !a.status ? 'badge-green' : 'badge-red'}`}>
+                        {a.status ?? 'active'}
+                      </span>
+                    </td>
+                    <td>
+                      <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => { startEdit(a); setShowForm(false); }}>
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -441,6 +660,7 @@ type KenoConfigForm = {
   autoScheduleIntervalSeconds: number;
   maxWinnersPerDraw: number;
   paytable: KenoPaytableEntry[];
+  winChancePct: number;
 };
 
 const DEFAULT_KENO_CONFIG_FORM: KenoConfigForm = {
@@ -449,6 +669,7 @@ const DEFAULT_KENO_CONFIG_FORM: KenoConfigForm = {
   autoScheduleIntervalSeconds: 40,
   maxWinnersPerDraw: 0,
   paytable: [],
+  winChancePct: 100,
 };
 
 function getKenoIntervalSeconds(config: KenoConfig) {
@@ -489,6 +710,7 @@ function KenoAdmin() {
         autoScheduleIntervalSeconds: getKenoIntervalSeconds(c),
         maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0,
         paytable: (c.paytable ?? []).map((entry) => ({ ...entry })),
+        winChancePct: c.winChancePct ?? 100,
       });
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
@@ -511,6 +733,7 @@ function KenoAdmin() {
         autoScheduleIntervalSeconds: cfgForm.autoScheduleIntervalSeconds,
         maxWinnersPerDraw: cfgForm.maxWinnersPerDraw,
         paytable: cfgForm.paytable,
+        winChancePct: cfgForm.winChancePct,
       });
       addToast('success', 'Config updated.');
       setShowCfg(false);
@@ -569,6 +792,7 @@ function KenoAdmin() {
           <span>{config.numberMin}–{config.numberMax}, draw {config.drawSize}</span>
           <span>Draw interval: {formatKenoInterval(config)}</span>
           <span>Bot interval: {config.globalBotWinInterval || 'off'}</span>
+          <span>Win Probability: {config.winChancePct ?? 100}%</span>
         </div>
       )}
 
@@ -595,6 +819,11 @@ function KenoAdmin() {
               <span>Max Winners Per Draw (0 = unlimited)</span>
               <input className="input" type="number" min={0} value={cfgForm.maxWinnersPerDraw}
                 onChange={(e) => setCfgForm((f) => ({ ...f, maxWinnersPerDraw: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Win Probability % (0-100)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.winChancePct}
+                onChange={(e) => setCfgForm((f) => ({ ...f, winChancePct: Number(e.target.value) }))} />
             </label>
           </div>
           <div className="adm-paytable-editor">

@@ -5,12 +5,14 @@ import { WalletModule } from '../wallet/wallet.module';
 import { AgentsController } from './agents.controller';
 import { AgentsService } from './agents.service';
 import { AgentShift, AgentShiftSchema } from './schemas/agent-shift.schema';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     JwtModule.register({}),
     MongooseModule.forFeature([{ name: AgentShift.name, schema: AgentShiftSchema }]),
     WalletModule,
+    UsersModule,
   ],
   controllers: [AgentsController],
   providers: [AgentsService],

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
   AuthTokenResponse,
+  BingoConfig,
   BingoRoom,
   BingoRoomState,
   BingoTicket,
@@ -176,6 +177,10 @@ export const adminApi = {
   getOverview: () => api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
   getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
   updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
+  topupWallet: (amountMinor: number, idempotencyKey?: string) =>
+    api.post<Wallet>('/admin/wallet/topup', { amountMinor, idempotencyKey }).then((r) => r.data),
+  transferToAgent: (agentId: string, amountMinor: number, idempotencyKey?: string) =>
+    api.post<{ adminWallet: Wallet; agentWallet: Wallet }>('/admin/wallet/transfer-to-agent', { agentId, amountMinor, idempotencyKey }).then((r) => r.data),
 };
 
 // ── Admin: Keno ───────────────────────────────────────────────────
@@ -194,6 +199,9 @@ export const adminKenoApi = {
 
 // ── Admin: Bingo ──────────────────────────────────────────────────
 export const adminBingoApi = {
+  getConfig: () => api.get<BingoConfig>('/admin/bingo/config').then((r) => r.data),
+  updateConfig: (dto: Partial<BingoConfig>) =>
+    api.post<BingoConfig>('/admin/bingo/config', dto).then((r) => r.data),
   listAllRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
   createRoom: (dto: {
     name: string;
@@ -253,6 +261,8 @@ export const agentApi = {
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
   completeWithdrawal: (id: string, telebirrReference: string) =>
     api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { telebirrReference }).then((r) => r.data),
+  transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
+    api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
 };
 
 export default api;

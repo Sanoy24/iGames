@@ -1,11 +1,12 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { BingoService } from './bingo.service';
 import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
+import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
 
 @ApiTags('admin-bingo')
 @ApiBearerAuth()
@@ -18,10 +19,23 @@ export class BingoAdminController {
     private readonly gameEventsGateway: GameEventsGateway
   ) {}
 
+  // ── Config ──────────────────────────────────────────────────────
+
+  @Get('config')
+  @ApiOkResponse({ description: 'Returns the global Bingo auto-play configuration.' })
+  getConfig() {
+    return this.bingoService.getBingoConfig();
+  }
+
+  @Post('config')
+  @ApiOkResponse({ description: 'Updates and returns the global Bingo configuration.' })
+  updateConfig(@Body() dto: UpdateBingoConfigDto) {
+    return this.bingoService.updateBingoConfig(dto);
+  }
+
+  // ── Rooms ───────────────────────────────────────────────────────
+
   @Post('rooms')
-  @ApiCreatedResponse({
-    schema: { example: { id: '665f...', name: 'Daily 90-ball', status: 'open' } }
-  })
   async createRoom(@Body() dto: CreateBingoRoomDto) {
     const room = await this.bingoService.createRoom(dto);
     this.gameEventsGateway.emitBingoRoomUpdated(room);

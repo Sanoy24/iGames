@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, Bot, ChevronDown, ChevronUp, CircleDot, Dices,
+  Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
   Play, Plus, RefreshCw, Settings, Shield, Users, Wallet, X,
 } from 'lucide-react';
 import {
@@ -10,15 +10,16 @@ import {
   adminKenoApi,
   adminApi,
   adminWithdrawalsApi,
+  walletApi,
   type BotUser,
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
-import type { BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
+import type { BingoConfig, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
 import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
-type AdminTab = 'overview' | 'agents' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config';
+type AdminTab = 'overview' | 'agents' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -28,6 +29,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
+  { id: 'emoney',      label: 'E-Money',     icon: <Coins size={15} /> },
 ];
 
 // ── Shared helpers ────────────────────────────────────────────────
@@ -702,32 +704,61 @@ function KenoAdmin() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [d, c] = await Promise.all([adminKenoApi.listDraws(20), adminKenoApi.getConfig()]);
-      setDraws(d); setConfig(c);
-      setCfgForm({
-        ticketPriceMinor: c.ticketPriceMinor,
-        globalBotWinInterval: c.globalBotWinInterval || 0,
-        autoScheduleIntervalSeconds: getKenoIntervalSeconds(c),
-        maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0,
-        paytable: (c.paytable ?? []).map((entry) => ({ ...entry })),
-        winChancePct: c.winChancePct ?? 100,
-      });
-    } catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setLoading(false); }
+      const d = await adminKenoApi.listDraws(20).catch(() => []);
+      setDraws(d);
+      try {
+        const c = await adminKenoApi.getConfig();
+        setConfig(c);
+        setCfgForm({
+          ticketPriceMinor: c.ticketPriceMinor,
+          globalBotWinInterval: c.globalBotWinInterval || 0,
+          autoScheduleIntervalSeconds: getKenoIntervalSeconds(c),
+          maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0,
+          paytable: (c.paytable ?? []).map((entry) => ({ ...entry })),
+          winChancePct: c.winChancePct ?? 100,
+        });
+      } catch (err) {
+        // If config is not found (404), we leave it as null
+        setConfig(null);
+        // Pre-populate with standard Keno default values to make initialization easy
+        setCfgForm({
+          ticketPriceMinor: 100,
+          globalBotWinInterval: 0,
+          autoScheduleIntervalSeconds: 40,
+          maxWinnersPerDraw: 0,
+          paytable: [
+            { spots: 1, matches: 1, payoutMultiplier: 3 },
+            { spots: 2, matches: 2, payoutMultiplier: 12 },
+            { spots: 3, matches: 2, payoutMultiplier: 2 },
+            { spots: 3, matches: 3, payoutMultiplier: 45 },
+            { spots: 4, matches: 2, payoutMultiplier: 1 },
+            { spots: 4, matches: 3, payoutMultiplier: 8 },
+            { spots: 4, matches: 4, payoutMultiplier: 120 },
+            { spots: 5, matches: 3, payoutMultiplier: 3 },
+            { spots: 5, matches: 4, payoutMultiplier: 25 },
+            { spots: 5, matches: 5, payoutMultiplier: 800 }
+          ],
+          winChancePct: 100,
+        });
+      }
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
 
   const updateConfig = async () => {
-    if (!config) return;
     setBusy('cfg');
     try {
       await adminKenoApi.createConfig({
-        name: config.name,
-        numberMin: config.numberMin,
-        numberMax: config.numberMax,
-        drawSize: config.drawSize,
-        allowedSpots: config.allowedSpots,
+        name: config ? config.name : 'Default Keno',
+        numberMin: config ? config.numberMin : 1,
+        numberMax: config ? config.numberMax : 80,
+        drawSize: config ? config.drawSize : 20,
+        allowedSpots: config ? config.allowedSpots : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         ticketPriceMinor: cfgForm.ticketPriceMinor,
         globalBotWinInterval: cfgForm.globalBotWinInterval,
         autoScheduleIntervalSeconds: cfgForm.autoScheduleIntervalSeconds,
@@ -735,7 +766,7 @@ function KenoAdmin() {
         paytable: cfgForm.paytable,
         winChancePct: cfgForm.winChancePct,
       });
-      addToast('success', 'Config updated.');
+      addToast('success', config ? 'Config updated.' : 'Initial config created.');
       setShowCfg(false);
       await load();
     }
@@ -796,9 +827,9 @@ function KenoAdmin() {
         </div>
       )}
 
-      {showCfg && config && (
+      {showCfg && (
         <div className="adm-panel">
-          <div className="adm-panel-head">New Config Version</div>
+          <div className="adm-panel-head">{config ? 'New Config Version' : 'Create Initial Config'}</div>
           <div className="adm-field-grid">
             <label className="adm-field">
               <span>Ticket Price (credits)</span>
@@ -914,19 +945,59 @@ function KenoAdmin() {
 function BingoAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [rooms, setRooms] = useState<BingoRoom[]>([]);
+  const [cfg, setCfg] = useState<BingoConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [form, setForm] = useState({ name: 'Room Alpha', ticketPriceMinor: 500, maxTickets: 100, minutesFromNow: 5, oneLine: 20000, twoLines: 50000, fullHouse: 100000 });
+  const [cfgForm, setCfgForm] = useState<Partial<BingoConfig>>({
+    enabled: true,
+    autoRepeatIntervalMinutes: 0,
+    defaultTicketPriceMinor: 500,
+    defaultMaxTickets: 200,
+    defaultOneLineMinor: 20000,
+    defaultTwoLinesMinor: 50000,
+    defaultFullHouseMinor: 100000,
+    drawIntervalSeconds: 5,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setRooms(await adminBingoApi.listAllRooms()); }
+    try {
+      const [r, c] = await Promise.all([
+        adminBingoApi.listAllRooms(),
+        adminBingoApi.getConfig(),
+      ]);
+      setRooms(r);
+      setCfg(c);
+      setCfgForm({
+        enabled: c.enabled,
+        autoRepeatIntervalMinutes: c.autoRepeatIntervalMinutes,
+        defaultTicketPriceMinor: c.defaultTicketPriceMinor,
+        defaultMaxTickets: c.defaultMaxTickets,
+        defaultOneLineMinor: c.defaultOneLineMinor,
+        defaultTwoLinesMinor: c.defaultTwoLinesMinor,
+        defaultFullHouseMinor: c.defaultFullHouseMinor,
+        drawIntervalSeconds: c.drawIntervalSeconds,
+      });
+    }
     catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const saveConfig = async () => {
+    setBusy('cfg');
+    try {
+      const updated = await adminBingoApi.updateConfig(cfgForm);
+      setCfg(updated);
+      addToast('success', 'Bingo settings saved.');
+      setShowSettings(false);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
 
   const createRoom = async () => {
     setBusy('create');
@@ -948,16 +1019,95 @@ function BingoAdmin() {
       setForm((prev) => ({ ...prev, [key]: typeof prev[key] === 'number' ? Number(e.target.value) : e.target.value })),
   });
 
-  const R_STATUS: Record<string, string> = { open: 'badge-gold', running: 'badge-violet', settled: 'badge-green', cancelled: 'badge-red' };
+  const R_STATUS: Record<string, string> = {
+    open: 'badge-gold',
+    running: 'badge-violet',
+    completed: 'badge-green',
+    cancelled: 'badge-red',
+  };
 
   return (
     <div className="stack-lg">
-      <SectionHead title="Bingo Rooms" sub="Create rooms and manage live draws.">
+      <SectionHead title="Bingo" sub="Auto-draw rooms with configurable prizes.">
         <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-secondary" onClick={() => setShowSettings((v) => !v)}>
+          <Settings size={13} />{showSettings ? 'Close' : 'Settings'}
+        </button>
         <button className="adm-btn adm-btn-primary" onClick={() => setShowCreate((v) => !v)}>
           {showCreate ? <X size={13} /> : <Plus size={13} />}{showCreate ? 'Cancel' : 'New Room'}
         </button>
       </SectionHead>
+
+      {/* Config info strip */}
+      {cfg && (
+        <div className="adm-info-strip">
+          <span>{cfg.enabled ? '✅ Auto-Bingo ON' : '⏸ Auto-Bingo OFF'}</span>
+          <span>{cfg.defaultTicketPriceMinor} credits/ticket</span>
+          <span>Max {cfg.defaultMaxTickets} tickets</span>
+          <span>Draw every {cfg.drawIntervalSeconds}s</span>
+          <span>Repeat delay: {cfg.autoRepeatIntervalMinutes} min</span>
+        </div>
+      )}
+
+      {/* Settings panel */}
+      {showSettings && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">Bingo Settings</div>
+          <div className="adm-field-grid">
+            <label className="adm-field" style={{ gridColumn: '1 / -1' }}>
+              <span>Auto-Bingo Enabled</span>
+              <select
+                className="input"
+                value={cfgForm.enabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, enabled: e.target.value === 'true' }))}
+              >
+                <option value="true">Yes — automatically create & run rooms</option>
+                <option value="false">No — admin creates rooms manually</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Repeat Delay After Completion (minutes, 0 = instant)</span>
+              <input className="input" type="number" min={0} value={cfgForm.autoRepeatIntervalMinutes}
+                onChange={(e) => setCfgForm((f) => ({ ...f, autoRepeatIntervalMinutes: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Number Draw Interval (seconds)</span>
+              <input className="input" type="number" min={1} max={60} value={cfgForm.drawIntervalSeconds}
+                onChange={(e) => setCfgForm((f) => ({ ...f, drawIntervalSeconds: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Default Ticket Price (credits)</span>
+              <input className="input" type="number" min={1} value={cfgForm.defaultTicketPriceMinor}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultTicketPriceMinor: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Default Max Tickets Per Room</span>
+              <input className="input" type="number" min={1} value={cfgForm.defaultMaxTickets}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultMaxTickets: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Default One-Line Prize (credits)</span>
+              <input className="input" type="number" min={0} value={cfgForm.defaultOneLineMinor}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultOneLineMinor: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Default Two-Lines Prize (credits)</span>
+              <input className="input" type="number" min={0} value={cfgForm.defaultTwoLinesMinor}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultTwoLinesMinor: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Default Full-House Prize (credits)</span>
+              <input className="input" type="number" min={0} value={cfgForm.defaultFullHouseMinor}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultFullHouseMinor: Number(e.target.value) }))} />
+            </label>
+          </div>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={busy === 'cfg'} onClick={saveConfig}>
+              {busy === 'cfg' ? 'Saving…' : 'Save Settings'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showCreate && (
         <div className="adm-panel">
@@ -981,10 +1131,10 @@ function BingoAdmin() {
 
       <div className="adm-panel">
         {loading && rooms.length === 0 ? <div className="adm-empty">Loading rooms…</div>
-          : rooms.length === 0 ? <div className="adm-empty">No rooms yet.</div>
+          : rooms.length === 0 ? <div className="adm-empty">No rooms yet. Enable Auto-Bingo in Settings and a room will be created automatically.</div>
           : (
             <table className="adm-table">
-              <thead><tr><th>Room</th><th>Tickets</th><th>Status</th><th>Starts</th><th></th></tr></thead>
+              <thead><tr><th>Room</th><th>Tickets</th><th>Status</th><th>Starts</th><th>Drawn</th><th></th></tr></thead>
               <tbody>
                 {rooms.map((room) => {
                   const isActive = room.status === 'open' || room.status === 'running';
@@ -994,14 +1144,10 @@ function BingoAdmin() {
                       <td className="adm-td-muted">{room.soldTickets}/{room.maxTickets}</td>
                       <td><span className={`badge ${R_STATUS[room.status] ?? 'badge-gold'}`}>{room.status}</span></td>
                       <td className="adm-td-muted">{formatRelativeTime(room.scheduledStartAt)}</td>
+                      <td className="adm-td-muted">{room.drawnNumbers?.length ?? 0}/90</td>
                       <td>
                         {isActive && (
                           <div className="adm-cell-actions">
-                            <button className="adm-btn adm-btn-primary adm-btn-xs"
-                              disabled={!!busy}
-                              onClick={async () => { setBusy(`d-${room.id}`); try { await adminBingoApi.drawNext(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
-                              <CircleDot size={11} />Draw
-                            </button>
                             <button className="adm-btn adm-btn-danger adm-btn-xs"
                               disabled={!!busy}
                               onClick={async () => { setBusy(`c-${room.id}`); try { await adminBingoApi.cancelRoom(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
@@ -1020,6 +1166,7 @@ function BingoAdmin() {
     </div>
   );
 }
+
 
 // ══════════════════════════════════════════════════════════════════
 // Bots
@@ -1121,6 +1268,181 @@ function BotsAdmin() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// E-Money Management
+// ══════════════════════════════════════════════════════════════════
+function EMoneyAdmin() {
+  const wallet = useStore((s) => s.wallet);
+  const setWallet = useStore((s) => s.setWallet);
+  const addToast = useStore((s) => s.addToast);
+
+  const [topupAmount, setTopupAmount] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [agents, setAgents] = useState<User[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [submittingTopup, setSubmittingTopup] = useState(false);
+  const [submittingTransfer, setSubmittingTransfer] = useState(false);
+
+  const refreshWallet = useCallback(async () => {
+    try {
+      const data = await walletApi.getWallet();
+      setWallet(data);
+    } catch (e) {
+      addToast('error', 'Failed to refresh wallet: ' + getErrorMessage(e));
+    }
+  }, [addToast, setWallet]);
+
+  const loadAgents = useCallback(async () => {
+    setLoadingAgents(true);
+    try {
+      const list = await adminAgentsApi.listAgents();
+      setAgents(list);
+      if (list.length > 0) {
+        setSelectedAgentId(list[0].id);
+      }
+    } catch (e) {
+      addToast('error', 'Failed to load agents: ' + getErrorMessage(e));
+    } finally {
+      setLoadingAgents(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => {
+    void refreshWallet();
+    void loadAgents();
+  }, [refreshWallet, loadAgents]);
+
+  const handleTopup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseInt(topupAmount, 10);
+    if (!amount || amount <= 0) {
+      addToast('error', 'Please enter a valid amount');
+      return;
+    }
+    setSubmittingTopup(true);
+    try {
+      const updatedWallet = await adminApi.topupWallet(amount);
+      setWallet(updatedWallet);
+      addToast('success', `Successfully topped up ${formatCreditsFull(amount)}`);
+      setTopupAmount('');
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setSubmittingTopup(false);
+    }
+  };
+
+  const handleTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseInt(transferAmount, 10);
+    if (!selectedAgentId) {
+      addToast('error', 'Please select an agent');
+      return;
+    }
+    if (!amount || amount <= 0) {
+      addToast('error', 'Please enter a valid amount');
+      return;
+    }
+    setSubmittingTransfer(true);
+    try {
+      const result = await adminApi.transferToAgent(selectedAgentId, amount);
+      setWallet(result.adminWallet);
+      addToast('success', `Successfully transferred ${formatCreditsFull(amount)} to agent`);
+      setTransferAmount('');
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setSubmittingTransfer(false);
+    }
+  };
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="E-Money Management" sub="Top-up your system balance and distribute e-money to agents.">
+        <button className="adm-icon-btn" onClick={refreshWallet} title="Refresh Balance"><RefreshCw size={14} /></button>
+      </SectionHead>
+
+      <div className="adm-kpi-grid" style={{ gridTemplateColumns: '1fr' }}>
+        <Kpi label="Admin E-Money Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+        {/* Top-up Panel */}
+        <div className="adm-panel">
+          <div className="adm-panel-head">Top-up E-Money</div>
+          <form onSubmit={handleTopup} className="stack-md p-lg">
+            <div className="adm-field">
+              <label>Amount (Credits / Minor Units)</label>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                placeholder="e.g. 100000 for 1000 e-Birr"
+                value={topupAmount}
+                onChange={(e) => setTopupAmount(e.target.value)}
+                required
+              />
+              <span className="adm-field-hint" style={{ marginTop: 4, display: 'block', fontSize: '0.85em', color: 'var(--text-muted)' }}>
+                Equivalent to: {formatCreditsFull(parseInt(topupAmount, 10) || 0)}
+              </span>
+            </div>
+            <button className="adm-btn adm-btn-primary" type="submit" disabled={submittingTopup}>
+              {submittingTopup ? 'Topping up...' : 'Top-up Wallet'}
+            </button>
+          </form>
+        </div>
+
+        {/* Transfer Panel */}
+        <div className="adm-panel">
+          <div className="adm-panel-head">Transfer to Agent</div>
+          <form onSubmit={handleTransfer} className="stack-md p-lg">
+            <div className="adm-field">
+              <label>Select Agent</label>
+              {loadingAgents ? (
+                <div>Loading agents...</div>
+              ) : (
+                <select
+                  className="input"
+                  style={{ background: 'var(--bg-card)', color: 'var(--text)' }}
+                  value={selectedAgentId}
+                  onChange={(e) => setSelectedAgentId(e.target.value)}
+                  required
+                >
+                  <option value="" disabled>-- Choose Agent --</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.displayName} ({a.phoneNumber || 'No Phone'})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="adm-field">
+              <label>Amount (Credits / Minor Units)</label>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                placeholder="e.g. 50000 for 500 e-Birr"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                required
+              />
+              <span className="adm-field-hint" style={{ marginTop: 4, display: 'block', fontSize: '0.85em', color: 'var(--text-muted)' }}>
+                Equivalent to: {formatCreditsFull(parseInt(transferAmount, 10) || 0)}
+              </span>
+            </div>
+            <button className="adm-btn adm-btn-primary" type="submit" disabled={submittingTransfer || !selectedAgentId}>
+              {submittingTransfer ? 'Transferring...' : 'Transfer E-Money'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Root Admin
 // ══════════════════════════════════════════════════════════════════
 export function Admin() {
@@ -1181,6 +1503,7 @@ export function Admin() {
         {tab === 'bots'        && <BotsAdmin />}
         {tab === 'withdrawals' && <WithdrawalsAdmin />}
         {tab === 'config'      && <ConfigAdmin />}
+        {tab === 'emoney'      && <EMoneyAdmin />}
       </div>
     </div>
   );

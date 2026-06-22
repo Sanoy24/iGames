@@ -58,7 +58,8 @@ export function App() {
         const walletData = await walletApi.getWallet();
         setWallet(walletData);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('Telegram login failed:', err);
         loginStarted.current = false;
         setShowCredLogin(true);
       });

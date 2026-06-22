@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle, Clock, RefreshCw, Send, Undo2, Users } from 'lucide-react';
-import { adminApi, agentApi } from '../lib/api';
+import { adminApi, agentApi, walletApi } from '../lib/api';
 import type { SystemConfig } from '../lib/api';
-import type { Withdrawal } from '../lib/models';
+import type { Wallet, Withdrawal } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
@@ -20,28 +20,61 @@ export function Agent() {
   const [available, setAvailable] = useState<Withdrawal[]>([]);
   const [mine, setMine] = useState<Withdrawal[]>([]);
   const [config, setConfig] = useState<SystemConfig | null>(null);
+  const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
   const [loading, setLoading] = useState(true);
 
   // per-withdrawal state for the complete form
   const [refInputs, setRefInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
 
+  // Transfer E-Money to Player form states
+  const [transferPhone, setTransferPhone] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [submittingTransfer, setSubmittingTransfer] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const [avail, my, cfg] = await Promise.all([
+      const [avail, my, cfg, wallet] = await Promise.all([
         agentApi.getAvailableWithdrawals(),
         agentApi.getMyWithdrawals(),
         adminApi.getConfig(),
+        walletApi.getWallet(),
       ]);
       setAvailable(avail);
       setMine(my);
       setConfig(cfg);
+      setAgentWallet(wallet);
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
       setLoading(false);
     }
   }, [addToast]);
+
+  const handleTransferToUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseInt(transferAmount, 10);
+    if (!transferPhone.trim()) {
+      addToast('error', 'Please enter player phone number');
+      return;
+    }
+    if (!amount || amount <= 0) {
+      addToast('error', 'Please enter a valid amount');
+      return;
+    }
+    setSubmittingTransfer(true);
+    try {
+      const result = await agentApi.transferToUser(transferPhone.trim(), amount);
+      setAgentWallet(result.agentWallet);
+      addToast('success', `Successfully transferred ${formatCreditsFull(amount)} to player ${transferPhone}`);
+      setTransferAmount('');
+      setTransferPhone('');
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setSubmittingTransfer(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -127,7 +160,11 @@ export function Agent() {
         </div>
 
         {config && (
-          <div className="stats-grid">
+          <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
+            <div className="stat-card">
+              <span className="stat-label">My Balance</span>
+              <strong style={{ color: '#10b981' }}>{formatCreditsFull(agentWallet?.availableMinor ?? 0)}</strong>
+            </div>
             <div className="stat-card">
               <span className="stat-label">Service Charge</span>
               <strong>{serviceChargePct}%</strong>
@@ -142,6 +179,49 @@ export function Agent() {
             </div>
           </div>
         )}
+      </section>
+
+      {/* ── Transfer E-Money to Player ── */}
+      <section className="card">
+        <div className="section-header">
+          <div>
+            <div className="section-title">Transfer E-Money to Player</div>
+            <p className="section-copy">Directly transfer credits to a player's wallet using their phone number.</p>
+          </div>
+        </div>
+        <form onSubmit={handleTransferToUser} className="stack-md" style={{ padding: '0 16px 16px 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: '0.9em', color: 'var(--text-muted)' }}>Player Phone Number</label>
+              <input
+                className="input"
+                placeholder="e.g. +2519XXXXXXXX or 09XXXXXXXX"
+                value={transferPhone}
+                onChange={(e) => setTransferPhone(e.target.value)}
+                required
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ fontSize: '0.9em', color: 'var(--text-muted)' }}>Amount (Credits)</label>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                placeholder="e.g. 1000 for 10 Birr"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                required
+              />
+              <span style={{ fontSize: '0.8em', color: 'var(--text-muted)' }}>
+                Equivalent to: {formatCreditsFull(parseInt(transferAmount, 10) || 0)}
+              </span>
+            </div>
+          </div>
+          <button className="btn btn-primary" type="submit" disabled={submittingTransfer} style={{ alignSelf: 'flex-start', marginTop: 12 }}>
+            <Send size={14} />
+            {submittingTransfer ? 'Transferring...' : 'Transfer to Player'}
+          </button>
+        </form>
       </section>
 
       {/* ── My Claimed Withdrawals ── */}

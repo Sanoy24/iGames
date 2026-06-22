@@ -8,6 +8,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AgentsService } from './agents.service';
 import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
+import { TransferToUserDto } from './dto/transfer-to-user.dto';
+import { WalletService } from '../wallet/wallet.service';
 
 @ApiTags('agent')
 @ApiBearerAuth()
@@ -16,7 +18,10 @@ import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('agent')
 export class AgentsController {
-  constructor(private readonly agentsService: AgentsService) {}
+  constructor(
+    private readonly agentsService: AgentsService,
+    private readonly walletService: WalletService,
+  ) {}
 
   /**
    * The shift currently active (who should be handling withdrawals right now).
@@ -74,5 +79,14 @@ export class AgentsController {
     @CurrentUser() agent: AuthenticatedUser,
   ) {
     return this.agentsService.completeWithdrawal(id, agent.id, dto.telebirrReference);
+  }
+
+  @Post('wallet/transfer-to-user')
+  @HttpCode(HttpStatus.OK)
+  transferToUser(
+    @Body() dto: TransferToUserDto,
+    @CurrentUser() agent: AuthenticatedUser,
+  ) {
+    return this.walletService.transferAgentToUser(agent.id, dto.phoneNumber, dto.amountMinor, dto.idempotencyKey);
   }
 }

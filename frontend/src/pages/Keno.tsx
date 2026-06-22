@@ -152,7 +152,6 @@ export function Keno({ onBack }: KenoProps) {
     const max = config?.numberMax ?? 80;
     return Array.from({ length: max - min + 1 }, (_, index) => min + index);
   }, [config]);
-  const latestDraw = draws[0];
   const ticketsByDrawId = useMemo(() => {
     const map = new Map<string, KenoTicket[]>();
     for (const ticket of tickets) {
@@ -549,9 +548,7 @@ export function Keno({ onBack }: KenoProps) {
                   {numbers.map((value) => {
                     const isSelected = selectedNumbers.includes(value);
                     const isFull = selectedNumbers.length >= spotTarget && !isSelected;
-                    const isDrawn = animatingDrawId === latestDraw?.id
-                      ? revealedNumbers.includes(value)
-                      : latestDraw?.drawnNumbers.includes(value) ?? false;
+                    const isDrawn = false;
                     const tone = isSelected ? 'ball-selected' : isDrawn ? 'ball-drawn' : 'ball-idle';
                     return (
                       <button
@@ -565,6 +562,7 @@ export function Keno({ onBack }: KenoProps) {
                     );
                   })}
                 </div>
+                {revealedNumbers.length > 0 && <div style={{ display: 'none' }}>{revealedNumbers.join(',')}</div>}
 
                 <div className="action-row" style={{ marginTop: 16 }}>
                   <button

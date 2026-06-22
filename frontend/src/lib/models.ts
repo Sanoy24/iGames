@@ -129,6 +129,20 @@ export type BingoRoomState = BingoRoom & {
   tickets?: BingoTicket[];
 };
 
+export type BingoConfig = {
+  key: string;
+  enabled: boolean;
+  autoRepeatIntervalMinutes: number;
+  defaultTicketPriceMinor: number;
+  defaultMaxTickets: number;
+  defaultOneLineMinor: number;
+  defaultTwoLinesMinor: number;
+  defaultFullHouseMinor: number;
+  drawIntervalSeconds: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type Withdrawal = {
   id: string;
   userId: string;

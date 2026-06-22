@@ -242,22 +242,22 @@ export function Bingo({ onBack }: BingoProps) {
                                 </div>
                                 <p className="section-copy">
                                     {selectedRoom.status === 'running'
-                                        ? 'In progress · drawing numbers now'
+                                        ? 'In progress · drawing numbers automatically'
                                         : selectedRoom.status === 'open'
                                         ? `Starts ${formatRelativeTime(selectedRoom.scheduledStartAt)}`
-                                        : selectedRoom.status === 'settled'
-                                        ? 'Completed'
+                                        : selectedRoom.status === 'completed'
+                                        ? 'Game over · results settled'
                                         : selectedRoom.status}
                                 </p>
                             </div>
                             <span className={`badge ${
                                 selectedRoom.status === 'running' ? 'badge-green' :
-                                selectedRoom.status === 'settled' ? 'badge-violet' :
+                                selectedRoom.status === 'completed' ? 'badge-violet' :
                                 selectedRoom.status === 'cancelled' ? 'badge-red' : 'badge-gold'
                             }`}>
                                 {selectedRoom.status === 'running' ? 'Live' :
                                  selectedRoom.status === 'open' ? 'Open' :
-                                 selectedRoom.status === 'settled' ? 'Settled' : selectedRoom.status}
+                                 selectedRoom.status === 'completed' ? 'Completed' : selectedRoom.status}
                             </span>
                         </div>
 

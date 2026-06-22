@@ -9,6 +9,8 @@ export default defineConfig({
             '261e-196-190-62-169.ngrok-free.app',
             '.ngrok-free.app',
             '.ngrok.io',
+            'api.binastech.com',
+            'binastech.com'
         ],
     },
 });

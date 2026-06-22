@@ -7,6 +7,7 @@ import { LedgerModule } from '../ledger/ledger.module';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal } from './entities/withdrawal.entity';
+import { User } from '../users/entities/user.entity';
 import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 
@@ -15,7 +16,7 @@ import { WalletService } from './wallet.service';
     JwtModule.register({}),
     LedgerModule,
     GameEventsModule,
-    TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal])
+    TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal, User])
   ],
   controllers: [WalletController],
   providers: [WalletService, JwtAuthGuard],

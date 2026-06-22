@@ -2,7 +2,7 @@
   "name": "igames-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "NestJS + MongoDB backend for iGames Keno and 90-ball Bingo.",
+  "description": "NestJS + MySQL backend for iGames Keno and 90-ball Bingo.",
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",

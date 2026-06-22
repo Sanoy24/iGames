@@ -10,6 +10,7 @@ import { AdminService } from './admin.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
+import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -121,6 +122,24 @@ export class AdminController {
     @CurrentUser() admin: AuthenticatedUser,
   ) {
     return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
+  }
+
+  // ── Admin Wallet Operations ───────────────────────────────────────
+
+  @Post('wallet/topup')
+  topupWallet(
+    @Body() dto: AdminTopupDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.walletService.adminTopup(admin.id, dto.amountMinor, dto.idempotencyKey);
+  }
+
+  @Post('wallet/transfer-to-agent')
+  transferToAgent(
+    @Body() dto: AdminTransferToAgentDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.walletService.transferAdminToAgent(admin.id, dto.agentId, dto.amountMinor, dto.idempotencyKey);
   }
 
   // ── Agent Shifts ──────────────────────────────────────────────────

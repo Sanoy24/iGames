@@ -13,6 +13,7 @@ import { GameEventsGateway } from '../events/game-events.gateway';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
+import { User } from '../users/entities/user.entity';
 
 export type WalletSummary = {
   id: string;
@@ -769,6 +770,130 @@ export class WalletService {
 
   async deleteWagerLimit(userId: string): Promise<void> {
     await this.wagerLimitRepository.delete({ userId });
+  }
+
+  async adminTopup(
+    adminUserId: string,
+    amountMinor: number,
+    idempotencyKey?: string
+  ): Promise<WalletMutationResult> {
+    const key = idempotencyKey || `admin-topup:${adminUserId}:${Date.now()}`;
+    return this.dataSource.transaction(async (manager) => {
+      await this.ensureDefaultWallet(adminUserId, manager);
+      return await this.creditInSession(
+        {
+          userId: adminUserId,
+          amountMinor,
+          entryType: 'deposit',
+          sourceType: 'admin_topup',
+          sourceId: 'admin_topup',
+          idempotencyKey: key,
+          metadata: { adminUserId }
+        },
+        manager
+      );
+    });
+  }
+
+  async transferAdminToAgent(
+    adminUserId: string,
+    agentId: string,
+    amountMinor: number,
+    idempotencyKey?: string
+  ): Promise<{ adminWallet: WalletSummary; agentWallet: WalletSummary }> {
+    const key = idempotencyKey || `admin-to-agent:${adminUserId}:${agentId}:${Date.now()}`;
+    return this.dataSource.transaction(async (manager) => {
+      // Ensure wallets exist
+      await this.ensureDefaultWallet(adminUserId, manager);
+      await this.ensureDefaultWallet(agentId, manager);
+
+      // Debit admin
+      const debitResult = await this.debitInSession(
+        {
+          userId: adminUserId,
+          amountMinor,
+          entryType: 'adjustment',
+          sourceType: 'admin_to_agent_transfer',
+          sourceId: agentId,
+          idempotencyKey: `${key}:debit`,
+          metadata: { agentId }
+        },
+        manager
+      );
+
+      // Credit agent
+      const creditResult = await this.creditInSession(
+        {
+          userId: agentId,
+          amountMinor,
+          entryType: 'deposit',
+          sourceType: 'admin_to_agent_transfer',
+          sourceId: adminUserId,
+          idempotencyKey: `${key}:credit`,
+          metadata: { adminUserId }
+        },
+        manager
+      );
+
+      return {
+        adminWallet: debitResult.wallet,
+        agentWallet: creditResult.wallet
+      };
+    });
+  }
+
+  async transferAgentToUser(
+    agentUserId: string,
+    userPhone: string,
+    amountMinor: number,
+    idempotencyKey?: string
+  ): Promise<{ agentWallet: WalletSummary; userWallet: WalletSummary }> {
+    const key = idempotencyKey || `agent-to-user:${agentUserId}:${userPhone}:${Date.now()}`;
+    return this.dataSource.transaction(async (manager) => {
+      // Find user by phone number
+      const userRepo = manager.getRepository(User);
+      const user = await userRepo.findOneBy({ phoneNumber: userPhone });
+      if (!user) {
+        throw new NotFoundException(`User with phone number ${userPhone} not found`);
+      }
+
+      // Ensure wallets exist
+      await this.ensureDefaultWallet(agentUserId, manager);
+      await this.ensureDefaultWallet(user.id, manager);
+
+      // Debit agent
+      const debitResult = await this.debitInSession(
+        {
+          userId: agentUserId,
+          amountMinor,
+          entryType: 'adjustment',
+          sourceType: 'agent_to_user_transfer',
+          sourceId: user.id,
+          idempotencyKey: `${key}:debit`,
+          metadata: { userPhone, userId: user.id }
+        },
+        manager
+      );
+
+      // Credit user
+      const creditResult = await this.creditInSession(
+        {
+          userId: user.id,
+          amountMinor,
+          entryType: 'deposit',
+          sourceType: 'agent_to_user_transfer',
+          sourceId: agentUserId,
+          idempotencyKey: `${key}:credit`,
+          metadata: { agentUserId }
+        },
+        manager
+      );
+
+      return {
+        agentWallet: debitResult.wallet,
+        userWallet: creditResult.wallet
+      };
+    });
   }
 
   private assertNonNegativeAmount(amount: number, field: string): void {

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
@@ -8,7 +8,7 @@ const BINGO_DRAW_LOCK_KEY = 'igames:bingo:draw-lock';
 const BINGO_DRAW_LOCK_TTL_MS = 120_000;
 
 @Injectable()
-export class BingoScheduler implements OnApplicationShutdown {
+export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(BingoScheduler.name);
   private isRunning = false;
   private shuttingDown = false;
@@ -19,6 +19,20 @@ export class BingoScheduler implements OnApplicationShutdown {
     private readonly lockService: RedisLockService
   ) {}
 
+  /**
+   * On startup, ensure there is at least one open Bingo room if auto-bingo is enabled.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      await this.bingoService.autoCreateNextRoom();
+    } catch (error) {
+      this.logger.error(
+        'Bootstrap: Failed to ensure initial Bingo room',
+        error instanceof Error ? error.stack : error
+      );
+    }
+  }
+
   onApplicationShutdown() {
     this.shuttingDown = true;
   }
@@ -27,6 +41,8 @@ export class BingoScheduler implements OnApplicationShutdown {
    * Runs every 5 seconds. Finds all running rooms and draws the next number
    * for each. The room status and drawnNumbers array act as the database-level
    * guard against duplicate draws across instances.
+   *
+   * After each completed room, auto-creates the next room using config defaults.
    */
   @Cron(CronExpression.EVERY_5_SECONDS)
   async drawNextNumbers(): Promise<void> {
@@ -42,6 +58,8 @@ export class BingoScheduler implements OnApplicationShutdown {
 
     try {
       const runningRooms = await this.bingoService.listRunningRooms();
+      let anyCompleted = false;
+
       for (const room of runningRooms) {
         if (this.shuttingDown) break;
         try {
@@ -51,6 +69,7 @@ export class BingoScheduler implements OnApplicationShutdown {
           if (updated.status === 'completed') {
             this.logger.log(`Bingo room ${updated.id} completed`);
             this.gameEventsGateway.emitBingoRoomCompleted(updated);
+            anyCompleted = true;
           }
         } catch (error) {
           this.logger.error(
@@ -72,6 +91,22 @@ export class BingoScheduler implements OnApplicationShutdown {
         } catch (error) {
           this.logger.error(
             `Error auto-starting room ${room.id}`,
+            error instanceof Error ? error.stack : error
+          );
+        }
+      }
+
+      // After any room completes, auto-create the next one
+      if (anyCompleted && !this.shuttingDown) {
+        try {
+          const newRoom = await this.bingoService.autoCreateNextRoom();
+          if (newRoom) {
+            this.gameEventsGateway.emitBingoRoomUpdated(newRoom);
+            this.logger.log(`Auto-created next Bingo room: ${newRoom.id}`);
+          }
+        } catch (error) {
+          this.logger.error(
+            'Error auto-creating next Bingo room',
             error instanceof Error ? error.stack : error
           );
         }

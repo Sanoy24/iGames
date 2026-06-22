@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Zap, Trophy, ChevronRight, HelpCircle, Clock, TrendingUp } from 'lucide-react';
+import { ChevronRight, HelpCircle, Clock, TrendingUp } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { kenoApi } from '../lib/api';
 import type { KenoDraw } from '../lib/models';

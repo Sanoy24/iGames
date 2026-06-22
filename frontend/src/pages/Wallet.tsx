@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, X, RefreshCw } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
-import { formatCredits, useStore } from '../store/useStore';
+import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
+import { authApi, walletApi, paymentsApi } from '../lib/api';
 
 const ENTRY_LABELS: Record<string, string> = {
   ticket_purchase: 'Ticket Purchase',
@@ -31,7 +32,6 @@ function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const { authApi, walletApi } = await import('../lib/api');
       await authApi.devTopup(user.id, amountMinor);
       const w = await walletApi.getWallet();
       setWallet(w);
@@ -76,7 +76,6 @@ export function Wallet() {
 
   const loadWallet = useCallback(async () => {
     try {
-      const { walletApi } = await import('../lib/api');
       const [nextWallet, nextLedger, nextWithdrawals] = await Promise.all([
         walletApi.getWallet(),
         walletApi.getLedger(30),
@@ -100,7 +99,6 @@ export function Wallet() {
     if (!receiptInput.trim()) return;
     setIsSubmitting(true);
     try {
-      const { paymentsApi } = await import('../lib/api');
       await paymentsApi.submitTelebirrReceipt(receiptInput.trim());
       addToast('success', 'Telebirr receipt verified! Account credited.');
       setReceiptInput('');
@@ -136,7 +134,6 @@ export function Wallet() {
 
     setIsWithdrawing(true);
     try {
-      const { walletApi } = await import('../lib/api');
       await walletApi.requestWithdrawal(amountMinor, withdrawPhone.trim());
       addToast('success', 'Withdrawal request submitted successfully!');
       setWithdrawAmount('');

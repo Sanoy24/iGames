@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -10,6 +11,8 @@ import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BingoRulesService } from './bingo-rules.service';
 import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
+import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
+import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoRoom, BingoPrizeTier } from './entities/bingo-room.entity';
 import { BingoTicket } from './entities/bingo-ticket.entity';
 
@@ -44,16 +47,95 @@ export type BingoTicketResponse = {
 
 @Injectable()
 export class BingoService {
+  private readonly logger = new Logger(BingoService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(BingoRoom)
     private readonly bingoRoomRepository: Repository<BingoRoom>,
     @InjectRepository(BingoTicket)
     private readonly bingoTicketRepository: Repository<BingoTicket>,
+    @InjectRepository(BingoConfig)
+    private readonly bingoConfigRepository: Repository<BingoConfig>,
     private readonly bingoRulesService: BingoRulesService,
     private readonly rngService: RngService,
     private readonly walletService: WalletService
   ) {}
+
+  // ── Config ──────────────────────────────────────────────────────
+
+  async getBingoConfig(): Promise<BingoConfig> {
+    let cfg = await this.bingoConfigRepository.findOneBy({ key: 'global' });
+    if (!cfg) {
+      cfg = this.bingoConfigRepository.create({
+        key: 'global',
+        enabled: true,
+        autoRepeatIntervalMinutes: 0,
+        defaultTicketPriceMinor: 500,
+        defaultMaxTickets: 200,
+        defaultOneLineMinor: 20000,
+        defaultTwoLinesMinor: 50000,
+        defaultFullHouseMinor: 100000,
+        drawIntervalSeconds: 5,
+      });
+      await this.bingoConfigRepository.save(cfg);
+    }
+    return cfg;
+  }
+
+  async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
+    const cfg = await this.getBingoConfig();
+    Object.assign(cfg, dto);
+    return this.bingoConfigRepository.save(cfg);
+  }
+
+  /**
+   * Create the next room using the global BingoConfig defaults.
+   * Called by the scheduler after a room completes.
+   */
+  async autoCreateNextRoom(): Promise<BingoRoomResponse | null> {
+    const cfg = await this.getBingoConfig();
+    if (!cfg.enabled) return null;
+
+    // Do not create a second open room if one already exists
+    const existing = await this.bingoRoomRepository.countBy({ status: 'open' });
+    if (existing > 0) return null;
+
+    const delayMs = cfg.autoRepeatIntervalMinutes * 60_000;
+    const scheduledStartAt = new Date(Date.now() + delayMs);
+
+    // Auto-generate a human-readable room name
+    const timestamp = scheduledStartAt.toLocaleTimeString('en-ET', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const name = `Bingo ${timestamp}`;
+
+    const room = this.bingoRoomRepository.create({
+      name,
+      status: 'open',
+      ticketPriceMinor: cfg.defaultTicketPriceMinor,
+      maxTickets: cfg.defaultMaxTickets,
+      prizes: {
+        oneLineMinor: cfg.defaultOneLineMinor,
+        twoLinesMinor: cfg.defaultTwoLinesMinor,
+        fullHouseMinor: cfg.defaultFullHouseMinor,
+      },
+      scheduledStartAt,
+      drawnNumbers: [],
+      rngAuditLogIds: [],
+      settledTiers: [],
+      winnersByTier: {},
+      settlementSummary: {},
+    });
+
+    await this.bingoRoomRepository.save(room);
+    this.logger.log(`Auto-created Bingo room "${room.name}" starting at ${scheduledStartAt.toISOString()}`);
+    return this.toRoomResponse(room, 0);
+  }
+
+  // ── Rooms ──────────────────────────────────────────────────────────
 
   async listRunningRooms(): Promise<BingoRoomResponse[]> {
     const rooms = await this.bingoRoomRepository.findBy({ status: 'running' });

@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AgentsService } from './agents.service';
 import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
+import { RejectWithdrawalDto } from './dto/reject-withdrawal.dto';
 import { TransferToUserDto } from './dto/transfer-to-user.dto';
 import { WalletService } from '../wallet/wallet.service';
 
@@ -22,6 +23,15 @@ export class AgentsController {
     private readonly agentsService: AgentsService,
     private readonly walletService: WalletService,
   ) {}
+
+  /**
+   * Agent-accessible config — returns only the data agents need
+   * (service charge %) without requiring admin role.
+   */
+  @Get('config')
+  getConfig() {
+    return this.agentsService.getAgentConfig();
+  }
 
   /**
    * The shift currently active (who should be handling withdrawals right now).
@@ -47,6 +57,11 @@ export class AgentsController {
     return this.agentsService.getMyWithdrawals(agent.id);
   }
 
+  @Get('transactions')
+  getTransactions(@CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.getTransactionHistory(agent.id);
+  }
+
   /**
    * Claim a pending withdrawal. The agent is then responsible for
    * doing the Telebirr transfer and confirming it.
@@ -64,6 +79,19 @@ export class AgentsController {
   @HttpCode(HttpStatus.OK)
   releaseWithdrawal(@Param('id') id: string, @CurrentUser() agent: AuthenticatedUser) {
     return this.agentsService.releaseWithdrawal(id, agent.id);
+  }
+
+  /**
+   * Reject a claimed withdrawal with mandatory remarks.
+   */
+  @Post('withdrawals/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  rejectWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: RejectWithdrawalDto,
+    @CurrentUser() agent: AuthenticatedUser,
+  ) {
+    return this.walletService.rejectWithdrawalByAgent(id, agent.id, dto.remarks);
   }
 
   /**

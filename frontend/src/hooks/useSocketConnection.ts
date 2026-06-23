@@ -76,6 +76,10 @@ export function useSocketConnection() {
       socketInstance.on('wallet.updated', (wallet: Wallet) => {
         setWallet(wallet);
       });
+
+      socketInstance.on('live.counts', (counts: { kenoOnline: number; bingoOnline: number; totalOnline: number }) => {
+        useStore.getState().setLiveCounts(counts);
+      });
     }
 
     return () => {

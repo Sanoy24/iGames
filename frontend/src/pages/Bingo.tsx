@@ -39,6 +39,7 @@ const BINGO_TABS: Array<GameTabOption<BingoTab>> = [
 export function Bingo({ onBack }: BingoProps) {
     const addToast = useStore((state) => state.addToast);
     const setWallet = useStore((state) => state.setWallet);
+    const liveCounts = useStore((state) => state.liveCounts);
     const [rooms, setRooms] = useState<BingoRoom[]>([]);
     const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
     const [roomState, setRoomState] = useState<BingoRoomState | null>(null);
@@ -90,6 +91,8 @@ export function Bingo({ onBack }: BingoProps) {
 
         const socket = getSocket();
         if (socket) {
+            socket.emit('enter.game', { game: 'bingo' });
+
             const handleRoomUpdate = (payload: BingoRoomEventPayload) => {
                 if (payload.roomId === selectedRoomId) {
                     void loadRoomState(selectedRoomId);
@@ -120,6 +123,7 @@ export function Bingo({ onBack }: BingoProps) {
             socket.on("bingo.room.completed", handleRoomCompleted);
 
             return () => {
+                socket.emit('leave.game', { game: 'bingo' });
                 socket.off("bingo.room.updated", handleRoomUpdate);
                 socket.off("bingo.number.drawn", handleNumberDrawn);
                 socket.off("bingo.room.completed", handleRoomCompleted);
@@ -196,7 +200,15 @@ export function Bingo({ onBack }: BingoProps) {
             <section className="card hero-subpanel">
                 <div className="section-header">
                     <div>
-                        <div className="section-title">Bingo Rooms</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div className="section-title">Bingo Rooms</div>
+                            {liveCounts && liveCounts.bingoOnline > 0 && (
+                                <span className="live-badge-pulse">
+                                    <span className="pulse-dot"></span>
+                                    {liveCounts.bingoOnline} online
+                                </span>
+                            )}
+                        </div>
                         <p className="section-copy">
                             Track active rooms, buy tickets, and follow live
                             numbers as tiers settle.

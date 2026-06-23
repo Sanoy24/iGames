@@ -10,7 +10,10 @@ import {
   adminKenoApi,
   adminApi,
   adminWithdrawalsApi,
+  adminUsersApi,
   walletApi,
+  type AgentLedgerAction,
+  type AgentWithdrawalAction,
   type BotUser,
   type PlatformStats,
   type SystemConfig,
@@ -19,11 +22,13 @@ import type { BingoConfig, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, U
 import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
-type AdminTab = 'overview' | 'agents' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
+  { id: 'players',     label: 'Players',     icon: <Users size={15} /> },
   { id: 'agents',      label: 'Agents',      icon: <Users size={15} /> },
+  { id: 'agent-actions', label: 'Agent Actions', icon: <Activity size={15} /> },
   { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
   { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
@@ -114,6 +119,16 @@ function OverviewAdmin() {
       </div>
 
       <div className="adm-panel">
+        <div className="adm-panel-head">User Engagement &amp; Active Players</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, padding: 16 }}>
+          <Kpi label="Registered Players" value={String(bd.totalUsers ?? 0)} color="#10b981" />
+          <Kpi label="Users Online Now" value={String(bd.onlineUsers ?? 0)} color="#3b82f6" />
+          <Kpi label="Active Keno Players" value={String(bd.activeKenoPlayers ?? 0)} color="#8b5cf6" />
+          <Kpi label="Active Bingo Players" value={String(bd.activeBingoPlayers ?? 0)} color="#ec4899" />
+        </div>
+      </div>
+
+      <div className="adm-panel">
         <div className="adm-panel-head">Financial Breakdown</div>
         <div className="adm-metric-list">
           {metrics.map(({ key, label, color }) => {
@@ -127,6 +142,293 @@ function OverviewAdmin() {
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Players
+// ══════════════════════════════════════════════════════════════════
+function PlayersAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(15);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalUsers, setTotalUsers] = useState(0);
+  
+  // Filters
+  const [search, setSearch] = useState('');
+  const [role, setRole] = useState('player'); // player by default
+
+  // Wallet adjustment
+  const [adjustingUser, setAdjustingUser] = useState<User | null>(null);
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustDirection, setAdjustDirection] = useState<'credit' | 'debit'>('credit');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await adminUsersApi.listUsers(page, limit, role || undefined, search || undefined);
+      setUsers(res.data);
+      setTotalPages(res.totalPages);
+      setTotalUsers(res.total);
+    } catch (e) {
+      addToast('error', 'Failed to load users: ' + getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit, role, search, addToast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleUpdateStatus = async (userId: string, newStatus: 'active' | 'suspended') => {
+    try {
+      await adminUsersApi.updateUserStatus(userId, newStatus);
+      addToast('success', `User status updated to ${newStatus}.`);
+      void load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    }
+  };
+
+  const handleAdjustWallet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjustingUser) return;
+    const amount = parseInt(adjustAmount, 10);
+    if (!amount || amount <= 0) {
+      addToast('error', 'Please enter a valid amount.');
+      return;
+    }
+    if (!adjustReason.trim()) {
+      addToast('error', 'Please provide a reason for the adjustment.');
+      return;
+    }
+    setSubmittingAdjustment(true);
+    try {
+      await adminUsersApi.adjustWallet(adjustingUser.id, amount, adjustDirection, adjustReason.trim());
+      addToast('success', `Successfully adjusted balance by ${adjustDirection === 'credit' ? '+' : '-'}${formatCreditsFull(amount)}`);
+      setAdjustingUser(null);
+      setAdjustAmount('');
+      setAdjustReason('');
+      void load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setSubmittingAdjustment(false);
+    }
+  };
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="Player Accounts" sub="View and manage player details, balances, status, and manual wallet adjustments.">
+        <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
+      </SectionHead>
+
+      {/* Adjust Wallet Form (Collapsible section) */}
+      {adjustingUser && (
+        <section className="card">
+          <div className="section-header">
+            <h3>Adjust Wallet Balance</h3>
+            <button className="btn btn-ghost icon-btn" onClick={() => setAdjustingUser(null)}>
+              <X size={16} />
+            </button>
+          </div>
+          <form onSubmit={handleAdjustWallet} className="stack-md p-lg">
+            <p className="section-copy" style={{ marginBottom: 12 }}>
+              Modifying balance for <strong>{adjustingUser.displayName}</strong> ({adjustingUser.phoneNumber || adjustingUser.username || 'No phone/username'}).
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <div className="adm-field">
+                <label>Operation Type</label>
+                <select
+                  className="input"
+                  value={adjustDirection}
+                  onChange={(e) => setAdjustDirection(e.target.value as 'credit' | 'debit')}
+                >
+                  <option value="credit">Credit (+) Add Credits</option>
+                  <option value="debit">Debit (-) Deduct Credits</option>
+                </select>
+              </div>
+              <div className="adm-field">
+                <label>Amount (Credits / Minor Units — 100 Credits = 1 Birr)</label>
+                <input
+                  className="input"
+                  type="number"
+                  min="1"
+                  placeholder="e.g. 50000 for 500 Credits"
+                  value={adjustAmount}
+                  onChange={(e) => setAdjustAmount(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="adm-field">
+              <label>Reason / Audit Log Note</label>
+              <input
+                className="input"
+                type="text"
+                placeholder="e.g. Compensation for draw delay, manual correction, welcome bonus adjustment"
+                value={adjustReason}
+                onChange={(e) => setAdjustReason(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setAdjustingUser(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={submittingAdjustment}>
+                {submittingAdjustment ? 'Processing...' : 'Apply Adjustment'}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {/* Filter panel */}
+      <div className="adm-panel" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+          <div className="adm-field" style={{ flex: '1 1 200px', margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Search by name, phone or username</label>
+            <input
+              className="input"
+              type="text"
+              placeholder="Type keywords..."
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+          </div>
+          <div className="adm-field" style={{ width: 150, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Role Filter</label>
+            <select
+              className="input"
+              value={role}
+              onChange={(e) => { setRole(e.target.value); setPage(1); }}
+            >
+              <option value="player">Player</option>
+              <option value="agent">Agent</option>
+              <option value="admin">Admin</option>
+              <option value="">All Roles</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Users table */}
+      <div className="adm-panel">
+        <div className="adm-panel-head">Registered Accounts ({totalUsers})</div>
+        {loading && users.length === 0 ? (
+          <div className="adm-empty">Loading user list...</div>
+        ) : users.length === 0 ? (
+          <div className="adm-empty">No matching users found.</div>
+        ) : (
+          <table className="adm-table">
+            <thead>
+              <tr className="adm-tr">
+                <th>Display Name</th>
+                <th>Roles</th>
+                <th>Contact info</th>
+                <th>Wallet Balance</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => {
+                const bal = u.wallets?.[0]?.availableMinor ?? 0;
+                return (
+                  <tr key={u.id} className="adm-tr">
+                    <td><strong>{u.displayName}</strong></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {u.roles.map((r) => (
+                          <span key={r} className={`badge ${
+                            r === 'admin' ? 'badge-red' :
+                            r === 'agent' ? 'badge-violet' :
+                            'badge-gold'
+                          }`} style={{ fontSize: 9 }}>
+                            {r}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="adm-td-muted">
+                      {u.phoneNumber && <div>📞 {u.phoneNumber}</div>}
+                      {u.username && <div>@{u.username}</div>}
+                      {!u.phoneNumber && !u.username && <span style={{ opacity: 0.5 }}>—</span>}
+                    </td>
+                    <td>
+                      <strong>{formatCredits(bal)}</strong>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>e-Birr</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${u.status === 'active' || !u.status ? 'badge-green' : 'badge-red'}`}>
+                        {u.status ?? 'active'}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          className="adm-btn adm-btn-secondary adm-btn-xs"
+                          onClick={() => { setAdjustingUser(u); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                        >
+                          Adjust Wallet
+                        </button>
+                        {u.status === 'suspended' ? (
+                          <button
+                            className="adm-btn adm-btn-secondary adm-btn-xs"
+                            style={{ color: 'var(--green)', borderColor: 'rgba(16, 185, 129, 0.3)' }}
+                            onClick={() => handleUpdateStatus(u.id, 'active')}
+                          >
+                            Activate
+                          </button>
+                        ) : (
+                          <button
+                            className="adm-btn adm-btn-secondary adm-btn-xs"
+                            style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                            onClick={() => handleUpdateStatus(u.id, 'suspended')}
+                          >
+                            Suspend
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              Page <strong>{page}</strong> of <strong>{totalPages}</strong> ({totalUsers} entries)
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </button>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -555,6 +857,13 @@ function WithdrawalsAdmin() {
   useEffect(() => { void load(); }, [load]);
 
   const process = async (id: string, action: 'approve' | 'reject') => {
+    if (action === 'reject') {
+      const note = (notes[id] ?? '').trim();
+      if (note.length < 15) {
+        addToast('error', 'Rejection remarks must be at least 15 characters.');
+        return;
+      }
+    }
     setBusy(`${action}-${id}`);
     try {
       await adminWithdrawalsApi.processWithdrawal(id, action, notes[id]);
@@ -604,7 +913,7 @@ function WithdrawalsAdmin() {
                     </div>
                     {expanded === w.id && (
                       <div className="adm-w-expand">
-                        <input className="input" placeholder="Admin note (optional)"
+                        <input className="input" placeholder="Admin note (required for rejection, min 15 chars)"
                           value={notes[w.id] ?? ''}
                           onChange={(e) => setNotes((n) => ({ ...n, [w.id]: e.target.value }))} />
                         <div className="adm-w-actions">
@@ -612,7 +921,7 @@ function WithdrawalsAdmin() {
                             onClick={() => process(w.id, 'approve')}>
                             {busy === `approve-${w.id}` ? '…' : 'Approve'}
                           </button>
-                          <button className="adm-btn adm-btn-danger" disabled={!!busy}
+                          <button className="adm-btn adm-btn-danger" disabled={!!busy || (notes[w.id] ?? '').trim().length < 15}
                             onClick={() => process(w.id, 'reject')}>
                             {busy === `reject-${w.id}` ? '…' : 'Reject'}
                           </button>
@@ -1268,6 +1577,198 @@ function BotsAdmin() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Agent Actions (Audit Trail)
+// ══════════════════════════════════════════════════════════════════
+function AgentActionsAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [ledgerActions, setLedgerActions] = useState<AgentLedgerAction[]>([]);
+  const [withdrawalActions, setWithdrawalActions] = useState<AgentWithdrawalAction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedLedger, setExpandedLedger] = useState<string | null>(null);
+  const [expandedWithdrawal, setExpandedWithdrawal] = useState<string | null>(null);
+  const [filterAgent, setFilterAgent] = useState<string>('');
+  const [viewMode, setViewMode] = useState<'ledger' | 'withdrawals'>('ledger');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await adminAgentsApi.listActions(200);
+      setLedgerActions(data.ledger);
+      setWithdrawalActions(data.withdrawals);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const filteredLedger = filterAgent
+    ? ledgerActions.filter((a) => a.agentId === filterAgent)
+    : ledgerActions;
+
+  const filteredWithdrawals = filterAgent
+    ? withdrawalActions.filter((w) => w.agentId === filterAgent)
+    : withdrawalActions;
+
+  const uniqueAgents = Array.from(
+    new Map(
+      [...ledgerActions, ...withdrawalActions].map((a) => [
+        a.agentId,
+        { id: a.agentId, name: a.agentName || a.agentId.slice(-8) }
+      ])
+    ).values()
+  );
+
+  const DIR_BADGE: Record<string, string> = { credit: 'badge-green', debit: 'badge-red' };
+  const W_STATUS: Record<string, string> = {
+    pending: 'badge-gold',
+    claimed: 'badge-violet',
+    processing: 'badge-violet',
+    completed: 'badge-green',
+    rejected: 'badge-red',
+  };
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="Agent Actions Audit Trail" sub="Track all money movements and withdrawal processing by every agent.">
+        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+      </SectionHead>
+
+      {/* Filters */}
+      <div className="adm-panel" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
+          <div className="adm-field" style={{ flex: '1 1 200px', margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Filter by Agent</label>
+            <select
+              className="input"
+              value={filterAgent}
+              onChange={(e) => setFilterAgent(e.target.value)}
+            >
+              <option value="">All Agents</option>
+              {uniqueAgents.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="adm-field" style={{ width: 200, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>View</label>
+            <select
+              className="input"
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as 'ledger' | 'withdrawals')}
+            >
+              <option value="ledger">Ledger Transactions</option>
+              <option value="withdrawals">Withdrawal Processing</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="adm-empty">Loading agent actions…</div>
+      ) : viewMode === 'ledger' ? (
+        <div className="adm-panel">
+          <div className="adm-panel-head">
+            Ledger Transactions
+            <span className="adm-badge-count">{filteredLedger.length}</span>
+          </div>
+          {filteredLedger.length === 0 ? (
+            <div className="adm-empty">No ledger transactions found.</div>
+          ) : (
+            <div className="adm-list">
+              {filteredLedger.map((entry) => (
+                <div key={entry.id} className="adm-w-row">
+                  <div className="adm-w-main" onClick={() => setExpandedLedger(expandedLedger === entry.id ? null : entry.id)}>
+                    <div className="adm-w-info">
+                      <strong>{entry.agentName || entry.agentId.slice(-8)}</strong>
+                      <span className="adm-td-muted">{formatCreditsFull(entry.amountMinor)} · {entry.entryType} · {entry.sourceType}</span>
+                      <span className="adm-td-muted">{formatDateTime(entry.createdAt)}</span>
+                    </div>
+                    <div className="adm-w-right">
+                      <span className={`badge ${DIR_BADGE[entry.direction] ?? 'badge-gold'}`}>{entry.direction}</span>
+                      {expandedLedger === entry.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </div>
+                  </div>
+                  {expandedLedger === entry.id && (
+                    <div className="adm-w-expand" style={{ flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
+                        <div><strong>Agent ID:</strong> <span className="adm-mono">{entry.agentId}</span></div>
+                        <div><strong>Entry ID:</strong> <span className="adm-mono">{entry.id.slice(-8)}</span></div>
+                        <div><strong>Direction:</strong> {entry.direction}</div>
+                        <div><strong>Amount:</strong> {formatCreditsFull(entry.amountMinor)}</div>
+                        <div><strong>Entry Type:</strong> {entry.entryType}</div>
+                        <div><strong>Source Type:</strong> {entry.sourceType}</div>
+                        <div><strong>Source ID:</strong> <span className="adm-mono">{entry.sourceId?.slice(-8) || '—'}</span></div>
+                        <div><strong>Balance After:</strong> {formatCreditsFull(entry.balanceAfterMinor)}</div>
+                        <div><strong>Created:</strong> {formatDateTime(entry.createdAt)}</div>
+                      </div>
+                      {entry.metadata && Object.keys(entry.metadata).length > 0 && (
+                        <div style={{ background: 'var(--bg-2)', borderRadius: 6, padding: 8, fontSize: 11, fontFamily: 'monospace' }}>
+                          <strong>Metadata:</strong>
+                          <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{JSON.stringify(entry.metadata, null, 2)}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="adm-panel">
+          <div className="adm-panel-head">
+            Withdrawal Processing
+            <span className="adm-badge-count">{filteredWithdrawals.length}</span>
+          </div>
+          {filteredWithdrawals.length === 0 ? (
+            <div className="adm-empty">No withdrawal actions found.</div>
+          ) : (
+            <div className="adm-list">
+              {filteredWithdrawals.map((w) => (
+                <div key={w.id} className="adm-w-row">
+                  <div className="adm-w-main" onClick={() => setExpandedWithdrawal(expandedWithdrawal === w.id ? null : w.id)}>
+                    <div className="adm-w-info">
+                      <strong>{w.agentName || w.agentId?.slice(-8) || '—'}</strong>
+                      <span className="adm-td-muted">{formatCreditsFull(w.amountMinor)} → {w.destinationAccount}</span>
+                      <span className="adm-td-muted">{formatDateTime(w.createdAt)}</span>
+                    </div>
+                    <div className="adm-w-right">
+                      <span className={`badge ${W_STATUS[w.status] ?? 'badge-gold'}`}>{w.status}</span>
+                      {expandedWithdrawal === w.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </div>
+                  </div>
+                  {expandedWithdrawal === w.id && (
+                    <div className="adm-w-expand" style={{ flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
+                        <div><strong>Withdrawal ID:</strong> <span className="adm-mono">{w.id.slice(-8)}</span></div>
+                        <div><strong>User:</strong> {w.userName || w.userId?.slice(-8) || '—'}</div>
+                        <div><strong>Agent:</strong> {w.agentName || w.agentId?.slice(-8) || '—'}</div>
+                        <div><strong>Amount:</strong> {formatCreditsFull(w.amountMinor)}</div>
+                        <div><strong>Service Charge:</strong> {w.serviceChargeMinor ? formatCreditsFull(w.serviceChargeMinor) : '—'}</div>
+                        <div><strong>Net Amount:</strong> {w.netAmountMinor ? formatCreditsFull(w.netAmountMinor) : '—'}</div>
+                        <div><strong>Destination:</strong> {w.destinationAccount}</div>
+                        <div><strong>Telebirr Ref:</strong> {w.telebirrReference || '—'}</div>
+                        <div><strong>Status:</strong> {w.status}</div>
+                        <div><strong>Claimed At:</strong> {w.claimedAt ? formatDateTime(w.claimedAt) : '—'}</div>
+                        <div><strong>Processed At:</strong> {w.processedAt ? formatDateTime(w.processedAt) : '—'}</div>
+                        {w.adminNotes && <div style={{ gridColumn: '1 / -1' }}><strong>Admin Notes:</strong> {w.adminNotes}</div>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // E-Money Management
 // ══════════════════════════════════════════════════════════════════
 function EMoneyAdmin() {
@@ -1496,14 +1997,16 @@ export function Admin() {
 
       {/* Content */}
       <div className="adm-content">
-        {tab === 'overview'    && <OverviewAdmin />}
-        {tab === 'agents'      && <AgentsAdmin />}
-        {tab === 'keno'        && <KenoAdmin />}
-        {tab === 'bingo'       && <BingoAdmin />}
-        {tab === 'bots'        && <BotsAdmin />}
-        {tab === 'withdrawals' && <WithdrawalsAdmin />}
-        {tab === 'config'      && <ConfigAdmin />}
-        {tab === 'emoney'      && <EMoneyAdmin />}
+        {tab === 'overview'      && <OverviewAdmin />}
+        {tab === 'players'       && <PlayersAdmin />}
+        {tab === 'agents'        && <AgentsAdmin />}
+        {tab === 'agent-actions' && <AgentActionsAdmin />}
+        {tab === 'keno'          && <KenoAdmin />}
+        {tab === 'bingo'         && <BingoAdmin />}
+        {tab === 'bots'          && <BotsAdmin />}
+        {tab === 'withdrawals'   && <WithdrawalsAdmin />}
+        {tab === 'config'        && <ConfigAdmin />}
+        {tab === 'emoney'        && <EMoneyAdmin />}
       </div>
     </div>
   );

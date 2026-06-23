@@ -57,6 +57,7 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 export function Home({ onNavigate }: Props) {
   const user = useStore(s => s.user);
   const wallet = useStore(s => s.wallet);
+  const liveCounts = useStore(s => s.liveCounts);
   const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
 
   useEffect(() => {
@@ -118,6 +119,9 @@ export function Home({ onNavigate }: Props) {
                 {countdown && activeDraw?.status === 'open'
                   ? `Draw in ${countdown}`
                   : 'Pick numbers & win'}
+                {liveCounts && liveCounts.kenoOnline > 0 && (
+                  <span className="live-pill-inline">🟢 {liveCounts.kenoOnline} online</span>
+                )}
               </span>
             </div>
           </div>
@@ -130,7 +134,12 @@ export function Home({ onNavigate }: Props) {
             <div className="home-game-info">
               <span className="home-game-tag">Live Rooms</span>
               <strong className="home-game-name">Bingo</strong>
-              <span className="home-game-sub">Buy cards & win prizes</span>
+              <span className="home-game-sub">
+                Buy cards & win prizes
+                {liveCounts && liveCounts.bingoOnline > 0 && (
+                  <span className="live-pill-inline">🟢 {liveCounts.bingoOnline} online</span>
+                )}
+              </span>
             </div>
           </div>
           <span className="home-game-arrow">→</span>

@@ -48,8 +48,15 @@ export class AdminController {
   getUsers(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '50',
+    @Query('role') role?: string,
+    @Query('search') search?: string,
   ) {
-    return this.usersService.listUsers(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+    return this.usersService.listUsers(
+      parseInt(page, 10) || 1,
+      parseInt(limit, 10) || 50,
+      role,
+      search,
+    );
   }
 
   @Put('users/:id/status')
@@ -106,6 +113,11 @@ export class AdminController {
     @Body() dto: UpdateAgentDto,
   ) {
     return this.usersService.updateAgentUser(id, dto);
+  }
+
+  @Get('agents/actions')
+  getAgentActions(@Query('limit') limit: string = '100') {
+    return this.adminService.getAgentActions(parseInt(limit, 10) || 100);
   }
 
   // ── Withdrawals ───────────────────────────────────────────────────

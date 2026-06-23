@@ -91,7 +91,7 @@ export class AuthService {
   }
 
   async loginWithCredentials(phoneNumber: string, password: string): Promise<AuthTokenResponse> {
-    const user = await this.usersService.findAgentByCredentials(phoneNumber, password);
+    const user = await this.usersService.findBackofficeUserByCredentials(phoneNumber, password);
     
     return this.dataSource.transaction(async (manager) => {
       await this.walletService.ensureDefaultWallet(user.id, manager);
@@ -157,6 +157,11 @@ export class AuthService {
 
   async logout(sessionId: string): Promise<void> {
     await this.refreshSessionRepository.update(sessionId, { revokedAt: new Date() });
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<{ ok: boolean }> {
+    await this.usersService.changePassword(userId, currentPassword, newPassword);
+    return { ok: true };
   }
 
   async devSeedAdmin(

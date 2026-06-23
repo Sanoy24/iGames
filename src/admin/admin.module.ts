@@ -9,6 +9,7 @@ import { AdminAuditLog } from './entities/admin-audit-log.entity';
 import { AgentsModule } from '../agents/agents.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { GameEventsModule } from '../events/game-events.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { WalletModule } from '../wallet/wallet.module';
     UsersModule,
     WalletModule,
     AgentsModule,
+    GameEventsModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

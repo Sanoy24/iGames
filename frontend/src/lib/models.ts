@@ -14,6 +14,7 @@ export type User = {
     deposit: boolean;
     withdraw: boolean;
   };
+  wallets?: Wallet[];
 };
 
 export type AuthTokenResponse = {

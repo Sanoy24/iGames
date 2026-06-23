@@ -1,5 +1,8 @@
+import { useCallback } from 'react';
+import { RefreshCw } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
+import { walletApi } from '../lib/api';
 
 type Props = {
   onNavigate: (tab: AppTab) => void;
@@ -57,10 +60,20 @@ function EBirrIcon({ size = 20 }: { size?: number }) {
 
 export function WalletBar({ onNavigate }: Props) {
   const wallet = useStore((s) => s.wallet);
+  const setWallet = useStore((s) => s.setWallet);
   const balance = wallet?.availableMinor ?? 0;
 
   // Format with full number, no K/M abbreviation for the bar
   const formatted = new Intl.NumberFormat().format(balance);
+
+  const refreshWallet = useCallback(async () => {
+    try {
+      const updatedWallet = await walletApi.getWallet();
+      setWallet(updatedWallet);
+    } catch (error) {
+      console.error('Failed to refresh wallet:', error);
+    }
+  }, [setWallet]);
 
   return (
     <button className="wallet-bar" onClick={() => onNavigate('wallet')} type="button">
@@ -69,6 +82,17 @@ export function WalletBar({ onNavigate }: Props) {
         {formatted}
         <span className="wallet-bar-unit"> e‑Birr</span>
       </span>
+      <button 
+        className="wallet-bar-refresh" 
+        onClick={(e) => {
+          e.stopPropagation();
+          refreshWallet();
+        }}
+        type="button"
+        aria-label="Refresh wallet balance"
+      >
+        <RefreshCw size={16} />
+      </button>
     </button>
   );
 }

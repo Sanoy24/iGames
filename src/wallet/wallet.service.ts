@@ -36,6 +36,7 @@ export type LedgerEntrySummary = {
   idempotencyKey?: string;
   balanceAfterMinor: number;
   metadata: Record<string, unknown>;
+  createdAt?: Date;
 };
 
 export type WalletMutationInput = {
@@ -119,7 +120,8 @@ export class WalletService {
       sourceId: entry.sourceId,
       idempotencyKey: entry.idempotencyKey,
       balanceAfterMinor: entry.balanceAfterMinor,
-      metadata: entry.metadata || {}
+      metadata: entry.metadata || {},
+      createdAt: entry.createdAt
     }));
   }
 
@@ -299,7 +301,8 @@ export class WalletService {
         sourceId: ledgerEntry.sourceId,
         idempotencyKey: ledgerEntry.idempotencyKey,
         balanceAfterMinor: ledgerEntry.balanceAfterMinor,
-        metadata: ledgerEntry.metadata || {}
+        metadata: ledgerEntry.metadata || {},
+        createdAt: ledgerEntry.createdAt
       },
       idempotent: false
     };
@@ -502,6 +505,10 @@ export class WalletService {
     adminNotes?: string,
     adminUserId?: string
   ): Promise<Withdrawal> {
+    if (action === 'reject' && (adminNotes?.trim().length ?? 0) < 15) {
+      throw new BadRequestException('Rejection remark must be at least 15 characters');
+    }
+
     return this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
       const walletRepo = manager.getRepository(Wallet);
@@ -626,6 +633,15 @@ export class WalletService {
     });
   }
 
+  async getAgentWithdrawalHistory(agentId: string): Promise<Withdrawal[]> {
+    return this.withdrawalRepository.find({
+      where: { agentId },
+      relations: ['user'],
+      order: { updatedAt: 'DESC' },
+      take: 100
+    });
+  }
+
   async claimWithdrawal(withdrawalId: string, agentId: string): Promise<Withdrawal> {
     const withdrawal = await this.withdrawalRepository.findOneBy({ id: withdrawalId, status: 'pending' });
     if (!withdrawal) {
@@ -731,6 +747,29 @@ export class WalletService {
       this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));
       return withdrawal;
     });
+  }
+
+  async rejectWithdrawalByAgent(withdrawalId: string, agentId: string, remarks: string): Promise<Withdrawal> {
+    if (!remarks || remarks.trim().length < 15) {
+      throw new BadRequestException('Rejection remarks must be at least 15 characters');
+    }
+
+    const withdrawal = await this.withdrawalRepository.findOneBy({
+      id: withdrawalId,
+      status: 'claimed',
+      agentId,
+    });
+
+    if (!withdrawal) {
+      throw new ConflictException('Withdrawal not found or not assigned to you');
+    }
+
+    withdrawal.status = 'rejected';
+    withdrawal.adminNotes = remarks.trim();
+    withdrawal.processedAt = new Date();
+    withdrawal.processedBy = agentId;
+
+    return await this.withdrawalRepository.save(withdrawal);
   }
 
   async getWagerLimit(userId: string): Promise<WagerLimit | null> {

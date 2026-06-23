@@ -18,6 +18,13 @@ export class AgentsService {
     private readonly usersService: UsersService,
   ) {}
 
+  // ── Config (agent-accessible) ────────────────────────────────────
+
+  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number }> {
+    const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    return { withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0 };
+  }
+
   // ── Withdrawals ────────────────────────────────────────────────────
 
   getAvailableWithdrawals() {
@@ -26,6 +33,15 @@ export class AgentsService {
 
   getMyWithdrawals(agentId: string) {
     return this.walletService.getAgentWithdrawals(agentId);
+  }
+
+  async getTransactionHistory(agentId: string) {
+    const [ledger, withdrawals] = await Promise.all([
+      this.walletService.getLedgerEntries({ userId: agentId, limit: 100 }),
+      this.walletService.getAgentWithdrawalHistory(agentId),
+    ]);
+
+    return { ledger, withdrawals };
   }
 
   verifyAgentWorkingHoursAndPermission(agent: any, permission: 'deposit' | 'withdraw') {

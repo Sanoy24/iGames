@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { SystemConfig } from './entities/system-config.entity';
 import { PlatformStats } from './entities/platform-stats.entity';
@@ -14,6 +14,12 @@ import { Wallet } from '../wallet/entities/wallet.entity';
 import { KenoTicket } from '../keno/entities/keno-ticket.entity';
 import { BingoTicket } from '../bingo/entities/bingo-ticket.entity';
 import { RngAuditLog } from '../rng/entities/rng-audit-log.entity';
+import { User } from '../users/entities/user.entity';
+import { KenoDraw } from '../keno/entities/keno-draw.entity';
+import { BingoRoom } from '../bingo/entities/bingo-room.entity';
+import { GameEventsGateway } from '../events/game-events.gateway';
+import { LedgerEntry } from '../ledger/entities/ledger-entry.entity';
+import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 
 @Injectable()
 export class AdminService {
@@ -26,6 +32,7 @@ export class AdminService {
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
     private readonly agentsService: AgentsService,
+    private readonly gameEventsGateway: GameEventsGateway,
   ) {}
 
   async getSystemConfig(): Promise<SystemConfig> {
@@ -95,13 +102,61 @@ export class AdminService {
     const ggr = totals.ticketPurchases - totals.payouts - totals.refunds;
     const totalLiabilities = totals.walletAvailable + totals.walletReserved + totals.kenoPendingStakes + totals.bingoPendingStakes;
 
+    // 5. User & engagement stats
+    // Total players (role includes player)
+    const totalUsers = await this.dataSource.getRepository(User)
+      .createQueryBuilder('user')
+      .where('JSON_CONTAINS(user.roles, :role)', { role: '"player"' })
+      .getCount();
+
+    // Active Keno players in open/locked draws
+    const activeKenoDraws = await this.dataSource.getRepository(KenoDraw).find({
+      where: { status: In(['open', 'locked']) }
+    });
+    let activeKenoPlayers = 0;
+    if (activeKenoDraws.length > 0) {
+      const drawIds = activeKenoDraws.map(d => d.id);
+      const kenoResult = await this.dataSource.getRepository(KenoTicket)
+        .createQueryBuilder('ticket')
+        .select('COUNT(DISTINCT ticket.userId)', 'cnt')
+        .where('ticket.drawId IN (:...drawIds)', { drawIds })
+        .getRawOne();
+      activeKenoPlayers = kenoResult?.cnt ? Number(kenoResult.cnt) : 0;
+    }
+
+    // Active Bingo players in open/running rooms
+    const activeBingoRooms = await this.dataSource.getRepository(BingoRoom).find({
+      where: { status: In(['open', 'running']) }
+    });
+    let activeBingoPlayers = 0;
+    if (activeBingoRooms.length > 0) {
+      const roomIds = activeBingoRooms.map(r => r.id);
+      const bingoResult = await this.dataSource.getRepository(BingoTicket)
+        .createQueryBuilder('ticket')
+        .select('COUNT(DISTINCT ticket.userId)', 'cnt')
+        .where('ticket.roomId IN (:...roomIds)', { roomIds })
+        .getRawOne();
+      activeBingoPlayers = bingoResult?.cnt ? Number(bingoResult.cnt) : 0;
+    }
+
+    // Online users count from socket gateway
+    const liveCounts = this.gameEventsGateway.getLiveCounts();
+
     return {
       ggrMinor: ggr,
       totalVolumeMinor: totals.ticketPurchases,
       totalPayoutsMinor: totals.payouts,
       totalRefundsMinor: totals.refunds,
       totalLiabilitiesMinor: totalLiabilities,
-      breakdown: totals
+      breakdown: {
+        ...totals,
+        totalUsers,
+        activeKenoPlayers,
+        activeBingoPlayers,
+        onlineUsers: liveCounts.totalOnline,
+        kenoOnline: liveCounts.kenoOnline,
+        bingoOnline: liveCounts.bingoOnline,
+      }
     };
   }
 
@@ -156,6 +211,64 @@ export class AdminService {
 
   async listAgents(page: number, limit: number) {
     return this.usersService.listAgents(page, limit);
+  }
+
+  async getAgentActions(limit = 100) {
+    const safeLimit = Math.min(Math.max(limit || 100, 1), 200);
+
+    const ledger = await this.dataSource.getRepository(LedgerEntry)
+      .createQueryBuilder('entry')
+      .leftJoinAndSelect('entry.user', 'agent')
+      .where('JSON_CONTAINS(agent.roles, :role)', { role: '"agent"' })
+      .andWhere('entry.sourceType IN (:...sourceTypes)', {
+        sourceTypes: ['admin_to_agent_transfer', 'agent_to_user_transfer', 'withdrawal']
+      })
+      .orderBy('entry.createdAt', 'DESC')
+      .take(safeLimit)
+      .getMany();
+
+    const withdrawals = await this.dataSource.getRepository(Withdrawal).find({
+      where: {},
+      relations: ['user', 'agent'],
+      order: { updatedAt: 'DESC' },
+      take: safeLimit
+    });
+
+    return {
+      ledger: ledger.map((entry) => ({
+        id: entry.id,
+        agentId: entry.userId,
+        agentName: entry.user?.displayName,
+        amountMinor: entry.amountMinor,
+        direction: entry.direction,
+        entryType: entry.entryType,
+        sourceType: entry.sourceType,
+        sourceId: entry.sourceId,
+        balanceAfterMinor: entry.balanceAfterMinor,
+        metadata: entry.metadata || {},
+        createdAt: entry.createdAt
+      })),
+      withdrawals: withdrawals
+        .filter((withdrawal) => withdrawal.agentId || withdrawal.processedBy)
+        .map((withdrawal) => ({
+          id: withdrawal.id,
+          userId: withdrawal.userId,
+          userName: withdrawal.user?.displayName,
+          agentId: withdrawal.agentId || withdrawal.processedBy,
+          agentName: withdrawal.agent?.displayName,
+          amountMinor: withdrawal.amountMinor,
+          status: withdrawal.status,
+          destinationAccount: withdrawal.destinationAccount,
+          serviceChargeMinor: withdrawal.serviceChargeMinor,
+          netAmountMinor: withdrawal.netAmountMinor,
+          telebirrReference: withdrawal.telebirrReference,
+          adminNotes: withdrawal.adminNotes,
+          claimedAt: withdrawal.claimedAt,
+          processedAt: withdrawal.processedAt,
+          updatedAt: withdrawal.updatedAt,
+          createdAt: withdrawal.createdAt
+        }))
+    };
   }
 
   async getRngAuditLogs(input: {

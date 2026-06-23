@@ -270,6 +270,31 @@ export class KenoService {
       for (const ft of forcedTickets) {
         ft.selectedNumbers.forEach((n) => mustIncludeSet.add(n));
       }
+
+      const winChancePct = config.winChancePct ?? 100;
+      if (winChancePct >= 100 && tickets.length > 0) {
+        // Find the best ticket to guarantee a win for — pick the first ticket
+        // and include enough of its numbers to guarantee at least the minimum
+        // payout tier in the paytable.
+        const targetTicket = tickets[0];
+        const spotCount = targetTicket.selectedNumbers.length;
+        
+        // Find the minimum matches needed for a payout on this spot count
+        const paytableForSpots = config.paytable
+          .filter((e) => e.spots === spotCount && e.payoutMultiplier > 0)
+          .sort((a, b) => a.matches - b.matches);
+        
+        const minMatchesNeeded = paytableForSpots.length > 0
+          ? paytableForSpots[0].matches
+          : 1;
+        
+        // Add enough of the target ticket's numbers to guarantee the minimum matches
+        for (const n of targetTicket.selectedNumbers) {
+          if (mustIncludeSet.size >= config.drawSize) break;
+          mustIncludeSet.add(n);
+          if (mustIncludeSet.size >= minMatchesNeeded) break;
+        }
+      }
       
       let mustInclude = Array.from(mustIncludeSet);
       if (mustInclude.length > config.drawSize) {
@@ -285,7 +310,6 @@ export class KenoService {
       let rngResult;
       let attempts = 0;
       const maxAttempts = 15;
-      const winChancePct = config.winChancePct ?? 100;
 
       do {
         rngResult = await this.rngService.drawUniqueNumbers({
@@ -332,7 +356,20 @@ export class KenoService {
         }
 
         if (hasWins && winChancePct < 100) {
-          const roll = Math.random() * 100;
+          const rollResult = await this.rngService.drawUniqueNumbers({
+            min: 1,
+            max: 100,
+            count: 1,
+            gameType: 'keno',
+            gameReference: draw.id,
+            metadata: {
+              purpose: 'win_chance_gate',
+              configVersion: config.version,
+              attempt: attempts + 1
+            },
+            manager
+          });
+          const roll = rollResult.numbers[0];
           if (roll > winChancePct) {
             attempts++;
             continue;

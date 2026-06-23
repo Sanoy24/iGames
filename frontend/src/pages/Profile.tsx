@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { UserCircle, Phone, Mail, Edit3, Check, X } from 'lucide-react';
-import { userApi } from '../lib/api';
+import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut } from 'lucide-react';
+import { authApi, userApi } from '../lib/api';
 import type { User } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
@@ -22,6 +22,7 @@ function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: 
 export function Profile() {
   const storeUser = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
+  const clearAuth = useStore((s) => s.clearAuth);
   const addToast = useStore((s) => s.addToast);
 
   const [profile, setProfile] = useState<User | null>(null);
@@ -31,6 +32,10 @@ export function Profile() {
 
   const [displayName, setDisplayName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -73,6 +78,39 @@ export function Profile() {
       addToast('error', getErrorMessage(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) {
+      addToast('error', 'New password must be at least 8 characters.');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await authApi.changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      addToast('success', 'Password changed. Sign in again with the new password.');
+      localStorage.setItem('manualLogout', '1');
+      clearAuth();
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const logout = async () => {
+    setLoggingOut(true);
+    try {
+      await authApi.logout();
+    } catch {
+      // Local logout still clears the session even if the server is unreachable.
+    } finally {
+      localStorage.setItem('manualLogout', '1');
+      clearAuth();
+      setLoggingOut(false);
     }
   };
 
@@ -189,6 +227,51 @@ export function Profile() {
               <strong>{new Date(user.lastLoginAt).toLocaleString()}</strong>
             </div>
           )}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="section-header">
+          <div>
+            <div className="section-title">Security</div>
+            <p className="section-copy">Change your password or end this session.</p>
+          </div>
+        </div>
+        <div className="stack-sm">
+          <label className="form-field">
+            <span>Current Password</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          </label>
+          <label className="form-field">
+            <span>New Password</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </label>
+          <div className="action-row" style={{ marginTop: 8 }}>
+            <button
+              className="btn btn-primary"
+              onClick={changePassword}
+              disabled={changingPassword || !currentPassword || !newPassword}
+            >
+              <KeyRound size={14} style={{ marginRight: 4 }} />
+              {changingPassword ? 'Changing...' : 'Change Password'}
+            </button>
+            <button className="btn btn-secondary" onClick={logout} disabled={loggingOut}>
+              <LogOut size={14} style={{ marginRight: 4 }} />
+              {loggingOut ? 'Logging out...' : 'Logout'}
+            </button>
+          </div>
         </div>
       </section>
 

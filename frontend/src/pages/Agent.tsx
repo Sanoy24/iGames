@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle, Clock, RefreshCw, Send, Undo2, Users } from 'lucide-react';
-import { adminApi, agentApi, walletApi } from '../lib/api';
-import type { SystemConfig } from '../lib/api';
-import type { Wallet, Withdrawal } from '../lib/models';
+import { CheckCircle, Clock, RefreshCw, Send, Undo2, Users, X } from 'lucide-react';
+import { agentApi, walletApi } from '../lib/api';
+import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
-import { getSocket } from '../hooks/useSocketConnection';
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gold',
@@ -19,13 +17,19 @@ export function Agent() {
 
   const [available, setAvailable] = useState<Withdrawal[]>([]);
   const [mine, setMine] = useState<Withdrawal[]>([]);
-  const [config, setConfig] = useState<SystemConfig | null>(null);
+  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
+  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
 
   // per-withdrawal state for the complete form
   const [refInputs, setRefInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+
+  // Reject state
+  const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
+  const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
 
   // Transfer E-Money to Player form states
   const [transferPhone, setTransferPhone] = useState('');
@@ -37,13 +41,16 @@ export function Agent() {
       const [avail, my, cfg, wallet] = await Promise.all([
         agentApi.getAvailableWithdrawals(),
         agentApi.getMyWithdrawals(),
-        adminApi.getConfig(),
+        agentApi.getConfig(),
         walletApi.getWallet(),
       ]);
       setAvailable(avail);
       setMine(my);
       setConfig(cfg);
       setAgentWallet(wallet);
+      const tx = await agentApi.getTransactions();
+      setLedger(tx.ledger);
+      setWithdrawalHistory(tx.withdrawals);
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -78,17 +85,9 @@ export function Agent() {
 
   useEffect(() => {
     void load();
+  }, [load]);
 
-    const socket = getSocket();
-    if (socket) {
-      const handlePending = () => {
-        void load();
-        addToast('info', 'New withdrawal request arrived.');
-      };
-      socket.on('withdrawal.pending', handlePending);
-      return () => { socket.off('withdrawal.pending', handlePending); };
-    }
-  }, [load, addToast]);
+  
 
   const setBusyFor = (id: string, value: boolean) =>
     setBusy((prev) => ({ ...prev, [id]: value }));
@@ -116,6 +115,26 @@ export function Agent() {
       addToast('error', getErrorMessage(err));
     } finally {
       setBusyFor(id, false);
+    }
+  };
+
+  const handleReject = async (w: Withdrawal) => {
+    const remarks = (rejectRemarks[w.id] ?? '').trim();
+    if (remarks.length < 15) {
+      addToast('error', 'Rejection remarks must be at least 15 characters.');
+      return;
+    }
+    setBusyFor(w.id, true);
+    try {
+      await agentApi.rejectWithdrawal(w.id, remarks);
+      await load();
+      setShowRejectForm(null);
+      setRejectRemarks((prev) => { const next = { ...prev }; delete next[w.id]; return next; });
+      addToast('info', 'Withdrawal rejected.');
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setBusyFor(w.id, false);
     }
   };
 
@@ -304,7 +323,42 @@ export function Agent() {
                       >
                         <Undo2 size={14} />
                       </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={isBusy}
+                        onClick={() => setShowRejectForm(showRejectForm === w.id ? null : w.id)}
+                        title="Reject withdrawal"
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
+                    {showRejectForm === w.id && (
+                      <div style={{ marginTop: 8 }}>
+                        <p className="agent-confirm-label" style={{ color: 'var(--danger)', marginBottom: 6 }}>
+                          Rejection reason (minimum 15 characters):
+                        </p>
+                        <div className="agent-complete-row">
+                          <input
+                            className="input compact-input"
+                            placeholder="Enter rejection reason…"
+                            value={rejectRemarks[w.id] ?? ''}
+                            onChange={(e) =>
+                              setRejectRemarks((prev) => ({ ...prev, [w.id]: e.target.value }))
+                            }
+                            disabled={isBusy}
+                          />
+                          <button
+                            className="btn btn-primary"
+                            disabled={isBusy || (rejectRemarks[w.id] ?? '').trim().length < 15}
+                            onClick={() => void handleReject(w)}
+                            style={{ background: 'var(--danger)' }}
+                          >
+                            {isBusy ? 'Rejecting…' : 'Confirm Reject'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </article>
               );

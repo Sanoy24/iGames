@@ -31,6 +31,10 @@ type AppState = {
   toasts: Toast[];
   addToast: (type: Toast['type'], message: string) => void;
   removeToast: (id: string) => void;
+
+  // Live counts
+  liveCounts: { kenoOnline: number; bingoOnline: number; totalOnline: number } | null;
+  setLiveCounts: (counts: { kenoOnline: number; bingoOnline: number; totalOnline: number }) => void;
 };
 
 export const useStore = create<AppState>((set) => ({
@@ -100,6 +104,10 @@ export const useStore = create<AppState>((set) => ({
     }, 3500);
   },
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  // Live counts
+  liveCounts: null,
+  setLiveCounts: (counts) => set({ liveCounts: counts }),
 }));
 
 // Helper: format minor units to display string

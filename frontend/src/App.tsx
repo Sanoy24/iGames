@@ -26,7 +26,7 @@ type TelegramWindow = Window &
   };
 
 export function App() {
-  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet } = useStore();
+  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet, clearAuth } = useStore();
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [showCredLogin, setShowCredLogin] = useState(false);
   const loginStarted = useRef(false);
@@ -37,6 +37,47 @@ export function App() {
     if (authStatus !== 'idle' || loginStarted.current) return;
 
     loginStarted.current = true;
+
+    setAuthLoading();
+
+    const bootstrap = async () => {
+      try {
+        if (localStorage.getItem('manualLogout') === '1') {
+          setShowCredLogin(true);
+          return;
+        }
+
+        const storedRefreshToken = localStorage.getItem('refreshToken');
+        if (storedRefreshToken) {
+          const { user, accessToken, refreshToken } = await authApi.refresh(storedRefreshToken);
+          setAuth(user, accessToken, refreshToken);
+          setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+          setWallet(await walletApi.getWallet());
+          return;
+        }
+
+        const tg = (window as TelegramWindow).Telegram?.WebApp;
+        if (!tg?.initData && !import.meta.env.DEV) {
+          setShowCredLogin(true);
+          return;
+        }
+
+        const { user, accessToken, refreshToken } = tg?.initData
+          ? await authApi.loginWithTelegram(tg.initData)
+          : await authApi.devSeedAdmin('Dev Admin');
+        setAuth(user, accessToken, refreshToken);
+        setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+        setWallet(await walletApi.getWallet());
+      } catch (err) {
+        console.error('Auth bootstrap failed:', err);
+        clearAuth();
+        loginStarted.current = false;
+        setShowCredLogin(true);
+      }
+    };
+
+    void bootstrap();
+    return;
 
     const tg = (window as TelegramWindow).Telegram?.WebApp;
 
@@ -63,13 +104,14 @@ export function App() {
         loginStarted.current = false;
         setShowCredLogin(true);
       });
-  }, [authStatus, setAuth, setAuthLoading, setWallet]);
+  }, [authStatus, clearAuth, setAuth, setAuthLoading, setWallet]);
 
   if (showCredLogin && !isAuthenticated) {
     return (
       <div className="app-container">
         <CredentialsLogin
           onSuccess={async ({ user, accessToken, refreshToken }) => {
+            localStorage.removeItem('manualLogout');
             setAuth(user, accessToken, refreshToken);
             const walletData = await walletApi.getWallet();
             setWallet(walletData);

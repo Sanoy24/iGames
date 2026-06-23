@@ -100,6 +100,14 @@ export const authApi = {
     api
       .post<AuthTokenResponse>('/auth/credentials', { phoneNumber, password })
       .then((r) => r.data),
+
+  refresh: (refreshToken: string) =>
+    api.post<AuthTokenResponse>('/auth/refresh', { refreshToken }).then((r) => r.data),
+
+  logout: () => api.post('/auth/logout').then((r) => r.data),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post<{ ok: boolean }>('/auth/change-password', { currentPassword, newPassword }).then((r) => r.data),
 };
 
 // ── Wallet ────────────────────────────────────────────────────────
@@ -236,6 +244,39 @@ export const adminBotsApi = {
 };
 
 // ── Admin: Agents ─────────────────────────────────────────────────
+export type AgentLedgerAction = {
+  id: string;
+  agentId: string;
+  agentName?: string;
+  amountMinor: number;
+  direction: 'credit' | 'debit';
+  entryType: string;
+  sourceType: string;
+  sourceId: string;
+  balanceAfterMinor: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AgentWithdrawalAction = {
+  id: string;
+  userId: string;
+  userName?: string;
+  agentId?: string;
+  agentName?: string;
+  amountMinor: number;
+  status: string;
+  destinationAccount: string;
+  serviceChargeMinor?: number;
+  netAmountMinor?: number;
+  telebirrReference?: string;
+  adminNotes?: string;
+  claimedAt?: string;
+  processedAt?: string;
+  updatedAt?: string;
+  createdAt: string;
+};
+
 export const adminAgentsApi = {
   listAgents: (page = 1, limit = 50) =>
     api.get<{ data: User[]; total: number; page: number; limit: number }>(`/admin/agents?page=${page}&limit=${limit}`)
@@ -244,6 +285,8 @@ export const adminAgentsApi = {
     api.post<User>('/admin/agents', dto).then((r) => r.data),
   updateAgent: (id: string, dto: Partial<User & { password?: string }>) =>
     api.patch<User>(`/admin/agents/${id}`, dto).then((r) => r.data),
+  listActions: (limit = 100) =>
+    api.get<{ ledger: AgentLedgerAction[]; withdrawals: AgentWithdrawalAction[] }>(`/admin/agents/actions?limit=${limit}`).then((r) => r.data),
 };
 
 // ── Admin: Withdrawals ─────────────────────────────────────────────
@@ -255,14 +298,31 @@ export const adminWithdrawalsApi = {
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
+  getConfig: () => api.get<{ withdrawalServiceChargePct: number }>('/agent/config').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
+  getTransactions: () => api.get<{ ledger: LedgerEntry[]; withdrawals: Withdrawal[] }>('/agent/transactions').then((r) => r.data),
   claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
+  rejectWithdrawal: (id: string, remarks: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/reject`, { remarks }).then((r) => r.data),
   completeWithdrawal: (id: string, telebirrReference: string) =>
     api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { telebirrReference }).then((r) => r.data),
   transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
+};
+
+// ── Admin: Users ───────────────────────────────────────────────────
+export const adminUsersApi = {
+  listUsers: (page = 1, limit = 50, role?: string, search?: string) => {
+    let url = `/admin/users?page=${page}&limit=${limit}`;
+    if (role) url += `&role=${role}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    return api.get<{ data: User[]; total: number; page: number; limit: number }>(url).then((r) => r.data);
+  },
+  updateUserStatus: (id: string, status: 'active' | 'suspended' | 'closed') =>
+    api.put<User>(`/admin/users/${id}/status`, { status }).then((r) => r.data),
+  adjustWallet: (userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) =>
+    api.post<User>(`/admin/users/${userId}/wallet/adjust`, { amountMinor, direction, reason }).then((r) => r.data),
 };
 
 export default api;

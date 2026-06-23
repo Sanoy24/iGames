@@ -105,13 +105,27 @@ export class UsersService {
     };
   }
 
-  async listUsers(page: number, limit: number) {
+  async listUsers(page: number, limit: number, role?: string, search?: string) {
     const skip = (page - 1) * limit;
-    const [data, total] = await this.userRepository.findAndCount({
-      order: { createdAt: 'DESC' },
-      skip,
-      take: limit
-    });
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .orderBy('user.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit);
+
+    if (role) {
+      queryBuilder.andWhere('JSON_CONTAINS(user.roles, :role)', { role: `"${role}"` });
+    }
+
+    if (search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+
     return {
       data,
       total,
@@ -219,7 +233,7 @@ export class UsersService {
     return user;
   }
 
-  async findAgentByCredentials(
+  async findBackofficeUserByCredentials(
     phoneNumber: string,
     password: string,
   ): Promise<User> {
@@ -243,10 +257,45 @@ export class UsersService {
       throw new BadRequestException('Account is inactive');
     }
 
+    const hasBackofficeRole =
+      Array.isArray(user.roles) &&
+      (user.roles.includes('agent' as any) || user.roles.includes('admin' as any));
+    if (!hasBackofficeRole) {
+      throw new BadRequestException('Account does not have backoffice access');
+    }
+
     identity.lastAuthAt = new Date();
     await this.authIdentityRepository.save(identity);
 
     return user;
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    if (!currentPassword || !newPassword || newPassword.length < 8) {
+      throw new BadRequestException('Current password and a new password of at least 8 characters are required');
+    }
+
+    const identity = await this.authIdentityRepository.findOne({
+      where: { userId, provider: 'password' },
+      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId']
+    });
+
+    if (!identity || !identity.passwordHash) {
+      throw new BadRequestException('This account does not have a password login');
+    }
+
+    const valid = await argon2.verify(identity.passwordHash, currentPassword);
+    if (!valid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    identity.passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+    await this.authIdentityRepository.save(identity);
+
+    await this.refreshSessionRepository.update(
+      { userId, revokedAt: IsNull() },
+      { revokedAt: new Date() }
+    );
   }
 
   async listAgents(page: number, limit: number) {

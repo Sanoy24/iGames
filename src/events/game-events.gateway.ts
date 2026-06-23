@@ -1,5 +1,5 @@
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
-import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer, SubscribeMessage } from '@nestjs/websockets';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Server, Socket } from 'socket.io';
@@ -115,6 +115,7 @@ export class GameEventsGateway
       }
 
       this.logger.debug(`Client connected: ${client.id} (User: ${payload.sub}, roles: ${(user.roles as string[]).join(',')})`);
+      await this.broadcastLiveCounts();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(`Unauthorized WebSocket connection attempt: ${client.id} - ${message}`);
@@ -124,6 +125,45 @@ export class GameEventsGateway
 
   handleDisconnect(client: Socket) {
     this.logger.debug(`Client disconnected: ${client.id}`);
+    void this.broadcastLiveCounts();
+  }
+
+  getLiveCounts() {
+    const kenoOnline = this.server?.sockets.adapter.rooms.get('game_keno')?.size || 0;
+    const bingoOnline = this.server?.sockets.adapter.rooms.get('game_bingo')?.size || 0;
+    const totalOnline = this.server?.sockets.sockets.size || 0;
+    return { kenoOnline, bingoOnline, totalOnline };
+  }
+
+  async broadcastLiveCounts() {
+    const counts = this.getLiveCounts();
+    this.server?.emit('live.counts', counts);
+  }
+
+  @SubscribeMessage('enter.game')
+  async handleEnterGame(client: Socket, payload: { game: 'keno' | 'bingo' }) {
+    if (payload?.game === 'keno') {
+      await client.join('game_keno');
+      this.logger.debug(`Client ${client.id} entered Keno`);
+      await this.broadcastLiveCounts();
+    } else if (payload?.game === 'bingo') {
+      await client.join('game_bingo');
+      this.logger.debug(`Client ${client.id} entered Bingo`);
+      await this.broadcastLiveCounts();
+    }
+  }
+
+  @SubscribeMessage('leave.game')
+  async handleLeaveGame(client: Socket, payload: { game: 'keno' | 'bingo' }) {
+    if (payload?.game === 'keno') {
+      await client.leave('game_keno');
+      this.logger.debug(`Client ${client.id} left Keno`);
+      await this.broadcastLiveCounts();
+    } else if (payload?.game === 'bingo') {
+      await client.leave('game_bingo');
+      this.logger.debug(`Client ${client.id} left Bingo`);
+      await this.broadcastLiveCounts();
+    }
   }
 
   emitWalletUpdated(userId: string, wallet: WalletSummary): void {

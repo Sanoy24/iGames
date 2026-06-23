@@ -67,4 +67,16 @@ export class AuthController {
       await this.authService.logout(user.sessionId);
     }
   }
+
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Password changed successfully' })
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: { currentPassword: string; newPassword: string },
+  ): Promise<{ ok: boolean }> {
+    return this.authService.changePassword(user.id, body.currentPassword, body.newPassword);
+  }
 }

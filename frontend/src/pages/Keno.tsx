@@ -123,6 +123,7 @@ function usePullToRefresh(onRefresh: () => Promise<void>) {
 export function Keno({ onBack }: KenoProps) {
   const addToast = useStore((state) => state.addToast);
   const setWallet = useStore((state) => state.setWallet);
+  const liveCounts = useStore((state) => state.liveCounts);
   const [config, setConfig] = useState<KenoConfig | null>(null);
   const [draws, setDraws] = useState<KenoDraw[]>([]);
   const [tickets, setTickets] = useState<KenoTicket[]>([]);
@@ -194,6 +195,8 @@ export function Keno({ onBack }: KenoProps) {
 
     const socket = getSocket();
     if (socket) {
+      socket.emit('enter.game', { game: 'keno' });
+
       const handleDrawStarted = () => {
         setActiveDraw((prev) => prev ? { ...prev, status: 'locked' } : prev);
       };
@@ -218,6 +221,7 @@ export function Keno({ onBack }: KenoProps) {
       socket.on('keno.draw.started', handleDrawStarted);
       socket.on('keno.draw.completed', handleDrawCompleted);
       return () => {
+        socket.emit('leave.game', { game: 'keno' });
         socket.off('keno.draw.started', handleDrawStarted);
         socket.off('keno.draw.completed', handleDrawCompleted);
       };
@@ -433,7 +437,15 @@ export function Keno({ onBack }: KenoProps) {
             <section className="card hero-subpanel">
               <div className="section-header">
                 <div>
-                  <div className="section-title">Keno</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="section-title">Keno</div>
+                    {liveCounts && liveCounts.kenoOnline > 0 && (
+                      <span className="live-badge-pulse">
+                        <span className="pulse-dot"></span>
+                        {liveCounts.kenoOnline} online
+                      </span>
+                    )}
+                  </div>
                   <p className="section-copy">
                     Choose your spot count, lock your numbers, and join the next scheduled draw.
                   </p>

@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { AppTab } from '../lib/navigation';
+import { useStore } from '../store/useStore';
 
 type Props = {
   onNavigate: (tab: AppTab) => void;
@@ -10,6 +11,7 @@ const BINGO_COLORS = ['#4ade80', '#facc15', '#60a5fa', '#f87171', '#c084fc'];
 const KENO_BALLS = [7, 23, 45, 68, 80];
 
 export function Games({ onNavigate }: Props) {
+  const liveCounts = useStore((s) => s.liveCounts);
   return (
     <div className="stack-lg">
       <section className="games-hero">
@@ -22,7 +24,12 @@ export function Games({ onNavigate }: Props) {
         {/* ── Bingo ── */}
         <button className="game-banner game-banner-bingo" onClick={() => onNavigate('bingo')}>
           <div className="game-banner-content">
-            <span className="game-banner-tag">Room based</span>
+            <span className="game-banner-tag">
+              Room based
+              {liveCounts && liveCounts.bingoOnline > 0 && (
+                <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {liveCounts.bingoOnline} online</span>
+              )}
+            </span>
             <h2 className="game-banner-title">Bingo</h2>
             <p className="game-banner-desc">
               Join scheduled rooms, buy cards, and chase one-line, two-line, and full-house prizes.
@@ -45,7 +52,12 @@ export function Games({ onNavigate }: Props) {
         {/* ── Keno ── */}
         <button className="game-banner game-banner-keno" onClick={() => onNavigate('keno')}>
           <div className="game-banner-content">
-            <span className="game-banner-tag">Fast draw</span>
+            <span className="game-banner-tag">
+              Fast draw
+              {liveCounts && liveCounts.kenoOnline > 0 && (
+                <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {liveCounts.kenoOnline} online</span>
+              )}
+            </span>
             <h2 className="game-banner-title">Keno</h2>
             <p className="game-banner-desc">
               Pick 1–12 numbers, buy a ticket, and watch 20 numbers drawn live every round.

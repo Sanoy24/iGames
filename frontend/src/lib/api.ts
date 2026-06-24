@@ -277,6 +277,73 @@ export type AgentWithdrawalAction = {
   createdAt: string;
 };
 
+export type AgentActionEvent = {
+  id: string;
+  agentId: string;
+  agentName?: string;
+  userId?: string;
+  userName?: string;
+  withdrawalId?: string;
+  ledgerEntryId?: string;
+  actionType: string;
+  amountMinor?: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AgentDepositAction = {
+  id: string;
+  agentId?: string;
+  agentName?: string;
+  userId: string;
+  userName?: string;
+  receiptNo: string;
+  amountMinor: number;
+  status: string;
+  payerPhone?: string;
+  creditedPartyAccount?: string;
+  createdAt: string;
+};
+
+export type AgentAuditSummary = {
+  agentId: string;
+  agentName?: string;
+  totalDepositsMinor: number;
+  depositCount: number;
+  totalTransfersToUsersMinor: number;
+  transferCount: number;
+  totalWithdrawalsMinor: number;
+  withdrawalCount: number;
+  totalReceiptsMinor: number;
+  receiptCount: number;
+  eventCount: number;
+};
+
+export type AdminUserDeposit = {
+  id: string;
+  receiptNo: string;
+  amountMinor: number;
+  status: string;
+  payerPhone?: string;
+  creditedPartyAccount?: string;
+  agentId?: string;
+  agent?: User;
+  createdAt: string;
+};
+
+export type AdminUserActivity = {
+  user: User;
+  ledger: LedgerEntry[];
+  withdrawals: Withdrawal[];
+  deposits: AdminUserDeposit[];
+  totals: {
+    walletAvailableMinor: number;
+    walletReservedMinor: number;
+    depositMinor: number;
+    completedWithdrawalMinor: number;
+  };
+};
+
 export const adminAgentsApi = {
   listAgents: (page = 1, limit = 50) =>
     api.get<{ data: User[]; total: number; page: number; limit: number }>(`/admin/agents?page=${page}&limit=${limit}`)
@@ -286,7 +353,13 @@ export const adminAgentsApi = {
   updateAgent: (id: string, dto: Partial<User & { password?: string }>) =>
     api.patch<User>(`/admin/agents/${id}`, dto).then((r) => r.data),
   listActions: (limit = 100) =>
-    api.get<{ ledger: AgentLedgerAction[]; withdrawals: AgentWithdrawalAction[] }>(`/admin/agents/actions?limit=${limit}`).then((r) => r.data),
+    api.get<{
+      events: AgentActionEvent[];
+      deposits: AgentDepositAction[];
+      ledger: AgentLedgerAction[];
+      withdrawals: AgentWithdrawalAction[];
+      summaryByAgent: AgentAuditSummary[];
+    }>(`/admin/agents/actions?limit=${limit}`).then((r) => r.data),
 };
 
 // ── Admin: Withdrawals ─────────────────────────────────────────────
@@ -323,6 +396,8 @@ export const adminUsersApi = {
     api.put<User>(`/admin/users/${id}/status`, { status }).then((r) => r.data),
   adjustWallet: (userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) =>
     api.post<User>(`/admin/users/${userId}/wallet/adjust`, { amountMinor, direction, reason }).then((r) => r.data),
+  getUserActivity: (userId: string, limit = 20) =>
+    api.get<AdminUserActivity>(`/admin/users/${userId}/activity?limit=${limit}`).then((r) => r.data),
 };
 
 export default api;

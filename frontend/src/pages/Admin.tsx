@@ -4,6 +4,10 @@ import {
   Play, Plus, RefreshCw, Settings, Shield, Users, Wallet, X,
 } from 'lucide-react';
 import {
+  type AdminUserActivity,
+  type AgentActionEvent,
+  type AgentAuditSummary,
+  type AgentDepositAction,
   adminAgentsApi,
   adminBingoApi,
   adminBotsApi,
@@ -21,8 +25,9 @@ import {
 import type { BingoConfig, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
 import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
+import { Profile } from './Profile';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -35,6 +40,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
   { id: 'emoney',      label: 'E-Money',     icon: <Coins size={15} /> },
+  { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
 ];
 
 // ── Shared helpers ────────────────────────────────────────────────

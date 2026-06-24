@@ -26,12 +26,27 @@ type TelegramWindow = Window &
   };
 
 export function App() {
-  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet, clearAuth } = useStore();
+  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet, clearAuth, user, wallet } = useStore();
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [showCredLogin, setShowCredLogin] = useState(false);
   const loginStarted = useRef(false);
 
   useSocketConnection();
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    setActiveTab((current) => {
+      if (current !== 'home') return current;
+      if (user.roles.includes('admin')) return 'admin';
+      if (user.roles.includes('agent')) return 'agent';
+      return 'home';
+    });
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || wallet) return;
+    walletApi.getWallet().then(setWallet).catch(() => {});
+  }, [isAuthenticated, wallet, setWallet]);
 
   useEffect(() => {
     if (authStatus !== 'idle' || loginStarted.current) return;
@@ -77,33 +92,6 @@ export function App() {
     };
 
     void bootstrap();
-    return;
-
-    const tg = (window as TelegramWindow).Telegram?.WebApp;
-
-    if (!tg?.initData && !import.meta.env.DEV) {
-      // No Telegram context — show credentials login for agents/admins
-      setShowCredLogin(true);
-      return;
-    }
-
-    setAuthLoading();
-
-    const loginPromise = tg?.initData
-      ? authApi.loginWithTelegram(tg.initData)
-      : authApi.devSeedAdmin('Dev Admin');
-
-    loginPromise
-      .then(async ({ user, accessToken, refreshToken }) => {
-        setAuth(user, accessToken, refreshToken);
-        const walletData = await walletApi.getWallet();
-        setWallet(walletData);
-      })
-      .catch((err) => {
-        console.error('Telegram login failed:', err);
-        loginStarted.current = false;
-        setShowCredLogin(true);
-      });
   }, [authStatus, clearAuth, setAuth, setAuthLoading, setWallet]);
 
   if (showCredLogin && !isAuthenticated) {
@@ -143,7 +131,7 @@ export function App() {
         {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
         {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
         {activeTab === 'wallet' && <Wallet />}
-        {activeTab === 'admin' && <Admin />}
+        {activeTab === 'admin' && <Admin onNavigate={setActiveTab} />}
         {activeTab === 'profile' && <Profile />}
         {activeTab === 'agent' && <Agent />}
       </main>

@@ -59,6 +59,14 @@ export class AdminController {
     );
   }
 
+  @Get('users/:id/activity')
+  getUserActivity(
+    @Param('id') userId: string,
+    @Query('limit') limit: string = '20',
+  ) {
+    return this.adminService.getUserActivity(userId, parseInt(limit, 10) || 20);
+  }
+
   @Put('users/:id/status')
   updateUserStatus(@Param('id') id: string, @Body('status') status: string) {
     return this.usersService.updateStatus(id, status as any);

@@ -18,6 +18,12 @@ export function Games({ onNavigate }: Props) {
         <div className="badge badge-gold">Games</div>
         <h1 className="hero-title">Choose a game</h1>
         <p className="hero-copy">Pick a game and start playing — results settle in real time.</p>
+        {liveCounts && (
+          <p className="hero-copy" style={{ marginTop: 8 }}>
+            {liveCounts.totalOnline} users online now
+            {liveCounts.totalPlaying > 0 ? ` • ${liveCounts.totalPlaying} playing a game` : ''}
+          </p>
+        )}
       </section>
 
       <div className="game-banner-list">

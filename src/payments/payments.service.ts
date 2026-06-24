@@ -2,6 +2,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
+import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
@@ -93,6 +94,24 @@ export class PaymentsService {
 
       deposit.walletCredit = walletCredit;
       await depositRepo.save(deposit);
+
+      if (deposit.agentId) {
+        const agentActionRepo = manager.getRepository(AgentActionLog);
+        await agentActionRepo.save(
+          agentActionRepo.create({
+            agentId: deposit.agentId,
+            userId,
+            amountMinor: deposit.amountMinor,
+            ledgerEntryId: walletCredit.ledgerEntry.id,
+            actionType: 'telebirr_deposit_receipt',
+            metadata: {
+              receiptNo: deposit.receiptNo,
+              payerPhone: deposit.payerPhone,
+              creditedPartyAccount: deposit.creditedPartyAccount,
+            },
+          }),
+        );
+      }
 
       return this.toResponse(deposit);
     });

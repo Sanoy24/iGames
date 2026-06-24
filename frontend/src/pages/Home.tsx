@@ -95,6 +95,15 @@ export function Home({ onNavigate }: Props) {
           </button>
         </div>
 
+        {liveCounts && (
+          <div className="home-draw-pill" style={{ marginTop: 10 }}>
+            <strong>{liveCounts.totalOnline}</strong>&nbsp;users online
+            {liveCounts.totalPlaying > 0 && (
+              <span>&nbsp;·&nbsp;<strong>{liveCounts.totalPlaying}</strong>&nbsp;playing now</span>
+            )}
+          </div>
+        )}
+
         {/* Live draw status pill */}
         {activeDraw && (
           <div className={`home-draw-pill${countdown === 'Starting…' || activeDraw.status !== 'open' ? ' home-draw-pill-active' : ''}`}>

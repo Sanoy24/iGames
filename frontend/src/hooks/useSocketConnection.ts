@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { useStore } from '../store/useStore';
+import { useStore, type LiveCounts } from '../store/useStore';
 import type { Wallet } from '../lib/models';
 
 let socketInstance: Socket | null = null;
@@ -77,7 +77,7 @@ export function useSocketConnection() {
         setWallet(wallet);
       });
 
-      socketInstance.on('live.counts', (counts: { kenoOnline: number; bingoOnline: number; totalOnline: number }) => {
+      socketInstance.on('live.counts', (counts: LiveCounts) => {
         useStore.getState().setLiveCounts(counts);
       });
     }

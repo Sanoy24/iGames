@@ -7,6 +7,14 @@ export type Toast = {
   message: string;
 };
 
+export type LiveCounts = {
+  kenoOnline: number;
+  bingoOnline: number;
+  totalOnline: number;
+  totalPlaying: number;
+  totalConnections: number;
+};
+
 type AppState = {
   // Auth
   user: User | null;
@@ -33,22 +41,45 @@ type AppState = {
   removeToast: (id: string) => void;
 
   // Live counts
-  liveCounts: { kenoOnline: number; bingoOnline: number; totalOnline: number } | null;
-  setLiveCounts: (counts: { kenoOnline: number; bingoOnline: number; totalOnline: number }) => void;
+  liveCounts: LiveCounts | null;
+  setLiveCounts: (counts: LiveCounts) => void;
 };
+
+function getStoredUser(): User | null {
+  if (typeof window === 'undefined') return null;
+  if (localStorage.getItem('manualLogout') === '1') return null;
+
+  const storedToken = localStorage.getItem('accessToken');
+  const storedUser = localStorage.getItem('authUser');
+  if (!storedToken || !storedUser) return null;
+
+  try {
+    return JSON.parse(storedUser) as User;
+  } catch {
+    localStorage.removeItem('authUser');
+    return null;
+  }
+}
+
+const initialUser = getStoredUser();
+const initialAccessToken =
+  initialUser && typeof window !== 'undefined'
+    ? localStorage.getItem('accessToken')
+    : null;
 
 export const useStore = create<AppState>((set) => ({
   // Auth
-  user: null,
-  accessToken: null,
-  isAuthenticated: false,
-  authStatus: 'idle',
+  user: initialUser,
+  accessToken: initialAccessToken,
+  isAuthenticated: Boolean(initialUser && initialAccessToken),
+  authStatus: initialUser && initialAccessToken ? 'ready' : 'idle',
   isAuthLoading: false,
   authError: null,
   isSocketConnected: false,
 
   setAuth: (user, token, refreshToken?: string) => {
     localStorage.setItem('accessToken', token);
+    localStorage.setItem('authUser', JSON.stringify(user));
     if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     set({
       user,
@@ -60,7 +91,10 @@ export const useStore = create<AppState>((set) => ({
     });
   },
 
-  setUser: (user) => set({ user }),
+  setUser: (user) => {
+    localStorage.setItem('authUser', JSON.stringify(user));
+    set({ user });
+  },
 
   setAuthLoading: () => set({ authStatus: 'loading', isAuthLoading: true, authError: null }),
 
@@ -80,6 +114,7 @@ export const useStore = create<AppState>((set) => ({
   clearAuth: () => {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
+    localStorage.removeItem('authUser');
     set({
       user: null,
       accessToken: null,

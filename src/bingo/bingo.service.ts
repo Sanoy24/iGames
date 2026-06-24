@@ -45,6 +45,8 @@ export type BingoTicketResponse = {
   settlementStatus: string;
 };
 
+const MIN_BINGO_SALES_WINDOW_MS = 60_000;
+
 @Injectable()
 export class BingoService {
   private readonly logger = new Logger(BingoService.name);
@@ -101,7 +103,9 @@ export class BingoService {
     const existing = await this.bingoRoomRepository.countBy({ status: 'open' });
     if (existing > 0) return null;
 
-    const delayMs = cfg.autoRepeatIntervalMinutes * 60_000;
+    // Always leave a short ticket-sales window so rooms do not auto-start
+    // immediately and block players from joining.
+    const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, MIN_BINGO_SALES_WINDOW_MS);
     const scheduledStartAt = new Date(Date.now() + delayMs);
 
     // Auto-generate a human-readable room name
@@ -301,11 +305,11 @@ export class BingoService {
       }
 
       if (room.status !== 'open') {
-        throw new ConflictException('Bingo room is full or not open for ticket sales');
+        throw new ConflictException('Bingo room is not open for ticket sales');
       }
 
       if (room.soldTickets + input.count > room.maxTickets) {
-        throw new ConflictException('Bingo room is full or not open for ticket sales');
+        throw new ConflictException('Bingo room is full for ticket sales');
       }
 
       room.soldTickets += input.count;

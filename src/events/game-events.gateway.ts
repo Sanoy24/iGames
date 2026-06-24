@@ -129,10 +129,34 @@ export class GameEventsGateway
   }
 
   getLiveCounts() {
-    const kenoOnline = this.server?.sockets.adapter.rooms.get('game_keno')?.size || 0;
-    const bingoOnline = this.server?.sockets.adapter.rooms.get('game_bingo')?.size || 0;
-    const totalOnline = this.server?.sockets.sockets.size || 0;
-    return { kenoOnline, bingoOnline, totalOnline };
+    const socketMap = this.server?.sockets.sockets;
+    const getDistinctUsers = (roomName?: string) => {
+      const socketIds = roomName
+        ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
+        : Array.from(socketMap?.keys() ?? []);
+      const users = new Set<string>();
+      for (const socketId of socketIds) {
+        const socket = socketMap?.get(socketId);
+        const userId = socket?.data?.user?.sub;
+        if (typeof userId === 'string' && userId) {
+          users.add(userId);
+        }
+      }
+      return users;
+    };
+
+    const kenoUsers = getDistinctUsers('game_keno');
+    const bingoUsers = getDistinctUsers('game_bingo');
+    const totalUsers = getDistinctUsers();
+    const playingUsers = new Set<string>([...kenoUsers, ...bingoUsers]);
+
+    return {
+      kenoOnline: kenoUsers.size,
+      bingoOnline: bingoUsers.size,
+      totalOnline: totalUsers.size,
+      totalPlaying: playingUsers.size,
+      totalConnections: socketMap?.size || 0,
+    };
   }
 
   async broadcastLiveCounts() {

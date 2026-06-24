@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, In } from 'typeorm';
 import { randomUUID } from 'crypto';
@@ -20,6 +20,8 @@ import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { LedgerEntry } from '../ledger/entities/ledger-entry.entity';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
+import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
+import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 
 @Injectable()
 export class AdminService {
@@ -103,11 +105,22 @@ export class AdminService {
     const totalLiabilities = totals.walletAvailable + totals.walletReserved + totals.kenoPendingStakes + totals.bingoPendingStakes;
 
     // 5. User & engagement stats
-    // Total players (role includes player)
-    const totalUsers = await this.dataSource.getRepository(User)
-      .createQueryBuilder('user')
-      .where('JSON_CONTAINS(user.roles, :role)', { role: '"player"' })
-      .getCount();
+    const userRepository = this.dataSource.getRepository(User);
+    const [totalUsers, totalPlayers, totalAgents, totalAdmins] = await Promise.all([
+      userRepository.count(),
+      userRepository
+        .createQueryBuilder('user')
+        .where('JSON_CONTAINS(user.roles, :role)', { role: '"player"' })
+        .getCount(),
+      userRepository
+        .createQueryBuilder('user')
+        .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+        .getCount(),
+      userRepository
+        .createQueryBuilder('user')
+        .where('JSON_CONTAINS(user.roles, :role)', { role: '"admin"' })
+        .getCount(),
+    ]);
 
     // Active Keno players in open/locked draws
     const activeKenoDraws = await this.dataSource.getRepository(KenoDraw).find({
@@ -151,11 +164,17 @@ export class AdminService {
       breakdown: {
         ...totals,
         totalUsers,
+        totalPlayers,
+        totalAgents,
+        totalAdmins,
+        totalBackofficeUsers: totalAgents + totalAdmins,
         activeKenoPlayers,
         activeBingoPlayers,
         onlineUsers: liveCounts.totalOnline,
         kenoOnline: liveCounts.kenoOnline,
         bingoOnline: liveCounts.bingoOnline,
+        totalPlayingUsers: liveCounts.totalPlaying,
+        totalConnections: liveCounts.totalConnections,
       }
     };
   }
@@ -213,28 +232,190 @@ export class AdminService {
     return this.usersService.listAgents(page, limit);
   }
 
+  async getUserActivity(userId: string, limit = 20) {
+    const safeLimit = Math.min(Math.max(limit || 20, 1), 100);
+    const user = await this.dataSource.getRepository(User).findOne({
+      where: { id: userId },
+      relations: ['wallets'],
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const [ledger, withdrawals, deposits] = await Promise.all([
+      this.dataSource.getRepository(LedgerEntry).find({
+        where: { userId },
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.dataSource.getRepository(Withdrawal).find({
+        where: { userId },
+        relations: ['agent'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.dataSource.getRepository(TelebirrDeposit).find({
+        where: { userId },
+        relations: ['agent'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+    ]);
+
+    return {
+      user,
+      ledger,
+      withdrawals,
+      deposits,
+      totals: {
+        walletAvailableMinor: user.wallets?.[0]?.availableMinor ?? 0,
+        walletReservedMinor: user.wallets?.[0]?.reservedMinor ?? 0,
+        depositMinor: deposits
+          .filter((deposit) => deposit.status === 'credited')
+          .reduce((sum, deposit) => sum + Number(deposit.amountMinor), 0),
+        completedWithdrawalMinor: withdrawals
+          .filter((withdrawal) => withdrawal.status === 'completed')
+          .reduce((sum, withdrawal) => sum + Number(withdrawal.amountMinor), 0),
+      },
+    };
+  }
+
   async getAgentActions(limit = 100) {
     const safeLimit = Math.min(Math.max(limit || 100, 1), 200);
 
-    const ledger = await this.dataSource.getRepository(LedgerEntry)
-      .createQueryBuilder('entry')
-      .leftJoinAndSelect('entry.user', 'agent')
-      .where('JSON_CONTAINS(agent.roles, :role)', { role: '"agent"' })
-      .andWhere('entry.sourceType IN (:...sourceTypes)', {
-        sourceTypes: ['admin_to_agent_transfer', 'agent_to_user_transfer', 'withdrawal']
-      })
-      .orderBy('entry.createdAt', 'DESC')
-      .take(safeLimit)
-      .getMany();
+    const [ledger, withdrawals, events, deposits] = await Promise.all([
+      this.dataSource.getRepository(LedgerEntry)
+        .createQueryBuilder('entry')
+        .leftJoinAndSelect('entry.user', 'agent')
+        .where('JSON_CONTAINS(agent.roles, :role)', { role: '"agent"' })
+        .andWhere('entry.sourceType IN (:...sourceTypes)', {
+          sourceTypes: ['admin_to_agent_transfer', 'agent_to_user_transfer', 'withdrawal']
+        })
+        .orderBy('entry.createdAt', 'DESC')
+        .take(safeLimit)
+        .getMany(),
+      this.dataSource.getRepository(Withdrawal).find({
+        where: {},
+        relations: ['user', 'agent', 'processor'],
+        order: { updatedAt: 'DESC' },
+        take: safeLimit
+      }),
+      this.dataSource.getRepository(AgentActionLog).find({
+        relations: ['agent', 'user'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      this.dataSource.getRepository(TelebirrDeposit).find({
+        where: {},
+        relations: ['user', 'agent'],
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+    ]);
 
-    const withdrawals = await this.dataSource.getRepository(Withdrawal).find({
-      where: {},
-      relations: ['user', 'agent'],
-      order: { updatedAt: 'DESC' },
-      take: safeLimit
-    });
+    const summaryByAgent = new Map<string, {
+      agentId: string;
+      agentName?: string;
+      totalDepositsMinor: number;
+      depositCount: number;
+      totalTransfersToUsersMinor: number;
+      transferCount: number;
+      totalWithdrawalsMinor: number;
+      withdrawalCount: number;
+      totalReceiptsMinor: number;
+      receiptCount: number;
+      eventCount: number;
+    }>();
+
+    const getSummary = (agentId?: string, agentName?: string) => {
+      if (!agentId) return null;
+      const existing = summaryByAgent.get(agentId);
+      if (existing) {
+        if (!existing.agentName && agentName) existing.agentName = agentName;
+        return existing;
+      }
+      const created = {
+        agentId,
+        agentName,
+        totalDepositsMinor: 0,
+        depositCount: 0,
+        totalTransfersToUsersMinor: 0,
+        transferCount: 0,
+        totalWithdrawalsMinor: 0,
+        withdrawalCount: 0,
+        totalReceiptsMinor: 0,
+        receiptCount: 0,
+        eventCount: 0,
+      };
+      summaryByAgent.set(agentId, created);
+      return created;
+    };
+
+    for (const entry of ledger) {
+      const summary = getSummary(entry.userId, entry.user?.displayName);
+      if (!summary) continue;
+      if (entry.sourceType === 'agent_to_user_transfer') {
+        summary.transferCount += 1;
+        summary.totalTransfersToUsersMinor += Number(entry.amountMinor);
+      }
+      if (entry.sourceType === 'withdrawal' && entry.entryType === 'agent_receipt') {
+        summary.receiptCount += 1;
+        summary.totalReceiptsMinor += Number(entry.amountMinor);
+      }
+    }
+
+    for (const withdrawal of withdrawals) {
+      const agentId = withdrawal.agentId || withdrawal.processedBy;
+      const agentName = withdrawal.agent?.displayName || withdrawal.processor?.displayName;
+      const summary = getSummary(agentId, agentName);
+      if (!summary) continue;
+      summary.withdrawalCount += 1;
+      summary.totalWithdrawalsMinor += Number(withdrawal.amountMinor);
+    }
+
+    for (const deposit of deposits) {
+      const summary = getSummary(deposit.agentId, deposit.agent?.displayName);
+      if (!summary) continue;
+      summary.depositCount += 1;
+      summary.totalDepositsMinor += Number(deposit.amountMinor);
+    }
+
+    for (const event of events) {
+      const summary = getSummary(event.agentId, event.agent?.displayName);
+      if (!summary) continue;
+      summary.eventCount += 1;
+    }
 
     return {
+      events: events.map((event) => ({
+        id: event.id,
+        agentId: event.agentId,
+        agentName: event.agent?.displayName,
+        userId: event.userId,
+        userName: event.user?.displayName,
+        withdrawalId: event.withdrawalId,
+        ledgerEntryId: event.ledgerEntryId,
+        actionType: event.actionType,
+        amountMinor: event.amountMinor,
+        metadata: event.metadata || {},
+        createdAt: event.createdAt,
+      })),
+      deposits: deposits
+        .filter((deposit) => deposit.agentId)
+        .map((deposit) => ({
+          id: deposit.id,
+          agentId: deposit.agentId,
+          agentName: deposit.agent?.displayName,
+          userId: deposit.userId,
+          userName: deposit.user?.displayName,
+          receiptNo: deposit.receiptNo,
+          amountMinor: deposit.amountMinor,
+          status: deposit.status,
+          payerPhone: deposit.payerPhone,
+          creditedPartyAccount: deposit.creditedPartyAccount,
+          createdAt: deposit.createdAt,
+        })),
       ledger: ledger.map((entry) => ({
         id: entry.id,
         agentId: entry.userId,
@@ -255,7 +436,7 @@ export class AdminService {
           userId: withdrawal.userId,
           userName: withdrawal.user?.displayName,
           agentId: withdrawal.agentId || withdrawal.processedBy,
-          agentName: withdrawal.agent?.displayName,
+          agentName: withdrawal.agent?.displayName || withdrawal.processor?.displayName,
           amountMinor: withdrawal.amountMinor,
           status: withdrawal.status,
           destinationAccount: withdrawal.destinationAccount,
@@ -267,7 +448,14 @@ export class AdminService {
           processedAt: withdrawal.processedAt,
           updatedAt: withdrawal.updatedAt,
           createdAt: withdrawal.createdAt
-        }))
+        })),
+      summaryByAgent: Array.from(summaryByAgent.values()).sort((left, right) => {
+        return (
+          right.eventCount - left.eventCount ||
+          right.totalWithdrawalsMinor - left.totalWithdrawalsMinor ||
+          right.totalDepositsMinor - left.totalDepositsMinor
+        );
+      }),
     };
   }
 

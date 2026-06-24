@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { LedgerService } from '../ledger/ledger.service';
 import { LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action-log.entity';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
@@ -651,8 +652,16 @@ export class WalletService {
     withdrawal.status = 'claimed';
     withdrawal.agentId = agentId;
     withdrawal.claimedAt = new Date();
-
-    return await this.withdrawalRepository.save(withdrawal);
+    const saved = await this.withdrawalRepository.save(withdrawal);
+    await this.recordAgentAction({
+      agentId,
+      userId: withdrawal.userId,
+      withdrawalId: withdrawal.id,
+      amountMinor: withdrawal.amountMinor,
+      actionType: 'withdrawal_claimed',
+      metadata: { destinationAccount: withdrawal.destinationAccount },
+    });
+    return saved;
   }
 
   async releaseWithdrawal(withdrawalId: string, agentId: string): Promise<Withdrawal> {
@@ -664,8 +673,16 @@ export class WalletService {
     withdrawal.status = 'pending';
     withdrawal.agentId = null as any;
     withdrawal.claimedAt = null as any;
-
-    return await this.withdrawalRepository.save(withdrawal);
+    const saved = await this.withdrawalRepository.save(withdrawal);
+    await this.recordAgentAction({
+      agentId,
+      userId: withdrawal.userId,
+      withdrawalId: withdrawal.id,
+      amountMinor: withdrawal.amountMinor,
+      actionType: 'withdrawal_released',
+      metadata: { destinationAccount: withdrawal.destinationAccount },
+    });
+    return saved;
   }
 
   async completeWithdrawalByAgent(input: {
@@ -736,6 +753,24 @@ export class WalletService {
       withdrawal.processedBy = input.agentId;
       await withdrawalRepo.save(withdrawal);
 
+      await this.recordAgentAction(
+        {
+          agentId: input.agentId,
+          userId: withdrawal.userId,
+          withdrawalId: withdrawal.id,
+          amountMinor: withdrawal.amountMinor,
+          ledgerEntryId: `agent-receipt:${withdrawal.id}`,
+          actionType: 'withdrawal_completed',
+          metadata: {
+            destinationAccount: withdrawal.destinationAccount,
+            netAmountMinor,
+            serviceChargeMinor,
+            telebirrReference: withdrawal.telebirrReference,
+          },
+        },
+        manager,
+      );
+
       if (serviceChargeMinor > 0) {
         await manager.query(`
           INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
@@ -768,8 +803,19 @@ export class WalletService {
     withdrawal.adminNotes = remarks.trim();
     withdrawal.processedAt = new Date();
     withdrawal.processedBy = agentId;
-
-    return await this.withdrawalRepository.save(withdrawal);
+    const saved = await this.withdrawalRepository.save(withdrawal);
+    await this.recordAgentAction({
+      agentId,
+      userId: withdrawal.userId,
+      withdrawalId: withdrawal.id,
+      amountMinor: withdrawal.amountMinor,
+      actionType: 'withdrawal_rejected',
+      metadata: {
+        destinationAccount: withdrawal.destinationAccount,
+        remarks: withdrawal.adminNotes,
+      },
+    });
+    return saved;
   }
 
   async getWagerLimit(userId: string): Promise<WagerLimit | null> {
@@ -874,6 +920,22 @@ export class WalletService {
         manager
       );
 
+      await this.recordAgentAction(
+        {
+          agentId,
+          userId: adminUserId,
+          amountMinor,
+          ledgerEntryId: creditResult.ledgerEntry.id,
+          actionType: 'admin_transfer_to_agent',
+          metadata: {
+            adminUserId,
+            debitLedgerEntryId: debitResult.ledgerEntry.id,
+            creditLedgerEntryId: creditResult.ledgerEntry.id,
+          },
+        },
+        manager,
+      );
+
       return {
         adminWallet: debitResult.wallet,
         agentWallet: creditResult.wallet
@@ -928,11 +990,53 @@ export class WalletService {
         manager
       );
 
+      await this.recordAgentAction(
+        {
+          agentId: agentUserId,
+          userId: user.id,
+          amountMinor,
+          ledgerEntryId: debitResult.ledgerEntry.id,
+          actionType: 'agent_transfer_to_user',
+          metadata: {
+            userPhone,
+            debitLedgerEntryId: debitResult.ledgerEntry.id,
+            creditLedgerEntryId: creditResult.ledgerEntry.id,
+          },
+        },
+        manager,
+      );
+
       return {
         agentWallet: debitResult.wallet,
         userWallet: creditResult.wallet
       };
     });
+  }
+
+  private async recordAgentAction(
+    input: {
+      agentId: string;
+      userId?: string;
+      withdrawalId?: string;
+      ledgerEntryId?: string;
+      amountMinor?: number;
+      actionType: AgentActionType;
+      metadata?: Record<string, unknown>;
+    },
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repo = manager ? manager.getRepository(AgentActionLog) : this.dataSource.getRepository(AgentActionLog);
+    await repo.save(
+      repo.create({
+        agentId: input.agentId,
+        userId: input.userId,
+        withdrawalId: input.withdrawalId,
+        ledgerEntryId: input.ledgerEntryId,
+        amountMinor: input.amountMinor,
+        actionType: input.actionType,
+        metadata: input.metadata ?? {},
+      }),
+    );
   }
 
   private assertNonNegativeAmount(amount: number, field: string): void {

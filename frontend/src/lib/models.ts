@@ -15,6 +15,8 @@ export type User = {
     withdraw: boolean;
   };
   wallets?: Wallet[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AuthTokenResponse = {

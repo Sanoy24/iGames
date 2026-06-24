@@ -95,7 +95,7 @@ export function Bingo({ onBack }: BingoProps) {
 
             const handleRoomUpdate = (payload: BingoRoomEventPayload) => {
                 if (payload.roomId === selectedRoomId) {
-                    void loadRoomState(selectedRoomId);
+                    void Promise.all([loadRoomState(selectedRoomId), loadRooms()]);
                 } else {
                     void loadRooms(); // If a different room updated, refresh the rooms list
                 }
@@ -151,15 +151,31 @@ export function Bingo({ onBack }: BingoProps) {
 
     const selectedRoom = useMemo(
         () =>
-            rooms.find((room) => room.id === selectedRoomId) ??
             roomState ??
+            rooms.find((room) => room.id === selectedRoomId) ??
             null,
         [roomState, rooms, selectedRoomId],
     );
 
+    const remainingTickets = selectedRoom
+        ? Math.max(0, selectedRoom.maxTickets - selectedRoom.soldTickets)
+        : 0;
+    const salesOpen = selectedRoom?.status === "open";
+    const buyDisabledReason = !selectedRoom
+        ? "Pick a room first."
+        : !salesOpen
+        ? "Ticket sales are closed for this room."
+        : remainingTickets <= 0
+        ? "This room is sold out."
+        : null;
+
     const buyTickets = async () => {
         if (!selectedRoomId) {
             addToast("info", "Pick a room before buying tickets.");
+            return;
+        }
+        if (buyDisabledReason) {
+            addToast("info", buyDisabledReason);
             return;
         }
 
@@ -314,7 +330,7 @@ export function Bingo({ onBack }: BingoProps) {
                                     className="input compact-input"
                                     type="number"
                                     min={1}
-                                    max={24}
+                                    max={Math.max(1, Math.min(24, remainingTickets || 24))}
                                     value={ticketCount}
                                     onChange={(event) =>
                                         setTicketCount(
@@ -324,12 +340,17 @@ export function Bingo({ onBack }: BingoProps) {
                                 />
                                 <button
                                     className="btn btn-primary"
-                                    disabled={buying}
+                                    disabled={buying || !!buyDisabledReason}
                                     onClick={buyTickets}
                                 >
                                     {buying ? "Buying..." : "Buy Tickets"}
                                 </button>
                             </div>
+                            {buyDisabledReason && (
+                                <p className="section-copy" style={{ marginTop: 8 }}>
+                                    {buyDisabledReason}
+                                </p>
+                            )}
                         </div>
                     </section>
                     </div>

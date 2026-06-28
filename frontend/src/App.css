@@ -1133,3 +1133,350 @@
   padding: 16px;
   margin-top: 16px;
 }
+
+/* ══════════════════════════════════════════════════════════
+   iGaming Premium Additions
+   ══════════════════════════════════════════════════════════ */
+
+/* ── Home hero pills row ──────────────────────────────────── */
+.home-hero-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+.home-pills-row    { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.home-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.home-pill-live {
+  background: rgba(16,185,129,0.09);
+  border-color: rgba(16,185,129,0.22);
+  color: var(--green);
+}
+.home-pill-active {
+  background: rgba(239,68,68,0.08);
+  border-color: rgba(239,68,68,0.22);
+  color: var(--danger);
+}
+
+/* ── Recent activity feed ────────────────────────────────── */
+.activity-feed  { display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.activity-item  {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.activity-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.activity-badge-keno  { background: rgba(250,204,21,0.1); }
+.activity-badge-bingo { background: rgba(52,211,153,0.1); }
+.activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.activity-name   { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.activity-game   { font-size: 11px; color: var(--text-muted); }
+.activity-amount {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--green);
+  font-family: var(--font-display);
+  flex-shrink: 0;
+  letter-spacing: -0.01em;
+}
+.activity-time { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+
+/* ── Enhanced wallet bar ──────────────────────────────────── */
+.wallet-bar-refresh {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: color var(--transition), background var(--transition);
+  flex-shrink: 0;
+}
+.wallet-bar-refresh:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+
+.wallet-bar-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.wallet-bar-status-ok { background: var(--green); box-shadow: 0 0 6px rgba(16,185,129,0.5); }
+.wallet-bar-status-off { background: var(--text-muted); }
+
+.wallet-bar-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  border: 1px solid rgba(245,158,11,0.3);
+  background: rgba(245,158,11,0.08);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.wallet-bar-add:hover { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.5); }
+
+/* ── Game catalog (Games page) ──────────────────────────── */
+.game-filter-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.game-filter-row::-webkit-scrollbar { display: none; }
+
+.game-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 100px;
+  border: 1.5px solid var(--border-2);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.game-filter-chip:hover { border-color: rgba(245,158,11,0.35); color: var(--text-primary); }
+.game-filter-chip.active {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+  color: var(--gold);
+}
+
+/* Game stats pill inside banner */
+.game-banner-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.game-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.75);
+}
+
+/* ── Preset amount chips (Wallet) ─────────────────────────── */
+.preset-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.preset-amount {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 13px;
+  border-radius: 100px;
+  border: 1.5px solid var(--border-2);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.preset-amount:hover {
+  border-color: rgba(245,158,11,0.4);
+  color: var(--gold);
+  background: var(--gold-dim);
+}
+
+/* ── Quick stats row ──────────────────────────────────────── */
+.quick-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.quick-stat {
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  text-align: center;
+}
+.quick-stat-val {
+  display: block;
+  font-size: 16px;
+  font-weight: 900;
+  font-family: var(--font-display);
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.quick-stat-lbl {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 3px;
+  font-weight: 600;
+}
+
+/* ── Profile stats card ───────────────────────────────────── */
+.profile-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+.profile-stat-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.profile-stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.profile-stat-value { font-size: 18px; font-weight: 900; font-family: var(--font-display); color: var(--gold); }
+
+/* ── Balance change flash ─────────────────────────────────── */
+@keyframes balance-flash {
+  0%   { color: var(--gold); }
+  30%  { color: var(--green); text-shadow: 0 0 12px rgba(16,185,129,0.6); }
+  100% { color: var(--gold); text-shadow: none; }
+}
+.balance-increase { animation: balance-flash 1.2s ease-out; }
+
+@keyframes balance-flash-down {
+  0%   { color: var(--gold); }
+  30%  { color: var(--danger); text-shadow: 0 0 12px rgba(239,68,68,0.4); }
+  100% { color: var(--gold); text-shadow: none; }
+}
+.balance-decrease { animation: balance-flash-down 1.2s ease-out; }
+
+/* ── Wallet bar loading skeleton ─────────────────────────── */
+@keyframes shimmer-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.skeleton {
+  position: relative;
+  background: rgba(255,255,255,0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 50%, transparent 100%);
+  animation: shimmer-slide 1.4s ease-in-out infinite;
+}
+
+/* ── Wallet transaction filters ──────────────────────────── */
+.tx-filter-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.tx-filter-row::-webkit-scrollbar { display: none; }
+
+.tx-filter-chip {
+  padding: 4px 12px;
+  border-radius: 100px;
+  border: 1px solid var(--border-2);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.tx-filter-chip.active { border-color: var(--gold); background: var(--gold-dim); color: var(--gold); }
+.tx-filter-chip:hover:not(.active) { border-color: var(--border-2); color: var(--text-primary); }
+
+/* ── Info banner (notice card) ──────────────────────────── */
+.info-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.info-banner-gold  { background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.2); color: var(--text-secondary); }
+.info-banner-green { background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.2); color: var(--text-secondary); }
+
+/* ── Section divider with label ─────────────────────────── */
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+.section-divider::before,
+.section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Responsive home balance ─────────────────────────────── */
+@media (max-width: 360px) {
+  .home-balance-amount { font-size: 28px; }
+  .quick-stats-row { grid-template-columns: 1fr 1fr; }
+}

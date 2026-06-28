@@ -43,6 +43,12 @@ type AppState = {
   // Live counts
   liveCounts: LiveCounts | null;
   setLiveCounts: (counts: LiveCounts) => void;
+
+  // Audio settings
+  soundVolume: number;
+  soundMuted: boolean;
+  setSoundVolume: (vol: number) => void;
+  setSoundMuted: (muted: boolean) => void;
 };
 
 function getStoredUser(): User | null {
@@ -143,6 +149,18 @@ export const useStore = create<AppState>((set) => ({
   // Live counts
   liveCounts: null,
   setLiveCounts: (counts) => set({ liveCounts: counts }),
+
+  // Audio settings
+  soundVolume: typeof window !== 'undefined' ? Number(localStorage.getItem('soundVolume') ?? '0.5') : 0.5,
+  soundMuted: typeof window !== 'undefined' ? localStorage.getItem('soundMuted') === '1' : false,
+  setSoundVolume: (vol) => {
+    localStorage.setItem('soundVolume', String(vol));
+    set({ soundVolume: vol });
+  },
+  setSoundMuted: (muted) => {
+    localStorage.setItem('soundMuted', muted ? '1' : '0');
+    set({ soundMuted: muted });
+  },
 }));
 
 // Helper: format minor units to display string

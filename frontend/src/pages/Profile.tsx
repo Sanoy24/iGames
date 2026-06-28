@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import { authApi, userApi } from '../lib/api';
 import type { User } from '../lib/models';
 import { useStore } from '../store/useStore';
@@ -50,9 +51,7 @@ export function Profile() {
     }
   }, [addToast]);
 
-  useEffect(() => {
-    void loadProfile();
-  }, [loadProfile]);
+  useEffect(() => { void loadProfile(); }, [loadProfile]);
 
   const startEdit = () => {
     setDisplayName(profile?.displayName ?? '');
@@ -70,7 +69,6 @@ export function Profile() {
         phoneNumber: phoneNumber.trim() || undefined,
       });
       setProfile(updated);
-      // Sync store so WalletBar / Home display name updates immediately
       if (storeUser) setUser({ ...storeUser, displayName: updated.displayName, phoneNumber: updated.phoneNumber });
       setEditing(false);
       addToast('success', 'Profile updated.');
@@ -105,9 +103,7 @@ export function Profile() {
     setLoggingOut(true);
     try {
       await authApi.logout();
-    } catch {
-      // Local logout still clears the session even if the server is unreachable.
-    } finally {
+    } catch { /* local logout is fine even if server unreachable */ } finally {
       localStorage.setItem('manualLogout', '1');
       clearAuth();
       setLoggingOut(false);
@@ -126,11 +122,16 @@ export function Profile() {
 
   return (
     <div className="stack-lg">
-      {/* Avatar + name header */}
+      {/* ── Avatar hero ── */}
       <section className="card profile-hero">
-        <div className="profile-avatar">
+        <motion.div
+          className="profile-avatar"
+          initial={{ scale: 0.85, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+        >
           <UserCircle size={64} strokeWidth={1.2} />
-        </div>
+        </motion.div>
         <h1 className="profile-name">{user?.displayName ?? 'Player'}</h1>
         <div className="profile-role-row">
           {(user?.roles ?? ['player']).map((role) => (
@@ -139,7 +140,42 @@ export function Profile() {
         </div>
       </section>
 
-      {/* Info section */}
+      {/* ── Account stats ── */}
+      <div className="profile-stats-grid">
+        <div className="profile-stat-card">
+          <span className="profile-stat-label">Account Status</span>
+          <span
+            className="profile-stat-value"
+            style={{ fontSize: 14, color: user?.status === 'active' ? 'var(--green)' : 'var(--danger)', textTransform: 'capitalize' }}
+          >
+            {user?.status ?? 'active'}
+          </span>
+        </div>
+        <div className="profile-stat-card">
+          <span className="profile-stat-label">Last Login</span>
+          <span className="profile-stat-value" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+            {user?.lastLoginAt
+              ? new Date(user.lastLoginAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+              : 'This session'}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Phone number prompt ── */}
+      {!user?.phoneNumber && !editing && (
+        <div className="info-banner info-banner-gold">
+          <Phone size={18} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <p style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>Add your Telebirr number</p>
+            <p style={{ fontSize: 12, lineHeight: 1.5 }}>Required to process withdrawal payouts via Telebirr.</p>
+            <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={startEdit}>
+              Add Phone Number
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Profile info ── */}
       <section className="card">
         <div className="section-header">
           <div>
@@ -183,7 +219,7 @@ export function Profile() {
               </button>
               <button className="btn btn-primary" onClick={saveProfile} disabled={saving}>
                 <Check size={14} style={{ marginRight: 4 }} />
-                {saving ? 'Saving...' : 'Save Changes'}
+                {saving ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </div>
@@ -211,29 +247,14 @@ export function Profile() {
         )}
       </section>
 
-      {/* Account section */}
-      <section className="card">
-        <div className="section-title" style={{ marginBottom: 12 }}>Account</div>
-        <div className="key-value-list">
-          <div className="key-value-row">
-            <span>Status</span>
-            <strong style={{ textTransform: 'capitalize', color: user?.status === 'active' ? 'var(--green)' : 'var(--danger)' }}>
-              {user?.status ?? 'active'}
-            </strong>
-          </div>
-          {user?.lastLoginAt && (
-            <div className="key-value-row">
-              <span>Last Login</span>
-              <strong>{new Date(user.lastLoginAt).toLocaleString()}</strong>
-            </div>
-          )}
-        </div>
-      </section>
-
+      {/* ── Security ── */}
       <section className="card">
         <div className="section-header">
           <div>
-            <div className="section-title">Security</div>
+            <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ShieldCheck size={15} style={{ color: 'var(--text-muted)' }} />
+              Security
+            </div>
             <p className="section-copy">Change your password or end this session.</p>
           </div>
         </div>
@@ -265,31 +286,15 @@ export function Profile() {
               disabled={changingPassword || !currentPassword || !newPassword}
             >
               <KeyRound size={14} style={{ marginRight: 4 }} />
-              {changingPassword ? 'Changing...' : 'Change Password'}
+              {changingPassword ? 'Changing…' : 'Change Password'}
             </button>
-            <button className="btn btn-secondary" onClick={logout} disabled={loggingOut}>
+            <button className="btn btn-danger" onClick={logout} disabled={loggingOut}>
               <LogOut size={14} style={{ marginRight: 4 }} />
-              {loggingOut ? 'Logging out...' : 'Logout'}
+              {loggingOut ? 'Logging out…' : 'Logout'}
             </button>
           </div>
         </div>
       </section>
-
-      {/* Phone prompt if missing */}
-      {!user?.phoneNumber && !editing && (
-        <section className="card" style={{ borderColor: 'rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.05)' }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <Phone size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
-            <div>
-              <p style={{ fontWeight: 700, marginBottom: 4 }}>Add your Telebirr number</p>
-              <p className="section-copy">Your phone number is required to process withdrawal payouts via Telebirr.</p>
-              <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={startEdit}>
-                Add Phone Number
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

@@ -4,10 +4,6 @@ import {
   Play, Plus, RefreshCw, Settings, Shield, Users, Wallet, X,
 } from 'lucide-react';
 import {
-  type AdminUserActivity,
-  type AgentActionEvent,
-  type AgentAuditSummary,
-  type AgentDepositAction,
   adminAgentsApi,
   adminBingoApi,
   adminBotsApi,
@@ -25,7 +21,6 @@ import {
 import type { BingoConfig, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
 import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
-import { Profile } from './Profile';
 
 type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney' | 'account';
 
@@ -181,7 +176,7 @@ function PlayersAdmin() {
     try {
       const res = await adminUsersApi.listUsers(page, limit, role || undefined, search || undefined);
       setUsers(res.data);
-      setTotalPages(res.totalPages);
+      setTotalPages(Math.ceil(res.total / limit));
       setTotalUsers(res.total);
     } catch (e) {
       addToast('error', 'Failed to load users: ' + getErrorMessage(e));
@@ -248,7 +243,7 @@ function PlayersAdmin() {
           </div>
           <form onSubmit={handleAdjustWallet} className="stack-md p-lg">
             <p className="section-copy" style={{ marginBottom: 12 }}>
-              Modifying balance for <strong>{adjustingUser.displayName}</strong> ({adjustingUser.phoneNumber || adjustingUser.username || 'No phone/username'}).
+              Modifying balance for <strong>{adjustingUser.displayName}</strong> ({adjustingUser.phoneNumber || 'No phone'}).
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
               <div className="adm-field">
@@ -365,8 +360,7 @@ function PlayersAdmin() {
                     </td>
                     <td className="adm-td-muted">
                       {u.phoneNumber && <div>📞 {u.phoneNumber}</div>}
-                      {u.username && <div>@{u.username}</div>}
-                      {!u.phoneNumber && !u.username && <span style={{ opacity: 0.5 }}>—</span>}
+                      {!u.phoneNumber && <span style={{ opacity: 0.5 }}>—</span>}
                     </td>
                     <td>
                       <strong>{formatCredits(bal)}</strong>
@@ -1621,8 +1615,8 @@ function AgentActionsAdmin() {
   const uniqueAgents = Array.from(
     new Map(
       [...ledgerActions, ...withdrawalActions].map((a) => [
-        a.agentId,
-        { id: a.agentId, name: a.agentName || a.agentId.slice(-8) }
+        a.agentId ?? '',
+        { id: a.agentId ?? '', name: a.agentName || (a.agentId ?? '').slice(-8) }
       ])
     ).values()
   );

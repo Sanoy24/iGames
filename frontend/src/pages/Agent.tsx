@@ -19,8 +19,8 @@ export function Agent() {
   const [mine, setMine] = useState<Withdrawal[]>([]);
   const [config, setConfig] = useState<{ withdrawalServiceChargePct: number } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
-  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
-  const [withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
+  const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [_withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
 
   // per-withdrawal state for the complete form

@@ -45,6 +45,14 @@ export class BingoConfig {
   @Column({ type: 'int', default: 5 })
   drawIntervalSeconds: number;
 
+  /** Default win mode for auto-created rooms. */
+  @Column({ type: 'varchar', length: 10, default: 'line' })
+  defaultWinMode: string;
+
+  /** Default number pool size for auto-created rooms in pattern mode. */
+  @Column({ type: 'int', default: 75 })
+  defaultNumberRange: number;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

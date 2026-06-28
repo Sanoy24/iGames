@@ -45,6 +45,10 @@ export class BingoTicket {
   @Column({ type: 'json' })
   wonTiers: BingoPrizeTier[];
 
+  /** Pattern IDs completed by this ticket (pattern mode only). */
+  @Column({ type: 'json', default: '[]' })
+  completedPatterns: string[];
+
   @Column({ type: 'int' })
   stakeMinor: number;
 

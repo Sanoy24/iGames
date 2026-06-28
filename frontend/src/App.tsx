@@ -57,6 +57,20 @@ export function App() {
 
     const bootstrap = async () => {
       try {
+        const tg = (window as TelegramWindow).Telegram?.WebApp;
+        const hasTelegramData = !!tg?.initData;
+
+        // Telegram miniapp: always re-auth via initData, never show cred login
+        if (hasTelegramData) {
+          localStorage.removeItem('manualLogout');
+          const { user, accessToken, refreshToken } = await authApi.loginWithTelegram(tg!.initData!);
+          setAuth(user, accessToken, refreshToken);
+          setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+          setWallet(await walletApi.getWallet());
+          return;
+        }
+
+        // Standalone web: respect manual logout flag
         if (localStorage.getItem('manualLogout') === '1') {
           setShowCredLogin(true);
           return;
@@ -71,18 +85,15 @@ export function App() {
           return;
         }
 
-        const tg = (window as TelegramWindow).Telegram?.WebApp;
-        if (!tg?.initData && !import.meta.env.DEV) {
-          setShowCredLogin(true);
+        if (import.meta.env.DEV) {
+          const { user, accessToken, refreshToken } = await authApi.devSeedAdmin('Dev Admin');
+          setAuth(user, accessToken, refreshToken);
+          setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+          setWallet(await walletApi.getWallet());
           return;
         }
 
-        const { user, accessToken, refreshToken } = tg?.initData
-          ? await authApi.loginWithTelegram(tg.initData)
-          : await authApi.devSeedAdmin('Dev Admin');
-        setAuth(user, accessToken, refreshToken);
-        setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
-        setWallet(await walletApi.getWallet());
+        setShowCredLogin(true);
       } catch (err) {
         console.error('Auth bootstrap failed:', err);
         clearAuth();

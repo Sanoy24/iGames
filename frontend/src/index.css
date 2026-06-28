@@ -529,3 +529,372 @@ button { font-family: inherit; }
   vertical-align: middle;
   line-height: 1;
 }
+
+/* ============================================================
+   iGaming Ambient Background
+   ============================================================ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(245,158,11,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 110%, rgba(139,92,246,0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 30% at 50% 50%, rgba(16,185,129,0.03) 0%, transparent 60%);
+  animation: ambient-shift 18s ease-in-out infinite alternate;
+}
+@keyframes ambient-shift {
+  0%   { opacity: 0.7; background-position: 0% 0%, 100% 100%, 50% 50%; }
+  50%  { opacity: 1;   background-position: 5% -5%, 95% 105%, 52% 48%; }
+  100% { opacity: 0.8; background-position: -3% 3%, 103% 97%, 48% 52%; }
+}
+
+/* Ensure content sits above */
+.app-container { position: relative; z-index: 1; }
+
+/* ============================================================
+   Enhanced Bottom Nav
+   ============================================================ */
+.nav-active-bubble {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  background: radial-gradient(ellipse at 50% 120%, rgba(245,158,11,0.18) 0%, rgba(245,158,11,0.06) 60%, transparent 100%);
+  border: 1px solid rgba(245,158,11,0.18);
+  pointer-events: none;
+}
+.nav-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+.nav-item {
+  position: relative;
+  overflow: hidden;
+}
+/* Remove the old ::before indicator — bubble replaces it on mobile */
+.nav-item.active::before { display: none; }
+
+/* ============================================================
+   Premium Card Effects
+   ============================================================ */
+.card {
+  transition: box-shadow 0.22s ease, transform 0.18s ease;
+}
+.card-interactive {
+  cursor: pointer;
+}
+.card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.07);
+}
+
+/* Game card premium glow on hover */
+.game-card-glow:hover {
+  box-shadow:
+    0 0 0 1px rgba(245,158,11,0.2),
+    0 8px 40px rgba(0,0,0,0.4),
+    0 0 60px rgba(245,158,11,0.06);
+}
+
+/* ============================================================
+   Jackpot / Live Ticker
+   ============================================================ */
+.ticker-wrap {
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+}
+.ticker-wrap::before,
+.ticker-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 32px;
+  z-index: 2;
+  pointer-events: none;
+}
+.ticker-wrap::before { left: 0;  background: linear-gradient(to right, var(--surface), transparent); }
+.ticker-wrap::after  { right: 0; background: linear-gradient(to left,  var(--surface), transparent); }
+
+.ticker-inner {
+  display: inline-flex;
+  gap: 28px;
+  animation: ticker-scroll 26s linear infinite;
+}
+.ticker-inner:hover { animation-play-state: paused; }
+
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.ticker-item-win  { color: var(--gold); }
+.ticker-item-name { color: var(--text-muted); }
+
+/* ============================================================
+   Jackpot counter hero
+   ============================================================ */
+.jackpot-hero {
+  background: linear-gradient(135deg, rgba(245,158,11,0.08) 0%, rgba(245,158,11,0.03) 50%, rgba(139,92,246,0.06) 100%);
+  border: 1px solid rgba(245,158,11,0.15);
+  border-radius: var(--radius-xl);
+  padding: 24px 20px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.jackpot-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(245,158,11,0.1) 0%, transparent 65%);
+  pointer-events: none;
+}
+.jackpot-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+.jackpot-value {
+  font-size: clamp(32px, 8vw, 52px);
+  font-weight: 900;
+  font-family: var(--font-display);
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 40%, #fcd34d 70%, #f59e0b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-shadow: none;
+  filter: drop-shadow(0 0 20px rgba(245,158,11,0.4));
+}
+.jackpot-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+/* ============================================================
+   Shimmer / skeleton loading
+   ============================================================ */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background-size: 600px 100%;
+  animation: shimmer 1.6s infinite linear;
+  border-radius: var(--radius);
+}
+
+/* ============================================================
+   WalletBar upgrade
+   ============================================================ */
+.wallet-bar {
+  position: relative;
+  overflow: hidden;
+}
+.wallet-bar::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(245,158,11,0.3) 30%, rgba(245,158,11,0.5) 50%, rgba(245,158,11,0.3) 70%, transparent 100%);
+  animation: bar-shimmer 3s ease-in-out infinite;
+}
+@keyframes bar-shimmer {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ============================================================
+   Number pop animation for draws
+   ============================================================ */
+@keyframes number-drop {
+  0%   { transform: translateY(-20px) scale(0.6); opacity: 0; }
+  60%  { transform: translateY(4px)   scale(1.12); opacity: 1; }
+  100% { transform: translateY(0)     scale(1); }
+}
+.number-drop {
+  animation: number-drop 0.38s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* ============================================================
+   Lobby grid layout for home game banners
+   ============================================================ */
+.lobby-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (min-width: 560px) {
+  .lobby-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.lobby-card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.2s ease;
+  background: var(--surface);
+  min-height: 110px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 14px;
+}
+.lobby-card:hover {
+  transform: translateY(-3px) scale(1.01);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45), 0 0 0 1px rgba(245,158,11,0.15);
+}
+.lobby-card:active { transform: scale(0.97); }
+
+.lobby-card-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.18;
+  pointer-events: none;
+}
+.lobby-card-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.lobby-card-name {
+  font-size: 14px;
+  font-weight: 800;
+  font-family: var(--font-display);
+  color: var(--text-primary);
+  position: relative;
+  z-index: 1;
+  line-height: 1.2;
+}
+.lobby-card-sub {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  position: relative;
+  z-index: 1;
+  margin-top: 3px;
+}
+.lobby-card-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 100px;
+  z-index: 2;
+}
+
+/* ============================================================
+   Glowing action button
+   ============================================================ */
+.btn-glow {
+  position: relative;
+  overflow: hidden;
+}
+.btn-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 60%);
+  pointer-events: none;
+}
+.btn-primary.btn-glow:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px rgba(245,158,11,0.25), 0 6px 24px rgba(245,158,11,0.4);
+}
+
+/* ============================================================
+   Section divider with glow
+   ============================================================ */
+.section-divider-glow {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(245,158,11,0.25), transparent);
+  margin: 20px 0;
+}
+
+/* ============================================================
+   Stat pill row (home page quick stats)
+   ============================================================ */
+.stat-pill-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.stat-pill-row::-webkit-scrollbar { display: none; }
+.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.stat-pill-val { color: var(--text-primary); }
+.stat-pill-lbl { color: var(--text-muted); font-weight: 600; }
+
+/* ============================================================
+   Countdown ring pulse (Bingo/Keno)
+   ============================================================ */
+@keyframes ring-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(245,158,11,0.4)); }
+  50%       { filter: drop-shadow(0 0 12px rgba(245,158,11,0.8)); }
+}
+.ring-pulse { animation: ring-pulse 2s ease-in-out infinite; }
+
+/* ============================================================
+   Form fields (profile / wallet)
+   ============================================================ */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.stack-sm  { display: flex; flex-direction: column; gap: 10px; }
+.stack-lg  { display: flex; flex-direction: column; gap: 20px; }

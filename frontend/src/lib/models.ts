@@ -99,6 +99,27 @@ export type KenoTicket = {
   walletCredit?: Record<string, unknown>;
 };
 
+export type PatternType = 'fixed' | 'any_row' | 'any_col' | 'any_diagonal' | 'any_line' | 'coverall';
+
+export type BingoPattern = {
+  id: string;
+  name: string;
+  description?: string;
+  patternType: PatternType;
+  mask?: boolean[][];
+  isBuiltIn: boolean;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type BingoPatternPrize = {
+  patternId: string;
+  name: string;
+  prizeMinor: number;
+};
+
 export type BingoRoom = {
   id: string;
   name: string;
@@ -107,6 +128,9 @@ export type BingoRoom = {
   maxTickets: number;
   soldTickets: number;
   prizes: Record<string, number>;
+  winMode: 'line' | 'pattern';
+  numberRange: number;
+  patternPrizes: BingoPatternPrize[];
   scheduledStartAt: string;
   drawnNumbers: number[];
   settledTiers: string[];
@@ -122,6 +146,7 @@ export type BingoTicket = {
   markedNumbers: number[];
   completedLines: number[];
   wonTiers: string[];
+  completedPatterns: string[];
   stakeMinor: number;
   payoutMinor: number;
   status: string;
@@ -142,6 +167,8 @@ export type BingoConfig = {
   defaultTwoLinesMinor: number;
   defaultFullHouseMinor: number;
   drawIntervalSeconds: number;
+  defaultWinMode?: string;
+  defaultNumberRange?: number;
   createdAt?: string;
   updatedAt?: string;
 };

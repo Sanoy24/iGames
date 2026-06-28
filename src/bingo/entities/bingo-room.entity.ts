@@ -2,11 +2,18 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 
 export type BingoRoomStatus = 'open' | 'running' | 'completed' | 'cancelled';
 export type BingoPrizeTier = 'one_line' | 'two_lines' | 'full_house';
+export type BingoWinMode = 'line' | 'pattern';
 
 export class BingoPrizeConfig {
   oneLineMinor: number;
   twoLinesMinor: number;
   fullHouseMinor: number;
+}
+
+export class BingoPatternPrize {
+  patternId: string;
+  name: string;
+  prizeMinor: number;
 }
 
 @Entity('bingo_rooms')
@@ -49,13 +56,25 @@ export class BingoRoom {
   rngAuditLogIds: string[];
 
   @Column({ type: 'json' })
-  settledTiers: BingoPrizeTier[];
+  settledTiers: string[];
 
   @Column({ type: 'json' })
   winnersByTier: Record<string, string[]>;
 
   @Column({ type: 'json', nullable: true })
   settlementSummary?: Record<string, unknown>;
+
+  /** 'line' = 90-ball 3×9 with one/two/full_house tiers. 'pattern' = 5×5 pattern card. */
+  @Column({ type: 'varchar', length: 10, default: 'line' })
+  winMode: BingoWinMode;
+
+  /** Number pool size for this room (90 for line mode, configurable for pattern mode). */
+  @Column({ type: 'int', default: 90 })
+  numberRange: number;
+
+  /** Active patterns and their prizes — only relevant when winMode === 'pattern'. */
+  @Column({ type: 'json', default: '[]' })
+  patternPrizes: BingoPatternPrize[];
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

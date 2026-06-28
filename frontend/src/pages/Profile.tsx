@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck } from 'lucide-react';
+import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck, Send } from 'lucide-react';
 import { authApi, userApi } from '../lib/api';
 import type { User } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
+
+type TelegramWindow = Window & typeof globalThis & { Telegram?: { WebApp?: { initData?: string } } };
+
+function isTelegramMode(): boolean {
+  return !!((window as TelegramWindow).Telegram?.WebApp?.initData);
+}
 
 function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: string; value?: string; empty?: string }) {
   return (
@@ -37,6 +43,8 @@ export function Profile() {
   const [newPassword, setNewPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  const telegramMode = isTelegramMode();
 
   const loadProfile = useCallback(async () => {
     try {
@@ -104,7 +112,13 @@ export function Profile() {
     try {
       await authApi.logout();
     } catch { /* local logout is fine even if server unreachable */ } finally {
-      localStorage.setItem('manualLogout', '1');
+      if (!telegramMode) {
+        // Standalone web: show credential login on next open
+        localStorage.setItem('manualLogout', '1');
+      }
+      // Telegram mode: just clear tokens — next miniapp open re-auths via initData automatically
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
       clearAuth();
       setLoggingOut(false);
     }
@@ -137,6 +151,12 @@ export function Profile() {
           {(user?.roles ?? ['player']).map((role) => (
             <span key={role} className="badge badge-gold">{role}</span>
           ))}
+          {telegramMode && (
+            <span className="badge" style={{ background: 'rgba(37,99,235,0.15)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
+              <Send size={9} style={{ display: 'inline', marginRight: 3 }} />
+              Telegram
+            </span>
+          )}
         </div>
       </section>
 
@@ -247,54 +267,81 @@ export function Profile() {
         )}
       </section>
 
-      {/* ── Security ── */}
-      <section className="card">
-        <div className="section-header">
-          <div>
-            <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ShieldCheck size={15} style={{ color: 'var(--text-muted)' }} />
-              Security
+      {/* ── Telegram session info ── */}
+      {telegramMode ? (
+        <section className="card">
+          <div className="section-header">
+            <div>
+              <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Send size={14} style={{ color: '#60a5fa' }} />
+                Session
+              </div>
+              <p className="section-copy">Your session is managed by Telegram.</p>
             </div>
-            <p className="section-copy">Change your password or end this session.</p>
           </div>
-        </div>
-        <div className="stack-sm">
-          <label className="form-field">
-            <span>Current Password</span>
-            <input
-              className="input"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-            />
-          </label>
-          <label className="form-field">
-            <span>New Password</span>
-            <input
-              className="input"
-              type="password"
-              autoComplete="new-password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-            />
-          </label>
-          <div className="action-row" style={{ marginTop: 8 }}>
-            <button
-              className="btn btn-primary"
-              onClick={changePassword}
-              disabled={changingPassword || !currentPassword || !newPassword}
-            >
-              <KeyRound size={14} style={{ marginRight: 4 }} />
-              {changingPassword ? 'Changing…' : 'Change Password'}
-            </button>
-            <button className="btn btn-danger" onClick={logout} disabled={loggingOut}>
-              <LogOut size={14} style={{ marginRight: 4 }} />
-              {loggingOut ? 'Logging out…' : 'Logout'}
-            </button>
+          <button
+            className="btn btn-danger btn-full"
+            onClick={logout}
+            disabled={loggingOut}
+            style={{ marginTop: 4 }}
+          >
+            <LogOut size={14} style={{ marginRight: 6 }} />
+            {loggingOut ? 'Ending session…' : 'End Session'}
+          </button>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
+            Reopen the app via Telegram to sign in again automatically.
+          </p>
+        </section>
+      ) : (
+        /* ── Security (standalone web only) ── */
+        <section className="card">
+          <div className="section-header">
+            <div>
+              <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ShieldCheck size={15} style={{ color: 'var(--text-muted)' }} />
+                Security
+              </div>
+              <p className="section-copy">Change your password or end this session.</p>
+            </div>
           </div>
-        </div>
-      </section>
+          <div className="stack-sm">
+            <label className="form-field">
+              <span>Current Password</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+              />
+            </label>
+            <label className="form-field">
+              <span>New Password</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+            </label>
+            <div className="action-row" style={{ marginTop: 8 }}>
+              <button
+                className="btn btn-primary"
+                onClick={changePassword}
+                disabled={changingPassword || !currentPassword || !newPassword}
+              >
+                <KeyRound size={14} style={{ marginRight: 4 }} />
+                {changingPassword ? 'Changing…' : 'Change Password'}
+              </button>
+              <button className="btn btn-danger" onClick={logout} disabled={loggingOut}>
+                <LogOut size={14} style={{ marginRight: 4 }} />
+                {loggingOut ? 'Logging out…' : 'Logout'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

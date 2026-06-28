@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class UpdateBingoConfigDto {
   @IsOptional()
@@ -39,4 +39,13 @@ export class UpdateBingoConfigDto {
   @IsInt()
   @Min(1)
   drawIntervalSeconds?: number;
+
+  @IsOptional()
+  @IsIn(['line', 'pattern'])
+  defaultWinMode?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(10)
+  defaultNumberRange?: number;
 }

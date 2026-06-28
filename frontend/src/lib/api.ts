@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   AuthTokenResponse,
   BingoConfig,
+  BingoPattern,
   BingoRoom,
   BingoRoomState,
   BingoTicket,
@@ -217,11 +218,23 @@ export const adminBingoApi = {
     maxTickets: number;
     scheduledStartAt: string;
     prizes: Record<string, number>;
+    winMode?: string;
+    numberRange?: number;
+    patternPrizes?: Array<{ patternId: string; name: string; prizeMinor: number }>;
   }) => api.post<BingoRoom>('/admin/bingo/rooms', dto).then((r) => r.data),
   drawNext: (roomId: string) =>
     api.post<BingoRoom>(`/admin/bingo/rooms/${roomId}/draw-next`).then((r) => r.data),
   cancelRoom: (roomId: string) =>
     api.post<BingoRoom>(`/admin/bingo/rooms/${roomId}/cancel`).then((r) => r.data),
+  listPatterns: () => api.get<BingoPattern[]>('/admin/bingo/patterns').then((r) => r.data),
+  createPattern: (dto: Partial<BingoPattern>) =>
+    api.post<BingoPattern>('/admin/bingo/patterns', dto).then((r) => r.data),
+  updatePattern: (id: string, dto: Partial<BingoPattern>) =>
+    api.patch<BingoPattern>(`/admin/bingo/patterns/${id}`, dto).then((r) => r.data),
+  deletePattern: (id: string) =>
+    api.delete(`/admin/bingo/patterns/${id}`).then((r) => r.data),
+  seedPatterns: () =>
+    api.post<BingoPattern[]>('/admin/bingo/patterns/seed').then((r) => r.data),
 };
 
 // ── Admin: Bots ───────────────────────────────────────────────────

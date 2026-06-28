@@ -1,5 +1,17 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+
+export class BingoPatternPrizeDto {
+  @IsString()
+  patternId: string;
+
+  @IsString()
+  name: string;
+
+  @IsInt()
+  @Min(0)
+  prizeMinor: number;
+}
 
 export class BingoPrizeConfigDto {
   @IsInt()
@@ -34,4 +46,19 @@ export class CreateBingoRoomDto {
   @IsOptional()
   @IsDateString()
   scheduledStartAt?: string;
+
+  @IsOptional()
+  @IsIn(['line', 'pattern'])
+  winMode?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(10)
+  numberRange?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BingoPatternPrizeDto)
+  patternPrizes?: BingoPatternPrizeDto[];
 }

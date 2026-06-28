@@ -19,6 +19,10 @@ function formatPrizeTier(key: string): string {
   return titleCase(key.replace(/minor$/i, '').trim());
 }
 
+function isPatternGrid(grid: Array<Array<number | null>>): boolean {
+  return grid.length === 5 && (grid[0]?.length ?? 0) === 5;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type BingoRoomEventPayload = { roomId?: string };
@@ -31,11 +35,13 @@ const BINGO_TABS: Array<GameTabOption<BingoTab>> = [
   { id: 'tickets', label: 'My Tickets',   description: 'View your active cards.',            icon: <Ticket  size={18} /> },
 ];
 
+const BINGO_COLS = ['B', 'I', 'N', 'G', 'O'];
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 /** Animated lottery-cage draw machine */
-function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
-  roomStatus: string; lastNumber: number | null; drawnCount: number;
+function DrawMachine({ roomStatus, lastNumber, drawnCount, maxNumber }: {
+  roomStatus: string; lastNumber: number | null; drawnCount: number; maxNumber: number;
 }) {
   const balls = useMemo(() =>
     Array.from({ length: 8 }, (_, i) => ({
@@ -49,7 +55,6 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
     return (
       <div className="flex flex-col items-center gap-3 py-4">
         <div className="relative w-28 h-28">
-          {/* Cage ring */}
           <svg className="w-full h-full absolute inset-0" viewBox="0 0 112 112">
             <circle cx="56" cy="56" r="50" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="2" strokeDasharray="6 4" />
             <motion.circle
@@ -61,7 +66,6 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
               style={{ transformOrigin: '56px 56px' }}
             />
           </svg>
-          {/* Bouncing preview balls */}
           {balls.map((b) => (
             <motion.div
               key={b.id}
@@ -75,7 +79,6 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
               transition={{ duration: 1.8 + b.delay, repeat: Infinity, ease: 'easeInOut', delay: b.delay }}
             />
           ))}
-          {/* Center label */}
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-[9px] font-black uppercase tracking-wider text-amber-500/80">Tickets Open</span>
           </div>
@@ -89,7 +92,6 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
     return (
       <div className="flex flex-col items-center gap-3 py-2">
         <div className="relative w-32 h-32">
-          {/* Spinning outer cage */}
           <motion.svg
             className="w-full h-full absolute inset-0"
             viewBox="0 0 128 128"
@@ -100,15 +102,14 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
               <line
                 key={i}
                 x1="64" y1="8" x2="64" y2="30"
-                stroke="rgba(139,92,246,0.35)"
+                stroke="rgba(239,68,68,0.35)"
                 strokeWidth="1.5"
                 strokeLinecap="round"
                 transform={`rotate(${i * 30} 64 64)`}
               />
             ))}
-            <circle cx="64" cy="64" r="56" fill="none" stroke="rgba(139,92,246,0.15)" strokeWidth="2" />
+            <circle cx="64" cy="64" r="56" fill="none" stroke="rgba(239,68,68,0.15)" strokeWidth="2" />
           </motion.svg>
-          {/* Inner spinning balls */}
           {balls.slice(0, 5).map((b) => (
             <motion.div
               key={b.id}
@@ -121,7 +122,6 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
               transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut', delay: b.delay }}
             />
           ))}
-          {/* Central number display */}
           <div className="absolute inset-0 flex items-center justify-center">
             <AnimatePresence mode="popLayout">
               {lastNumber !== null ? (
@@ -131,14 +131,14 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
                   animate={{ scale: 1, rotate: 0, opacity: 1 }}
                   exit={{ scale: 0.6, opacity: 0, y: 8 }}
                   transition={{ type: 'spring', stiffness: 220, damping: 16 }}
-                  className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 border-2 border-violet-400 flex items-center justify-center shadow-[0_0_20px_rgba(139,92,246,0.5)]"
+                  className="w-16 h-16 rounded-full bg-gradient-to-br from-red-600 to-rose-700 border-2 border-red-400 flex items-center justify-center shadow-[0_0_20px_rgba(239,68,68,0.5)]"
                 >
                   <span className="text-2xl font-black text-white font-mono">{lastNumber}</span>
                 </motion.div>
               ) : (
                 <motion.span key="waiting"
                   animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 1.4, repeat: Infinity }}
-                  className="text-[9px] font-black uppercase tracking-wider text-violet-400"
+                  className="text-[9px] font-black uppercase tracking-wider text-red-400"
                 >
                   Drawing
                 </motion.span>
@@ -146,8 +146,8 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
             </AnimatePresence>
           </div>
         </div>
-        <span className="text-xs font-black text-violet-400 uppercase tracking-widest animate-pulse">
-          Ball #{drawnCount} of 90
+        <span className="text-xs font-black text-red-400 uppercase tracking-widest animate-pulse">
+          Ball #{drawnCount} of {maxNumber}
         </span>
       </div>
     );
@@ -167,35 +167,150 @@ function DrawMachine({ roomStatus, lastNumber, drawnCount }: {
   );
 }
 
-/** 1–90 number board with per-cell glow animation */
-const NumberBoard = memo(({ drawnNumbers }: { drawnNumbers: number[] }) => (
-  <div className="grid grid-cols-10 gap-1 sm:gap-1.5">
-    {Array.from({ length: 90 }, (_, i) => i + 1).map((val) => {
-      const called = drawnNumbers.includes(val);
-      return (
-        <motion.span
-          key={val}
-          animate={called ? {
-            scale: [1, 1.35, 1.1],
-            boxShadow: ['0 0 0px rgba(139,92,246,0)', '0 0 18px rgba(139,92,246,0.8)', '0 0 6px rgba(139,92,246,0.35)'],
-          } : {}}
-          transition={{ duration: 0.5, ease: 'backOut' }}
-          className={`aspect-square rounded-md flex items-center justify-center text-[10px] font-bold font-mono transition-colors duration-300 ${
-            called
-              ? 'bg-violet-600/90 border border-violet-400/60 text-white'
-              : 'bg-white/[0.03] border border-white/[0.06] text-slate-600'
-          }`}
-        >
-          {val}
-        </motion.span>
-      );
-    })}
+/**
+ * Number board matching the Ethiopian "Esu Bingo" style.
+ * Drawn numbers appear highlighted in red. 10 columns wide.
+ */
+const NumberBoard = memo(({ drawnNumbers, numberRange }: { drawnNumbers: number[]; numberRange: number }) => (
+  <div className="space-y-2">
+    {/* Column headers for pattern mode (1-75) or plain for 90/140 */}
+    {numberRange <= 75 && (
+      <div className="grid grid-cols-10 gap-1 sm:gap-1.5 mb-1">
+        {['B','I','N','G','O','','','','',''].map((h, i) => (
+          <div key={i} className="aspect-square flex items-center justify-center text-[9px] font-black text-slate-500 uppercase">
+            {h}
+          </div>
+        ))}
+      </div>
+    )}
+    <div className="grid grid-cols-10 gap-1 sm:gap-1.5">
+      {Array.from({ length: numberRange }, (_, i) => i + 1).map((val) => {
+        const called = drawnNumbers.includes(val);
+        return (
+          <motion.span
+            key={val}
+            animate={called ? {
+              scale: [1, 1.3, 1.1],
+              boxShadow: ['0 0 0px rgba(239,68,68,0)', '0 0 16px rgba(239,68,68,0.8)', '0 0 6px rgba(239,68,68,0.4)'],
+            } : {}}
+            transition={{ duration: 0.5, ease: 'backOut' }}
+            className={`aspect-square rounded-md flex items-center justify-center text-[10px] font-bold font-mono transition-colors duration-300 ${
+              called
+                ? 'bg-red-600/90 border border-red-400/60 text-white shadow-[0_0_4px_rgba(239,68,68,0.4)]'
+                : 'bg-white/[0.03] border border-white/[0.06] text-slate-600'
+            }`}
+          >
+            {val}
+          </motion.span>
+        );
+      })}
+    </div>
   </div>
 ));
 NumberBoard.displayName = 'NumberBoard';
 
-/** Individual bingo ticket card with animated marking */
-const BingoTicketCard = memo(({ ticket }: { ticket: BingoTicket }) => {
+/**
+ * 5×5 BINGO pattern ticket card (B-I-N-G-O headers, FREE center)
+ */
+const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
+  ticket: BingoTicket;
+  patternPrizeMap: Map<string, string>;
+}) => {
+  const won = ticket.payoutMinor > 0;
+  const grid = ticket.grid as Array<Array<number | null>>;
+
+  return (
+    <motion.article
+      layout
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className={`rounded-2xl border p-4 flex flex-col gap-3 ${
+        won
+          ? 'bg-gradient-to-br from-amber-950/30 to-black/40 border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.1)]'
+          : 'bg-white/[0.025] border-white/[0.06]'
+      }`}
+    >
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="text-xs font-black text-slate-200">#{ticket.id.slice(-6)}</h4>
+          {ticket.completedPatterns && ticket.completedPatterns.length > 0 ? (
+            <p className="text-[10px] text-amber-400 font-bold mt-0.5">
+              Won: {ticket.completedPatterns.map((pid) => patternPrizeMap.get(pid) ?? 'Pattern').join(', ')}
+            </p>
+          ) : (
+            <p className="text-[10px] text-slate-500 mt-0.5">Awaiting pattern</p>
+          )}
+        </div>
+        <span className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}>
+          {won ? `+${formatCredits(ticket.payoutMinor)} Cr` : ticket.settlementStatus}
+        </span>
+      </div>
+
+      {/* BINGO column headers */}
+      <div className="grid grid-cols-5 gap-1">
+        {BINGO_COLS.map((col) => (
+          <div key={col} className="aspect-square flex items-center justify-center text-[11px] font-black text-red-400">
+            {col}
+          </div>
+        ))}
+      </div>
+
+      {/* 5×5 grid */}
+      <div className="grid grid-cols-5 gap-1">
+        {grid.map((row, rowIdx) =>
+          row.map((value, colIdx) => {
+            const isFree = value === null;
+            const isMarked = isFree || ticket.markedNumbers.includes(value!);
+            return (
+              <motion.span
+                key={`${ticket.id}-${rowIdx}-${colIdx}`}
+                animate={isMarked && !isFree ? {
+                  scale: [1, 1.15, 1.05],
+                  backgroundColor: ['rgba(255,255,255,0.04)', '#ef4444', '#ef4444'],
+                  color: ['#9ca3af', '#ffffff', '#ffffff'],
+                } : {}}
+                transition={{ duration: 0.35, ease: 'backOut' }}
+                className={`aspect-square rounded-md flex items-center justify-center text-[11px] font-bold font-mono relative ${
+                  isFree
+                    ? 'bg-red-600/30 border border-red-500/40 text-red-400 text-[9px] font-black'
+                    : isMarked
+                      ? 'bg-red-600 border border-red-400/60 text-white shadow-[0_0_4px_rgba(239,68,68,0.4)]'
+                      : 'bg-white/[0.04] border border-white/[0.07] text-slate-400'
+                }`}
+              >
+                {isFree ? 'FREE' : value}
+                {isMarked && !isFree && (
+                  <motion.span
+                    initial={{ scale: 0.3, opacity: 1 }}
+                    animate={{ scale: 2.2, opacity: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="absolute inset-0 rounded-md bg-red-400/50 pointer-events-none"
+                  />
+                )}
+              </motion.span>
+            );
+          })
+        )}
+      </div>
+
+      <div className="flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-wider pt-1 border-t border-white/[0.05]">
+        <span>Stake: {formatCredits(ticket.stakeMinor)} Cr</span>
+        {ticket.completedPatterns && <span>Patterns: {ticket.completedPatterns.length}</span>}
+      </div>
+    </motion.article>
+  );
+});
+PatternTicketCard.displayName = 'PatternTicketCard';
+
+/** Individual bingo ticket card with animated marking (90-ball 3×9 mode) */
+const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
+  ticket: BingoTicket;
+  patternPrizeMap: Map<string, string>;
+}) => {
+  if (isPatternGrid(ticket.grid)) {
+    return <PatternTicketCard ticket={ticket} patternPrizeMap={patternPrizeMap} />;
+  }
+
   const won = ticket.payoutMinor > 0;
   return (
     <motion.article
@@ -294,11 +409,27 @@ const BingoTicketCard = memo(({ ticket }: { ticket: BingoTicket }) => {
 });
 BingoTicketCard.displayName = 'BingoTicketCard';
 
-/** Full-house or big-win celebration overlay */
-function VictoryOverlay({ tickets, onClose }: { tickets: BingoTicket[]; onClose: () => void }) {
+/** Full-house or pattern win celebration overlay */
+function VictoryOverlay({ tickets, room, onClose }: {
+  tickets: BingoTicket[];
+  room: BingoRoomState | null;
+  onClose: () => void;
+}) {
   const totalWin = tickets.reduce((s, t) => s + t.payoutMinor, 0);
-  const topTier = tickets.some((t) => t.wonTiers.includes('fullHouse')) ? 'Full House!' :
-                  tickets.some((t) => t.wonTiers.includes('twoLines')) ? 'Two Lines!' : 'Line Win!';
+
+  let topLabel = 'Line Win!';
+  if (room?.winMode === 'pattern') {
+    const patternPrizeMap = new Map(
+      (room.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name]),
+    );
+    const allCompleted = tickets.flatMap((t) => t.completedPatterns ?? []);
+    const uniqueCompleted = [...new Set(allCompleted)];
+    const names = uniqueCompleted.map((pid) => patternPrizeMap.get(pid)).filter(Boolean);
+    topLabel = names.length > 0 ? names.join(' & ') + '!' : 'Pattern Win!';
+  } else {
+    topLabel = tickets.some((t) => t.wonTiers.includes('full_house')) ? 'Full House!' :
+               tickets.some((t) => t.wonTiers.includes('two_lines')) ? 'Two Lines!' : 'Line Win!';
+  }
 
   return (
     <motion.div
@@ -316,7 +447,6 @@ function VictoryOverlay({ tickets, onClose }: { tickets: BingoTicket[]; onClose:
         <div className="absolute inset-0 pointer-events-none"
           style={{ background: 'radial-gradient(ellipse at 50% 10%, rgba(245,158,11,0.15) 0%, transparent 60%)' }} />
 
-        {/* Sparkle particles */}
         {Array.from({ length: 6 }, (_, i) => (
           <motion.div
             key={i}
@@ -345,7 +475,7 @@ function VictoryOverlay({ tickets, onClose }: { tickets: BingoTicket[]; onClose:
             initial={{ y: 16, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}
             className="text-3xl font-black text-amber-400 mb-1"
           >
-            {topTier}
+            {topLabel}
           </motion.h2>
 
           <motion.p
@@ -552,7 +682,7 @@ export function Bingo({ onBack }: BingoProps) {
     const curLen = roomState.drawnNumbers?.length ?? 0;
     if (curLen > prevLen) {
       soundEngine.win();
-      confetti({ particleCount: 220, spread: 90, origin: { y: 0.55 }, colors: ['#00FFFF', '#FF00FF', '#FFE600', '#FFFFFF'] });
+      confetti({ particleCount: 220, spread: 90, origin: { y: 0.55 }, colors: ['#00FFFF', '#FF0000', '#FFE600', '#FFFFFF'] });
       setVictoryTickets(winners);
       setShowVictory(true);
     }
@@ -568,6 +698,13 @@ export function Bingo({ onBack }: BingoProps) {
     [roomState, rooms, selectedRoomId],
   );
 
+  const patternPrizeMap = useMemo(
+    () => new Map((selectedRoom?.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name])),
+    [selectedRoom],
+  );
+
+  const isPatternMode = selectedRoom?.winMode === 'pattern';
+  const numberRange = selectedRoom?.numberRange ?? (isPatternMode ? 75 : 90);
   const remainingTickets = selectedRoom ? Math.max(0, selectedRoom.maxTickets - selectedRoom.soldTickets) : 0;
   const salesOpen = selectedRoom?.status === 'open';
   const buyDisabledReason = !selectedRoom ? 'Pick a room first.'
@@ -601,6 +738,7 @@ export function Bingo({ onBack }: BingoProps) {
         {showVictory && victoryTickets.length > 0 && (
           <VictoryOverlay
             tickets={victoryTickets}
+            room={roomState}
             onClose={() => { soundEngine.click(); setShowVictory(false); }}
           />
         )}
@@ -652,16 +790,21 @@ export function Bingo({ onBack }: BingoProps) {
                 onClick={() => { soundEngine.click(); setSelectedRoomId(room.id); }}
                 className={`p-3.5 rounded-xl border text-left transition-all duration-200 ${
                   selectedRoomId === room.id
-                    ? 'bg-amber-500/8 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.12)]'
+                    ? 'bg-red-500/8 border-red-500/40 shadow-[0_0_12px_rgba(239,68,68,0.12)]'
                     : 'bg-white/[0.025] border-white/[0.06] hover:border-white/[0.12]'
                 }`}
               >
                 <span className="block font-black text-sm text-slate-100">{room.name}</span>
                 <span className="block text-[10px] text-slate-500 mt-0.5">{formatCredits(room.ticketPriceMinor)} Cr/ticket</span>
                 <div className="flex items-center justify-between mt-2">
-                  <span className={`text-[9px] font-bold uppercase ${
-                    room.status === 'open' ? 'text-emerald-400' : room.status === 'running' ? 'text-violet-400' : 'text-slate-500'
-                  }`}>{room.status}</span>
+                  <div className="flex items-center gap-1">
+                    <span className={`text-[9px] font-bold uppercase ${
+                      room.status === 'open' ? 'text-emerald-400' : room.status === 'running' ? 'text-red-400' : 'text-slate-500'
+                    }`}>{room.status}</span>
+                    {room.winMode === 'pattern' && (
+                      <span className="text-[8px] font-black uppercase text-violet-400 bg-violet-500/10 px-1 rounded">PTN</span>
+                    )}
+                  </div>
                   <span className="text-[9px] text-slate-500">{room.soldTickets}/{room.maxTickets}</span>
                 </div>
               </motion.button>
@@ -679,11 +822,12 @@ export function Bingo({ onBack }: BingoProps) {
             {/* Draw machine + timer card */}
             <div className="card text-center relative overflow-hidden">
               <div className="absolute inset-0 pointer-events-none"
-                style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.06) 0%, transparent 65%)' }} />
+                style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(239,68,68,0.06) 0%, transparent 65%)' }} />
               <DrawMachine
                 roomStatus={selectedRoom.status}
                 lastNumber={lastNumber}
                 drawnCount={drawnNumbers.length}
+                maxNumber={numberRange}
               />
               {selectedRoom.status === 'open' && (
                 <div className="flex justify-center mt-2">
@@ -704,7 +848,7 @@ export function Bingo({ onBack }: BingoProps) {
                         initial={{ scale: 0, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
                         transition={{ delay: i * 0.04 }}
-                        className="w-7 h-7 rounded-full bg-violet-900/60 border border-violet-500/30 flex items-center justify-center text-[10px] font-black text-violet-300"
+                        className="w-7 h-7 rounded-full bg-red-900/60 border border-red-500/30 flex items-center justify-center text-[10px] font-black text-red-300"
                       >
                         {n}
                       </motion.span>
@@ -716,7 +860,14 @@ export function Bingo({ onBack }: BingoProps) {
 
             {/* Buy tickets panel */}
             <div className="card space-y-4">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-300">Purchase Tickets</h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-300">Purchase Tickets</h3>
+                {isPatternMode && (
+                  <span className="text-[9px] font-black uppercase tracking-wider text-violet-400 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full">
+                    Pattern Mode · 1–{numberRange}
+                  </span>
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-2">
                 {[
@@ -751,16 +902,39 @@ export function Bingo({ onBack }: BingoProps) {
                 <p className="text-[10px] text-red-400 font-bold text-center">{buyDisabledReason}</p>
               )}
 
-              {/* Prize tiers */}
-              <div className="border-t border-white/[0.05] pt-3 space-y-1">
-                <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 mb-2">Prize Tiers</p>
-                {Object.entries(selectedRoom.prizes).map(([tier, amount]) => (
-                  <div key={tier} className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400">{formatPrizeTier(tier)}</span>
-                    <span className="font-black text-amber-400">{formatCreditsFull(amount)} Cr</span>
-                  </div>
-                ))}
-              </div>
+              {/* Prize tiers — line mode */}
+              {!isPatternMode && (
+                <div className="border-t border-white/[0.05] pt-3 space-y-1">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 mb-2">Prize Tiers</p>
+                  {Object.entries(selectedRoom.prizes).map(([tier, amount]) => (
+                    <div key={tier} className="flex justify-between items-center text-xs">
+                      <span className="text-slate-400">{formatPrizeTier(tier)}</span>
+                      <span className="font-black text-amber-400">{formatCreditsFull(amount)} Cr</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Pattern prizes */}
+              {isPatternMode && selectedRoom.patternPrizes && selectedRoom.patternPrizes.length > 0 && (
+                <div className="border-t border-white/[0.05] pt-3 space-y-1.5">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-500 mb-2">Pattern Prizes</p>
+                  {selectedRoom.patternPrizes.map((pp) => (
+                    <div key={pp.patternId} className="flex justify-between items-center text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 flex-shrink-0" />
+                        <span className="text-slate-300 font-bold">{pp.name}</span>
+                      </div>
+                      <span className="font-black text-amber-400">{formatCreditsFull(pp.prizeMinor)} Cr</span>
+                    </div>
+                  ))}
+                  {selectedRoom.settledTiers.length > 0 && (
+                    <p className="text-[9px] text-emerald-500 font-bold mt-1">
+                      {selectedRoom.settledTiers.length} pattern{selectedRoom.settledTiers.length > 1 ? 's' : ''} settled
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Chat */}
@@ -776,7 +950,7 @@ export function Bingo({ onBack }: BingoProps) {
               <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                 {chatMessages.map((msg, i) => (
                   <div key={i} className="text-xs">
-                    <span className="font-bold text-amber-500">{msg.sender}</span>
+                    <span className="font-bold text-red-500">{msg.sender}</span>
                     <span className="text-[9px] text-slate-600 ml-1">{msg.time}</span>
                     <p className="text-slate-400 mt-0.5 leading-relaxed">{msg.text}</p>
                   </div>
@@ -795,19 +969,27 @@ export function Bingo({ onBack }: BingoProps) {
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                 className="card space-y-5"
               >
-                <div>
-                  <h3 className="section-title">Called Numbers Board</h3>
-                  <p className="hero-copy text-xs">
-                    {drawnNumbers.length > 0
-                      ? `${drawnNumbers.length} of 90 numbers called`
-                      : 'Waiting for the game to start.'}
-                  </p>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="section-title">Called Numbers Board</h3>
+                    <p className="hero-copy text-xs">
+                      {drawnNumbers.length > 0
+                        ? `${drawnNumbers.length} of ${numberRange} numbers called`
+                        : 'Waiting for the game to start.'}
+                    </p>
+                  </div>
+                  {isPatternMode && (
+                    <div className="text-right">
+                      <span className="text-[9px] font-black uppercase text-violet-400">Pattern Bingo</span>
+                      <p className="text-[9px] text-slate-500">1 – {numberRange}</p>
+                    </div>
+                  )}
                 </div>
 
                 {loadingState && !roomState ? (
                   <div className="centered-loader"><div className="spinner" /></div>
                 ) : (
-                  <NumberBoard drawnNumbers={drawnNumbers} />
+                  <NumberBoard drawnNumbers={drawnNumbers} numberRange={numberRange} />
                 )}
               </motion.section>
             )}
@@ -820,15 +1002,20 @@ export function Bingo({ onBack }: BingoProps) {
               >
                 <div>
                   <h3 className="section-title">My Cards</h3>
-                  <p className="hero-copy text-xs">Cards auto-mark as numbers are called.</p>
+                  <p className="hero-copy text-xs">
+                    {isPatternMode
+                      ? 'Pattern cards auto-mark as numbers are called. FREE center is always marked.'
+                      : 'Cards auto-mark as numbers are called.'}
+                  </p>
                 </div>
 
                 {roomState?.tickets?.length ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={`grid gap-4 ${isPatternMode ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 md:grid-cols-2'}`}>
                     {roomState.tickets.map((ticket) => (
                       <BingoTicketCard
                         key={ticket.id}
                         ticket={ticket}
+                        patternPrizeMap={patternPrizeMap}
                       />
                     ))}
                   </div>

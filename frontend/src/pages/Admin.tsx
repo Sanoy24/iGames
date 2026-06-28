@@ -18,7 +18,7 @@ import {
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
-import type { BingoConfig, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
+import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
 import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
@@ -1251,15 +1251,25 @@ function KenoAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Bingo
 // ══════════════════════════════════════════════════════════════════
+type PatternPrizeEntry = { patternId: string; name: string; prizeMinor: number };
+
 function BingoAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [rooms, setRooms] = useState<BingoRoom[]>([]);
   const [cfg, setCfg] = useState<BingoConfig | null>(null);
+  const [patterns, setPatterns] = useState<BingoPattern[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showPatterns, setShowPatterns] = useState(false);
+
+  // Room creation form
+  const [winMode, setWinMode] = useState<'line' | 'pattern'>('line');
+  const [numberRange, setNumberRange] = useState(75);
+  const [patternPrizes, setPatternPrizes] = useState<PatternPrizeEntry[]>([]);
   const [form, setForm] = useState({ name: 'Room Alpha', ticketPriceMinor: 500, maxTickets: 100, minutesFromNow: 5, oneLine: 20000, twoLines: 50000, fullHouse: 100000 });
+
   const [cfgForm, setCfgForm] = useState<Partial<BingoConfig>>({
     enabled: true,
     autoRepeatIntervalMinutes: 0,
@@ -1269,17 +1279,21 @@ function BingoAdmin() {
     defaultTwoLinesMinor: 50000,
     defaultFullHouseMinor: 100000,
     drawIntervalSeconds: 5,
+    defaultWinMode: 'line',
+    defaultNumberRange: 75,
   });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, c] = await Promise.all([
+      const [r, c, p] = await Promise.all([
         adminBingoApi.listAllRooms(),
         adminBingoApi.getConfig(),
+        adminBingoApi.listPatterns(),
       ]);
       setRooms(r);
       setCfg(c);
+      setPatterns(p);
       setCfgForm({
         enabled: c.enabled,
         autoRepeatIntervalMinutes: c.autoRepeatIntervalMinutes,
@@ -1289,6 +1303,8 @@ function BingoAdmin() {
         defaultTwoLinesMinor: c.defaultTwoLinesMinor,
         defaultFullHouseMinor: c.defaultFullHouseMinor,
         drawIntervalSeconds: c.drawIntervalSeconds,
+        defaultWinMode: c.defaultWinMode ?? 'line',
+        defaultNumberRange: c.defaultNumberRange ?? 75,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -1312,14 +1328,50 @@ function BingoAdmin() {
     setBusy('create');
     try {
       await adminBingoApi.createRoom({
-        name: form.name, ticketPriceMinor: form.ticketPriceMinor, maxTickets: form.maxTickets,
+        name: form.name,
+        ticketPriceMinor: form.ticketPriceMinor,
+        maxTickets: form.maxTickets,
         scheduledStartAt: new Date(Date.now() + form.minutesFromNow * 60_000).toISOString(),
         prizes: { oneLineMinor: form.oneLine, twoLinesMinor: form.twoLines, fullHouseMinor: form.fullHouse },
+        winMode,
+        numberRange: winMode === 'pattern' ? numberRange : undefined,
+        patternPrizes: winMode === 'pattern' ? patternPrizes : undefined,
       });
       addToast('success', `Room "${form.name}" created.`);
-      setShowCreate(false); await load();
+      setShowCreate(false);
+      await load();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
+  };
+
+  const togglePattern = async (pattern: BingoPattern) => {
+    setBusy(`p-${pattern.id}`);
+    try {
+      const updated = await adminBingoApi.updatePattern(pattern.id, { enabled: !pattern.enabled });
+      setPatterns((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const seedPatterns = async () => {
+    setBusy('seed');
+    try {
+      await adminBingoApi.seedPatterns();
+      addToast('success', 'Built-in patterns seeded.');
+      const p = await adminBingoApi.listPatterns();
+      setPatterns(p);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const setPatternPrize = (patternId: string, name: string, prizeMinor: number) => {
+    setPatternPrizes((prev) => {
+      const existing = prev.find((p) => p.patternId === patternId);
+      if (existing) {
+        return prev.map((p) => p.patternId === patternId ? { ...p, prizeMinor } : p);
+      }
+      return [...prev, { patternId, name, prizeMinor }];
+    });
   };
 
   const f = (key: keyof typeof form) => ({
@@ -1335,10 +1387,15 @@ function BingoAdmin() {
     cancelled: 'badge-red',
   };
 
+  const enabledPatterns = patterns.filter((p) => p.enabled);
+
   return (
     <div className="stack-lg">
-      <SectionHead title="Bingo" sub="Auto-draw rooms with configurable prizes.">
+      <SectionHead title="Bingo" sub="Auto-draw rooms with configurable prizes and patterns.">
         <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-secondary" onClick={() => setShowPatterns((v) => !v)}>
+          <CircleDot size={13} />{showPatterns ? 'Hide Patterns' : 'Patterns'}
+        </button>
         <button className="adm-btn adm-btn-secondary" onClick={() => setShowSettings((v) => !v)}>
           <Settings size={13} />{showSettings ? 'Close' : 'Settings'}
         </button>
@@ -1354,7 +1411,41 @@ function BingoAdmin() {
           <span>{cfg.defaultTicketPriceMinor} credits/ticket</span>
           <span>Max {cfg.defaultMaxTickets} tickets</span>
           <span>Draw every {cfg.drawIntervalSeconds}s</span>
-          <span>Repeat delay: {cfg.autoRepeatIntervalMinutes} min</span>
+          <span>Default mode: {cfg.defaultWinMode ?? 'line'}</span>
+        </div>
+      )}
+
+      {/* Patterns panel */}
+      {showPatterns && (
+        <div className="adm-panel">
+          <div className="adm-panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Bingo Patterns ({patterns.length})</span>
+            <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === 'seed'} onClick={seedPatterns}>
+              {busy === 'seed' ? 'Seeding…' : 'Seed Built-ins'}
+            </button>
+          </div>
+          {patterns.length === 0 ? (
+            <div className="adm-empty">No patterns. Click "Seed Built-ins" to add standard patterns.</div>
+          ) : (
+            <table className="adm-table">
+              <thead><tr><th>Name</th><th>Type</th><th>Built-in</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {patterns.map((p) => (
+                  <tr key={p.id} className="adm-tr">
+                    <td><strong>{p.name}</strong>{p.description && <span className="adm-td-muted" style={{ display: 'block', fontSize: '11px' }}>{p.description}</span>}</td>
+                    <td className="adm-td-muted">{p.patternType}</td>
+                    <td className="adm-td-muted">{p.isBuiltIn ? 'Yes' : 'Custom'}</td>
+                    <td><span className={`badge ${p.enabled ? 'badge-green' : 'badge-red'}`}>{p.enabled ? 'Enabled' : 'Disabled'}</span></td>
+                    <td>
+                      <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `p-${p.id}`} onClick={() => togglePattern(p)}>
+                        {p.enabled ? 'Disable' : 'Enable'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -1373,6 +1464,22 @@ function BingoAdmin() {
                 <option value="true">Yes — automatically create & run rooms</option>
                 <option value="false">No — admin creates rooms manually</option>
               </select>
+            </label>
+            <label className="adm-field">
+              <span>Default Win Mode</span>
+              <select
+                className="input"
+                value={cfgForm.defaultWinMode ?? 'line'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultWinMode: e.target.value }))}
+              >
+                <option value="line">Line (90-ball 3×9 card)</option>
+                <option value="pattern">Pattern (5×5 BINGO card)</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Default Number Range (pattern mode)</span>
+              <input className="input" type="number" min={25} max={140} value={cfgForm.defaultNumberRange ?? 75}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultNumberRange: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
               <span>Repeat Delay After Completion (minutes, 0 = instant)</span>
@@ -1426,9 +1533,61 @@ function BingoAdmin() {
             <label className="adm-field"><span>Ticket Price (credits)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
             <label className="adm-field"><span>Max Tickets</span><input className="input" type="number" min={1} {...f('maxTickets')} /></label>
             <label className="adm-field"><span>Starts In (minutes)</span><input className="input" type="number" min={1} {...f('minutesFromNow')} /></label>
-            <label className="adm-field"><span>One Line Prize</span><input className="input" type="number" min={0} {...f('oneLine')} /></label>
-            <label className="adm-field"><span>Two Lines Prize</span><input className="input" type="number" min={0} {...f('twoLines')} /></label>
-            <label className="adm-field"><span>Full House Prize</span><input className="input" type="number" min={0} {...f('fullHouse')} /></label>
+            <label className="adm-field" style={{ gridColumn: '1 / -1' }}>
+              <span>Win Mode</span>
+              <select className="input" value={winMode} onChange={(e) => setWinMode(e.target.value as 'line' | 'pattern')}>
+                <option value="line">Line (90-ball 3×9 ticket)</option>
+                <option value="pattern">Pattern (5×5 BINGO card)</option>
+              </select>
+            </label>
+
+            {winMode === 'pattern' && (
+              <label className="adm-field">
+                <span>Number Range (1 to N) — e.g. 75, 90, 140</span>
+                <input className="input" type="number" min={25} max={140} value={numberRange}
+                  onChange={(e) => setNumberRange(Number(e.target.value))} />
+              </label>
+            )}
+
+            {winMode === 'line' && (
+              <>
+                <label className="adm-field"><span>One Line Prize</span><input className="input" type="number" min={0} {...f('oneLine')} /></label>
+                <label className="adm-field"><span>Two Lines Prize</span><input className="input" type="number" min={0} {...f('twoLines')} /></label>
+                <label className="adm-field"><span>Full House Prize</span><input className="input" type="number" min={0} {...f('fullHouse')} /></label>
+              </>
+            )}
+
+            {winMode === 'pattern' && enabledPatterns.length > 0 && (
+              <div className="adm-field" style={{ gridColumn: '1 / -1' }}>
+                <span style={{ display: 'block', marginBottom: 8, fontSize: 12, fontWeight: 700, color: '#94a3b8' }}>
+                  Pattern Prizes (set prize per pattern; 0 = no prize for that pattern)
+                </span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {enabledPatterns.map((p) => {
+                    const existing = patternPrizes.find((pp) => pp.patternId === p.id);
+                    return (
+                      <label key={p.id} className="adm-field">
+                        <span>{p.name}</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          value={existing?.prizeMinor ?? 0}
+                          onChange={(e) => setPatternPrize(p.id, p.name, Number(e.target.value))}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {winMode === 'pattern' && enabledPatterns.length === 0 && (
+              <div className="adm-field" style={{ gridColumn: '1 / -1' }}>
+                <span style={{ color: '#ef4444', fontSize: 12 }}>
+                  No enabled patterns found. Enable patterns in the Patterns panel first.
+                </span>
+              </div>
+            )}
           </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createRoom}>
@@ -1443,17 +1602,23 @@ function BingoAdmin() {
           : rooms.length === 0 ? <div className="adm-empty">No rooms yet. Enable Auto-Bingo in Settings and a room will be created automatically.</div>
           : (
             <table className="adm-table">
-              <thead><tr><th>Room</th><th>Tickets</th><th>Status</th><th>Starts</th><th>Drawn</th><th></th></tr></thead>
+              <thead><tr><th>Room</th><th>Mode</th><th>Tickets</th><th>Status</th><th>Starts</th><th>Drawn</th><th></th></tr></thead>
               <tbody>
                 {rooms.map((room) => {
                   const isActive = room.status === 'open' || room.status === 'running';
+                  const maxNum = room.winMode === 'pattern' ? (room.numberRange ?? 75) : 90;
                   return (
                     <tr key={room.id} className="adm-tr">
                       <td><strong>{room.name}</strong></td>
+                      <td className="adm-td-muted">
+                        <span className={`badge ${room.winMode === 'pattern' ? 'badge-violet' : 'badge-gold'}`} style={{ fontSize: 10 }}>
+                          {room.winMode === 'pattern' ? `Pattern 1-${room.numberRange ?? 75}` : 'Line 1-90'}
+                        </span>
+                      </td>
                       <td className="adm-td-muted">{room.soldTickets}/{room.maxTickets}</td>
                       <td><span className={`badge ${R_STATUS[room.status] ?? 'badge-gold'}`}>{room.status}</span></td>
                       <td className="adm-td-muted">{formatRelativeTime(room.scheduledStartAt)}</td>
-                      <td className="adm-td-muted">{room.drawnNumbers?.length ?? 0}/90</td>
+                      <td className="adm-td-muted">{room.drawnNumbers?.length ?? 0}/{maxNum}</td>
                       <td>
                         {isActive && (
                           <div className="adm-cell-actions">

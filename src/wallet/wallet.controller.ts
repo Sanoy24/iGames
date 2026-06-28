@@ -82,6 +82,13 @@ export class WalletController {
     return this.walletService.requestWithdrawal(user.id, amountMinor, destinationAccount);
   }
 
+  @Get('recent-wins')
+  getRecentWins(
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number
+  ) {
+    return this.walletService.getRecentPlatformWins(limit);
+  }
+
   @Get('withdrawals')
   @ApiOkResponse({
     schema: {

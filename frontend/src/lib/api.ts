@@ -10,6 +10,7 @@ import type {
   KenoDraw,
   KenoTicket,
   LedgerEntry,
+  RecentWin,
   User,
   Wallet,
   Withdrawal,
@@ -115,6 +116,7 @@ export const authApi = {
 export const walletApi = {
   getWallet: () => api.get<Wallet>('/wallet').then((r) => r.data),
   getLedger: (limit = 20) => api.get<LedgerEntry[]>(`/wallet/ledger?limit=${limit}`).then((r) => r.data),
+  getRecentWins: (limit = 20) => api.get<RecentWin[]>(`/wallet/recent-wins?limit=${limit}`).then((r) => r.data),
   requestWithdrawal: (amountMinor: number, destinationAccount: string) =>
     api.post<Withdrawal>('/wallet/withdraw', { amountMinor, destinationAccount }).then((r) => r.data),
   getWithdrawals: () => api.get<Withdrawal[]>('/wallet/withdrawals').then((r) => r.data),

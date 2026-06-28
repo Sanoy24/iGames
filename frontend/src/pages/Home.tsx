@@ -1,11 +1,12 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
 import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { kenoApi, walletApi } from '../lib/api';
-import type { KenoDraw, LedgerEntry } from '../lib/models';
+import type { KenoDraw, LedgerEntry, RecentWin } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { soundEngine } from '../lib/audio';
+import { getSocket } from '../hooks/useSocketConnection';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
@@ -48,32 +49,21 @@ function useAnimatedNumber(target: number) {
 
 // ─── Live wins ticker ─────────────────────────────────────────────────────────
 
-const FAKE_NAMES = ['Abebe', 'Tigist', 'Dawit', 'Hana', 'Yonas', 'Selam', 'Bereket', 'Meron', 'Samuel', 'Bethlehem'];
-const FAKE_GAMES = ['Keno', 'Bingo', 'Pattern Bingo'];
+function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
+  // Duplicate for seamless CSS loop — need enough items to fill viewport twice
+  const items = wins.length > 0 ? [...wins, ...wins] : [];
 
-function makeFakeWins(n: number) {
-  return Array.from({ length: n }, (_, i) => ({
-    id: i,
-    name: FAKE_NAMES[i % FAKE_NAMES.length],
-    game: FAKE_GAMES[i % FAKE_GAMES.length],
-    amount: (Math.floor(Math.random() * 980) + 20) * 100,
-  }));
-}
-
-function LiveWinsTicker() {
-  const wins = useMemo(() => makeFakeWins(12), []);
-  // Duplicate for seamless loop
-  const doubled = [...wins, ...wins];
+  if (items.length === 0) return null;
 
   return (
     <div className="ticker-wrap" style={{ borderRadius: 10, background: 'var(--surface)', border: '1px solid var(--border)', padding: '6px 0' }}>
       <div className="ticker-inner">
-        {doubled.map((w, i) => (
+        {items.map((w, i) => (
           <span key={i} className="ticker-item">
             <Trophy size={11} style={{ color: 'var(--gold)', flexShrink: 0 }} />
-            <span className="ticker-item-name">{w.name}</span>
+            <span className="ticker-item-name">{w.displayName}</span>
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>won</span>
-            <span className="ticker-item-win">{new Intl.NumberFormat().format(w.amount)} e‑Birr</span>
+            <span className="ticker-item-win">{new Intl.NumberFormat().format(w.amountMinor)} e‑Birr</span>
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>on {w.game}</span>
             <span style={{ color: 'rgba(255,255,255,0.1)', margin: '0 4px' }}>•</span>
           </span>
@@ -199,11 +189,30 @@ export function Home({ onNavigate }: Props) {
   const liveCounts = useStore(s => s.liveCounts);
   const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
   const [recentActivity, setRecentActivity] = useState<LedgerEntry[]>([]);
+  const [recentWins, setRecentWins] = useState<RecentWin[]>([]);
+
+  const loadRecentWins = useCallback(() => {
+    walletApi.getRecentWins(20).then(setRecentWins).catch(() => {});
+  }, []);
 
   useEffect(() => {
     kenoApi.getActiveDraw().then(d => setActiveDraw(d)).catch(() => {});
     walletApi.getLedger(5).then(entries => setRecentActivity(entries)).catch(() => {});
-  }, []);
+    loadRecentWins();
+  }, [loadRecentWins]);
+
+  // Refresh wins ticker when draws/rooms complete
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const refresh = () => loadRecentWins();
+    socket.on('keno.draw.completed', refresh);
+    socket.on('bingo.room.completed', refresh);
+    return () => {
+      socket.off('keno.draw.completed', refresh);
+      socket.off('bingo.room.completed', refresh);
+    };
+  }, [loadRecentWins]);
 
   const countdown = useCountdownSecs(
     activeDraw?.status === 'open' ? activeDraw.scheduledAt : null
@@ -226,7 +235,7 @@ export function Home({ onNavigate }: Props) {
     <div className="stack-lg">
 
       {/* ── Live wins ticker ── */}
-      <LiveWinsTicker />
+      <LiveWinsTicker wins={recentWins} />
 
       {/* ── Balance hero ── */}
       <section className="jackpot-hero">

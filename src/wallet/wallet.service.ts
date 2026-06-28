@@ -126,6 +126,40 @@ export class WalletService {
     }));
   }
 
+  async getRecentPlatformWins(limit: number): Promise<Array<{
+    displayName: string;
+    amountMinor: number;
+    game: string;
+    timestamp: string;
+  }>> {
+    const safeLimit = Math.min(Math.max(limit || 20, 1), 50);
+    const rows = await this.dataSource
+      .getRepository(LedgerEntry)
+      .createQueryBuilder('le')
+      .innerJoin('le.user', 'u')
+      .select([
+        'u.displayName AS displayName',
+        'le.amountMinor AS amountMinor',
+        'le.sourceType AS sourceType',
+        'le.createdAt AS createdAt',
+      ])
+      .where('le.entryType = :type', { type: 'win' })
+      .andWhere('le.direction = :dir', { dir: 'credit' })
+      .andWhere('le.amountMinor > 0')
+      .orderBy('le.createdAt', 'DESC')
+      .limit(safeLimit)
+      .getRawMany<{ displayName: string; amountMinor: string; sourceType: string; createdAt: Date | string }>();
+
+    return rows.map((row) => ({
+      displayName: row.displayName ?? 'Player',
+      amountMinor: Number(row.amountMinor ?? 0),
+      game: String(row.sourceType ?? '').toLowerCase().includes('keno') ? 'Keno' : 'Bingo',
+      timestamp: row.createdAt instanceof Date
+        ? row.createdAt.toISOString()
+        : String(row.createdAt),
+    }));
+  }
+
   debit(input: WalletMutationInput): Promise<WalletMutationResult> {
     return this.mutateWalletInOwnTransaction({
       ...input,

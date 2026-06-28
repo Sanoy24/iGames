@@ -27,6 +27,13 @@ export type AuthTokenResponse = {
   user: User;
 };
 
+export type RecentWin = {
+  displayName: string;
+  amountMinor: number;
+  game: string;
+  timestamp: string;
+};
+
 export type Wallet = {
   id: string;
   userId?: string;

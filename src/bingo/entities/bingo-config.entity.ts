@@ -6,23 +6,14 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-/**
- * Single-row global config for Bingo automation.
- * Always read/written via BingoService.getBingoConfig().
- */
 @Entity('bingo_config')
 export class BingoConfig {
   @PrimaryColumn({ type: 'varchar', length: 32 })
-  key: string; // always 'global'
+  key: string;
 
-  /** Master switch. When false the scheduler will not create new rooms. */
   @Column({ type: 'boolean', default: true })
   enabled: boolean;
 
-  /**
-   * Minutes after a room completes before the next one starts.
-   * 0 = create the next room immediately on completion.
-   */
   @Column({ type: 'int', default: 0 })
   autoRepeatIntervalMinutes: number;
 
@@ -41,17 +32,30 @@ export class BingoConfig {
   @Column({ type: 'int', default: 100000 })
   defaultFullHouseMinor: number;
 
-  /** How many seconds between each number draw (default 5). */
   @Column({ type: 'int', default: 5 })
   drawIntervalSeconds: number;
 
-  /** Default win mode for auto-created rooms. */
   @Column({ type: 'varchar', length: 10, default: 'line' })
   defaultWinMode: string;
 
-  /** Default number pool size for auto-created rooms in pattern mode. */
   @Column({ type: 'int', default: 75 })
   defaultNumberRange: number;
+
+  /** Minimum balls drawn before any prize tier can be settled (0 = immediate). */
+  @Column({ type: 'int', default: 0 })
+  minDrawsBeforeWin: number;
+
+  /** Minimum tickets sold before draw can start (0 = no minimum). */
+  @Column({ type: 'int', default: 0 })
+  minTicketsToStart: number;
+
+  /** House edge percentage shown in admin UI for reference (0–100). */
+  @Column({ type: 'int', default: 20 })
+  houseEdgePct: number;
+
+  /** Every N bingo rooms a randomly chosen active bot receives a guaranteed win. 0 = disabled. */
+  @Column({ type: 'int', default: 0 })
+  globalBingoBotWinInterval: number;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

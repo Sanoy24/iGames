@@ -232,6 +232,157 @@ export class BingoRulesService {
   }
 
   /**
+   * Build a 5×5 pattern card seeding it with player-chosen numbers.
+   * Numbers not provided (or that fall outside a column's range) are auto-filled.
+   * Center cell [2][2] is always FREE.
+   */
+  generatePatternCardFromSelection(selected: number[], numberRange: number): (number | null)[][] {
+    const ROWS = 5;
+    const COLS = 5;
+    const colWidth = Math.floor(numberRange / COLS);
+
+    // Bucket selected numbers by column
+    const buckets: Set<number>[] = Array.from({ length: COLS }, () => new Set());
+    for (const n of selected) {
+      if (n < 1 || n > numberRange) continue;
+      const col = Math.min(Math.floor((n - 1) / colWidth), COLS - 1);
+      buckets[col].add(n);
+    }
+
+    const grid: (number | null)[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+
+    for (let col = 0; col < COLS; col++) {
+      const min = col * colWidth + 1;
+      const max = col === COLS - 1 ? numberRange : (col + 1) * colWidth;
+      const isFreeCol = col === 2;
+      const needed = isFreeCol ? ROWS - 1 : ROWS;
+
+      const picks = [...buckets[col]].slice(0, needed);
+      const usedSet = new Set(picks);
+
+      // Auto-fill remaining slots
+      const pool = Array.from({ length: max - min + 1 }, (_, i) => min + i).filter(
+        (n) => !usedSet.has(n),
+      );
+      while (picks.length < needed && pool.length > 0) {
+        const idx = randomInt(0, pool.length);
+        picks.push(pool[idx]);
+        pool.splice(idx, 1);
+      }
+
+      picks.sort((a, b) => a - b);
+
+      let numIdx = 0;
+      for (let row = 0; row < ROWS; row++) {
+        if (isFreeCol && row === 2) {
+          grid[row][col] = null; // FREE space
+        } else {
+          grid[row][col] = picks[numIdx++] ?? null;
+        }
+      }
+    }
+
+    return grid;
+  }
+
+  /**
+   * Build a 90-ball ticket seeding it with up to 15 player-chosen numbers.
+   * Numbers not provided are auto-filled. The final ticket satisfies all 90-ball
+   * constraints (3×9, 5 per row, 1–3 per column, ascending within column).
+   */
+  generateTicketFromSelection(selected: number[]): BingoGrid {
+    // Validate and deduplicate
+    const valid = [...new Set(selected.filter((n) => n >= 1 && n <= 90))].slice(0, 15);
+
+    // Group by column (0-based)
+    const colBuckets: number[][] = Array.from({ length: 9 }, () => []);
+    for (const n of valid) {
+      let col: number;
+      if (n <= 9) col = 0;
+      else if (n === 90) col = 8;
+      else col = Math.floor(n / 10);
+      colBuckets[col].push(n);
+    }
+
+    // Truncate to at most 3 per column (90-ball constraint)
+    for (let c = 0; c < 9; c++) {
+      colBuckets[c] = colBuckets[c].slice(0, 3);
+    }
+
+    // Count how many numbers we have; auto-fill up to 15
+    const totalSelected = colBuckets.reduce((s, b) => s + b.length, 0);
+    const remaining = 15 - totalSelected;
+
+    if (remaining > 0) {
+      // Build pool of unused numbers
+      const usedSet = new Set(colBuckets.flat());
+      const pool: number[] = [];
+      for (let n = 1; n <= 90; n++) {
+        if (!usedSet.has(n)) pool.push(n);
+      }
+      // Shuffle and pick
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = randomInt(0, i + 1);
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      for (let i = 0; i < remaining && i < pool.length; i++) {
+        const n = pool[i];
+        let col: number;
+        if (n <= 9) col = 0;
+        else if (n === 90) col = 8;
+        else col = Math.floor(n / 10);
+        if (colBuckets[col].length < 3) colBuckets[col].push(n);
+        else {
+          // Column full — find next available column
+          for (let c = 0; c < 9; c++) {
+            if (colBuckets[c].length < 3) { colBuckets[c].push(n); break; }
+          }
+        }
+      }
+    }
+
+    // Sort each column ascending
+    for (let c = 0; c < 9; c++) {
+      colBuckets[c].sort((a, b) => a - b);
+    }
+
+    // Build grid using a mask that satisfies the row constraint (5 per row)
+    return this.placeColumnsOnGrid(colBuckets);
+  }
+
+  private placeColumnsOnGrid(colBuckets: number[][]): BingoGrid {
+    // Try to generate a valid mask up to 500 times, same as generateTicket
+    for (let attempt = 0; attempt < 500; attempt++) {
+      const mask = Array.from({ length: 3 }, () => Array(9).fill(false));
+
+      for (let col = 0; col < 9; col++) {
+        const count = colBuckets[col].length;
+        if (count === 0) continue;
+        const rows = this.pickUnique(0, 2, Math.min(count, 3));
+        for (const row of rows) mask[row][col] = true;
+      }
+
+      // Ensure exactly 5 per row
+      const rowCounts = mask.map((row) => row.filter(Boolean).length);
+      if (rowCounts.every((c) => c === 5)) {
+        const grid: BingoGrid = Array.from({ length: 3 }, () => Array(9).fill(null));
+        const colIndices = Array(9).fill(0);
+        for (let col = 0; col < 9; col++) {
+          for (let row = 0; row < 3; row++) {
+            if (mask[row][col]) {
+              grid[row][col] = colBuckets[col][colIndices[col]++] ?? null;
+            }
+          }
+        }
+        return grid;
+      }
+    }
+
+    // Fallback: generate a fresh random ticket
+    return this.generateTicket();
+  }
+
+  /**
    * Evaluate which patterns are newly completed.
    * null cells in the grid are FREE spaces (always marked).
    */

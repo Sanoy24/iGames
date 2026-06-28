@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, X, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, X, RefreshCw, Wallet as WalletIcon, TrendingUp } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
@@ -21,11 +21,11 @@ const ENTRY_LABELS: Record<string, string> = {
 
 type TxFilter = 'all' | 'wins' | 'purchases' | 'deposits';
 
-const TX_FILTERS: { id: TxFilter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'wins', label: '🏆 Wins' },
-  { id: 'purchases', label: '🎟 Purchases' },
-  { id: 'deposits', label: '💰 Deposits' },
+const TX_FILTERS: { id: TxFilter; label: string; icon: string }[] = [
+  { id: 'all',       label: 'All',       icon: '📋' },
+  { id: 'wins',      label: 'Wins',      icon: '🏆' },
+  { id: 'purchases', label: 'Purchases', icon: '🎟' },
+  { id: 'deposits',  label: 'Deposits',  icon: '💰' },
 ];
 
 function formatLedgerTitle(entry: LedgerEntry): string {
@@ -35,13 +35,24 @@ function formatLedgerTitle(entry: LedgerEntry): string {
 function matchesTxFilter(entry: LedgerEntry, filter: TxFilter): boolean {
   if (filter === 'all') return true;
   const type = entry.entryType ?? entry.sourceType ?? '';
-  if (filter === 'wins') return type === 'ticket_win' || type === 'bonus';
+  if (filter === 'wins')      return type === 'ticket_win' || type === 'bonus';
   if (filter === 'purchases') return type === 'ticket_purchase';
-  if (filter === 'deposits') return type === 'deposit' || type === 'agent_receipt';
+  if (filter === 'deposits')  return type === 'deposit' || type === 'agent_receipt';
   return true;
 }
 
 const WITHDRAW_PRESETS = [500, 1000, 5000, 10000];
+
+function AnimatedBalance({ value }: { value: number }) {
+  const mv     = useMotionValue(value);
+  const spring = useSpring(mv, { stiffness: 80, damping: 18 });
+  const [display, setDisplay] = useState(value);
+
+  useEffect(() => { mv.set(value); }, [value, mv]);
+  useEffect(() => spring.on('change', (v) => setDisplay(Math.round(v))), [spring]);
+
+  return <>{new Intl.NumberFormat().format(display)}</>;
+}
 
 function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
   const addToast = useStore((s) => s.addToast);
@@ -78,23 +89,32 @@ function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
   );
 }
 
-export function Wallet() {
-  const wallet = useStore((state) => state.wallet);
-  const setWallet = useStore((state) => state.setWallet);
-  const addToast = useStore((state) => state.addToast);
-  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
-  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [txFilter, setTxFilter] = useState<TxFilter>('all');
+const staggerList = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.05 } },
+};
+const listItem = {
+  hidden: { opacity: 0, x: -8 },
+  show:   { opacity: 1, x: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 28 } },
+};
 
-  const [showTopup, setShowTopup] = useState(false);
+export function Wallet() {
+  const wallet    = useStore((state) => state.wallet);
+  const setWallet = useStore((state) => state.setWallet);
+  const addToast  = useStore((state) => state.addToast);
+  const [ledger,       setLedger]       = useState<LedgerEntry[]>([]);
+  const [withdrawals,  setWithdrawals]  = useState<Withdrawal[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [txFilter,     setTxFilter]     = useState<TxFilter>('all');
+
+  const [showTopup,    setShowTopup]    = useState(false);
   const [receiptInput, setReceiptInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [showWithdraw,   setShowWithdraw]   = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawPhone, setWithdrawPhone] = useState('');
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [withdrawPhone,  setWithdrawPhone]  = useState('');
+  const [isWithdrawing,  setIsWithdrawing]  = useState(false);
 
   const loadWallet = useCallback(async () => {
     try {
@@ -133,20 +153,14 @@ export function Wallet() {
 
   const handleWithdraw = async () => {
     const credits = parseFloat(withdrawAmount);
-    if (isNaN(credits) || credits <= 0) {
-      addToast('error', 'Please enter a valid amount');
-      return;
-    }
+    if (isNaN(credits) || credits <= 0) { addToast('error', 'Please enter a valid amount'); return; }
     const amountMinor = Math.round(credits);
-    const available = wallet?.availableMinor ?? 0;
+    const available   = wallet?.availableMinor ?? 0;
     if (amountMinor > available) {
       addToast('error', `Insufficient balance — available: ${new Intl.NumberFormat().format(available)} e‑Birr`);
       return;
     }
-    if (!withdrawPhone.trim()) {
-      addToast('error', 'Please enter your Telebirr phone number');
-      return;
-    }
+    if (!withdrawPhone.trim()) { addToast('error', 'Please enter your Telebirr phone number'); return; }
     setIsWithdrawing(true);
     try {
       await walletApi.requestWithdrawal(amountMinor, withdrawPhone.trim());
@@ -166,12 +180,33 @@ export function Wallet() {
   const available = wallet?.availableMinor ?? 0;
 
   return (
-    <div className="stack-lg">
+    <motion.div
+      className="stack-lg"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+    >
       {/* ── Balance hero ── */}
-      <section className="card wallet-hero">
-        <div className="badge badge-green">Wallet</div>
-        <h1 className="hero-title">{new Intl.NumberFormat().format(available)} e‑Birr</h1>
-        <p className="hero-copy">Balance shared across Keno stakes, Bingo tickets, deposits, and winnings.</p>
+      <motion.section
+        className="card"
+        style={{ background: 'linear-gradient(135deg, rgba(250,204,21,0.06) 0%, rgba(139,92,246,0.04) 100%)', border: '1px solid rgba(250,204,21,0.12)' }}
+        initial={{ scale: 0.97, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: 'spring', stiffness: 280, damping: 24 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <div className="badge badge-gold" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <WalletIcon size={11} /> Wallet
+          </div>
+          {wallet?.status === 'active' && (
+            <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>● Active</span>
+          )}
+        </div>
+
+        <div className="jackpot-value" style={{ fontSize: '2.2rem', margin: '8px 0 4px' }}>
+          <AnimatedBalance value={available} />
+          <span style={{ fontSize: '1rem', marginLeft: 6, color: 'var(--text-muted)', fontWeight: 600 }}>e‑Birr</span>
+        </div>
 
         <div className="stats-grid" style={{ marginBottom: 16 }}>
           <div className="stat-card">
@@ -184,25 +219,29 @@ export function Wallet() {
           </div>
           <div className="stat-card">
             <span className="stat-label">Status</span>
-            <strong style={{ textTransform: 'capitalize' }}>{wallet?.status ?? '—'}</strong>
+            <strong style={{ textTransform: 'capitalize', color: wallet?.status === 'active' ? 'var(--green)' : 'var(--danger)' }}>
+              {wallet?.status ?? '—'}
+            </strong>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
+          <motion.button
             className="btn btn-primary"
             onClick={() => { setShowTopup(v => !v); setShowWithdraw(false); }}
             style={{ flex: 1, minWidth: 140 }}
+            whileTap={{ scale: 0.96 }}
           >
             {showTopup ? <><X size={15} /> Cancel</> : <><ArrowUpToLine size={15} /> Top Up</>}
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             className="btn btn-secondary"
             onClick={() => { setShowWithdraw(v => !v); setShowTopup(false); }}
             style={{ flex: 1, minWidth: 140 }}
+            whileTap={{ scale: 0.96 }}
           >
             {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Payout</>}
-          </button>
+          </motion.button>
         </div>
 
         {import.meta.env.DEV && <DevTopup onSuccess={loadWallet} />}
@@ -220,7 +259,7 @@ export function Wallet() {
               <div className="admin-form" style={{ marginTop: 16 }}>
                 <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Manual Deposit</h3>
                 <p className="text-muted" style={{ fontSize: 13, marginBottom: 14 }}>
-                  Transfer the desired amount via your Telebirr app, then paste the SMS confirmation or receipt URL below.
+                  Transfer the desired amount via your Telebirr app, then paste the SMS confirmation or receipt below.
                 </p>
                 <textarea
                   className="input"
@@ -258,37 +297,40 @@ export function Wallet() {
                   Available: <strong>{new Intl.NumberFormat().format(available)} e&#x2011;Birr</strong>
                 </p>
 
-                {/* Preset amount chips */}
-                <div className="preset-amounts">
+                <div className="preset-amounts" style={{ marginBottom: 12 }}>
                   {WITHDRAW_PRESETS.filter(p => p <= available).map(preset => (
-                    <button
+                    <motion.button
                       key={preset}
                       className="preset-amount"
                       onClick={() => setWithdrawAmount(String(preset))}
                       type="button"
+                      whileTap={{ scale: 0.9 }}
+                      style={withdrawAmount === String(preset)
+                        ? { borderColor: 'var(--gold)', color: 'var(--gold)', background: 'rgba(250,204,21,0.1)' }
+                        : {}}
                     >
                       {new Intl.NumberFormat().format(preset)}
-                    </button>
+                    </motion.button>
                   ))}
                   {available > 0 && (
-                    <button
+                    <motion.button
                       className="preset-amount"
                       onClick={() => setWithdrawAmount(String(available))}
                       type="button"
-                      style={{ borderColor: 'rgba(16,185,129,0.35)', color: 'var(--green)' }}
+                      whileTap={{ scale: 0.9 }}
+                      style={withdrawAmount === String(available)
+                        ? { borderColor: 'var(--green)', color: 'var(--green)', background: 'rgba(16,185,129,0.1)' }
+                        : { borderColor: 'rgba(16,185,129,0.35)', color: 'var(--green)' }}
                     >
                       All ({new Intl.NumberFormat().format(available)})
-                    </button>
+                    </motion.button>
                   )}
                 </div>
 
                 <div style={{ marginBottom: 12 }}>
                   <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Amount (e‑Birr)</label>
                   <input
-                    type="number"
-                    step="1"
-                    min="1"
-                    max={available}
+                    type="number" step="1" min="1" max={available}
                     className="input"
                     placeholder={`e.g. ${Math.floor(available / 2)}`}
                     value={withdrawAmount}
@@ -299,8 +341,7 @@ export function Wallet() {
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Telebirr Phone Number</label>
                   <input
-                    type="tel"
-                    className="input"
+                    type="tel" className="input"
                     placeholder="e.g. 0912345678"
                     value={withdrawPhone}
                     onChange={(e) => setWithdrawPhone(e.target.value)}
@@ -318,100 +359,135 @@ export function Wallet() {
             </motion.div>
           )}
         </AnimatePresence>
-      </section>
+      </motion.section>
 
       {/* ── Withdrawal requests ── */}
-      {withdrawals.length > 0 && (
-        <section className="card">
-          <div className="section-header">
-            <div>
-              <div className="section-title">Withdrawal Requests</div>
-              <p className="section-copy">Track your Telebirr cashout requests.</p>
+      <AnimatePresence>
+        {withdrawals.length > 0 && (
+          <motion.section
+            className="card"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+          >
+            <div className="section-header">
+              <div>
+                <div className="section-title">Withdrawal Requests</div>
+                <p className="section-copy">Track your Telebirr cashout requests.</p>
+              </div>
             </div>
-          </div>
-          <div className="list-stack">
-            {withdrawals.map((w) => (
-              <article key={w.id} className="list-card">
-                <div className="list-card-header">
-                  <div>
-                    <h3>Telebirr Cashout</h3>
-                    <p style={{ margin: '4px 0 0', fontSize: 13 }}>Phone: {w.destinationAccount}</p>
-                    {w.adminNotes && (
-                      <p style={{ color: 'var(--yellow-1)', fontSize: 12, marginTop: 4 }}>Note: {w.adminNotes}</p>
-                    )}
+            <motion.div className="list-stack" variants={staggerList} initial="hidden" animate="show">
+              {withdrawals.map((w) => (
+                <motion.article key={w.id} className="list-card" variants={listItem}>
+                  <div className="list-card-header">
+                    <div>
+                      <h3>Telebirr Cashout</h3>
+                      <p style={{ margin: '4px 0 0', fontSize: 13 }}>Phone: {w.destinationAccount}</p>
+                      {w.adminNotes && (
+                        <p style={{ color: 'var(--yellow-1)', fontSize: 12, marginTop: 4 }}>Note: {w.adminNotes}</p>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span className="badge" style={{ display: 'block', marginBottom: 4 }}>
+                        {new Intl.NumberFormat().format(w.amountMinor)} e‑Birr
+                      </span>
+                      <span className={`badge ${
+                        w.status === 'completed'  ? 'badge-green'  :
+                        w.status === 'rejected'   ? 'badge-red'    :
+                        w.status === 'processing' ? 'badge-violet' : 'badge-gold'
+                      }`}>
+                        {w.status === 'pending'    ? 'Pending'    :
+                         w.status === 'processing' ? 'Processing' :
+                         w.status === 'completed'  ? 'Completed'  :
+                         w.status === 'rejected'   ? 'Rejected'   : w.status}
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span className="badge" style={{ display: 'block', marginBottom: 4 }}>
-                      {new Intl.NumberFormat().format(w.amountMinor)} e‑Birr
-                    </span>
-                    <span className={`badge ${
-                      w.status === 'completed' ? 'badge-green' :
-                      w.status === 'rejected' ? 'badge-red' :
-                      w.status === 'processing' ? 'badge-violet' : 'badge-gold'
-                    }`}>
-                      {w.status === 'pending' ? 'Pending' :
-                       w.status === 'processing' ? 'Processing' :
-                       w.status === 'completed' ? 'Completed' :
-                       w.status === 'rejected' ? 'Rejected' : w.status}
-                    </span>
+                  <div className="ticket-meta">
+                    <span>Requested: {new Date(w.createdAt).toLocaleString()}</span>
+                    {w.processedAt && <span>Processed: {new Date(w.processedAt).toLocaleString()}</span>}
                   </div>
-                </div>
-                <div className="ticket-meta">
-                  <span>Requested: {new Date(w.createdAt).toLocaleString()}</span>
-                  {w.processedAt && <span>Processed: {new Date(w.processedAt).toLocaleString()}</span>}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
+                </motion.article>
+              ))}
+            </motion.div>
+          </motion.section>
+        )}
+      </AnimatePresence>
 
       {/* ── Transaction history ── */}
-      <section className="card">
+      <motion.section
+        className="card"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+      >
         <div className="section-header">
-          <div>
-            <div className="section-title">Transaction History</div>
-            <p className="section-copy">Your balance activity and game results.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <TrendingUp size={16} style={{ color: 'var(--gold)' }} />
+            <div>
+              <div className="section-title">Transaction History</div>
+              <p className="section-copy">Your balance activity and game results.</p>
+            </div>
           </div>
-          <button
+          <motion.button
             className="btn btn-ghost btn-sm"
             onClick={() => void loadWallet()}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            whileTap={{ scale: 0.9, rotate: 180 }}
           >
             <RefreshCw size={13} /> Refresh
-          </button>
+          </motion.button>
         </div>
 
         {/* Filter chips */}
         <div className="tx-filter-row" style={{ marginBottom: 12 }}>
           {TX_FILTERS.map(f => (
-            <button
+            <motion.button
               key={f.id}
               className={`tx-filter-chip${txFilter === f.id ? ' active' : ''}`}
               onClick={() => setTxFilter(f.id)}
+              whileTap={{ scale: 0.9 }}
+              style={{ position: 'relative', overflow: 'hidden' }}
             >
+              <span style={{ marginRight: 4 }}>{f.icon}</span>
               {f.label}
-            </button>
+              {txFilter === f.id && (
+                <motion.span
+                  layoutId="tx-pill"
+                  style={{ position: 'absolute', inset: 0, borderRadius: 'inherit', background: 'rgba(250,204,21,0.08)', zIndex: -1 }}
+                  transition={{ type: 'spring', stiffness: 340, damping: 26 }}
+                />
+              )}
+            </motion.button>
           ))}
         </div>
 
         {loading && ledger.length === 0 ? (
           <div className="card-muted">Loading activity…</div>
         ) : filteredLedger.length === 0 ? (
-          <div className="card-muted">
+          <motion.div className="card-muted" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             {txFilter === 'all' ? 'No activity yet. Play a game to get started.' : 'No transactions in this category.'}
-          </div>
+          </motion.div>
         ) : (
-          <div className="list-stack">
+          <motion.div
+            className="list-stack"
+            key={txFilter}
+            variants={staggerList}
+            initial="hidden"
+            animate="show"
+          >
             {filteredLedger.map((entry) => (
-              <article key={entry.id} className="list-card">
+              <motion.article key={entry.id} className="list-card" variants={listItem}>
                 <div className="list-card-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span className={`ledger-icon ${entry.direction === 'credit' ? 'ledger-icon-credit' : 'ledger-icon-debit'}`}>
+                    <motion.span
+                      className={`ledger-icon ${entry.direction === 'credit' ? 'ledger-icon-credit' : 'ledger-icon-debit'}`}
+                      whileHover={{ scale: 1.15 }}
+                    >
                       {entry.direction === 'credit'
                         ? <ArrowDownLeft size={14} />
-                        : <ArrowUpRight size={14} />}
-                    </span>
+                        : <ArrowUpRight  size={14} />}
+                    </motion.span>
                     <div>
                       <h3>{formatLedgerTitle(entry)}</h3>
                       {entry.createdAt && (
@@ -421,19 +497,24 @@ export function Wallet() {
                       )}
                     </div>
                   </div>
-                  <span className={`badge ${entry.direction === 'credit' ? 'badge-green' : 'badge-red'}`}>
+                  <motion.span
+                    className={`badge ${entry.direction === 'credit' ? 'badge-green' : 'badge-red'}`}
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 22 }}
+                  >
                     {entry.direction === 'credit' ? '+' : '-'}
                     {new Intl.NumberFormat().format(entry.amountMinor)}
-                  </span>
+                  </motion.span>
                 </div>
                 <div className="ticket-meta">
                   <span>Balance after: {formatCreditsFull(entry.balanceAfterMinor)}</span>
                 </div>
-              </article>
+              </motion.article>
             ))}
-          </div>
+          </motion.div>
         )}
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }

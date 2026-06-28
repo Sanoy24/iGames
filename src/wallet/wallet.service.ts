@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager, In } from 'typeorm';
 import { createHash } from 'crypto';
 import { LedgerService } from '../ledger/ledger.service';
-import { LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
+import { LedgerEntry, LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action-log.entity';
 import { Wallet } from './entities/wallet.entity';

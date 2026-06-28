@@ -28,6 +28,7 @@ function isPatternGrid(grid: Array<Array<number | null>>): boolean {
 type BingoRoomEventPayload = { roomId?: string };
 type BingoProps = { onBack: () => void };
 type BingoTab = 'active' | 'draws' | 'tickets';
+type ChatMessage = { userId?: string; displayName: string; text: string; timestamp: string; isSystem?: boolean };
 
 const BINGO_TABS: Array<GameTabOption<BingoTab>> = [
   { id: 'active',  label: 'Bingo Rooms',  description: 'Select room and buy tickets.',      icon: <Gamepad2 size={18} /> },
@@ -566,16 +567,27 @@ export function Bingo({ onBack }: BingoProps) {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevDrawnLengthRef = useRef(0);
 
-  const [chatMessages, setChatMessages] = useState<Array<{ sender: string; text: string; time: string }>>([
-    { sender: 'System', text: 'Welcome to iGames Bingo! Select a room to get started.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { displayName: 'System', text: 'Welcome to iGames Bingo! Select a room to get started.', timestamp: new Date().toISOString(), isSystem: true },
   ]);
+  const [chatInput, setChatInput] = useState('');
+  const [sendingChat, setSendingChat] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
 
-  const CHAT_NAMES = useMemo(() => ['Alex', 'Sophia', 'Maya', 'Marcus', 'Ethan', 'Zoe', 'Liam', 'Olivia'], []);
-  const CHAT_LINES = useMemo(() => [
-    'Close one!', 'Need just one more!', 'Come on jackpot!', 'Nice!', 'One line away!',
-    'So close!', 'Let\'s go!', 'Almost!', 'Lucky night!', 'Full house incoming!',
-  ], []);
+  const currentUser = useStore((s) => s.user);
+
+  const sendChatMessage = useCallback(() => {
+    const text = chatInput.trim();
+    if (!text || sendingChat || !selectedRoomId) return;
+    const socket = getSocket();
+    if (!socket) return;
+    setSendingChat(true);
+    socket.emit('bingo.chat.send', { roomId: selectedRoomId, text });
+    setChatInput('');
+    setSendingChat(false);
+    chatInputRef.current?.focus();
+  }, [chatInput, sendingChat, selectedRoomId]);
 
   const loadRooms = useCallback(async () => {
     setLoadingRooms(true);
@@ -626,12 +638,6 @@ export function Bingo({ onBack }: BingoProps) {
       if (payload.roomId !== selectedRoomId) return;
       soundEngine.pop();
       void loadRoomState(selectedRoomId);
-      const name = CHAT_NAMES[Math.floor(Math.random() * CHAT_NAMES.length)];
-      const line = CHAT_LINES[Math.floor(Math.random() * CHAT_LINES.length)];
-      setChatMessages((prev) => [
-        ...prev.slice(-30),
-        { sender: name, text: line, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-      ]);
     };
 
     const handleRoomCompleted = (payload: BingoRoomEventPayload) => {
@@ -640,17 +646,24 @@ export function Bingo({ onBack }: BingoProps) {
       addToast('info', 'Bingo room completed — payouts settled!');
     };
 
+    const handleChatMessage = (payload: { roomId: string; userId?: string; displayName: string; text: string; timestamp: string }) => {
+      if (payload.roomId !== selectedRoomId) return;
+      setChatMessages((prev) => [...prev.slice(-49), { ...payload }]);
+    };
+
     socket.on('bingo.room.updated', handleRoomUpdate);
     socket.on('bingo.number.drawn', handleNumberDrawn);
     socket.on('bingo.room.completed', handleRoomCompleted);
+    socket.on('bingo.chat.message', handleChatMessage);
 
     return () => {
       socket.emit('leave.game', { game: 'bingo' });
       socket.off('bingo.room.updated', handleRoomUpdate);
       socket.off('bingo.number.drawn', handleNumberDrawn);
       socket.off('bingo.room.completed', handleRoomCompleted);
+      socket.off('bingo.chat.message', handleChatMessage);
     };
-  }, [loadRoomState, loadRooms, selectedRoomId, addToast, CHAT_NAMES, CHAT_LINES]);
+  }, [loadRoomState, loadRooms, selectedRoomId, addToast]);
 
   // Countdown timer for open rooms
   useEffect(() => {
@@ -938,25 +951,71 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
 
             {/* Chat */}
-            <div className="card flex flex-col h-56 overflow-hidden">
-              <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/[0.05]">
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <div className="card flex flex-col overflow-hidden" style={{ height: 260 }}>
+              <div className="flex items-center justify-between mb-2 pb-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <span style={{ fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
                   <MessageSquare size={12} /> Room Chat
                 </span>
-                <span className="text-[9px] text-slate-600 flex items-center gap-1">
-                  <Users size={10} /> Active
+                <span style={{ fontSize: 9, color: '#475569', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Users size={10} /> Live
                 </span>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                {chatMessages.map((msg, i) => (
-                  <div key={i} className="text-xs">
-                    <span className="font-bold text-red-500">{msg.sender}</span>
-                    <span className="text-[9px] text-slate-600 ml-1">{msg.time}</span>
-                    <p className="text-slate-400 mt-0.5 leading-relaxed">{msg.text}</p>
-                  </div>
-                ))}
+              <div className="flex-1 overflow-y-auto pr-1" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {chatMessages.map((msg, i) => {
+                  const isOwn = !msg.isSystem && msg.userId === currentUser?.id;
+                  return (
+                    <div key={i} style={{ fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: isOwn ? 'flex-end' : 'flex-start' }}>
+                      {!msg.isSystem && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                          <span style={{ fontWeight: 700, color: isOwn ? 'var(--gold)' : '#60a5fa', fontSize: 11 }}>{isOwn ? 'You' : msg.displayName}</span>
+                          <span style={{ fontSize: 9, color: '#475569' }}>
+                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      )}
+                      <div style={{
+                        padding: '4px 8px',
+                        borderRadius: msg.isSystem ? 6 : (isOwn ? '10px 10px 2px 10px' : '10px 10px 10px 2px'),
+                        background: msg.isSystem
+                          ? 'rgba(255,255,255,0.04)'
+                          : (isOwn ? 'rgba(250,204,21,0.12)' : 'rgba(96,165,250,0.1)'),
+                        border: `1px solid ${msg.isSystem ? 'rgba(255,255,255,0.05)' : (isOwn ? 'rgba(250,204,21,0.2)' : 'rgba(96,165,250,0.15)')}`,
+                        color: msg.isSystem ? 'var(--text-muted)' : 'var(--text-secondary)',
+                        fontSize: msg.isSystem ? 10 : 12,
+                        lineHeight: 1.4,
+                        maxWidth: '85%',
+                      }}>
+                        {msg.text}
+                      </div>
+                    </div>
+                  );
+                })}
                 <div ref={chatEndRef} />
               </div>
+              {/* Input row */}
+              {selectedRoomId && (
+                <div style={{ display: 'flex', gap: 6, marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <input
+                    ref={chatInputRef}
+                    className="input"
+                    style={{ flex: 1, fontSize: 12, padding: '6px 10px', height: 32 }}
+                    placeholder="Say something…"
+                    maxLength={200}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') sendChatMessage(); }}
+                    disabled={sendingChat}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: 11, padding: '0 12px', height: 32, minWidth: 44 }}
+                    onClick={sendChatMessage}
+                    disabled={!chatInput.trim() || sendingChat}
+                  >
+                    Send
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

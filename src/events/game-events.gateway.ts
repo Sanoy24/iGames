@@ -99,7 +99,7 @@ export class GameEventsGateway
 
       const user = await this.userRepository.findOne({
         where: { id: payload.sub },
-        select: ['id', 'status', 'roles']
+        select: ['id', 'status', 'roles', 'displayName']
       });
 
       if (!user || user.status !== 'active') {
@@ -107,6 +107,7 @@ export class GameEventsGateway
       }
 
       client.data.user = payload;
+      client.data.displayName = user.displayName ?? 'Player';
       await client.join(`user_${payload.sub}`);
 
       // Agents join a shared room so withdrawal.pending broadcasts reach them all.
@@ -244,5 +245,23 @@ export class GameEventsGateway
       settlementSummary: room.settlementSummary
     };
     this.server.emit('bingo.room.completed', payload);
+  }
+
+  @SubscribeMessage('bingo.chat.send')
+  handleBingoChatSend(client: Socket, payload: { roomId: string; text: string }) {
+    if (!payload?.roomId || typeof payload.text !== 'string') return;
+    const text = payload.text.trim().slice(0, 200);
+    if (!text) return;
+
+    const userId: string = client.data.user?.sub ?? '';
+    const displayName: string = client.data.displayName ?? 'Player';
+
+    this.server.to('game_bingo').emit('bingo.chat.message', {
+      roomId: payload.roomId,
+      userId,
+      displayName,
+      text,
+      timestamp: new Date().toISOString(),
+    });
   }
 }

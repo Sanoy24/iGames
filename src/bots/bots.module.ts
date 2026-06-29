@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { BingoModule } from '../bingo/bingo.module';
 import { KenoModule } from '../keno/keno.module';
 import { User } from '../users/entities/user.entity';
 import { WalletModule } from '../wallet/wallet.module';
@@ -14,7 +15,8 @@ import { BotsService } from './bots.service';
     JwtModule.register({}),
     TypeOrmModule.forFeature([User]),
     WalletModule,
-    KenoModule
+    KenoModule,
+    BingoModule,
   ],
   controllers: [BotsController],
   providers: [BotsService, JwtAuthGuard, RolesGuard],

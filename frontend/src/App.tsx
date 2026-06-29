@@ -10,6 +10,7 @@ import { Admin } from './pages/Admin';
 import { Wallet } from './pages/Wallet';
 import { Profile } from './pages/Profile';
 import { Agent } from './pages/Agent';
+import { Leaderboard } from './pages/Leaderboard';
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
@@ -142,6 +143,7 @@ export function App() {
         {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
         {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
         {activeTab === 'wallet' && <Wallet />}
+        {activeTab === 'leaderboard' && <Leaderboard />}
         {activeTab === 'admin' && <Admin />}
         {activeTab === 'profile' && <Profile />}
         {activeTab === 'agent' && <Agent />}

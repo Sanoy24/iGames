@@ -1281,6 +1281,10 @@ function BingoAdmin() {
     drawIntervalSeconds: 5,
     defaultWinMode: 'line',
     defaultNumberRange: 75,
+    minDrawsBeforeWin: 0,
+    minTicketsToStart: 0,
+    houseEdgePct: 20,
+    globalBingoBotWinInterval: 0,
   });
 
   const load = useCallback(async () => {
@@ -1305,6 +1309,10 @@ function BingoAdmin() {
         drawIntervalSeconds: c.drawIntervalSeconds,
         defaultWinMode: c.defaultWinMode ?? 'line',
         defaultNumberRange: c.defaultNumberRange ?? 75,
+        minDrawsBeforeWin: c.minDrawsBeforeWin ?? 0,
+        minTicketsToStart: c.minTicketsToStart ?? 0,
+        houseEdgePct: c.houseEdgePct ?? 20,
+        globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -1408,10 +1416,13 @@ function BingoAdmin() {
       {cfg && (
         <div className="adm-info-strip">
           <span>{cfg.enabled ? '✅ Auto-Bingo ON' : '⏸ Auto-Bingo OFF'}</span>
-          <span>{cfg.defaultTicketPriceMinor} credits/ticket</span>
+          <span>{cfg.defaultTicketPriceMinor} Cr/ticket</span>
           <span>Max {cfg.defaultMaxTickets} tickets</span>
           <span>Draw every {cfg.drawIntervalSeconds}s</span>
-          <span>Default mode: {cfg.defaultWinMode ?? 'line'}</span>
+          <span>Mode: {cfg.defaultWinMode ?? 'line'}</span>
+          {(cfg.minDrawsBeforeWin ?? 0) > 0 && <span>Min draws: {cfg.minDrawsBeforeWin}</span>}
+          {(cfg.globalBingoBotWinInterval ?? 0) > 0 && <span>Bot win every {cfg.globalBingoBotWinInterval} rooms</span>}
+          <span>Edge: {cfg.houseEdgePct ?? 20}%</span>
         </div>
       )}
 
@@ -1517,6 +1528,35 @@ function BingoAdmin() {
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultFullHouseMinor: Number(e.target.value) }))} />
             </label>
           </div>
+
+          <div className="adm-panel-head" style={{ marginTop: 12 }}>Win Probability &amp; Bot Settings</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>Min Draws Before Any Win (0 = immediate)</span>
+              <input className="input" type="number" min={0} value={cfgForm.minDrawsBeforeWin ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, minDrawsBeforeWin: Number(e.target.value) }))} />
+              <span className="adm-field-hint">Prevents prizes until this many numbers are drawn. Increases perceived game depth.</span>
+            </label>
+            <label className="adm-field">
+              <span>Min Tickets Before Draw Starts (0 = no minimum)</span>
+              <input className="input" type="number" min={0} value={cfgForm.minTicketsToStart ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, minTicketsToStart: Number(e.target.value) }))} />
+              <span className="adm-field-hint">Room will not auto-start until at least this many tickets are sold.</span>
+            </label>
+            <label className="adm-field">
+              <span>House Edge % (display reference, 0–100)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.houseEdgePct ?? 20}
+                onChange={(e) => setCfgForm((f) => ({ ...f, houseEdgePct: Math.min(100, Number(e.target.value)) }))} />
+              <span className="adm-field-hint">Shown in admin stats only — does not affect payout logic.</span>
+            </label>
+            <label className="adm-field">
+              <span>Bot Guaranteed Win Every N Rooms (0 = disabled)</span>
+              <input className="input" type="number" min={0} value={cfgForm.globalBingoBotWinInterval ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, globalBingoBotWinInterval: Number(e.target.value) }))} />
+              <span className="adm-field-hint">After every N completed rooms a random active bot receives a bonus credit. Creates visible bot activity on the wins ticker.</span>
+            </label>
+          </div>
+
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'cfg'} onClick={saveConfig}>
               {busy === 'cfg' ? 'Saving…' : 'Save Settings'}

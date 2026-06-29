@@ -160,6 +160,45 @@ export class WalletService {
     }));
   }
 
+  async getLeaderboard(input: { period?: string; limit: number }): Promise<Array<{
+    rank: number;
+    displayName: string;
+    totalWinMinor: number;
+    winCount: number;
+  }>> {
+    const safeLimit = Math.min(Math.max(input.limit || 10, 1), 50);
+    let since: Date | undefined;
+    if (input.period === 'weekly')  since = new Date(Date.now() - 7  * 86400 * 1000);
+    if (input.period === 'monthly') since = new Date(Date.now() - 30 * 86400 * 1000);
+
+    const qb = this.dataSource
+      .getRepository(LedgerEntry)
+      .createQueryBuilder('le')
+      .innerJoin('le.user', 'u')
+      .select('u.displayName', 'displayName')
+      .addSelect('SUM(le.amountMinor)', 'totalWinMinor')
+      .addSelect('COUNT(le.id)', 'winCount')
+      .where('le.entryType = :type', { type: 'win' })
+      .andWhere('le.direction = :dir', { dir: 'credit' })
+      .andWhere('le.amountMinor > 0');
+
+    if (since) qb.andWhere('le.createdAt >= :since', { since });
+
+    const rows = await qb
+      .groupBy('u.id')
+      .addGroupBy('u.displayName')
+      .orderBy('totalWinMinor', 'DESC')
+      .limit(safeLimit)
+      .getRawMany<{ displayName: string; totalWinMinor: string; winCount: string }>();
+
+    return rows.map((row, i) => ({
+      rank: i + 1,
+      displayName: row.displayName ?? 'Player',
+      totalWinMinor: Number(row.totalWinMinor ?? 0),
+      winCount: Number(row.winCount ?? 0),
+    }));
+  }
+
   debit(input: WalletMutationInput): Promise<WalletMutationResult> {
     return this.mutateWalletInOwnTransaction({
       ...input,

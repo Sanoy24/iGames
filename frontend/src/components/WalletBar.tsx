@@ -3,6 +3,7 @@ import { RefreshCw, Plus } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { walletApi } from '../lib/api';
+import { NotificationBell } from './NotificationBell';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
@@ -80,6 +81,8 @@ export function WalletBar({ onNavigate }: Props) {
         <Plus size={11} />
         Top Up
       </button>
+
+      <NotificationBell />
 
       <button
         className="wallet-bar-refresh"

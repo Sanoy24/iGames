@@ -8,6 +8,6 @@ import { TelegramController } from './telegram.controller';
   imports: [UsersModule],
   controllers: [TelegramController],
   providers: [TelegramMiniAppAuthService, TelegramBotService],
-  exports: [TelegramMiniAppAuthService]
+  exports: [TelegramMiniAppAuthService, TelegramBotService]
 })
 export class TelegramModule {}

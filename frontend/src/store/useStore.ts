@@ -7,6 +7,15 @@ export type Toast = {
   message: string;
 };
 
+export type AppNotification = {
+  id: string;
+  type: 'win' | 'info';
+  title: string;
+  message: string;
+  timestamp: number;
+  read: boolean;
+};
+
 export type LiveCounts = {
   kenoOnline: number;
   bingoOnline: number;
@@ -49,6 +58,12 @@ type AppState = {
   soundMuted: boolean;
   setSoundVolume: (vol: number) => void;
   setSoundMuted: (muted: boolean) => void;
+
+  // Notifications
+  notifications: AppNotification[];
+  unreadCount: number;
+  addNotification: (n: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => void;
+  markAllNotificationsRead: () => void;
 };
 
 function getStoredUser(): User | null {
@@ -161,6 +176,27 @@ export const useStore = create<AppState>((set) => ({
     localStorage.setItem('soundMuted', muted ? '1' : '0');
     set({ soundMuted: muted });
   },
+
+  // Notifications
+  notifications: [],
+  unreadCount: 0,
+  addNotification: (n) => {
+    const note: AppNotification = {
+      ...n,
+      id: Math.random().toString(36).slice(2),
+      timestamp: Date.now(),
+      read: false,
+    };
+    set((s) => ({
+      notifications: [note, ...s.notifications].slice(0, 50),
+      unreadCount: s.unreadCount + 1,
+    }));
+  },
+  markAllNotificationsRead: () =>
+    set((s) => ({
+      notifications: s.notifications.map((n) => ({ ...n, read: true })),
+      unreadCount: 0,
+    })),
 }));
 
 // Helper: format minor units to display string

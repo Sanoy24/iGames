@@ -16,7 +16,7 @@ import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
 import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo-pattern.dto';
 import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoRoom, BingoPrizeTier } from './entities/bingo-room.entity';
-import { BingoTicket } from './entities/bingo-ticket.entity';
+import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 
 export type BingoRoomResponse = {
@@ -321,6 +321,7 @@ export class BingoService implements OnModuleInit {
     roomId: string;
     count: number;
     idempotencyKey: string;
+    selectedNumbers?: number[];
   }): Promise<BingoTicketResponse[]> {
     if (!Number.isSafeInteger(input.count) || input.count < 1 || input.count > 24) {
       throw new BadRequestException('Bingo ticket count must be between 1 and 24');
@@ -354,9 +355,14 @@ export class BingoService implements OnModuleInit {
       const createdTickets: BingoTicket[] = [];
       for (let index = 0; index < input.count; index += 1) {
         const isPatternMode = room.winMode === 'pattern';
-        const grid = isPatternMode
-          ? this.bingoRulesService.generatePatternCard(room.numberRange ?? 75)
-          : this.bingoRulesService.generateTicket();
+        const useSelection = index === 0 && input.selectedNumbers && input.selectedNumbers.length > 0;
+        const grid = useSelection
+          ? (isPatternMode
+              ? this.bingoRulesService.generatePatternCardFromSelection(input.selectedNumbers!, room.numberRange ?? 75)
+              : this.bingoRulesService.generateTicketFromSelection(input.selectedNumbers!))
+          : (isPatternMode
+              ? this.bingoRulesService.generatePatternCard(room.numberRange ?? 75)
+              : this.bingoRulesService.generateTicket());
 
         const ticket = manager.create(BingoTicket, {
           userId,
@@ -402,6 +408,8 @@ export class BingoService implements OnModuleInit {
 
   async drawNextNumber(roomId: string): Promise<BingoRoomResponse> {
     const validRoomId = this.validateUuid(roomId, 'roomId');
+    const cfg = await this.getBingoConfig();
+    const minDrawsBeforeWin = cfg.minDrawsBeforeWin ?? 0;
 
     return await this.dataSource.transaction(async (manager) => {
       const room = await manager.findOne(BingoRoom, {
@@ -447,7 +455,10 @@ export class BingoService implements OnModuleInit {
           patternIds.length > 0
             ? await manager.find(BingoPattern, { where: { id: In(patternIds) } })
             : [];
-        await this.evaluateAndSettlePatterns(room, patterns, manager);
+
+        if (room.drawnNumbers.length >= minDrawsBeforeWin) {
+          await this.evaluateAndSettlePatterns(room, patterns, manager);
+        }
 
         const allSettled =
           patternIds.length > 0 && patternIds.every((pid) => room.settledTiers.includes(pid));
@@ -456,7 +467,9 @@ export class BingoService implements OnModuleInit {
           await this.markRemainingTicketsLost(room, manager);
         }
       } else {
-        await this.evaluateAndSettleTiers(room, manager);
+        if (room.drawnNumbers.length >= minDrawsBeforeWin) {
+          await this.evaluateAndSettleTiers(room, manager);
+        }
         if (room.settledTiers.includes('full_house')) {
           room.status = 'completed';
           await this.markRemainingTicketsLost(room, manager);
@@ -693,6 +706,31 @@ export class BingoService implements OnModuleInit {
         },
       };
     }
+  }
+
+  async getRoomWinners(roomId: string): Promise<{ userId: string; payoutMinor: number }[]> {
+    return this.bingoTicketRepository.find({
+      where: { roomId, status: 'won', settlementStatus: 'settled' },
+      select: ['userId', 'payoutMinor'],
+    });
+  }
+
+  async getSpectatorView(roomId: string): Promise<Array<{
+    grid: BingoGrid;
+    markedNumbers: number[];
+    status: string;
+  }>> {
+    const validRoomId = this.validateUuid(roomId, 'roomId');
+    const tickets = await this.bingoTicketRepository.find({
+      where: { roomId: validRoomId, status: Not('cancelled') },
+      select: ['grid', 'markedNumbers', 'status'],
+      order: { createdAt: 'ASC' },
+    });
+    return tickets.map((t) => ({
+      grid: t.grid,
+      markedNumbers: t.markedNumbers,
+      status: t.status,
+    }));
   }
 
   private async markRemainingTicketsLost(room: BingoRoom, manager: EntityManager): Promise<void> {

@@ -60,6 +60,18 @@ export class BingoController {
     });
   }
 
+  @Get('rooms/:id/spectate')
+  @ApiOkResponse({
+    schema: {
+      example: [
+        { grid: [[1, null, 20]], markedNumbers: [1, 20], status: 'active' }
+      ]
+    }
+  })
+  spectateRoom(@Param('id') roomId: string) {
+    return this.bingoService.getSpectatorView(roomId);
+  }
+
   @Post('rooms/:id/tickets')
   @Throttle({ strict: { ttl: 60_000, limit: 10 } })
   @ApiBearerAuth()
@@ -90,7 +102,8 @@ export class BingoController {
       userId: user.id,
       roomId,
       count: dto.count,
-      idempotencyKey
+      idempotencyKey,
+      selectedNumbers: dto.selectedNumbers,
     });
   }
 }

@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomInt } from 'crypto';
-import { Repository, DataSource, EntityManager, In, MoreThan } from 'typeorm';
+import { Repository, DataSource, In, MoreThan } from 'typeorm';
 import { KenoService } from '../keno/keno.service';
+import { BingoService } from '../bingo/bingo.service';
+import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { User } from '../users/entities/user.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { CreateBotDto } from './dto/create-bot.dto';
@@ -37,7 +39,8 @@ export class BotsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly walletService: WalletService,
-    private readonly kenoService: KenoService
+    private readonly kenoService: KenoService,
+    private readonly bingoService: BingoService,
   ) {}
 
   async createBot(dto: CreateBotDto): Promise<BotResponse> {
@@ -108,10 +111,7 @@ export class BotsService {
    * Each active bot buys tickets for the given open draw.
    */
   async buyTicketsForDraw(drawId: string): Promise<void> {
-    const bots = await this.userRepository.createQueryBuilder('user')
-      .where("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
-      .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy.active') = true")
-      .getMany();
+    const bots = await this.getActiveBots();
 
     if (bots.length === 0) return;
 
@@ -158,6 +158,74 @@ export class BotsService {
         );
       }
     }
+  }
+
+  /**
+   * Called by the scheduler when a bingo room opens.
+   * Each active bot buys tickets. Idempotent — safe to call multiple times per room.
+   */
+  async buyTicketsForBingoRoom(roomId: string): Promise<void> {
+    const bots = await this.getActiveBots();
+    if (bots.length === 0) return;
+
+    for (const bot of bots) {
+      const policy = bot.productMetadata!.botPolicy as BotPolicy;
+      const count = Math.min(policy.ticketsPerRound ?? 1, 5);
+      const idempotencyKey = `bot-bingo:${roomId}:${bot.id}`;
+      try {
+        await this.bingoService.purchaseTickets({ userId: bot.id, roomId, count, idempotencyKey });
+      } catch {
+        // Room full, insufficient balance, or duplicate key — skip silently
+      }
+    }
+  }
+
+  /**
+   * Called by the scheduler after a bingo room completes.
+   * If the completed-room count is a multiple of `interval`, a random active bot
+   * receives a bonus win credit (posted-room win, no draw rigging needed).
+   */
+  async handleBingoBotWinInterval(roomId: string, interval: number): Promise<void> {
+    if (interval <= 0) return;
+
+    const completedCount = await this.dataSource.getRepository(BingoRoom).countBy({ status: 'completed' });
+    if (completedCount === 0 || completedCount % interval !== 0) return;
+
+    const bots = await this.getActiveBots();
+    if (bots.length === 0) return;
+
+    const luckyBot = bots[randomInt(0, bots.length)];
+    const bonusAmountMinor = 50_000;
+
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        await this.walletService.creditInSession(
+          {
+            userId: luckyBot.id,
+            amountMinor: bonusAmountMinor,
+            entryType: 'win',
+            sourceType: 'bingo_bot_win_interval',
+            sourceId: roomId,
+            idempotencyKey: `bingo-bot-win:${roomId}:${luckyBot.id}`,
+            metadata: { roomId, completedCount, interval },
+          },
+          manager,
+        );
+      });
+      this.logger.log(
+        `Bingo bot win interval (every ${interval} rooms): credited ${bonusAmountMinor} to bot ${luckyBot.id}`,
+      );
+    } catch (err) {
+      this.logger.error(`Failed to credit bot win for room ${roomId}`, err instanceof Error ? err.stack : err);
+    }
+  }
+
+  private async getActiveBots(): Promise<User[]> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .where("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
+      .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy.active') = true")
+      .getMany();
   }
 
   private async buyTicketsForSingleBot(bot: User, drawId: string, isForcedWin: boolean): Promise<void> {

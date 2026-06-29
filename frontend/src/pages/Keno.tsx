@@ -1,10 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Play, Pause, Trash2, RefreshCw, History, Ticket, Gamepad2,
+  ArrowLeft, Play, Pause, Trash2, ChevronDown, ChevronUp,
   Volume2, VolumeX, Trophy, Award, Zap,
 } from 'lucide-react';
-import { GameTabs, type GameTabOption } from '../components/GameTabs';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoConfig, KenoDraw, KenoTicket } from '../lib/models';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
@@ -75,13 +74,6 @@ function formatKenoInterval(cfg: KenoConfig) {
 
 type KenoDrawCompletedPayload = { drawId?: string; drawnNumbers?: number[] };
 type KenoProps = { onBack: () => void };
-type KenoTab = 'active' | 'draws' | 'tickets';
-
-const KENO_TABS: Array<GameTabOption<KenoTab>> = [
-  { id: 'active', label: 'Play Keno', description: 'Interactive board, bets, and drawing.', icon: <Gamepad2 size={18} /> },
-  { id: 'draws', label: 'Round History', description: 'Recent draws and outcomes.', icon: <History size={18} /> },
-  { id: 'tickets', label: 'My Bets', description: 'Your active and past tickets.', icon: <Ticket size={18} /> },
-];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -180,32 +172,35 @@ function CircularTimer({
   );
 }
 
-function DrawnBallsStrip({
-  revealedNumbers, selectedNumbers,
+function CollapsibleSection({
+  title, children, defaultOpen = false,
 }: {
-  revealedNumbers: number[]; selectedNumbers: number[];
+  title: string; children: React.ReactNode; defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="card">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between text-left"
+        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+      >
+        <span className="text-sm font-bold text-slate-200">{title}</span>
+        {open ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+      </button>
       <AnimatePresence initial={false}>
-        {revealedNumbers.map((num) => {
-          const hit = selectedNumbers.includes(num);
-          return (
-            <motion.span
-              key={num}
-              initial={{ y: -28, opacity: 0, scale: 0.4, rotate: -90 }}
-              animate={{ y: 0, opacity: 1, scale: 1, rotate: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 18 }}
-              className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-[10px] font-black font-mono border flex-shrink-0 ${
-                hit
-                  ? 'bg-emerald-500 border-emerald-400 text-black shadow-[0_0_10px_rgba(16,185,129,0.55)]'
-                  : 'bg-violet-950/80 border-violet-500/40 text-violet-300'
-              }`}
-            >
-              {num}
-            </motion.span>
-          );
-        })}
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="pt-4">{children}</div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
@@ -231,7 +226,6 @@ export function Keno({ onBack }: KenoProps) {
   const [spotTarget, setSpotTarget]   = useState(4);
   const [loading, setLoading]         = useState(true);
   const [submitting, setSubmitting]   = useState(false);
-  const [activeTab, setActiveTab]     = useState<KenoTab>('active');
 
   const [gameState, setGameState]     = useState<'idle' | 'waiting' | 'drawing' | 'celebrating' | 'finished'>('idle');
   const [animatingDrawId, setAnimatingDrawId] = useState<string | null>(null);
@@ -513,22 +507,35 @@ export function Keno({ onBack }: KenoProps) {
   );
 
   const intervalSecs = config ? getKenoIntervalSeconds(config) : DEFAULT_KENO_INTERVAL_SECONDS;
+  const paytableEntries = config?.paytable
+    ?.filter((e) => e.spots === spotTarget && e.payoutMultiplier > 0)
+    .sort((a, b) => a.matches - b.matches) ?? [];
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
-  return (
-    <div className="space-y-5 max-w-4xl mx-auto pb-20">
-      <GameTabs tabs={KENO_TABS} activeTab={activeTab} onTabChange={setActiveTab} onBack={onBack} ariaLabel="Keno sections" />
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
+        <div className="spinner" />
+      </div>
+    );
+  }
 
-      {/* Audio bar */}
-      <div className="flex justify-between items-center">
-        {liveCounts && liveCounts.kenoOnline > 0 && (
-          <span className="live-badge-pulse">
-            <span className="pulse-dot" />
-            {liveCounts.kenoOnline} playing
-          </span>
-        )}
-        <div className="flex items-center gap-2 ml-auto">
+  return (
+    <div className="space-y-4 max-w-2xl mx-auto pb-20">
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <button type="button" onClick={onBack} className="btn btn-ghost btn-sm" style={{ gap: 4 }}>
+          <ArrowLeft size={16} /> Back
+        </button>
+        <div className="flex items-center gap-3">
+          {liveCounts && liveCounts.kenoOnline > 0 && (
+            <span className="live-badge-pulse">
+              <span className="pulse-dot" />
+              {liveCounts.kenoOnline} playing
+            </span>
+          )}
           <button onClick={() => setSoundMuted(!soundMuted)} className="btn btn-ghost btn-sm icon-btn">
             {soundMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </button>
@@ -540,496 +547,393 @@ export function Keno({ onBack }: KenoProps) {
         </div>
       </div>
 
-      {/* ── PLAY TAB ── */}
-      {activeTab === 'active' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      {/* Draw status card */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+        className="card text-center relative overflow-hidden"
+      >
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(245,158,11,0.06) 0%, transparent 70%)' }} />
 
-          {/* LEFT COLUMN */}
-          <div className="lg:col-span-4 space-y-4">
-
-            {/* Circular countdown card */}
+        {activeDraw && activeDraw.status !== 'open' ? (
+          <div className="py-4">
             <motion.div
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-              className="card text-center relative overflow-hidden"
+              animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 1.2, repeat: Infinity }}
+              className="text-2xl font-black text-amber-400 uppercase tracking-widest mb-1"
             >
-              <div className="absolute inset-0 pointer-events-none"
-                style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(245,158,11,0.06) 0%, transparent 70%)' }} />
-              {activeDraw && activeDraw.status !== 'open' ? (
-                <div className="py-4">
-                  <motion.div
-                    animate={{ opacity: [1, 0.5, 1] }} transition={{ duration: 1.2, repeat: Infinity }}
-                    className="text-2xl font-black text-amber-400 uppercase tracking-widest mb-1"
-                  >
-                    Drawing...
-                  </motion.div>
-                  <p className="text-xs text-slate-400">Numbers are being revealed</p>
-                </div>
-              ) : (
-                <CircularTimer
-                  seconds={countdownSeconds} totalSeconds={intervalSecs}
-                  urgent={countdownUrgent} expired={countdownExpired} display={countdown}
-                />
-              )}
-              {/* Config row */}
-              {config && (
-                <div className="grid grid-cols-3 gap-2 mt-4">
-                  {[
-                    { label: 'Price', value: `${formatCredits(config.ticketPriceMinor)} Cr`, color: 'text-amber-400' },
-                    { label: 'Draws', value: `${config.drawSize}`, color: 'text-indigo-400' },
-                    { label: 'Interval', value: formatKenoInterval(config), color: 'text-teal-400' },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className="rounded-xl p-2 bg-white/[0.03] border border-white/[0.05] text-center">
-                      <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">{label}</span>
-                      <span className={`text-sm font-black ${color}`}>{value}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              Drawing...
             </motion.div>
+            <p className="text-xs text-slate-400">Numbers are being revealed</p>
+          </div>
+        ) : (
+          <CircularTimer
+            seconds={countdownSeconds} totalSeconds={intervalSecs}
+            urgent={countdownUrgent} expired={countdownExpired} display={countdown}
+          />
+        )}
 
-            {/* Spot selector + paytable */}
-            <div className="card space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Spot Target</label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {allowedSpots.map((spots) => (
-                  <motion.button
-                    key={spots}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => { soundEngine.click(); setSpotTarget(spots); }}
-                    className={`py-2 text-xs font-black rounded-xl border transition-all ${
-                      spots === spotTarget
-                        ? 'bg-[var(--gold)] border-[var(--gold)] text-black shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                        : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-amber-500/40 hover:text-amber-400'
-                    }`}
-                  >
-                    {spots}
-                  </motion.button>
-                ))}
+        {/* Drawing reveal strip */}
+        <AnimatePresence>
+          {gameState === 'drawing' && revealedNumbers.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-3 pt-3 border-t border-white/[0.05]"
+            >
+              <div className="text-[10px] text-violet-400 font-bold mb-2 uppercase tracking-wider">
+                {revealedNumbers.length} / {config?.drawSize ?? 20} balls
               </div>
+              <div className="flex flex-wrap gap-1 justify-center">
+                {revealedNumbers.map((num) => {
+                  const hit = selectedNumbers.includes(num);
+                  return (
+                    <motion.span
+                      key={num}
+                      initial={{ y: -16, opacity: 0, scale: 0.5 }}
+                      animate={{ y: 0, opacity: 1, scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 300, damping: 18 }}
+                      className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black font-mono border flex-shrink-0 ${
+                        hit ? 'bg-emerald-500 border-emerald-400 text-black' : 'bg-violet-950/80 border-violet-500/40 text-violet-300'
+                      }`}
+                    >
+                      {num}
+                    </motion.span>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-              {/* Paytable */}
-              {config?.paytable && (() => {
-                const entries = config.paytable
-                  .filter((e) => e.spots === spotTarget && e.payoutMultiplier > 0)
-                  .sort((a, b) => a.matches - b.matches);
-                if (!entries.length) return null;
+        {/* Config strip */}
+        {config && (
+          <div className="grid grid-cols-3 gap-2 mt-4">
+            {[
+              { label: 'Price', value: `${formatCredits(config.ticketPriceMinor)} Cr`, color: 'text-amber-400' },
+              { label: 'Draws', value: `${config.drawSize}`, color: 'text-indigo-400' },
+              { label: 'Interval', value: formatKenoInterval(config), color: 'text-teal-400' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="rounded-xl p-2 bg-white/[0.03] border border-white/[0.05] text-center">
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-slate-500">{label}</span>
+                <span className={`text-sm font-black ${color}`}>{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </motion.div>
+
+      {/* Result panel */}
+      <AnimatePresence>
+        {drawResult && (
+          <motion.div
+            initial={{ opacity: 0, y: 16, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.97 }}
+            transition={{ type: 'spring', stiffness: 280, damping: 22 }}
+            className={`card border-2 relative overflow-hidden ${
+              drawResult.totalPayout > 0 ? 'border-amber-500/40' : 'border-white/[0.07]'
+            }`}
+          >
+            {drawResult.totalPayout > 0 && (
+              <div className="absolute inset-0 pointer-events-none"
+                style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.08) 0%, transparent 60%)' }} />
+            )}
+            <div className="flex justify-between items-center gap-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className={`p-3 rounded-2xl ${
+                  drawResult.totalPayout > 0
+                    ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+                    : 'bg-white/[0.04] border border-white/[0.06] text-slate-400'
+                }`}>
+                  {drawResult.totalPayout > 0 ? <Trophy size={28} /> : <Award size={28} />}
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-slate-100">
+                    {drawResult.totalPayout > 0 ? 'You Won!' : 'Round Complete'}
+                  </h4>
+                  <p className="text-[11px] text-slate-500">Draw #{drawResult.drawId.slice(-6)}</p>
+                </div>
+              </div>
+              {drawResult.totalPayout > 0 && (
+                <span className="text-xl font-black text-emerald-400 font-mono">
+                  +{formatCreditsFull(drawResult.totalPayout)}
+                </span>
+              )}
+            </div>
+            <div className="space-y-2 border-t border-white/[0.05] pt-3">
+              {drawResult.userTickets.map((t) => {
+                const hits = t.selectedNumbers.filter((n) => drawResult.drawnNumbers.includes(n));
                 return (
-                  <div className="rounded-xl bg-black/30 border border-white/[0.05] text-xs overflow-hidden">
-                    <div className="flex justify-between items-center px-3 py-2 border-b border-white/[0.05] text-slate-400 font-bold text-[10px] uppercase tracking-wider">
-                      <span>Matches</span><span>Multiplier</span>
+                  <div key={t.id} className="rounded-xl bg-black/30 border border-white/[0.05] p-3 flex flex-col gap-2">
+                    <div className="text-xs">
+                      <span className="font-bold text-slate-300">{t.selectedNumbers.length}-Spot</span>
+                      <span className="text-slate-500 ml-2">
+                        {t.matches} match{t.matches !== 1 ? 'es' : ''}
+                        {hits.length > 0 && <span className="text-amber-400 ml-1">({hits.join(', ')})</span>}
+                      </span>
                     </div>
-                    <div className="max-h-28 overflow-y-auto divide-y divide-white/[0.04]">
-                      {entries.map((e) => (
-                        <div key={`${e.spots}-${e.matches}`} className="flex justify-between items-center px-3 py-1.5 text-slate-400">
-                          <span>{e.matches}×</span>
-                          <span className="font-black text-amber-400">{e.payoutMultiplier}×</span>
-                        </div>
+                    <div className="flex gap-1 flex-wrap">
+                      {t.selectedNumbers.map((n) => (
+                        <span key={n}
+                          className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-[10px] ${
+                            hits.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
+                          }`}
+                        >
+                          {n}
+                        </span>
                       ))}
                     </div>
                   </div>
                 );
-              })()}
+              })}
             </div>
+            <button
+              onClick={() => { soundEngine.click(); setDrawResult(null); }}
+              className="btn btn-secondary btn-full btn-sm mt-3"
+            >
+              Dismiss
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-            {/* Auto Play */}
-            <div className="card space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-slate-200 uppercase tracking-wider">Auto Play</span>
-                <span className={`badge ${autoPlayEnabled ? 'badge-gold' : 'text-slate-500 bg-white/[0.03] border border-white/[0.07]'}`}>
-                  {autoPlayEnabled ? 'ACTIVE' : 'OFF'}
-                </span>
-              </div>
+      {/* Number grid card */}
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card relative">
+        <div className="absolute inset-0 pointer-events-none rounded-[var(--radius-lg)]"
+          style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.04) 0%, transparent 60%)' }} />
 
-              {!autoPlayEnabled ? (
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex justify-between text-[10px] text-slate-400 mb-1.5">
-                      <span>Rounds</span>
-                      <strong className="text-amber-400">{autoPlayRounds}</strong>
-                    </div>
-                    <input type="range" min="5" max="100" step="5" value={autoPlayRounds}
-                      onChange={(e) => setAutoPlayRounds(parseInt(e.target.value))}
-                      className="w-full accent-amber-500 cursor-pointer h-1 rounded" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      { label: 'Stop Profit', key: 'profit', value: autoPlayStopProfit, setter: setAutoPlayStopProfit },
-                      { label: 'Stop Loss', key: 'loss', value: autoPlayStopLoss, setter: setAutoPlayStopLoss },
-                    ].map(({ label, key, value, setter }) => (
-                      <div key={key}>
-                        <span className="block text-[9px] text-slate-500 font-bold uppercase mb-1">{label}</span>
-                        <input type="number" placeholder="Optional"
-                          value={value} onChange={(e) => setter(e.target.value)}
-                          className="input text-xs py-1.5 px-2" />
-                      </div>
-                    ))}
-                  </div>
-                  <button onClick={handleStartAutoPlay} className="btn btn-primary btn-full btn-sm">
-                    <Play size={13} fill="currentColor" /> Start Auto Play
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {/* Progress ring */}
-                  <div className="flex items-center gap-3">
-                    <div className="relative w-12 h-12 flex-shrink-0">
-                      <svg className="w-full h-full -rotate-90" viewBox="0 0 48 48">
-                        <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="4" />
-                        <circle cx="24" cy="24" r="20" fill="none" stroke="#f59e0b" strokeWidth="4"
-                          strokeLinecap="round"
-                          strokeDasharray={2 * Math.PI * 20}
-                          strokeDashoffset={2 * Math.PI * 20 * (1 - autoPlayRoundsRemaining / autoPlayRounds)}
-                          style={{ transition: 'stroke-dashoffset 0.4s ease' }} />
-                      </svg>
-                      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-amber-400">
-                        {autoPlayRoundsRemaining}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-400 space-y-0.5">
-                      <div>Played: <strong className="text-slate-200">{autoPlayStats.roundsPlayed}</strong></div>
-                      <div>P&L: <strong className={autoPlayStats.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-                        {autoPlayStats.netProfit >= 0 ? '+' : ''}{autoPlayStats.netProfit} Cr
-                      </strong></div>
-                    </div>
-                  </div>
-                  <button onClick={handleStopAutoPlay} className="btn btn-danger btn-full btn-sm">
-                    <Pause size={13} fill="currentColor" /> Stop / Pause
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* RIGHT COLUMN */}
-          <div className="lg:col-span-8 space-y-4">
-
-            {/* Drawing reveal panel */}
-            <AnimatePresence>
-              {gameState === 'drawing' && (
-                <motion.div
-                  initial={{ opacity: 0, y: -8, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.97 }}
-                  className="rounded-xl border border-violet-500/25 bg-violet-950/20 p-4 relative overflow-hidden"
-                >
-                  <div className="absolute inset-0 pointer-events-none"
-                    style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.1) 0%, transparent 70%)' }} />
-                  <div className="flex items-center gap-2.5 mb-3">
-                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}>
-                      <Zap className="text-violet-400" size={18} />
-                    </motion.div>
-                    <div>
-                      <span className="text-sm font-black text-violet-200">Drawing in Progress</span>
-                      <p className="text-[10px] text-violet-400">
-                        {revealedNumbers.length} / {config?.drawSize ?? 20} balls revealed
-                      </p>
-                    </div>
-                    <div className="ml-auto flex gap-1 flex-shrink-0">
-                      <span className="animate-ping absolute top-3 right-3 inline-flex h-2 w-2 rounded-full bg-violet-400 opacity-75" />
-                      <span className="absolute top-3 right-3 inline-flex rounded-full h-2 w-2 bg-violet-500" />
-                    </div>
-                  </div>
-                  <DrawnBallsStrip revealedNumbers={revealedNumbers} selectedNumbers={selectedNumbers} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Main board */}
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card relative">
-              <div className="absolute inset-0 pointer-events-none rounded-[var(--radius-lg)]"
-                style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.04) 0%, transparent 60%)' }} />
-
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
-                <div>
-                  <h3 className="section-title text-base">Number Grid</h3>
-                  <p className="text-[11px] text-slate-500">
-                    {selectedNumbers.length}/{spotTarget} selected
-                    {selectedNumbers.length > 0 && (
-                      <span className="ml-2 text-amber-400 font-bold">→ {selectedNumbers.join(', ')}</span>
-                    )}
-                  </p>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={handleQuickPick} disabled={gameState === 'drawing'}
-                    className="btn btn-ghost btn-sm text-amber-400">
-                    <Zap size={13} /> Quick Pick
-                  </button>
-                  <button onClick={handleClearSelection} disabled={gameState === 'drawing' || selectedNumbers.length === 0}
-                    className="btn btn-ghost btn-sm">
-                    <Trash2 size={13} /> Clear
-                  </button>
-                </div>
-              </div>
-
-              {/* Grid */}
-              <div className="grid grid-cols-10 gap-1 sm:gap-1.5">
-                {numbers.map((value) => (
-                  <KenoTile
-                    key={value}
-                    value={value}
-                    state={getTileState(value, selectedNumbers, revealedNumbers, drawComplete)}
-                    onClick={() => toggleNumber(value)}
-                    disabled={gameState === 'drawing'}
-                  />
-                ))}
-              </div>
-
-              {/* Bet controls */}
-              {!autoPlayEnabled && (
-                <div className="mt-5 flex flex-col sm:flex-row gap-3 items-center justify-between border-t border-white/[0.05] pt-4">
-                  <div className="text-center sm:text-left">
-                    <span className="block text-[9px] font-black uppercase tracking-widest text-slate-500">Total Stake</span>
-                    <strong className="text-lg font-black text-amber-400">
-                      {config ? `${formatCredits(config.ticketPriceMinor)} e-Birr` : '—'}
-                    </strong>
-                  </div>
-                  <motion.button
-                    whileHover={selectedNumbers.length === spotTarget && activeDraw?.status === 'open' ? { scale: 1.03 } : {}}
-                    whileTap={{ scale: 0.96 }}
-                    onClick={handleBuyTicket}
-                    disabled={submitting || selectedNumbers.length !== spotTarget || !activeDraw || activeDraw.status !== 'open'}
-                    className={`btn btn-full sm:btn w-full sm:w-auto px-10 ${
-                      selectedNumbers.length === spotTarget && activeDraw?.status === 'open'
-                        ? 'btn-primary'
-                        : 'btn-secondary opacity-50'
-                    }`}
-                  >
-                    {submitting ? 'Submitting...'
-                      : hasTicketForActiveDraw ? 'Ticket Purchased — Awaiting Draw'
-                      : !activeDraw || activeDraw.status !== 'open' ? 'Draw Locked / Running'
-                      : `Place ${spotTarget}-Spot Bet`}
-                  </motion.button>
-                </div>
-              )}
-            </motion.div>
-
-            {/* Result panel */}
-            <AnimatePresence>
-              {drawResult && (
-                <motion.div
-                  initial={{ opacity: 0, y: 16, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                  transition={{ type: 'spring', stiffness: 280, damping: 22 }}
-                  className={`card border-2 relative overflow-hidden ${
-                    drawResult.totalPayout > 0 ? 'border-amber-500/40' : 'border-white/[0.07]'
-                  }`}
-                >
-                  {drawResult.totalPayout > 0 && (
-                    <div className="absolute inset-0 pointer-events-none"
-                      style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.08) 0%, transparent 60%)' }} />
-                  )}
-
-                  <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-4">
-                    <div className="flex items-center gap-3">
-                      <motion.div
-                        initial={{ rotate: -20, scale: 0.7 }}
-                        animate={{ rotate: 0, scale: 1 }}
-                        transition={{ type: 'spring', stiffness: 260, damping: 14 }}
-                        className={`p-3 rounded-2xl ${
-                          drawResult.totalPayout > 0
-                            ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
-                            : 'bg-white/[0.04] border border-white/[0.06] text-slate-400'
-                        }`}
-                      >
-                        {drawResult.totalPayout > 0 ? <Trophy size={32} /> : <Award size={32} />}
-                      </motion.div>
-                      <div>
-                        <h4 className="text-base font-black text-slate-100">
-                          {drawResult.totalPayout > 0 ? 'You Won!' : 'Round Complete'}
-                        </h4>
-                        <p className="text-[11px] text-slate-500">Draw #{drawResult.drawId.slice(-6)}</p>
-                      </div>
-                    </div>
-                    {drawResult.totalPayout > 0 ? (
-                      <motion.div
-                        initial={{ scale: 0.6 }} animate={{ scale: 1 }}
-                        transition={{ type: 'spring', stiffness: 300, damping: 16, delay: 0.2 }}
-                        className="text-right"
-                      >
-                        <span className="block text-[9px] font-black uppercase tracking-widest text-emerald-400">Total Win</span>
-                        <span className="text-2xl font-black text-emerald-400 font-mono">
-                          +{formatCreditsFull(drawResult.totalPayout)}
-                        </span>
-                      </motion.div>
-                    ) : (
-                      <span className="text-sm font-bold text-slate-500">No matches</span>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 border-t border-white/[0.05] pt-3">
-                    {drawResult.userTickets.map((t) => {
-                      const hits = t.selectedNumbers.filter((n) => drawResult.drawnNumbers.includes(n));
-                      return (
-                        <div key={t.id} className="rounded-xl bg-black/30 border border-white/[0.05] p-3 flex flex-col sm:flex-row gap-3 justify-between">
-                          <div className="text-xs">
-                            <span className="font-bold text-slate-300">{t.selectedNumbers.length}-Spot</span>
-                            <span className="text-slate-500 ml-2">
-                              {t.matches} match{t.matches !== 1 ? 'es' : ''}
-                              {hits.length > 0 && <span className="text-amber-400 ml-1">({hits.join(', ')})</span>}
-                            </span>
-                          </div>
-                          <div className="flex gap-1 flex-wrap">
-                            {t.selectedNumbers.map((n) => (
-                              <span key={n}
-                                className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-[10px] ${
-                                  hits.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
-                                }`}
-                              >
-                                {n}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    onClick={() => { soundEngine.click(); setDrawResult(null); }}
-                    className="btn btn-secondary btn-full btn-sm mt-3"
-                  >
-                    Dismiss
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+        {/* Spot selector */}
+        <div className="mb-3">
+          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-2">
+            Pick spots ({selectedNumbers.length}/{spotTarget})
+          </label>
+          <div className="grid grid-cols-6 gap-1.5">
+            {allowedSpots.map((spots) => (
+              <motion.button
+                key={spots}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => { soundEngine.click(); setSpotTarget(spots); setSelectedNumbers([]); }}
+                className={`py-1.5 text-xs font-black rounded-xl border transition-all ${
+                  spots === spotTarget
+                    ? 'bg-[var(--gold)] border-[var(--gold)] text-black shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                    : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-amber-500/40 hover:text-amber-400'
+                }`}
+              >
+                {spots}
+              </motion.button>
+            ))}
           </div>
         </div>
+
+        {/* Grid */}
+        <div className="grid grid-cols-10 gap-1 sm:gap-1.5 mb-4">
+          {numbers.map((value) => (
+            <KenoTile
+              key={value}
+              value={value}
+              state={getTileState(value, selectedNumbers, revealedNumbers, drawComplete)}
+              onClick={() => toggleNumber(value)}
+              disabled={gameState === 'drawing'}
+            />
+          ))}
+        </div>
+
+        {/* Action bar */}
+        <div className="flex gap-2 mb-4">
+          <button onClick={handleQuickPick} disabled={gameState === 'drawing'}
+            className="btn btn-ghost btn-sm flex-1">
+            <Zap size={13} /> Quick Pick
+          </button>
+          <button onClick={handleClearSelection} disabled={gameState === 'drawing' || selectedNumbers.length === 0}
+            className="btn btn-ghost btn-sm flex-1">
+            <Trash2 size={13} /> Clear
+          </button>
+        </div>
+
+        {/* Buy / Auto play status */}
+        {!autoPlayEnabled ? (
+          <motion.button
+            whileHover={selectedNumbers.length === spotTarget && activeDraw?.status === 'open' ? { scale: 1.02 } : {}}
+            whileTap={{ scale: 0.97 }}
+            onClick={handleBuyTicket}
+            disabled={submitting || selectedNumbers.length !== spotTarget || !activeDraw || activeDraw.status !== 'open'}
+            className={`btn btn-full ${
+              selectedNumbers.length === spotTarget && activeDraw?.status === 'open'
+                ? 'btn-primary'
+                : 'btn-secondary opacity-50'
+            }`}
+          >
+            {submitting ? 'Submitting...'
+              : hasTicketForActiveDraw ? '✓ Ticket Purchased — Awaiting Draw'
+              : !activeDraw || activeDraw.status !== 'open' ? 'Draw Locked / Running'
+              : `Place ${spotTarget}-Spot Bet · ${config ? formatCredits(config.ticketPriceMinor) : '—'} Cr`}
+          </motion.button>
+        ) : (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 flex items-center justify-between">
+            <div className="text-xs text-slate-300">
+              Auto Play: <strong className="text-amber-400">{autoPlayRoundsRemaining}</strong> rounds left
+              <span className={`ml-2 ${autoPlayStats.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                ({autoPlayStats.netProfit >= 0 ? '+' : ''}{autoPlayStats.netProfit} Cr)
+              </span>
+            </div>
+            <button onClick={handleStopAutoPlay} className="btn btn-danger btn-sm">
+              <Pause size={12} fill="currentColor" /> Stop
+            </button>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Paytable — collapsible */}
+      {paytableEntries.length > 0 && (
+        <CollapsibleSection title={`Paytable — ${spotTarget}-Spot`}>
+          <div className="rounded-xl bg-black/30 border border-white/[0.05] text-xs overflow-hidden">
+            <div className="flex justify-between items-center px-3 py-2 border-b border-white/[0.05] text-slate-400 font-bold text-[10px] uppercase tracking-wider">
+              <span>Matches</span><span>Multiplier</span>
+            </div>
+            <div className="divide-y divide-white/[0.04]">
+              {paytableEntries.map((e) => (
+                <div key={`${e.spots}-${e.matches}`} className="flex justify-between items-center px-3 py-2 text-slate-400">
+                  <span>{e.matches}×</span>
+                  <span className="font-black text-amber-400">{e.payoutMultiplier}×</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CollapsibleSection>
       )}
 
-      {/* ── DRAW HISTORY TAB ── */}
-      {activeTab === 'draws' && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-          <div className="card">
-            <div className="flex justify-between items-center mb-5">
-              <div>
-                <h3 className="section-title">Draw History</h3>
-                <p className="hero-copy text-xs">Recent Keno draws and matched numbers.</p>
+      {/* Auto Play — collapsible */}
+      <CollapsibleSection title="Auto Play">
+        {!autoPlayEnabled ? (
+          <div className="space-y-3">
+            <div>
+              <div className="flex justify-between text-[10px] text-slate-400 mb-1.5">
+                <span>Rounds</span>
+                <strong className="text-amber-400">{autoPlayRounds}</strong>
               </div>
-              <button onClick={loadKeno} className="btn btn-secondary btn-sm">
-                <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
-              </button>
+              <input type="range" min="5" max="100" step="5" value={autoPlayRounds}
+                onChange={(e) => setAutoPlayRounds(parseInt(e.target.value))}
+                className="w-full accent-amber-500 cursor-pointer h-1 rounded" />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { label: 'Stop Profit', key: 'profit', value: autoPlayStopProfit, setter: setAutoPlayStopProfit },
+                { label: 'Stop Loss', key: 'loss', value: autoPlayStopLoss, setter: setAutoPlayStopLoss },
+              ].map(({ label, key, value, setter }) => (
+                <div key={key}>
+                  <span className="block text-[9px] text-slate-500 font-bold uppercase mb-1">{label}</span>
+                  <input type="number" placeholder="Optional"
+                    value={value} onChange={(e) => setter(e.target.value)}
+                    className="input text-xs py-1.5 px-2" />
+                </div>
+              ))}
+            </div>
+            <button onClick={handleStartAutoPlay} className="btn btn-primary btn-full btn-sm">
+              <Play size={13} fill="currentColor" /> Start Auto Play
+            </button>
+          </div>
+        ) : (
+          <div className="text-center text-slate-400 text-sm">
+            Auto Play is active — {autoPlayRoundsRemaining} rounds remaining
+          </div>
+        )}
+      </CollapsibleSection>
 
-            {draws.length === 0 ? (
-              <div className="centered-loader">No draws found yet.</div>
-            ) : (
-              <div className="space-y-3">
-                {draws.map((draw) => {
-                  const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
-                  const userPicks = [...new Set(drawTickets.flatMap((t) => t.selectedNumbers))].sort((a, b) => a - b);
-                  return (
-                    <article key={draw.id} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-4 space-y-3">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="text-sm font-extrabold text-slate-200">Draw #{draw.id.slice(-6)}</h4>
-                          <span className="text-[10px] text-slate-500">{formatDateTime(draw.scheduledAt)}</span>
-                        </div>
-                        <span className={
-                          draw.status === 'settled' ? 'badge badge-green'
-                          : draw.status === 'cancelled' ? 'badge badge-red'
-                          : 'badge badge-violet'
-                        }>
-                          {draw.status}
-                        </span>
-                      </div>
+      {/* Recent draws — collapsible */}
+      <CollapsibleSection title="Recent Draws">
+        {draws.length === 0 ? (
+          <div className="text-center text-slate-500 text-sm py-4">No draws yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {draws.slice(0, 5).map((draw) => {
+              const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
+              const userPicks = [...new Set(drawTickets.flatMap((t) => t.selectedNumbers))].sort((a, b) => a - b);
+              return (
+                <article key={draw.id} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-3 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h4 className="text-xs font-extrabold text-slate-200">Draw #{draw.id.slice(-6)}</h4>
+                      <span className="text-[10px] text-slate-500">{formatDateTime(draw.scheduledAt)}</span>
+                    </div>
+                    <span className={
+                      draw.status === 'settled' ? 'badge badge-green'
+                      : draw.status === 'cancelled' ? 'badge badge-red'
+                      : 'badge badge-violet'
+                    }>{draw.status}</span>
+                  </div>
+                  {userPicks.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {userPicks.map((p) => (
+                        <span key={p}
+                          className={`w-5 h-5 rounded-full font-bold flex items-center justify-center text-[9px] ${
+                            draw.drawnNumbers.includes(p) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
+                          }`}
+                        >{p}</span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-0.5">
+                    {draw.drawnNumbers.map((n) => (
+                      <span key={n}
+                        className={`w-5 h-5 rounded-full font-mono text-[9px] flex items-center justify-center ${
+                          userPicks.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.05] text-slate-500'
+                        }`}
+                      >{n}</span>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </CollapsibleSection>
 
-                      {userPicks.length > 0 && (
-                        <div className="text-xs">
-                          <span className="text-slate-500 font-bold block mb-1.5">Your picks:</span>
-                          <div className="flex flex-wrap gap-1">
-                            {userPicks.map((p) => (
-                              <span key={p}
-                                className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-[10px] ${
-                                  draw.drawnNumbers.includes(p) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
-                                }`}
-                              >{p}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex flex-wrap gap-1">
-                        {draw.drawnNumbers.map((n) => (
+      {/* My tickets — collapsible */}
+      <CollapsibleSection title={`My Tickets (${tickets.length})`}>
+        {tickets.length === 0 ? (
+          <div className="text-center text-slate-500 text-sm py-4">No tickets yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {tickets.map((t) => {
+              const settled = t.settlementStatus === 'settled';
+              const won = t.payoutMinor > 0;
+              const draw = draws.find((d) => d.id === t.drawId);
+              const drawnNums = draw?.drawnNumbers ?? [];
+              return (
+                <article key={t.id}
+                  className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-3 flex justify-between gap-3"
+                >
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-extrabold text-slate-200">#{t.id.slice(-6)}</span>
+                      <span className="text-[10px] text-slate-500">Draw #{t.drawId.slice(-6)}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {t.selectedNumbers.map((n) => {
+                        const isHit = settled && drawnNums.includes(n);
+                        return (
                           <span key={n}
-                            className={`w-6 h-6 rounded-full font-bold font-mono text-[10px] flex items-center justify-center ${
-                              userPicks.includes(n) ? 'bg-emerald-500 text-black shadow-sm' : 'bg-white/[0.05] text-slate-400'
+                            className={`w-5 h-5 rounded-full font-bold flex items-center justify-center text-[9px] ${
+                              isHit ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
                             }`}
                           >{n}</span>
-                        ))}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span className={`badge ${won ? 'badge-green' : settled ? 'text-slate-500 bg-white/[0.03] border border-white/[0.07]' : 'badge-gold'}`}>
+                      {won ? 'Won' : settled ? 'No Win' : 'Pending'}
+                    </span>
+                    {won && <span className="text-xs font-black text-emerald-400">+{formatCredits(t.payoutMinor)}</span>}
+                  </div>
+                </article>
+              );
+            })}
           </div>
-        </motion.div>
-      )}
-
-      {/* ── MY BETS TAB ── */}
-      {activeTab === 'tickets' && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-          <div className="card">
-            <div className="flex justify-between items-center mb-5">
-              <div>
-                <h3 className="section-title">My Keno Tickets</h3>
-                <p className="hero-copy text-xs">Track your purchased tickets and results.</p>
-              </div>
-              <button onClick={loadKeno} className="btn btn-secondary btn-sm">
-                <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
-              </button>
-            </div>
-
-            {tickets.length === 0 ? (
-              <div className="centered-loader">No tickets yet. Buy tickets under "Play Keno".</div>
-            ) : (
-              <div className="space-y-3">
-                {tickets.map((t) => {
-                  const settled = t.settlementStatus === 'settled';
-                  const won = t.payoutMinor > 0;
-                  const draw = draws.find((d) => d.id === t.drawId);
-                  const drawnNums = draw?.drawnNumbers ?? [];
-                  return (
-                    <article key={t.id}
-                      className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-4 flex flex-col sm:flex-row justify-between gap-4"
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-extrabold text-slate-200">#{t.id.slice(-6)}</h4>
-                          <span className="text-[10px] text-slate-500">Draw #{t.drawId.slice(-6)}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {t.selectedNumbers.map((n) => {
-                            const isHit = settled && drawnNums.includes(n);
-                            return (
-                              <span key={n}
-                                className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-[10px] ${
-                                  isHit ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
-                                }`}
-                              >{n}</span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 sm:flex-col sm:items-end justify-between border-t border-white/[0.05] sm:border-0 pt-3 sm:pt-0">
-                        <div className="text-xs text-slate-500 space-y-0.5">
-                          <div>Bet: <strong className="text-slate-300">{formatCredits(t.stakeMinor)} Cr</strong></div>
-                          {settled && won && <div>Win: <strong className="text-emerald-400">+{formatCredits(t.payoutMinor)} Cr</strong></div>}
-                        </div>
-                        <span className={`badge ${won ? 'badge-green' : settled ? 'text-slate-500 bg-white/[0.03] border border-white/[0.07]' : 'badge-gold'}`}>
-                          {won ? 'Won' : settled ? 'No Win' : 'Pending'}
-                        </span>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </motion.div>
-      )}
+        )}
+      </CollapsibleSection>
     </div>
   );
 }

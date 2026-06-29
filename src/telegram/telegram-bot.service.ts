@@ -1,6 +1,9 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
+import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { UsersService } from '../users/users.service';
 
 @Injectable()
@@ -15,6 +18,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -87,6 +91,25 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     if (this.bot && this.isPolling) {
       await this.bot.stop();
       this.logger.log('Telegram bot polling stopped');
+    }
+  }
+
+  async notifyUserWin(userId: string, amountMinor: number, gameName: string): Promise<void> {
+    if (!this.bot) return;
+    try {
+      const identity = await this.dataSource.getRepository(AuthIdentity).findOne({
+        where: { userId, provider: 'telegram' },
+        select: ['providerUserId'],
+      });
+      if (!identity?.providerUserId) return;
+
+      const credits = (amountMinor / 100).toFixed(0);
+      await this.bot.api.sendMessage(
+        Number(identity.providerUserId),
+        `🎉 You won ${credits} Cr playing ${gameName}! Open iGames to play again.`,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to send Telegram win notification to user ${userId}: ${err instanceof Error ? err.message : err}`);
     }
   }
 

@@ -201,6 +201,13 @@ export class KenoService {
     return tickets.map((ticket) => this.toTicketResponse(ticket));
   }
 
+  async getDrawWinners(drawId: string): Promise<{ userId: string; payoutMinor: number }[]> {
+    return this.kenoTicketRepository.find({
+      where: { drawId, status: 'won', settlementStatus: 'settled' },
+      select: ['userId', 'payoutMinor'],
+    });
+  }
+
   async listDraws(input: { limit: number }): Promise<KenoDrawResponse[]> {
     const limit = Math.min(Math.max(input.limit || 50, 1), 100);
     const draws = await this.kenoDrawRepository.find({

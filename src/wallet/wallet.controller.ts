@@ -2,6 +2,7 @@ import { Body, Controller, DefaultValuePipe, Get, ParseIntPipe, Post, Query, Use
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { WalletService } from './wallet.service';
@@ -87,6 +88,22 @@ export class WalletController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number
   ) {
     return this.walletService.getRecentPlatformWins(limit);
+  }
+
+  @Public()
+  @Get('leaderboard')
+  @ApiOkResponse({
+    schema: {
+      example: [
+        { rank: 1, displayName: 'Player', totalWinMinor: 50000, winCount: 12 }
+      ]
+    }
+  })
+  getLeaderboard(
+    @Query('period') period: string,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number
+  ) {
+    return this.walletService.getLeaderboard({ period, limit });
   }
 
   @Get('withdrawals')

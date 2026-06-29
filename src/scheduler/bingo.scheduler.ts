@@ -1,8 +1,10 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
+import { BotsService } from '../bots/bots.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { RedisLockService } from '../redis/redis-lock.service';
+import { TelegramBotService } from '../telegram/telegram-bot.service';
 
 const BINGO_DRAW_LOCK_KEY = 'igames:bingo:draw-lock';
 const BINGO_DRAW_LOCK_TTL_MS = 120_000;
@@ -15,8 +17,10 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
 
   constructor(
     private readonly bingoService: BingoService,
+    private readonly botsService: BotsService,
     private readonly gameEventsGateway: GameEventsGateway,
-    private readonly lockService: RedisLockService
+    private readonly lockService: RedisLockService,
+    private readonly telegramBotService: TelegramBotService,
   ) {}
 
   /**
@@ -70,6 +74,18 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
             this.logger.log(`Bingo room ${updated.id} completed`);
             this.gameEventsGateway.emitBingoRoomCompleted(updated);
             anyCompleted = true;
+            try {
+              const cfg = await this.bingoService.getBingoConfig();
+              await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
+            } catch (err) {
+              this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
+            }
+            // Fire-and-forget Telegram win notifications
+            this.bingoService.getRoomWinners(updated.id).then((winners) => {
+              for (const w of winners) {
+                this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
+              }
+            }).catch(() => {});
           }
         } catch (error) {
           this.logger.error(
@@ -84,6 +100,8 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       for (const room of roomsToStart) {
         if (this.shuttingDown) break;
         try {
+          // Have bots buy last-minute tickets before the first draw (idempotent)
+          await this.botsService.buyTicketsForBingoRoom(room.id);
           this.logger.log(`Auto-starting Bingo room ${room.id}`);
           const updated = await this.bingoService.drawNextNumber(room.id);
           this.gameEventsGateway.emitBingoRoomUpdated(updated);
@@ -96,13 +114,14 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         }
       }
 
-      // After any room completes, auto-create the next one
+      // After any room completes, auto-create the next one and have bots buy in
       if (anyCompleted && !this.shuttingDown) {
         try {
           const newRoom = await this.bingoService.autoCreateNextRoom();
           if (newRoom) {
             this.gameEventsGateway.emitBingoRoomUpdated(newRoom);
             this.logger.log(`Auto-created next Bingo room: ${newRoom.id}`);
+            await this.botsService.buyTicketsForBingoRoom(newRoom.id);
           }
         } catch (error) {
           this.logger.error(

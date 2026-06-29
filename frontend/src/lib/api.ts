@@ -9,8 +9,10 @@ import type {
   KenoConfig,
   KenoDraw,
   KenoTicket,
+  LeaderboardEntry,
   LedgerEntry,
   RecentWin,
+  SpectatorCard,
   User,
   Wallet,
   Withdrawal,
@@ -117,6 +119,8 @@ export const walletApi = {
   getWallet: () => api.get<Wallet>('/wallet').then((r) => r.data),
   getLedger: (limit = 20) => api.get<LedgerEntry[]>(`/wallet/ledger?limit=${limit}`).then((r) => r.data),
   getRecentWins: (limit = 20) => api.get<RecentWin[]>(`/wallet/recent-wins?limit=${limit}`).then((r) => r.data),
+  getLeaderboard: (period: 'all' | 'monthly' | 'weekly' = 'all', limit = 10) =>
+    api.get<LeaderboardEntry[]>(`/wallet/leaderboard?period=${period}&limit=${limit}`).then((r) => r.data),
   requestWithdrawal: (amountMinor: number, destinationAccount: string) =>
     api.post<Withdrawal>('/wallet/withdraw', { amountMinor, destinationAccount }).then((r) => r.data),
   getWithdrawals: () => api.get<Withdrawal[]>('/wallet/withdrawals').then((r) => r.data),
@@ -148,11 +152,12 @@ export const kenoApi = {
 export const bingoApi = {
   listRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
   getRoomState: (roomId: string) => api.get<BingoRoomState>(`/bingo/rooms/${roomId}/state`).then((r) => r.data),
-  purchaseTickets: (roomId: string, count: number, idempotencyKey: string) =>
+  spectateRoom: (roomId: string) => api.get<SpectatorCard[]>(`/bingo/rooms/${roomId}/spectate`).then((r) => r.data),
+  purchaseTickets: (roomId: string, count: number, idempotencyKey: string, selectedNumbers?: number[]) =>
     api
       .post(
         `/bingo/rooms/${roomId}/tickets`,
-        { count },
+        { count, ...(selectedNumbers && selectedNumbers.length > 0 ? { selectedNumbers } : {}) },
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
       .then((r) => r.data as BingoTicket[]),

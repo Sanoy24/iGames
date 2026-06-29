@@ -176,8 +176,25 @@ export type BingoConfig = {
   drawIntervalSeconds: number;
   defaultWinMode?: string;
   defaultNumberRange?: number;
+  minDrawsBeforeWin?: number;
+  minTicketsToStart?: number;
+  houseEdgePct?: number;
+  globalBingoBotWinInterval?: number;
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type LeaderboardEntry = {
+  rank: number;
+  displayName: string;
+  totalWinMinor: number;
+  winCount: number;
+};
+
+export type SpectatorCard = {
+  grid: Array<Array<number | null>>;
+  markedNumbers: number[];
+  status: string;
 };
 
 export type Withdrawal = {

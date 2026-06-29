@@ -7,10 +7,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
+import { Reflector } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { Request } from 'express';
 import { AuthenticatedRequest } from '../types/authenticated-user';
 import { User } from '../../users/entities/user.entity';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 type AccessTokenPayload = {
   sub?: string;
@@ -24,9 +26,16 @@ export class JwtAuthGuard implements CanActivate {
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const token = this.extractBearerToken(request);
 

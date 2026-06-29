@@ -117,15 +117,19 @@ export class CrashService {
 
   async startRound(roundId: string): Promise<{ round: CrashRoundResponse; crashPointX100: number }> {
     return this.dataSource.transaction(async (manager) => {
-      const round = await manager.findOne(CrashRound, {
-        where: { id: roundId },
-        lock: { mode: 'pessimistic_write' },
-      });
+      // seed has select:false — must use addSelect to load it
+      const round = await manager
+        .createQueryBuilder(CrashRound, 'r')
+        .addSelect('r.seed')
+        .where('r.id = :id', { id: roundId })
+        .setLock('pessimistic_write')
+        .getOne();
       if (!round) throw new NotFoundException('Round not found');
       if (round.status !== 'waiting') throw new ConflictException(`Round is ${round.status}`);
+      if (!round.seed) throw new Error(`Round ${roundId} has no seed — cannot generate crash point`);
 
       const cfg = await this.getConfig();
-      const crashPointX100 = await this.generateCrashPoint(round.id, round.seed!, cfg.houseEdgePct, cfg.maxMultiplierX100, manager);
+      const crashPointX100 = await this.generateCrashPoint(round.id, round.seed, cfg.houseEdgePct, cfg.maxMultiplierX100, manager);
 
       round.status = 'running';
       round.crashPointX100 = crashPointX100;

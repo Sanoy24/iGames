@@ -264,7 +264,10 @@ export function Crash({ onBack }: { onBack: () => void }) {
     setIsBetting(true);
     try {
       const key = `crash-bet:${round.id}:${stakeMinor}:${Date.now()}`;
-      await crashApi.placeBet(round.id, stakeMinor, key, acVal);
+      const bet = await crashApi.placeBet(round.id, stakeMinor, key, acVal);
+      setMyBet(bet);
+      myBetRef.current = bet;
+      walletApi.getWallet().then(setWallet).catch(() => {});
     } catch (e: unknown) {
       const raw = (e as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
       setBetError(typeof raw === 'string' ? raw : 'Bet failed — check balance');
@@ -277,9 +280,13 @@ export function Crash({ onBack }: { onBack: () => void }) {
     if (!round || !myBet || myBet.status !== 'active' || isCashingOut || phase !== 'running') return;
     setIsCashingOut(true);
     try {
-      await crashApi.cashOut(round.id, multiplierX100);
+      const bet = await crashApi.cashOut(round.id, multiplierX100);
+      setMyBet(bet);
+      myBetRef.current = bet;
+      setCashoutResult({ mx100: bet.cashedOutAtX100 ?? multiplierX100, payoutMinor: bet.payoutMinor });
+      walletApi.getWallet().then(setWallet).catch(() => {});
     } catch {
-      // socket event confirms result
+      // if the HTTP fails (e.g. round already crashed), silently ignore
     } finally {
       setIsCashingOut(false);
     }

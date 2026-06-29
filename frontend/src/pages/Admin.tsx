@@ -40,12 +40,52 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
 
 // ── Shared helpers ────────────────────────────────────────────────
 
-function Kpi({ label, value, color = '#3b82f6' }: { label: string; value: string; color?: string }) {
+function Kpi({ label, value, color = '#3b82f6', icon }: { label: string; value: string; color?: string; icon?: React.ReactNode }) {
   return (
     <div className="adm-kpi" style={{ borderTopColor: color }}>
+      {icon && (
+        <span className="adm-kpi-ico" style={{ background: `${color}1f`, color }}>{icon}</span>
+      )}
       <span className="adm-kpi-label">{label}</span>
       <strong className="adm-kpi-value" style={{ color }}>{value}</strong>
     </div>
+  );
+}
+
+/** Lightweight SVG donut chart — no external deps. */
+function Donut({ segments, size = 150, thickness = 22 }: {
+  segments: Array<{ label: string; value: number; color: string }>;
+  size?: number; thickness?: number;
+}) {
+  const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0);
+  const r = (size - thickness) / 2;
+  const c = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="adm-donut">
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={thickness} />
+        {total > 0 && segments.map((seg, i) => {
+          const frac = Math.max(0, seg.value) / total;
+          const dash = frac * c;
+          const el = (
+            <circle
+              key={i}
+              cx={size / 2} cy={size / 2} r={r}
+              fill="none" stroke={seg.color} strokeWidth={thickness}
+              strokeDasharray={`${dash} ${c - dash}`}
+              strokeDashoffset={-offset}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+      </g>
+      <text x="50%" y="47%" textAnchor="middle" fontSize="11" fill="var(--text-muted)" fontWeight="700"
+        style={{ textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total</text>
+      <text x="50%" y="62%" textAnchor="middle" fontSize="15" fill="var(--text-primary)" fontWeight="800"
+        fontFamily="var(--font-display)">{formatCredits(total)}</text>
+    </svg>
   );
 }
 
@@ -106,42 +146,72 @@ function OverviewAdmin() {
     { key: 'refunds',            label: 'Refunds',              color: '#6b7280' },
   ];
 
+  const donutSegments = metrics
+    .map(({ key, label, color }) => ({ label, value: bd[key] ?? 0, color }))
+    .filter((s) => s.value > 0);
+
   return (
     <div className="stack-lg">
-      <SectionHead title="Platform Overview" sub="Live financial snapshot.">
+      <SectionHead title="Platform Overview" sub="Live financial &amp; engagement snapshot.">
         <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
       </SectionHead>
 
       <div className="adm-kpi-grid">
-        <Kpi label="Gross Gaming Revenue" value={formatCreditsFull(stats.ggrMinor)} color="#10b981" />
-        <Kpi label="Total Volume"          value={formatCreditsFull(stats.totalVolumeMinor)} color="#3b82f6" />
-        <Kpi label="Total Payouts"         value={formatCreditsFull(stats.totalPayoutsMinor)} color="#ef4444" />
-        <Kpi label="Total Liabilities"     value={formatCreditsFull(stats.totalLiabilitiesMinor)} color="#f59e0b" />
+        <Kpi label="Gross Gaming Revenue" value={formatCreditsFull(stats.ggrMinor)} color="#10b981" icon={<Activity size={16} />} />
+        <Kpi label="Total Volume"          value={formatCreditsFull(stats.totalVolumeMinor)} color="#6366f1" icon={<Coins size={16} />} />
+        <Kpi label="Total Payouts"         value={formatCreditsFull(stats.totalPayoutsMinor)} color="#ef4444" icon={<Wallet size={16} />} />
+        <Kpi label="Total Liabilities"     value={formatCreditsFull(stats.totalLiabilitiesMinor)} color="#f59e0b" icon={<Shield size={16} />} />
       </div>
 
-      <div className="adm-panel">
-        <div className="adm-panel-head">User Engagement &amp; Active Players</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, padding: 16 }}>
-          <Kpi label="Registered Players" value={String(bd.totalUsers ?? 0)} color="#10b981" />
-          <Kpi label="Users Online Now" value={String(bd.onlineUsers ?? 0)} color="#3b82f6" />
-          <Kpi label="Active Keno Players" value={String(bd.activeKenoPlayers ?? 0)} color="#8b5cf6" />
-          <Kpi label="Active Bingo Players" value={String(bd.activeBingoPlayers ?? 0)} color="#ec4899" />
+      <div className="adm-dash-grid">
+        {/* Financial composition donut */}
+        <div className="adm-panel">
+          <div className="adm-panel-head">Financial Composition</div>
+          <div className="adm-donut-wrap">
+            {donutSegments.length === 0 ? (
+              <div className="adm-empty" style={{ width: '100%' }}>No financial activity yet.</div>
+            ) : (
+              <>
+                <Donut segments={donutSegments} />
+                <div className="adm-legend">
+                  {donutSegments.map((s) => (
+                    <div key={s.label} className="adm-legend-row">
+                      <span className="adm-legend-dot" style={{ background: s.color }} />
+                      <span className="adm-legend-label">{s.label}</span>
+                      <span className="adm-legend-val">{formatCredits(s.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Financial breakdown bars */}
+        <div className="adm-panel">
+          <div className="adm-panel-head">Financial Breakdown</div>
+          <div className="adm-metric-list">
+            {metrics.map(({ key, label, color }) => {
+              const val = bd[key] ?? 0;
+              return (
+                <div key={key} className="adm-metric-row">
+                  <span className="adm-metric-label">{label}</span>
+                  <Bar value={val} max={totalLiab} color={color} />
+                  <span className="adm-metric-val">{formatCredits(val)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       <div className="adm-panel">
-        <div className="adm-panel-head">Financial Breakdown</div>
-        <div className="adm-metric-list">
-          {metrics.map(({ key, label, color }) => {
-            const val = bd[key] ?? 0;
-            return (
-              <div key={key} className="adm-metric-row">
-                <span className="adm-metric-label">{label}</span>
-                <Bar value={val} max={totalLiab} color={color} />
-                <span className="adm-metric-val">{formatCredits(val)}</span>
-              </div>
-            );
-          })}
+        <div className="adm-panel-head">User Engagement &amp; Active Players</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, padding: 16 }}>
+          <Kpi label="Registered Players" value={String(bd.totalUsers ?? 0)} color="#10b981" icon={<Users size={16} />} />
+          <Kpi label="Users Online Now" value={String(bd.onlineUsers ?? 0)} color="#3b82f6" icon={<CircleDot size={16} />} />
+          <Kpi label="Active Keno Players" value={String(bd.activeKenoPlayers ?? 0)} color="#8b5cf6" icon={<Dices size={16} />} />
+          <Kpi label="Active Bingo Players" value={String(bd.activeBingoPlayers ?? 0)} color="#ec4899" icon={<CircleDot size={16} />} />
         </div>
       </div>
     </div>
@@ -2356,14 +2426,14 @@ function AccountAdmin() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [w, agentsPage] = await Promise.all([
+      const [w, agentList] = await Promise.all([
         walletApi.getWallet(),
         adminAgentsApi.listAgents(1, 100),
       ]);
       setLocalWallet(w);
       setWallet(w);
-      setAgents(agentsPage.data);
-      if (!transferAgentId && agentsPage.data.length > 0) setTransferAgentId(agentsPage.data[0].id);
+      setAgents(agentList);
+      if (!transferAgentId && agentList.length > 0) setTransferAgentId(agentList[0].id);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
   }, [addToast, setWallet, transferAgentId]);

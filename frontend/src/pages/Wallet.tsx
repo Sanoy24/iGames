@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, Search } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';

@@ -14,7 +14,7 @@ async function refreshAccessToken(): Promise<string | null> {
   try {
     const rt = localStorage.getItem('refreshToken');
     if (!rt) return null;
-    const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+    const baseUrl = import.meta.env.VITE_API_URL ?? '/api';
     const res = await fetch(`${baseUrl}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -41,7 +41,11 @@ export function useSocketConnection() {
 
     if (!socketInstance) {
       const token = localStorage.getItem('accessToken');
-      const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      // Empty string = connect to the current page origin.
+      // In dev, Vite proxies /socket.io → localhost:3000 so this works through
+      // ngrok and any other tunnel without exposing localhost to the client.
+      // In production, VITE_API_URL is the absolute backend domain.
+      const SOCKET_URL = import.meta.env.VITE_API_URL ?? '';
 
       socketInstance = io(SOCKET_URL, {
         auth: { token },

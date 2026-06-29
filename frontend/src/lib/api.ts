@@ -21,8 +21,11 @@ import type {
   Withdrawal,
 } from './models';
 
+// In dev (no VITE_API_URL set) use '/api' so Vite proxies the request to
+// localhost:3000 server-side — this works through ngrok and any other tunnel.
+// In production VITE_API_URL is the absolute backend domain (e.g. https://api.binastech.com).
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:3000',
+  baseURL: import.meta.env.VITE_API_URL ?? '/api',
   timeout: 15000,
 });
 
@@ -43,7 +46,7 @@ function doRefresh(): Promise<string | null> {
       const rt = localStorage.getItem('refreshToken');
       if (!rt) return null;
       const res = await axios.post<{ accessToken: string; refreshToken?: string }>(
-        `${import.meta.env.VITE_API_URL ?? 'http://localhost:3000'}/auth/refresh`,
+        `${import.meta.env.VITE_API_URL ?? '/api'}/auth/refresh`,
         { refreshToken: rt },
       );
       const { accessToken, refreshToken } = res.data;

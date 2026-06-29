@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, X, RefreshCw, Wallet as WalletIcon, TrendingUp } from 'lucide-react';
+import { ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, Search } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
-import { authApi, walletApi, paymentsApi } from '../lib/api';
+import { authApi, walletApi, paymentsApi, type TelebirrPreview } from '../lib/api';
 
 const ENTRY_LABELS: Record<string, string> = {
   ticket_purchase: 'Ticket Purchase',
@@ -107,9 +107,11 @@ export function Wallet() {
   const [loading,      setLoading]      = useState(true);
   const [txFilter,     setTxFilter]     = useState<TxFilter>('all');
 
-  const [showTopup,    setShowTopup]    = useState(false);
-  const [receiptInput, setReceiptInput] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showTopup,      setShowTopup]      = useState(false);
+  const [receiptInput,   setReceiptInput]   = useState('');
+  const [isPreviewing,   setIsPreviewing]   = useState(false);
+  const [preview,        setPreview]        = useState<TelebirrPreview | null>(null);
+  const [isSubmitting,   setIsSubmitting]   = useState(false);
 
   const [showWithdraw,   setShowWithdraw]   = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -135,13 +137,28 @@ export function Wallet() {
 
   useEffect(() => { void loadWallet(); }, [loadWallet]);
 
+  const handlePreview = async () => {
+    if (!receiptInput.trim()) return;
+    setIsPreviewing(true);
+    setPreview(null);
+    try {
+      const result = await paymentsApi.previewTelebirrReceipt(receiptInput.trim());
+      setPreview(result);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
   const handleTopup = async () => {
     if (!receiptInput.trim()) return;
     setIsSubmitting(true);
     try {
       await paymentsApi.submitTelebirrReceipt(receiptInput.trim());
-      addToast('success', 'Telebirr receipt verified! Account credited.');
+      addToast('success', 'Deposit confirmed! Your account has been credited.');
       setReceiptInput('');
+      setPreview(null);
       setShowTopup(false);
       await loadWallet();
     } catch (e) {
@@ -149,6 +166,11 @@ export function Wallet() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const resetTopup = () => {
+    setReceiptInput('');
+    setPreview(null);
   };
 
   const handleWithdraw = async () => {
@@ -228,7 +250,7 @@ export function Wallet() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <motion.button
             className="btn btn-primary"
-            onClick={() => { setShowTopup(v => !v); setShowWithdraw(false); }}
+            onClick={() => { setShowTopup(v => !v); setShowWithdraw(false); if (showTopup) resetTopup(); }}
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
@@ -257,25 +279,105 @@ export function Wallet() {
               style={{ overflow: 'hidden' }}
             >
               <div className="admin-form" style={{ marginTop: 16 }}>
-                <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Manual Deposit</h3>
+                <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Deposit</h3>
                 <p className="text-muted" style={{ fontSize: 13, marginBottom: 14 }}>
-                  Transfer the desired amount via your Telebirr app, then paste the SMS confirmation or receipt below.
+                  Transfer money via Telebirr, then paste your SMS confirmation message or the receipt link below.
                 </p>
-                <textarea
-                  className="input"
-                  rows={4}
-                  placeholder="Paste Telebirr SMS receipt here…"
-                  value={receiptInput}
-                  onChange={(e) => setReceiptInput(e.target.value)}
-                  style={{ width: '100%', marginBottom: 12, resize: 'vertical' }}
-                />
-                <button
-                  className="btn btn-success btn-full"
-                  onClick={handleTopup}
-                  disabled={isSubmitting || !receiptInput.trim()}
-                >
-                  {isSubmitting ? 'Verifying Receipt…' : 'Verify & Claim Deposit'}
-                </button>
+
+                {/* Step 1 — paste & verify */}
+                {!preview && (
+                  <>
+                    <textarea
+                      className="input"
+                      rows={4}
+                      placeholder="Paste your Telebirr SMS message or receipt link…"
+                      value={receiptInput}
+                      onChange={(e) => { setReceiptInput(e.target.value); }}
+                      style={{ width: '100%', marginBottom: 12, resize: 'vertical' }}
+                    />
+                    <button
+                      className="btn btn-primary btn-full"
+                      onClick={handlePreview}
+                      disabled={isPreviewing || !receiptInput.trim()}
+                    >
+                      {isPreviewing
+                        ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Fetching receipt…</>
+                        : <><Search size={14} /> Verify Receipt</>}
+                    </button>
+                  </>
+                )}
+
+                {/* Step 2 — confirm details */}
+                {preview && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+                  >
+                    <div style={{
+                      background: 'rgba(16,185,129,0.07)',
+                      border: '1px solid rgba(16,185,129,0.25)',
+                      borderRadius: 10,
+                      padding: '14px 16px',
+                      marginBottom: 14,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                        <CheckCircle size={15} color="#10b981" />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>Receipt Verified</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>#{preview.receiptNo}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: 12 }}>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Amount</span>
+                          <strong style={{ fontSize: 18, color: '#10b981' }}>{formatCreditsFull(preview.amountMinor)} Cr</strong>
+                        </div>
+                        {preview.payerName && (
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>From</span>
+                            <strong>{preview.payerName}</strong>
+                          </div>
+                        )}
+                        {preview.payerPhone && (
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Phone</span>
+                            <strong>{preview.payerPhone}</strong>
+                          </div>
+                        )}
+                        {preview.receiverName && (
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>To (Agent)</span>
+                            <strong>{preview.receiverName}</strong>
+                          </div>
+                        )}
+                        {preview.date && (
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Date</span>
+                            <strong>{new Date(preview.date).toLocaleString()}</strong>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={resetTopup}
+                        style={{ flex: 1 }}
+                      >
+                        <X size={13} /> Change
+                      </button>
+                      <button
+                        className="btn btn-success"
+                        onClick={handleTopup}
+                        disabled={isSubmitting}
+                        style={{ flex: 2 }}
+                      >
+                        {isSubmitting
+                          ? <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Processing…</>
+                          : <><CheckCircle size={13} /> Confirm Deposit</>}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
               </div>
             </motion.div>
           )}

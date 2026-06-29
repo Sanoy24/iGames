@@ -1687,11 +1687,22 @@ function BingoAdmin() {
 // ══════════════════════════════════════════════════════════════════
 function BotsAdmin() {
   const addToast = useStore((s) => s.addToast);
-  const [bots, setBots] = useState<BotUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [bots, setBots]           = useState<BotUser[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [busy, setBusy]           = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ displayName: 'Bot Alpha', initialBalanceMinor: 10000, ticketsPerRound: 2, spotCount: 4 });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [topupId, setTopupId]     = useState<string | null>(null);
+  const [topupAmount, setTopupAmount] = useState('');
+  const [form, setForm] = useState({
+    displayName: 'Bot Alpha',
+    initialBalanceMinor: 10000,
+    ticketsPerRound: 2,
+    spotCount: 4,
+  });
+  const [editForm, setEditForm] = useState<{ ticketsPerRound: number; spotCount: number }>({
+    ticketsPerRound: 1, spotCount: 3,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1704,8 +1715,54 @@ function BotsAdmin() {
 
   const createBot = async () => {
     setBusy('create');
-    try { await adminBotsApi.createBot(form); addToast('success', `Bot "${form.displayName}" created.`); setShowCreate(false); await load(); }
+    try {
+      await adminBotsApi.createBot(form);
+      addToast('success', `Bot "${form.displayName}" created.`);
+      setShowCreate(false);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const toggleActive = async (bot: BotUser) => {
+    setBusy(bot.id);
+    try { await adminBotsApi.updateBot(bot.id, { active: !bot.botPolicy.active }); await load(); }
     catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const saveEdit = async (bot: BotUser) => {
+    setBusy(bot.id + '-edit');
+    try {
+      await adminBotsApi.updateBot(bot.id, editForm);
+      setEditingId(null);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const handleTopup = async (bot: BotUser) => {
+    const minor = Math.round(parseFloat(topupAmount) * 100);
+    if (!minor || minor <= 0) { addToast('error', 'Enter a valid amount'); return; }
+    setBusy(bot.id + '-topup');
+    try {
+      await adminBotsApi.topupBot(bot.id, minor);
+      addToast('success', `Added ${topupAmount} Cr to ${bot.displayName}`);
+      setTopupId(null);
+      setTopupAmount('');
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const handleDelete = async (bot: BotUser) => {
+    if (!confirm(`Delete bot "${bot.displayName}"? This will deactivate it from all games.`)) return;
+    setBusy(bot.id + '-del');
+    try {
+      await adminBotsApi.deleteBot(bot.id);
+      addToast('success', `Bot "${bot.displayName}" deleted.`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
 
@@ -1715,23 +1772,45 @@ function BotsAdmin() {
       setForm((prev) => ({ ...prev, [key]: typeof prev[key] === 'number' ? Number(e.target.value) : e.target.value })),
   });
 
+  const activeBots = bots.filter(b => b.botPolicy?.active).length;
+
   return (
     <div className="stack-lg">
-      <SectionHead title="Keno Bots" sub="Auto-playing bots that simulate player activity.">
+      <SectionHead title="Game Bots" sub="Virtual players that simulate activity when real player count is low.">
         <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
         <button className="adm-btn adm-btn-primary" onClick={() => setShowCreate((v) => !v)}>
           {showCreate ? <X size={13} /> : <Plus size={13} />}{showCreate ? 'Cancel' : 'New Bot'}
         </button>
       </SectionHead>
 
+      {/* Summary KPIs */}
+      <div className="adm-kpi-row">
+        <Kpi label="Total Bots" value={String(bots.length)} color="#6366f1" />
+        <Kpi label="Active" value={String(activeBots)} color="#10b981" />
+        <Kpi label="Paused" value={String(bots.length - activeBots)} color="#94a3b8" />
+        <Kpi label="Total Balance"
+          value={`${formatCreditsFull(bots.reduce((s, b) => s + (b.walletBalanceMinor ?? 0), 0))} Cr`}
+          color="#f59e0b" />
+      </div>
+
+      {/* Create form */}
       {showCreate && (
         <div className="adm-panel">
-          <div className="adm-panel-head">Create Bot</div>
+          <div className="adm-panel-head">Create New Bot</div>
           <div className="adm-field-grid">
             <label className="adm-field"><span>Display Name</span><input className="input" {...f('displayName')} /></label>
-            <label className="adm-field"><span>Starting Balance (credits)</span><input className="input" type="number" min={0} {...f('initialBalanceMinor')} /></label>
-            <label className="adm-field"><span>Tickets per Round</span><input className="input" type="number" min={0} max={10} {...f('ticketsPerRound')} /></label>
-            <label className="adm-field"><span>Spot Count (1–12)</span><input className="input" type="number" min={1} max={12} {...f('spotCount')} /></label>
+            <label className="adm-field">
+              <span>Starting Balance (Cr)</span>
+              <input className="input" type="number" min={0} {...f('initialBalanceMinor')} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Tickets / Draw</span>
+              <input className="input" type="number" min={1} max={10} {...f('ticketsPerRound')} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Spot Count (1–12)</span>
+              <input className="input" type="number" min={1} max={12} {...f('spotCount')} />
+            </label>
           </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createBot}>
@@ -1741,40 +1820,135 @@ function BotsAdmin() {
         </div>
       )}
 
-      <div className="adm-panel">
-        {loading && bots.length === 0 ? <div className="adm-empty">Loading bots…</div>
-          : bots.length === 0 ? <div className="adm-empty">No bots yet.</div>
+      {/* Bot list */}
+      <div className="adm-panel" style={{ overflowX: 'auto' }}>
+        {loading && bots.length === 0
+          ? <div className="adm-empty">Loading bots…</div>
+          : bots.length === 0
+          ? <div className="adm-empty">No bots yet. Create one to simulate player activity.</div>
           : (
-            <table className="adm-table">
-              <thead><tr><th>Name</th><th>Tickets/round</th><th>Spots</th><th>Status</th><th></th></tr></thead>
-              <tbody>
-                {bots.map((bot) => (
-                  <tr key={bot.id} className="adm-tr">
-                    <td><strong>{bot.displayName}</strong></td>
-                    <td className="adm-td-muted">{bot.botPolicy?.ticketsPerRound}</td>
-                    <td className="adm-td-muted">{bot.botPolicy?.spotCount}-spot</td>
-                    <td>
-                      <span className={`badge ${bot.botPolicy?.active ? 'badge-green' : 'badge-red'}`}>
-                        {bot.botPolicy?.active ? 'Active' : 'Paused'}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        className={`adm-btn adm-btn-xs ${bot.botPolicy?.active ? 'adm-btn-danger' : 'adm-btn-secondary'}`}
-                        disabled={busy === bot.id}
-                        onClick={async () => {
-                          setBusy(bot.id);
-                          try { await adminBotsApi.updateBot(bot.id, { active: !bot.botPolicy.active }); await load(); }
-                          catch (e) { addToast('error', getErrorMessage(e)); }
-                          finally { setBusy(null); }
-                        }}>
-                        {busy === bot.id ? '…' : bot.botPolicy?.active ? 'Pause' : 'Activate'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              {bots.map((bot) => {
+                const isEditing = editingId === bot.id;
+                const isTopping = topupId === bot.id;
+                return (
+                  <div key={bot.id} style={{
+                    borderBottom: '1px solid var(--border)',
+                    padding: '12px 0',
+                  }}>
+                    {/* Main row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 120 }}>
+                        <strong style={{ fontSize: 13 }}>{bot.displayName}</strong>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                          {bot.botPolicy?.ticketsPerRound}t · {bot.botPolicy?.spotCount}-spot
+                          · {bot.botPolicy?.drawParticipationCount ?? 0} draws played
+                        </div>
+                      </div>
+
+                      <div style={{ textAlign: 'right', minWidth: 90 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold)' }}>
+                          {formatCreditsFull(bot.walletBalanceMinor ?? 0)} Cr
+                        </div>
+                        <span className={`badge ${bot.botPolicy?.active ? 'badge-green' : 'badge-red'}`}
+                          style={{ fontSize: 9, marginTop: 2 }}>
+                          {bot.botPolicy?.active ? 'Active' : 'Paused'}
+                        </span>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          className="adm-btn adm-btn-xs adm-btn-secondary"
+                          onClick={() => {
+                            setEditingId(isEditing ? null : bot.id);
+                            setTopupId(null);
+                            setEditForm({
+                              ticketsPerRound: bot.botPolicy.ticketsPerRound,
+                              spotCount: bot.botPolicy.spotCount,
+                            });
+                          }}>
+                          {isEditing ? 'Cancel' : 'Edit'}
+                        </button>
+                        <button
+                          className="adm-btn adm-btn-xs adm-btn-secondary"
+                          onClick={() => {
+                            setTopupId(isTopping ? null : bot.id);
+                            setEditingId(null);
+                            setTopupAmount('');
+                          }}>
+                          {isTopping ? 'Cancel' : 'Top Up'}
+                        </button>
+                        <button
+                          className={`adm-btn adm-btn-xs ${bot.botPolicy?.active ? 'adm-btn-warning' : 'adm-btn-secondary'}`}
+                          disabled={busy === bot.id}
+                          onClick={() => toggleActive(bot)}>
+                          {busy === bot.id ? '…' : bot.botPolicy?.active ? 'Pause' : 'Activate'}
+                        </button>
+                        <button
+                          className="adm-btn adm-btn-xs adm-btn-danger"
+                          disabled={busy === bot.id + '-del'}
+                          onClick={() => handleDelete(bot)}>
+                          {busy === bot.id + '-del' ? '…' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Inline edit */}
+                    {isEditing && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <label className="adm-field" style={{ flex: 1, minWidth: 130 }}>
+                          <span>Keno Tickets / Draw</span>
+                          <input className="input" type="number" min={1} max={12}
+                            value={editForm.ticketsPerRound}
+                            onChange={e => setEditForm(p => ({ ...p, ticketsPerRound: Number(e.target.value) }))} />
+                        </label>
+                        <label className="adm-field" style={{ flex: 1, minWidth: 130 }}>
+                          <span>Keno Spot Count</span>
+                          <input className="input" type="number" min={1} max={12}
+                            value={editForm.spotCount}
+                            onChange={e => setEditForm(p => ({ ...p, spotCount: Number(e.target.value) }))} />
+                        </label>
+                        <button
+                          className="adm-btn adm-btn-primary"
+                          disabled={busy === bot.id + '-edit'}
+                          onClick={() => saveEdit(bot)}
+                          style={{ alignSelf: 'flex-end', marginBottom: 2 }}>
+                          {busy === bot.id + '-edit' ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Inline top-up */}
+                    {isTopping && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                        <label className="adm-field" style={{ flex: 1, minWidth: 160 }}>
+                          <span>Add credits (Cr)</span>
+                          <input className="input" type="number" min={1}
+                            placeholder="e.g. 500"
+                            value={topupAmount}
+                            onChange={e => setTopupAmount(e.target.value)} />
+                        </label>
+                        {[100, 500, 1000, 5000].map(preset => (
+                          <button key={preset} className="adm-btn adm-btn-xs adm-btn-secondary"
+                            style={{ alignSelf: 'flex-end', marginBottom: 2 }}
+                            onClick={() => setTopupAmount(String(preset))}>
+                            +{preset}
+                          </button>
+                        ))}
+                        <button
+                          className="adm-btn adm-btn-primary"
+                          disabled={busy === bot.id + '-topup'}
+                          onClick={() => handleTopup(bot)}
+                          style={{ alignSelf: 'flex-end', marginBottom: 2 }}>
+                          {busy === bot.id + '-topup' ? 'Adding…' : 'Add Credits'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
       </div>
     </div>

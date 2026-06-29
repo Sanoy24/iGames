@@ -290,9 +290,11 @@ export const adminBingoApi = {
 export type BotUser = {
   id: string;
   displayName: string;
+  walletBalanceMinor?: number;
   botPolicy: {
     ticketsPerRound: number;
     spotCount: number;
+    drawParticipationCount: number;
     active: boolean;
   };
 };
@@ -303,6 +305,10 @@ export const adminBotsApi = {
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
   updateBot: (id: string, dto: Partial<{ active: boolean; ticketsPerRound: number; spotCount: number }>) =>
     api.patch<BotUser>(`/admin/bots/${id}`, dto).then((r) => r.data),
+  topupBot: (id: string, amountMinor: number) =>
+    api.post<BotUser>(`/admin/bots/${id}/topup`, { amountMinor }).then((r) => r.data),
+  deleteBot: (id: string) =>
+    api.delete(`/admin/bots/${id}`).then((r) => r.data),
 };
 
 // ── Admin: Agents ─────────────────────────────────────────────────

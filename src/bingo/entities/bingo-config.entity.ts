@@ -32,8 +32,16 @@ export class BingoConfig {
   @Column({ type: 'int', default: 100000 })
   defaultFullHouseMinor: number;
 
-  @Column({ type: 'int', default: 5 })
+  @Column({ type: 'int', default: 2 })
   drawIntervalSeconds: number;
+
+  /** Seconds the buy/registration window stays open before a room starts drawing. */
+  @Column({ type: 'int', default: 40 })
+  salesWindowSeconds: number;
+
+  /** Seconds the completed-room result is shown before advancing to the next room. */
+  @Column({ type: 'int', default: 10 })
+  resultDisplaySeconds: number;
 
   @Column({ type: 'varchar', length: 10, default: 'line' })
   defaultWinMode: string;

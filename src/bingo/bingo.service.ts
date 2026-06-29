@@ -54,7 +54,7 @@ export type BingoTicketResponse = {
   settlementStatus: string;
 };
 
-const MIN_BINGO_SALES_WINDOW_MS = 60_000;
+const MIN_BINGO_SALES_WINDOW_MS = 15_000;
 
 @Injectable()
 export class BingoService implements OnModuleInit {
@@ -138,7 +138,9 @@ export class BingoService implements OnModuleInit {
         defaultOneLineMinor: 20000,
         defaultTwoLinesMinor: 50000,
         defaultFullHouseMinor: 100000,
-        drawIntervalSeconds: 5,
+        drawIntervalSeconds: 2,
+        salesWindowSeconds: 40,
+        resultDisplaySeconds: 10,
         defaultWinMode: 'line',
         defaultNumberRange: 75,
       });
@@ -160,7 +162,8 @@ export class BingoService implements OnModuleInit {
     const existing = await this.bingoRoomRepository.countBy({ status: 'open' });
     if (existing > 0) return null;
 
-    const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, MIN_BINGO_SALES_WINDOW_MS);
+    const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
+    const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);
     const scheduledStartAt = new Date(Date.now() + delayMs);
 
     const timestamp = scheduledStartAt.toLocaleTimeString('en-ET', {
@@ -214,6 +217,58 @@ export class BingoService implements OnModuleInit {
 
     const countMap = new Map(counts.map((c) => [c.roomId, Number(c.count)]));
     return rooms.map((room) => this.toRoomResponse(room, countMap.get(room.id) ?? 0));
+  }
+
+  /**
+   * Returns the single room the player should currently be looking at, with the
+   * caller's tickets attached. Priority: a running room (live draw) → an open
+   * room (buy window) → the most recently completed room (result display).
+   * Auto-creates the next room if none exist so the screen is never empty.
+   */
+  async getCurrentRoom(userId?: string): Promise<(BingoRoomResponse & { tickets?: BingoTicketResponse[] }) | null> {
+    let room =
+      (await this.bingoRoomRepository.findOne({
+        where: { status: 'running' },
+        order: { scheduledStartAt: 'ASC' },
+      })) ??
+      (await this.bingoRoomRepository.findOne({
+        where: { status: 'open' },
+        order: { scheduledStartAt: 'ASC' },
+      }));
+
+    if (!room) {
+      // Nothing live — show the most recent completed room for its result window,
+      // and lazily ensure the next room gets created.
+      room = await this.bingoRoomRepository.findOne({
+        where: { status: 'completed' },
+        order: { updatedAt: 'DESC' },
+      });
+      await this.autoCreateNextRoom().catch(() => undefined);
+      if (!room) {
+        const created = await this.bingoRoomRepository.findOne({
+          where: { status: 'open' },
+          order: { scheduledStartAt: 'ASC' },
+        });
+        if (!created) return null;
+        room = created;
+      }
+    }
+
+    return this.getRoomState({ roomId: room.id, userId });
+  }
+
+  /**
+   * Running rooms whose last draw (updatedAt) is older than the configured draw
+   * interval — i.e. due for their next ball. Lets the scheduler tick every second
+   * while still honoring drawIntervalSeconds.
+   */
+  async findRunningRoomIdsDue(intervalSeconds: number): Promise<string[]> {
+    const cutoff = new Date(Date.now() - Math.max(1, intervalSeconds) * 1000);
+    const rooms = await this.bingoRoomRepository.find({
+      where: { status: 'running', updatedAt: LessThanOrEqual(cutoff) },
+      select: ['id'],
+    });
+    return rooms.map((r) => r.id);
   }
 
   async findRoomsToStart(): Promise<BingoRoomResponse[]> {

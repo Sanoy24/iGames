@@ -75,6 +75,54 @@ export class CrashService {
 
   // ── Round lifecycle ───────────────────────────────────────────────────────
 
+  /**
+   * Marks any non-crashed rounds left over from a previous process (e.g. a
+   * restart mid-round) as crashed and refunds still-active bets, so the
+   * scheduler can start cleanly instead of dead-locking on a stuck round.
+   * Idempotent and restart-safe.
+   */
+  async abandonStaleRounds(): Promise<number> {
+    const stale = await this.roundRepo.find({ where: { status: Not('crashed') as any } });
+    if (stale.length === 0) return 0;
+
+    for (const round of stale) {
+      await this.dataSource.transaction(async (manager) => {
+        const activeBets = await manager.find(CrashBet, { where: { roundId: round.id, status: 'active' } });
+        for (const bet of activeBets) {
+          // Full refund — the round never completed, so the stake is returned.
+          await this.walletService.creditInSession(
+            {
+              userId: bet.userId,
+              amountMinor: bet.stakeMinor,
+              entryType: 'refund',
+              sourceType: 'crash_bet',
+              sourceId: bet.id,
+              idempotencyKey: `crash-abandon-refund:${bet.id}`,
+              metadata: { roundId: round.id, reason: 'round_abandoned' },
+            },
+            manager,
+          );
+          bet.status = 'won';
+          bet.cashedOutAtX100 = 100;
+          bet.payoutMinor = bet.stakeMinor;
+          bet.walletCredit = { reason: 'round_abandoned_refund' };
+          await manager.save(bet);
+        }
+
+        const fresh = await manager.findOne(CrashRound, { where: { id: round.id } });
+        if (fresh && fresh.status !== 'crashed') {
+          fresh.status = 'crashed';
+          fresh.crashedAt = new Date();
+          if (fresh.crashPointX100 == null) fresh.crashPointX100 = 100;
+          await manager.save(fresh);
+        }
+      });
+    }
+
+    this.logger.warn(`Abandoned ${stale.length} stale crash round(s) on startup`);
+    return stale.length;
+  }
+
   async getActiveRound(): Promise<CrashRoundResponse | null> {
     const round = await this.roundRepo.findOne({
       where: { status: Not('crashed') as any },

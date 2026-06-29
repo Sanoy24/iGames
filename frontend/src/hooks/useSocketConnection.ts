@@ -56,7 +56,11 @@ export function useSocketConnection() {
         timeout: 20000,
       });
 
-      socketInstance.on('connect', () => setSocketConnected(true));
+      socketInstance.on('connect', () => {
+        setSocketConnected(true);
+        // Pull live counts immediately so the UI doesn't wait for the next heartbeat.
+        socketInstance?.emit('request.counts');
+      });
       socketInstance.on('disconnect', () => setSocketConnected(false));
 
       // On connect error, silently try to refresh the access token and update

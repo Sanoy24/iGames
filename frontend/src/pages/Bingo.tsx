@@ -1,11 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  ArrowLeft, RefreshCw, Hash, Trophy, Sparkles,
-  Volume2, VolumeX, Users, MessageSquare,
+  ArrowLeft, Hash, Trophy, Sparkles,
+  Volume2, VolumeX, Users, MessageSquare, RefreshCw,
 } from 'lucide-react';
 import { bingoApi, walletApi } from '../lib/api';
-import type { BingoRoom, BingoRoomState, BingoTicket } from '../lib/models';
+import type { BingoRoomState, BingoTicket } from '../lib/models';
 import { createIdempotencyKey, formatCreditsFull, getErrorMessage, titleCase } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
@@ -14,11 +14,16 @@ import confetti from 'canvas-confetti';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Screen = 'lobby' | 'configure' | 'playing';
+type Phase = 'loading' | 'buy' | 'playing' | 'result';
 type ChatMessage = { userId?: string; displayName: string; text: string; timestamp: string; isSystem?: boolean };
 type BingoProps = { onBack: () => void };
 
 const BINGO_COLS = ['B', 'I', 'N', 'G', 'O'];
+// How long the completed-room result stays on screen before auto-advancing to
+// the next room. Mirrors the backend resultDisplaySeconds default.
+const RESULT_DISPLAY_MS = 10_000;
+// Light fallback poll so room transitions are caught even if a socket event is missed.
+const POLL_INTERVAL_MS = 5_000;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -272,76 +277,76 @@ function DrawBall({ number, count, max, status }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function Bingo({ onBack }: BingoProps) {
-  const addToast         = useStore((s) => s.addToast);
-  const setWallet        = useStore((s) => s.setWallet);
-  const liveCounts       = useStore((s) => s.liveCounts);
-  const soundVolume      = useStore((s) => s.soundVolume);
-  const soundMuted       = useStore((s) => s.soundMuted);
-  const setSoundVolume   = useStore((s) => s.setSoundVolume);
-  const setSoundMuted    = useStore((s) => s.setSoundMuted);
-  const currentUser      = useStore((s) => s.user);
+  const addToast          = useStore((s) => s.addToast);
+  const setWallet         = useStore((s) => s.setWallet);
+  const liveCounts        = useStore((s) => s.liveCounts);
+  const soundVolume       = useStore((s) => s.soundVolume);
+  const soundMuted        = useStore((s) => s.soundMuted);
+  const setSoundVolume    = useStore((s) => s.setSoundVolume);
+  const setSoundMuted     = useStore((s) => s.setSoundMuted);
+  const currentUser       = useStore((s) => s.user);
   const isSocketConnected = useStore((s) => s.isSocketConnected);
 
-  // ── Screen state machine ───────────────────────────────────────────────────
-  const [screen, setScreen]               = useState<Screen>('lobby');
-  const [rooms, setRooms]                 = useState<BingoRoom[]>([]);
-  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
-  const [roomState, setRoomState]         = useState<BingoRoomState | null>(null);
-  const [loadingRooms, setLoadingRooms]   = useState(true);
-  const [loadingState, setLoadingState]   = useState(false);
+  // ── Core state ──────────────────────────────────────────────────────────────
+  const [room, setRoom]                   = useState<BingoRoomState | null>(null);
+  const [loading, setLoading]             = useState(true);
+  const [holdingResult, setHoldingResult] = useState(false);
 
-  // ── Configure state ────────────────────────────────────────────────────────
+  // ── Buy state ───────────────────────────────────────────────────────────────
   const [ticketCount, setTicketCount]     = useState(1);
   const [buying, setBuying]               = useState(false);
 
-  // ── Playing state ─────────────────────────────────────────────────────────
+  // ── Playing / result state ─────────────────────────────────────────────────
   const [showVictory, setShowVictory]     = useState(false);
   const [victoryTickets, setVictoryTickets] = useState<BingoTicket[]>([]);
-  const prevDrawnLengthRef                = useRef(0);
   const [showBoard, setShowBoard]         = useState(true);
 
-  // ── Countdown ─────────────────────────────────────────────────────────────
+  // ── Countdown ───────────────────────────────────────────────────────────────
   const [timeRemainingSecs, setTimeRemainingSecs] = useState<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [resultSecs, setResultSecs]       = useState<number>(0);
 
-  // ── Chat ──────────────────────────────────────────────────────────────────
+  // ── Refs ────────────────────────────────────────────────────────────────────
+  const roomIdRef          = useRef<string | null>(null);
+  const holdingResultRef   = useRef(false);
+  const victoryRoomRef     = useRef<string | null>(null);
+  const reconcileTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resultTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Chat ────────────────────────────────────────────────────────────────────
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { displayName: 'System', text: 'Welcome to iGames Bingo!', timestamp: new Date().toISOString(), isSystem: true },
   ]);
-  const [chatInput, setChatInput]   = useState('');
-  const [showChat, setShowChat]     = useState(false);
-  const chatEndRef                  = useRef<HTMLDivElement>(null);
-  const chatInputRef                = useRef<HTMLInputElement>(null);
+  const [chatInput, setChatInput] = useState('');
+  const [showChat, setShowChat]   = useState(false);
+  const chatEndRef                = useRef<HTMLDivElement>(null);
+  const chatInputRef              = useRef<HTMLInputElement>(null);
 
-  // ── Data loading ──────────────────────────────────────────────────────────
+  // ── Load the single active room ─────────────────────────────────────────────
 
-  const loadRooms = useCallback(async () => {
-    setLoadingRooms(true);
+  const loadCurrent = useCallback(async () => {
     try {
-      const next = await bingoApi.listRooms();
-      setRooms(next);
+      const next = await bingoApi.getCurrentRoom();
+      setRoom(next);
+      roomIdRef.current = next?.id ?? null;
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
-      setLoadingRooms(false);
+      setLoading(false);
     }
   }, [addToast]);
 
-  const loadRoomState = useCallback(async (roomId: string) => {
-    setLoadingState(true);
-    try {
-      const next = await bingoApi.getRoomState(roomId);
-      setRoomState(next);
-    } catch (err) {
-      addToast('error', getErrorMessage(err));
-    } finally {
-      setLoadingState(false);
-    }
-  }, [addToast]);
+  // Initial load + light fallback poll. While the result is being held we skip
+  // re-fetching so we don't jump to the next room before the 10s window ends.
+  useEffect(() => {
+    void loadCurrent();
+    const id = setInterval(() => {
+      if (!holdingResultRef.current) void loadCurrent();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [loadCurrent]);
 
-  useEffect(() => { void loadRooms(); }, [loadRooms]);
-
-  // ── Socket: join/leave bingo room on mount so online count is correct ─────
+  // ── Socket: presence (online count) ─────────────────────────────────────────
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -349,146 +354,160 @@ export function Bingo({ onBack }: BingoProps) {
     return () => { socket.emit('leave.game', { game: 'bingo' }); };
   }, [isSocketConnected]);
 
-  // ── Socket: room-specific events ─────────────────────────────────────────
-
+  // ── Socket: live room events ────────────────────────────────────────────────
   useEffect(() => {
-    if (!selectedRoomId) { setRoomState(null); return; }
-    void loadRoomState(selectedRoomId);
-    prevDrawnLengthRef.current = 0;
-
     const socket = getSocket();
     if (!socket) return;
 
-    const onRoomUpdate = (p: { roomId?: string }) => {
-      if (p.roomId === selectedRoomId) void loadRoomState(selectedRoomId);
-      void loadRooms();
+    const scheduleReconcile = () => {
+      if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
+      // Debounce: after the burst of balls settles, do one authoritative reload
+      // to sync completedLines / winners that we can't derive optimistically.
+      reconcileTimerRef.current = setTimeout(() => {
+        if (!holdingResultRef.current) void loadCurrent();
+      }, 1200);
     };
+
     const onNumberDrawn = (p: { roomId?: string; number?: number }) => {
-      if (p.roomId !== selectedRoomId) return;
+      if (p.roomId !== roomIdRef.current || p.number === undefined) return;
       soundEngine.pop();
-      // Optimistic update: immediately mark the ball on all local ticket cards
-      if (p.number !== undefined) {
-        const drawn = p.number;
-        setRoomState((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            drawnNumbers: prev.drawnNumbers.includes(drawn)
-              ? prev.drawnNumbers
-              : [...prev.drawnNumbers, drawn],
-            tickets: prev.tickets?.map((t) => {
-              if (t.markedNumbers.includes(drawn)) return t;
-              const isOnCard = t.grid.some((row) => row.some((cell) => cell === drawn));
-              if (!isOnCard) return t;
-              return { ...t, markedNumbers: [...t.markedNumbers, drawn] };
-            }),
-          };
-        });
-      }
-      // Full reload for completedLines, status, etc.
-      void loadRoomState(selectedRoomId);
+      const drawn = p.number;
+      setRoom((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          status: prev.status === 'open' ? 'running' : prev.status,
+          drawnNumbers: prev.drawnNumbers.includes(drawn) ? prev.drawnNumbers : [...prev.drawnNumbers, drawn],
+          tickets: prev.tickets?.map((t) => {
+            if (t.markedNumbers.includes(drawn)) return t;
+            const isOnCard = t.grid.some((row) => row.some((cell) => cell === drawn));
+            if (!isOnCard) return t;
+            return { ...t, markedNumbers: [...t.markedNumbers, drawn] };
+          }),
+        };
+      });
+      scheduleReconcile();
     };
+
+    const onRoomUpdate = (p: { roomId?: string }) => {
+      // open→running transition, new-room creation, etc. Ignore while holding result.
+      if (holdingResultRef.current) return;
+      if (p.roomId === roomIdRef.current || roomIdRef.current === null) void loadCurrent();
+    };
+
     const onRoomCompleted = (p: { roomId?: string }) => {
-      if (p.roomId !== selectedRoomId) return;
-      void loadRoomState(selectedRoomId);
-      addToast('info', 'Bingo room completed — payouts settled!');
+      if (p.roomId !== roomIdRef.current) return;
+      void loadCurrent(); // pull settled tickets; the status effect starts the hold
     };
+
     const onChatMessage = (p: { roomId: string; userId?: string; displayName: string; text: string; timestamp: string }) => {
-      if (p.roomId !== selectedRoomId) return;
+      if (p.roomId !== roomIdRef.current) return;
       setChatMessages((prev) => [...prev.slice(-49), { ...p }]);
     };
 
-    socket.on('bingo.room.updated', onRoomUpdate);
     socket.on('bingo.number.drawn', onNumberDrawn);
+    socket.on('bingo.room.updated', onRoomUpdate);
     socket.on('bingo.room.completed', onRoomCompleted);
     socket.on('bingo.chat.message', onChatMessage);
 
     return () => {
-      socket.off('bingo.room.updated', onRoomUpdate);
       socket.off('bingo.number.drawn', onNumberDrawn);
+      socket.off('bingo.room.updated', onRoomUpdate);
       socket.off('bingo.room.completed', onRoomCompleted);
       socket.off('bingo.chat.message', onChatMessage);
+      if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
     };
-  }, [selectedRoomId, loadRoomState, loadRooms, addToast]);
+  }, [isSocketConnected, loadCurrent]);
 
-  // ── Countdown ─────────────────────────────────────────────────────────────
-
+  // ── Result hold: when a room completes, freeze on it for RESULT_DISPLAY_MS ──
   useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (!room) return;
+    const done = room.status === 'completed' || room.status === 'cancelled';
+    if (!done) {
+      holdingResultRef.current = false;
+      setHoldingResult(false);
+      return;
+    }
+    holdingResultRef.current = true;
+    setHoldingResult(true);
+    setResultSecs(Math.ceil(RESULT_DISPLAY_MS / 1000));
+
+    if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
+    resultTimerRef.current = setTimeout(() => {
+      holdingResultRef.current = false;
+      setHoldingResult(false);
+      void loadCurrent();
+    }, RESULT_DISPLAY_MS);
+
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      setResultSecs((s) => Math.max(0, s - 1));
+    }, 1000);
+
+    return () => {
+      if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, [room?.id, room?.status, loadCurrent]);
+
+  // ── Buy-window countdown ────────────────────────────────────────────────────
+  useEffect(() => {
     setTimeRemainingSecs(null);
-    const room = rooms.find((r) => r.id === selectedRoomId);
     if (!room || room.status !== 'open') return;
     const tick = () => {
       const ms = new Date(room.scheduledStartAt).getTime() - Date.now();
-      const secs = Math.max(0, Math.floor(ms / 1000));
-      setTimeRemainingSecs(secs);
-      if (secs <= 0 && timerRef.current) clearInterval(timerRef.current);
+      setTimeRemainingSecs(Math.max(0, Math.floor(ms / 1000)));
     };
     tick();
-    timerRef.current = setInterval(tick, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [rooms, selectedRoomId]);
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [room?.id, room?.status, room?.scheduledStartAt]);
 
-  // ── Win detection ─────────────────────────────────────────────────────────
-
+  // ── Win detection ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (roomState?.status !== 'completed' || !roomState.tickets?.length) return;
-    const winners = roomState.tickets.filter((t) => t.payoutMinor > 0);
+    if (room?.status !== 'completed' || !room.tickets?.length) return;
+    if (victoryRoomRef.current === room.id) return; // already celebrated this room
+    const winners = room.tickets.filter((t) => t.payoutMinor > 0);
     if (!winners.length) return;
-    const curLen = roomState.drawnNumbers?.length ?? 0;
-    if (curLen > prevDrawnLengthRef.current) {
-      soundEngine.win();
-      confetti({ particleCount: 200, spread: 90, origin: { y: 0.55 }, colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'] });
-      setVictoryTickets(winners);
-      setShowVictory(true);
-    }
-    prevDrawnLengthRef.current = curLen;
-  }, [roomState?.status, roomState?.tickets, roomState?.drawnNumbers]);
+    victoryRoomRef.current = room.id;
+    soundEngine.win();
+    confetti({ particleCount: 200, spread: 90, origin: { y: 0.55 }, colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'] });
+    setVictoryTickets(winners);
+    setShowVictory(true);
+  }, [room?.status, room?.tickets, room?.id]);
 
-  // ── Chat scroll ───────────────────────────────────────────────────────────
-
+  // ── Chat auto-scroll ────────────────────────────────────────────────────────
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Derived ─────────────────────────────────────────────────────────────────
+  const phase: Phase = !room ? 'loading'
+    : holdingResult ? 'result'
+    : room.status === 'open' ? 'buy'
+    : room.status === 'running' ? 'playing'
+    : 'result';
 
-  const selectedRoom = useMemo(
-    () => roomState ?? rooms.find((r) => r.id === selectedRoomId) ?? null,
-    [roomState, rooms, selectedRoomId],
-  );
   const patternPrizeMap = useMemo(
-    () => new Map((selectedRoom?.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name])),
-    [selectedRoom],
+    () => new Map((room?.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name])),
+    [room],
   );
-  const isPatternMode  = selectedRoom?.winMode === 'pattern';
-  const numberRange    = selectedRoom?.numberRange ?? (isPatternMode ? 75 : 90);
-  const drawnNumbers   = roomState?.drawnNumbers ?? [];
-  const lastNumber     = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
-  const remainingTickets = selectedRoom ? Math.max(0, selectedRoom.maxTickets - selectedRoom.soldTickets) : 0;
-  const salesOpen      = selectedRoom?.status === 'open';
+  const isPatternMode    = room?.winMode === 'pattern';
+  const numberRange      = room?.numberRange ?? (isPatternMode ? 75 : 90);
+  const drawnNumbers     = room?.drawnNumbers ?? [];
+  const lastNumber       = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+  const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
+  const myTickets        = room?.tickets ?? [];
+  const salesOpen        = room?.status === 'open';
 
-  // ── Actions ───────────────────────────────────────────────────────────────
-
-  const selectRoom = (room: BingoRoom) => {
-    soundEngine.click();
-    setSelectedRoomId(room.id);
-    setTicketCount(1);
-    if (room.status === 'running' || room.status === 'completed') {
-      setScreen('playing');
-    } else {
-      setScreen('configure');
-    }
-  };
-
+  // ── Actions ─────────────────────────────────────────────────────────────────
   const buyTickets = async () => {
-    if (!selectedRoomId || !salesOpen) return;
+    if (!room || !salesOpen) return;
     setBuying(true);
     try {
-      await bingoApi.purchaseTickets(selectedRoomId, ticketCount, createIdempotencyKey('bingo'));
-      const [nextWallet] = await Promise.all([walletApi.getWallet(), loadRoomState(selectedRoomId), loadRooms()]);
+      await bingoApi.purchaseTickets(room.id, ticketCount, createIdempotencyKey('bingo'));
+      const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
       setWallet(nextWallet);
       soundEngine.cashout();
       addToast('success', `Bought ${ticketCount} Bingo ticket${ticketCount > 1 ? 's' : ''}!`);
-      setScreen('playing');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -498,16 +517,15 @@ export function Bingo({ onBack }: BingoProps) {
 
   const sendChat = useCallback(() => {
     const text = chatInput.trim();
-    if (!text || !selectedRoomId) return;
+    if (!text || !room) return;
     const socket = getSocket();
     if (!socket) return;
-    socket.emit('bingo.chat.send', { roomId: selectedRoomId, text });
+    socket.emit('bingo.chat.send', { roomId: room.id, text });
     setChatInput('');
     chatInputRef.current?.focus();
-  }, [chatInput, selectedRoomId]);
+  }, [chatInput, room]);
 
-  // ── RENDER ────────────────────────────────────────────────────────────────
-
+  // ── RENDER ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4 max-w-3xl mx-auto pb-20">
       {/* Victory overlay */}
@@ -515,7 +533,7 @@ export function Bingo({ onBack }: BingoProps) {
         {showVictory && victoryTickets.length > 0 && (
           <VictoryOverlay
             tickets={victoryTickets}
-            room={roomState}
+            room={room}
             onClose={() => { soundEngine.click(); setShowVictory(false); }}
           />
         )}
@@ -523,16 +541,8 @@ export function Bingo({ onBack }: BingoProps) {
 
       {/* ── Top bar ── */}
       <div className="flex items-center justify-between">
-        <button
-          onClick={() => {
-            if (screen === 'lobby') { onBack(); }
-            else if (screen === 'playing') { setScreen('lobby'); }
-            else { setScreen('lobby'); }
-          }}
-          className="btn btn-ghost btn-sm flex items-center gap-2"
-        >
-          <ArrowLeft size={14} />
-          {screen === 'lobby' ? 'Home' : 'Rooms'}
+        <button onClick={onBack} className="btn btn-ghost btn-sm flex items-center gap-2">
+          <ArrowLeft size={14} /> Home
         </button>
 
         <div className="flex items-center gap-2">
@@ -553,138 +563,110 @@ export function Bingo({ onBack }: BingoProps) {
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════════════
-          LOBBY
-      ═══════════════════════════════════════════════════════════════════ */}
-      <AnimatePresence mode="wait">
-        {screen === 'lobby' && (
-          <motion.div key="lobby"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="space-y-4"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-black text-slate-100">Bingo Rooms</h2>
-                <p className="text-[11px] text-slate-500">Choose a room to play</p>
-              </div>
-              <button onClick={loadRooms} className="btn btn-secondary btn-sm">
-                <RefreshCw size={12} className={loadingRooms ? 'animate-spin' : ''} />
-              </button>
-            </div>
+      {/* ── Loading / empty ── */}
+      {phase === 'loading' && (
+        <div className="centered-loader py-16"><div className="spinner" /></div>
+      )}
 
-            {loadingRooms && rooms.length === 0 ? (
-              <div className="centered-loader py-12"><div className="spinner" /></div>
-            ) : rooms.length === 0 ? (
-              <div className="card text-center py-12 space-y-2">
-                <Sparkles size={28} className="mx-auto text-slate-600" />
-                <p className="text-slate-400 text-sm">No rooms available right now.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {rooms.map((room) => (
-                  <motion.button
-                    key={room.id}
-                    whileHover={{ scale: 1.01, y: -1 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => selectRoom(room)}
-                    className="w-full card text-left flex items-center gap-4 hover:border-amber-500/20 transition-all"
-                  >
-                    {/* Status dot */}
-                    <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                      room.status === 'open' ? 'bg-emerald-400 animate-pulse' :
-                      room.status === 'running' ? 'bg-red-400 animate-pulse' : 'bg-slate-600'
-                    }`} />
+      {!loading && !room && (
+        <div className="card text-center py-12 space-y-2">
+          <Sparkles size={28} className="mx-auto text-slate-600" />
+          <p className="text-slate-400 text-sm">No Bingo game running right now.</p>
+          <button onClick={() => void loadCurrent()} className="btn btn-secondary btn-sm mt-1">
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
+      )}
 
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-sm text-slate-100">{room.name}</span>
-                        <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
-                          room.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' :
-                          room.status === 'running' ? 'bg-red-500/10 text-red-400' :
-                          'bg-slate-700 text-slate-500'
-                        }`}>{room.status}</span>
-                        {room.winMode === 'pattern' && (
-                          <span className="text-[8px] font-black bg-violet-500/10 text-violet-400 px-1.5 py-0.5 rounded">PATTERN</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500">
-                        <span>{formatCredits(room.ticketPriceMinor)} Cr/ticket</span>
-                        <span>{room.soldTickets}/{room.maxTickets} sold</span>
-                        <span>1–{room.numberRange ?? 90}</span>
-                      </div>
-                    </div>
-
-                    <div className="text-right flex-shrink-0">
-                      <span className="text-[10px] font-black text-amber-400 block">
-                        {room.status === 'running' ? 'Join' : room.status === 'open' ? 'Buy In' : 'Watch'}
-                      </span>
-                      <span className="text-[9px] text-slate-600">{room.maxTickets - room.soldTickets} left</span>
-                    </div>
-                  </motion.button>
-                ))}
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {/* ════════════════════════════════════════════════════════════════
-            CONFIGURE
-        ═══════════════════════════════════════════════════════════════════ */}
-        {screen === 'configure' && selectedRoom && (
-          <motion.div key="configure"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="space-y-4"
-          >
-            {/* Room header */}
-            <div className="card">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h2 className="font-black text-base text-slate-100">{selectedRoom.name}</h2>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    {formatCredits(selectedRoom.ticketPriceMinor)} Cr · {remainingTickets} tickets left
-                    {isPatternMode ? ' · Pattern mode' : ' · 90-ball'}
-                  </p>
+      {room && (
+        <motion.div
+          key={room.id}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+          className="space-y-4"
+        >
+          {/* ── Draw header ── */}
+          <div className="card">
+            <div className="flex items-center gap-4">
+              <DrawBall number={lastNumber} count={drawnNumbers.length} max={numberRange} status={room.status} />
+              <div className="flex-1 min-w-0 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-black text-sm text-slate-100">{room.name}</span>
+                  <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                    room.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' :
+                    room.status === 'running' ? 'bg-red-500/10 text-red-400 animate-pulse' :
+                    'bg-slate-700 text-slate-400'
+                  }`}>{phase === 'buy' ? 'buy in' : room.status}</span>
+                  {isPatternMode && (
+                    <span className="text-[8px] font-black bg-violet-500/10 text-violet-400 px-1.5 py-0.5 rounded">PATTERN</span>
+                  )}
                 </div>
-                {timeRemainingSecs !== null && (
-                  <div className="text-right">
-                    <span className={`text-xl font-black font-mono ${timeRemainingSecs <= 10 ? 'text-red-400 animate-pulse' : 'text-amber-400'}`}>
+
+                {/* Buy-window countdown */}
+                {phase === 'buy' && timeRemainingSecs !== null && (
+                  <p className="text-[10px] text-slate-500">
+                    Starts in{' '}
+                    <span className={`font-mono font-black ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
                       {String(Math.floor(timeRemainingSecs / 60)).padStart(2, '0')}:{String(timeRemainingSecs % 60).padStart(2, '0')}
                     </span>
-                    <span className="block text-[9px] text-slate-500">starts in</span>
+                  </p>
+                )}
+
+                {/* Recent balls */}
+                {drawnNumbers.length > 0 && (
+                  <div className="flex gap-1 flex-wrap">
+                    {drawnNumbers.slice(-10).map((n, i, arr) => (
+                      <motion.span
+                        key={`${n}-${i}`}
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black ${
+                          i === arr.length - 1
+                            ? 'bg-red-600 border border-red-400/60 text-white'
+                            : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
+                        }`}
+                      >
+                        {n}
+                      </motion.span>
+                    ))}
                   </div>
                 )}
-              </div>
 
-              {/* Pot-based prize */}
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                <div className="rounded-lg bg-amber-500/8 border border-amber-500/20 p-2 text-center">
-                  <span className="block text-[8px] font-bold uppercase text-amber-600 mb-0.5">Prize Pot</span>
-                  <span className="text-[11px] font-black text-amber-400">
-                    {formatCredits(selectedRoom.prizeMinor)} Cr
-                  </span>
-                </div>
-                <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
-                  <span className="block text-[8px] font-bold uppercase text-slate-600 mb-0.5">Players</span>
-                  <span className="text-[11px] font-black text-slate-300">{selectedRoom.soldTickets}</span>
-                </div>
-                <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
-                  <span className="block text-[8px] font-bold uppercase text-slate-600 mb-0.5">Stake</span>
-                  <span className="text-[11px] font-black text-slate-300">
-                    {formatCredits(selectedRoom.ticketPriceMinor)} Cr
-                  </span>
-                </div>
+                {phase === 'result' && (
+                  <p className="text-[10px] font-bold text-emerald-400">
+                    {room.settledTiers.length > 0
+                      ? `${room.settledTiers.length} prize tier${room.settledTiers.length > 1 ? 's' : ''} settled`
+                      : 'No winners this round'}
+                    {resultSecs > 0 && <span className="text-slate-500"> · next game in {resultSecs}s</span>}
+                  </p>
+                )}
               </div>
             </div>
+          </div>
 
-            {/* Step 1: Tickets */}
+          {/* ── Stats bar ── */}
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'Derash', value: `${formatCredits(room.prizeMinor)} Cr`, color: 'text-amber-400' },
+              { label: 'Players', value: String(room.soldTickets), color: 'text-slate-200' },
+              { label: 'Stake', value: `${formatCredits(room.ticketPriceMinor)} Cr`, color: 'text-slate-200' },
+              { label: 'Call', value: `${drawnNumbers.length}/${numberRange}`, color: 'text-red-400' },
+            ].map((stat) => (
+              <div key={stat.label} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
+                <span className={`text-[11px] font-black ${stat.color}`}>{stat.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Buy panel (only during buy window) ── */}
+          {phase === 'buy' && (
             <div className="card space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Step 1 — How many tickets?</p>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">How many cards?</p>
+                <span className="text-[10px] text-slate-500">{remainingTickets} left</span>
+              </div>
               <div className="flex gap-2">
                 {[1, 2, 3, 5].map((n) => (
                   <motion.button
@@ -709,264 +691,135 @@ export function Bingo({ onBack }: BingoProps) {
                   className="input text-center font-mono font-black w-16 py-2 text-sm"
                 />
               </div>
+              <motion.button
+                whileHover={!buying && remainingTickets > 0 ? { scale: 1.02, y: -2 } : {}}
+                whileTap={{ scale: 0.97 }}
+                onClick={buyTickets}
+                disabled={buying || remainingTickets <= 0}
+                className="btn btn-primary btn-full py-3.5 text-base font-black"
+              >
+                {buying ? (
+                  <span className="flex items-center gap-2 justify-center"><RefreshCw size={15} className="animate-spin" /> Processing…</span>
+                ) : remainingTickets <= 0 ? (
+                  'Room Full'
+                ) : (
+                  `Buy ${ticketCount} Card${ticketCount > 1 ? 's' : ''} — ${formatCreditsFull(room.ticketPriceMinor * ticketCount)} Cr`
+                )}
+              </motion.button>
             </div>
+          )}
 
-            {/* Buy button */}
-            <motion.button
-              whileHover={!buying && salesOpen ? { scale: 1.02, y: -2 } : {}}
-              whileTap={{ scale: 0.97 }}
-              onClick={buyTickets}
-              disabled={buying || !salesOpen || remainingTickets <= 0}
-              className="btn btn-primary btn-full py-4 text-base font-black"
-            >
-              {buying ? (
-                <span className="flex items-center gap-2 justify-center"><RefreshCw size={15} className="animate-spin" /> Processing…</span>
-              ) : !salesOpen ? (
-                'Sales Closed'
-              ) : remainingTickets <= 0 ? (
-                'Room Full'
-              ) : (
-                `Buy ${ticketCount} Ticket${ticketCount > 1 ? 's' : ''} — ${formatCreditsFull(selectedRoom.ticketPriceMinor * ticketCount)} Cr`
+          {/* ── My cards ── */}
+          {myTickets.length > 0 ? (
+            <div className="space-y-3">
+              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Cards</h3>
+              <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+                {myTickets.map((ticket) => (
+                  <BingoTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
+                ))}
+              </div>
+            </div>
+          ) : phase !== 'buy' && (
+            <div className="card text-center py-6 space-y-1">
+              <Sparkles size={20} className="mx-auto text-slate-600" />
+              <p className="text-slate-500 text-xs">You didn’t buy a card for this round.</p>
+              <p className="text-slate-600 text-[10px]">Hang tight — the next game opens for buy-in soon.</p>
+            </div>
+          )}
+
+          {/* ── Number board (collapsible) ── */}
+          <div className="card space-y-2">
+            <button onClick={() => setShowBoard((v) => !v)} className="w-full flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <Hash size={11} /> Called Numbers · {drawnNumbers.length}/{numberRange}
+              </span>
+              <span className="text-[9px] text-slate-600">{showBoard ? '▲' : '▼'}</span>
+            </button>
+            <AnimatePresence>
+              {showBoard && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <NumberBoard drawnNumbers={drawnNumbers} numberRange={numberRange} />
+                </motion.div>
               )}
-            </motion.button>
+            </AnimatePresence>
+          </div>
 
-            {salesOpen && (
-              <button
-                onClick={() => { setScreen('playing'); }}
-                className="btn btn-ghost btn-full text-xs text-slate-500"
-              >
-                Watch without buying
-              </button>
-            )}
-          </motion.div>
-        )}
-
-        {/* ════════════════════════════════════════════════════════════════
-            PLAYING
-        ═══════════════════════════════════════════════════════════════════ */}
-        {screen === 'playing' && selectedRoom && (
-          <motion.div key="playing"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-            className="space-y-4"
-          >
-            {/* ── Draw header ── */}
-            <div className="card">
-              <div className="flex items-center gap-4">
-                <DrawBall
-                  number={lastNumber}
-                  count={drawnNumbers.length}
-                  max={numberRange}
-                  status={selectedRoom.status}
-                />
-                <div className="flex-1 min-w-0 space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-black text-sm text-slate-100">{selectedRoom.name}</span>
-                    <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
-                      selectedRoom.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' :
-                      selectedRoom.status === 'running' ? 'bg-red-500/10 text-red-400 animate-pulse' :
-                      'bg-slate-700 text-slate-400'
-                    }`}>{selectedRoom.status}</span>
-                  </div>
-                  {/* Recent balls */}
-                  {drawnNumbers.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {drawnNumbers.slice(-10).map((n, i) => (
-                        <motion.span
-                          key={`${n}-${i}`}
-                          initial={{ scale: 0, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black ${
-                            i === drawnNumbers.slice(-10).length - 1
-                              ? 'bg-red-600 border border-red-400/60 text-white'
-                              : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
-                          }`}
-                        >
-                          {n}
-                        </motion.span>
-                      ))}
-                    </div>
-                  )}
-                  {selectedRoom.status === 'completed' && (
-                    <p className="text-[9px] text-emerald-400 font-bold">
-                      {selectedRoom.settledTiers.length > 0
-                        ? `${selectedRoom.settledTiers.length} prize tier${selectedRoom.settledTiers.length > 1 ? 's' : ''} settled`
-                        : 'No winners this round'}
-                    </p>
-                  )}
-                </div>
-                {/* Buy more (if sales still open) */}
-                {salesOpen && (
-                  <button onClick={() => setScreen('configure')} className="btn btn-secondary btn-sm flex-shrink-0">
-                    + Buy
-                  </button>
+          {/* ── Chat (collapsible) ── */}
+          <div className="card space-y-2">
+            <button onClick={() => setShowChat((v) => !v)} className="w-full flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <MessageSquare size={11} /> Room Chat
+              </span>
+              <span className="flex items-center gap-1">
+                {chatMessages.filter((m) => !m.isSystem).length > 0 && (
+                  <span className="text-[9px] text-blue-400 font-bold">{chatMessages.filter((m) => !m.isSystem).length}</span>
                 )}
-              </div>
-            </div>
+                <Users size={9} className="text-slate-600" />
+                <span className="text-[9px] text-slate-600">{showChat ? '▲' : '▼'}</span>
+              </span>
+            </button>
 
-            {/* ── Stats bar ── */}
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                {
-                  label: 'Derash',
-                  value: `${formatCredits(selectedRoom.prizeMinor)} Cr`,
-                  color: 'text-amber-400',
-                },
-                {
-                  label: 'Players',
-                  value: String(selectedRoom.soldTickets),
-                  color: 'text-slate-200',
-                },
-                {
-                  label: 'Stake',
-                  value: `${formatCredits(selectedRoom.ticketPriceMinor)} Cr`,
-                  color: 'text-slate-200',
-                },
-                {
-                  label: 'Call',
-                  value: `${drawnNumbers.length}/${numberRange}`,
-                  color: 'text-red-400',
-                },
-              ].map((stat) => (
-                <div key={stat.label} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-2 text-center">
-                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
-                  <span className={`text-[11px] font-black ${stat.color}`}>{stat.value}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* ── My Tickets ── */}
-            {roomState?.tickets && roomState.tickets.length > 0 ? (
-              <div className="space-y-3">
-                <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Cards</h3>
-                <div className={`grid gap-3 ${isPatternMode ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2'}`}>
-                  {roomState.tickets.map((ticket) => (
-                    <BingoTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="card text-center py-6 space-y-2">
-                <Sparkles size={20} className="mx-auto text-slate-600" />
-                <p className="text-slate-500 text-xs">You have no tickets for this room.</p>
-                {salesOpen && (
-                  <button onClick={() => setScreen('configure')} className="btn btn-primary btn-sm mt-1">
-                    Buy Tickets
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* ── Number Board (collapsible) ── */}
-            <div className="card space-y-2">
-              <button
-                onClick={() => setShowBoard((v) => !v)}
-                className="w-full flex items-center justify-between"
-              >
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <Hash size={11} /> Called Numbers · {drawnNumbers.length}/{numberRange}
-                </span>
-                <span className="text-[9px] text-slate-600">{showBoard ? '▲' : '▼'}</span>
-              </button>
-              <AnimatePresence>
-                {showBoard && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="overflow-hidden"
-                  >
-                    {loadingState && !roomState ? (
-                      <div className="centered-loader py-4"><div className="spinner" /></div>
-                    ) : (
-                      <NumberBoard drawnNumbers={drawnNumbers} numberRange={numberRange} />
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            {/* ── Chat (collapsible) ── */}
-            <div className="card space-y-2">
-              <button
-                onClick={() => setShowChat((v) => !v)}
-                className="w-full flex items-center justify-between"
-              >
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <MessageSquare size={11} /> Room Chat
-                </span>
-                <span className="flex items-center gap-1">
-                  {chatMessages.filter((m) => !m.isSystem).length > 0 && (
-                    <span className="text-[9px] text-blue-400 font-bold">{chatMessages.filter((m) => !m.isSystem).length}</span>
-                  )}
-                  <Users size={9} className="text-slate-600" />
-                  <span className="text-[9px] text-slate-600">{showChat ? '▲' : '▼'}</span>
-                </span>
-              </button>
-
-              <AnimatePresence>
-                {showChat && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 220 }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="overflow-hidden flex flex-col"
-                  >
-                    <div className="flex-1 overflow-y-auto pr-1 space-y-1.5" style={{ maxHeight: 160 }}>
-                      {chatMessages.map((msg, i) => {
-                        const isOwn = !msg.isSystem && msg.userId === currentUser?.id;
-                        return (
-                          <div key={i} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
-                            {!msg.isSystem && (
-                              <span className={`text-[9px] font-bold mb-0.5 ${isOwn ? 'text-amber-400' : 'text-blue-400'}`}>
-                                {isOwn ? 'You' : msg.displayName}
-                              </span>
-                            )}
-                            <div
-                              className={`text-[11px] px-2 py-1 max-w-[85%] leading-snug ${
-                                msg.isSystem
-                                  ? 'text-slate-500 bg-white/[0.02] rounded-md border border-white/[0.04]'
-                                  : isOwn
-                                    ? 'bg-amber-500/12 border border-amber-500/20 rounded-[10px_10px_2px_10px] text-slate-300'
-                                    : 'bg-blue-500/8 border border-blue-500/15 rounded-[10px_10px_10px_2px] text-slate-300'
-                              }`}
-                            >
-                              {msg.text}
-                            </div>
+            <AnimatePresence>
+              {showChat && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 220 }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden flex flex-col"
+                >
+                  <div className="flex-1 overflow-y-auto pr-1 space-y-1.5" style={{ maxHeight: 160 }}>
+                    {chatMessages.map((msg, i) => {
+                      const isOwn = !msg.isSystem && msg.userId === currentUser?.id;
+                      return (
+                        <div key={i} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
+                          {!msg.isSystem && (
+                            <span className={`text-[9px] font-bold mb-0.5 ${isOwn ? 'text-amber-400' : 'text-blue-400'}`}>
+                              {isOwn ? 'You' : msg.displayName}
+                            </span>
+                          )}
+                          <div
+                            className={`text-[11px] px-2 py-1 max-w-[85%] leading-snug ${
+                              msg.isSystem
+                                ? 'text-slate-500 bg-white/[0.02] rounded-md border border-white/[0.04]'
+                                : isOwn
+                                  ? 'bg-amber-500/12 border border-amber-500/20 rounded-[10px_10px_2px_10px] text-slate-300'
+                                  : 'bg-blue-500/8 border border-blue-500/15 rounded-[10px_10px_10px_2px] text-slate-300'
+                            }`}
+                          >
+                            {msg.text}
                           </div>
-                        );
-                      })}
-                      <div ref={chatEndRef} />
-                    </div>
-                    <div className="flex gap-2 mt-2 pt-2 border-t border-white/[0.05]">
-                      <input
-                        ref={chatInputRef}
-                        className="input flex-1 text-xs py-1.5"
-                        placeholder="Say something…"
-                        maxLength={200}
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }}
-                      />
-                      <button
-                        onClick={sendChat}
-                        disabled={!chatInput.trim()}
-                        className="btn btn-primary btn-sm"
-                      >
-                        Send
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                    <div ref={chatEndRef} />
+                  </div>
+                  <div className="flex gap-2 mt-2 pt-2 border-t border-white/[0.05]">
+                    <input
+                      ref={chatInputRef}
+                      className="input flex-1 text-xs py-1.5"
+                      placeholder="Say something…"
+                      maxLength={200}
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }}
+                    />
+                    <button onClick={sendChat} disabled={!chatInput.trim()} className="btn btn-primary btn-sm">
+                      Send
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }

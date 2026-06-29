@@ -171,6 +171,41 @@ export class KenoService {
     });
   }
 
+  /**
+   * Updates the chosen numbers on a ticket the player already paid for, while
+   * its draw is still open. Used by the "pay first, then pick" flow — the spot
+   * count is fixed at purchase, so only the specific numbers may change.
+   */
+  async updateTicketNumbers(input: {
+    userId: string;
+    ticketId: string;
+    selectedNumbers: number[];
+  }): Promise<KenoTicketResponse> {
+    return this.dataSource.transaction(async (manager) => {
+      const ticketRepo = manager.getRepository(KenoTicket);
+      const ticket = await ticketRepo.findOneBy({ id: input.ticketId, userId: input.userId });
+      if (!ticket) throw new NotFoundException('Keno ticket not found');
+      if (ticket.settlementStatus !== 'pending' || ticket.status !== 'pending') {
+        throw new ConflictException('Ticket can no longer be edited');
+      }
+
+      const draw = await manager.getRepository(KenoDraw).findOneBy({ id: ticket.drawId });
+      if (!draw || draw.status !== 'open') {
+        throw new ConflictException('Draw is locked — numbers can no longer be changed');
+      }
+
+      const config = await this.getActiveConfigInSession(manager);
+      this.kenoRulesService.validateSelectedNumbers(input.selectedNumbers, config);
+      if (input.selectedNumbers.length !== ticket.selectedNumbers.length) {
+        throw new BadRequestException('Cannot change the number of spots after paying');
+      }
+
+      ticket.selectedNumbers = [...input.selectedNumbers].sort((left, right) => left - right);
+      const saved = await ticketRepo.save(ticket);
+      return this.toTicketResponse(saved);
+    });
+  }
+
   async getTicketForUser(input: {
     ticketId: string;
     userId: string;

@@ -171,6 +171,8 @@ export const kenoApi = {
     api
       .post<KenoTicket>('/keno/tickets', { selectedNumbers }, { headers: { 'Idempotency-Key': idempotencyKey } })
       .then((r) => r.data),
+  updateTicketNumbers: (ticketId: string, selectedNumbers: number[]) =>
+    api.patch<KenoTicket>(`/keno/tickets/${ticketId}/numbers`, { selectedNumbers }).then((r) => r.data),
   listTickets: (limit = 20) => api.get<KenoTicket[]>(`/keno/tickets?limit=${limit}`).then((r) => r.data),
   getTicket: (id: string) => api.get<KenoTicket>(`/keno/tickets/${id}`).then((r) => r.data),
   listDraws: (limit = 10) => api.get<KenoDraw[]>(`/keno/draws?limit=${limit}`).then((r) => r.data),
@@ -179,6 +181,7 @@ export const kenoApi = {
 // ── Bingo ─────────────────────────────────────────────────────────
 export const bingoApi = {
   listRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
+  getCurrentRoom: () => api.get<BingoRoomState | null>('/bingo/current').then((r) => r.data),
   getRoomState: (roomId: string) => api.get<BingoRoomState>(`/bingo/rooms/${roomId}/state`).then((r) => r.data),
   spectateRoom: (roomId: string) => api.get<SpectatorCard[]>(`/bingo/rooms/${roomId}/spectate`).then((r) => r.data),
   purchaseTickets: (roomId: string, count: number, idempotencyKey: string, selectedNumbers?: number[]) =>

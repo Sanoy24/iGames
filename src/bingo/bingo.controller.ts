@@ -42,6 +42,13 @@ export class BingoController {
     return this.bingoService.listRooms();
   }
 
+  @Get('current')
+  @ApiOkResponse({ description: 'The single active room (running → open → last completed) with the caller’s tickets' })
+  getCurrentRoom(@Req() request: Request) {
+    const maybeUser = (request as Partial<AuthenticatedRequest>).user;
+    return this.bingoService.getCurrentRoom(maybeUser?.id);
+  }
+
   @Get('rooms/:id/state')
   getRoomState(@Param('id') roomId: string, @Req() request: Request) {
     const maybeUser = (request as Partial<AuthenticatedRequest>).user;

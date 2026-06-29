@@ -42,13 +42,15 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
   }
 
   /**
-   * Runs every 5 seconds. Finds all running rooms and draws the next number
-   * for each. The room status and drawnNumbers array act as the database-level
+   * Runs every second. Draws the next number only for running rooms whose last
+   * draw is older than the configured drawIntervalSeconds, so draw cadence is
+   * config-driven (default ~1 ball every couple of seconds) instead of a fixed
+   * slow 5s. The room status and drawnNumbers array act as the database-level
    * guard against duplicate draws across instances.
    *
    * After each completed room, auto-creates the next room using config defaults.
    */
-  @Cron(CronExpression.EVERY_5_SECONDS)
+  @Cron(CronExpression.EVERY_SECOND)
   async drawNextNumbers(): Promise<void> {
     if (this.isRunning || this.shuttingDown) {
       return;
@@ -61,13 +63,15 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
     }
 
     try {
-      const runningRooms = await this.bingoService.listRunningRooms();
+      const cfg = await this.bingoService.getBingoConfig();
+      const intervalSeconds = Math.max(1, cfg.drawIntervalSeconds ?? 2);
+      const dueRoomIds = await this.bingoService.findRunningRoomIdsDue(intervalSeconds);
       let anyCompleted = false;
 
-      for (const room of runningRooms) {
+      for (const roomId of dueRoomIds) {
         if (this.shuttingDown) break;
         try {
-          const updated = await this.bingoService.drawNextNumber(room.id);
+          const updated = await this.bingoService.drawNextNumber(roomId);
           this.gameEventsGateway.emitBingoNumberDrawn(updated);
 
           if (updated.status === 'completed') {
@@ -75,7 +79,6 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
             this.gameEventsGateway.emitBingoRoomCompleted(updated);
             anyCompleted = true;
             try {
-              const cfg = await this.bingoService.getBingoConfig();
               await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
             } catch (err) {
               this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
@@ -89,7 +92,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           }
         } catch (error) {
           this.logger.error(
-            `Error drawing next number for room ${room.id}`,
+            `Error drawing next number for room ${roomId}`,
             error instanceof Error ? error.stack : error
           );
         }

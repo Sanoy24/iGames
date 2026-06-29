@@ -42,15 +42,9 @@ export class CrashScheduler implements OnApplicationBootstrap, OnApplicationShut
       this.waitingDurationMs = cfg.waitingDurationSeconds * 1000;
       this.tickIntervalMs = cfg.tickIntervalMs;
 
-      // Resume any in-progress round from DB
-      const active = await this.crashService.getActiveRound();
-      if (active && active.status === 'waiting') {
-        // Create fresh round since we can't restore exact timing
-        this.activeRoundId = active.id;
-        this.roundStatus = 'waiting';
-        this.waitingStartedAt = Date.now();
-        this.logger.log(`Crash scheduler resumed waiting round ${active.id}`);
-      }
+      // Clear any rounds left mid-flight by a previous process (their exact
+      // timing can't be restored) so the ticker starts from a clean state.
+      await this.crashService.abandonStaleRounds();
 
       this.startTicker();
     } catch (err) {

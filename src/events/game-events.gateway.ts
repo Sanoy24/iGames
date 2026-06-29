@@ -1,4 +1,5 @@
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer, SubscribeMessage } from '@nestjs/websockets';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -162,8 +163,9 @@ export class GameEventsGateway
 
     const kenoUsers = getDistinctUsers('game_keno');
     const bingoUsers = getDistinctUsers('game_bingo');
+    const crashUsers = getDistinctUsers('game_crash');
     const totalUsers = getDistinctUsers();
-    const playingUsers = new Set<string>([...kenoUsers, ...bingoUsers]);
+    const playingUsers = new Set<string>([...kenoUsers, ...bingoUsers, ...crashUsers]);
 
     return {
       kenoOnline: kenoUsers.size,
@@ -177,6 +179,21 @@ export class GameEventsGateway
   async broadcastLiveCounts() {
     const counts = this.getLiveCounts();
     this.server?.emit('live.counts', counts);
+  }
+
+  /**
+   * Periodic refresh so counts stay correct cluster-wide even if a
+   * connect/disconnect event was missed, and so freshly opened tabs converge.
+   */
+  @Interval(10_000)
+  handleLiveCountsHeartbeat() {
+    void this.broadcastLiveCounts();
+  }
+
+  /** On-demand pull — clients emit this on connect to populate counts immediately. */
+  @SubscribeMessage('request.counts')
+  handleRequestCounts(client: Socket) {
+    client.emit('live.counts', this.getLiveCounts());
   }
 
   @SubscribeMessage('enter.game')

@@ -110,6 +110,9 @@ export class CrashScheduler implements OnApplicationBootstrap, OnApplicationShut
         seedHash: round.seedHash,
       });
       this.logger.log(`Crash round ${round.id} — waiting phase started`);
+
+      // Fire-and-forget: let bots place their bets during the waiting window
+      void this.botsService.placeBetsForCrashRound(round.id).catch(() => {});
       return;
     }
 

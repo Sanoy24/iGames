@@ -143,6 +143,8 @@ export type BingoRoom = {
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
   settlementSummary: Record<string, unknown>;
+  houseEdgePct: number;
+  prizeMinor: number;
 };
 
 export type BingoTicket = {

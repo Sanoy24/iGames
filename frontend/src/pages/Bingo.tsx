@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, RefreshCw, Hash, Trophy, Sparkles,
-  Volume2, VolumeX, Users, MessageSquare, Shuffle, Hand, Wand2,
+  Volume2, VolumeX, Users, MessageSquare,
 } from 'lucide-react';
 import { bingoApi, walletApi } from '../lib/api';
 import type { BingoRoom, BingoRoomState, BingoTicket } from '../lib/models';
@@ -15,7 +15,6 @@ import confetti from 'canvas-confetti';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Screen = 'lobby' | 'configure' | 'playing';
-type FillMode = 'auto' | 'manual' | 'hybrid';
 type ChatMessage = { userId?: string; displayName: string; text: string; timestamp: string; isSystem?: boolean };
 type BingoProps = { onBack: () => void };
 
@@ -25,163 +24,6 @@ const BINGO_COLS = ['B', 'I', 'N', 'G', 'O'];
 
 function isPatternGrid(grid: Array<Array<number | null>>): boolean {
   return grid.length === 5 && (grid[0]?.length ?? 0) === 5;
-}
-
-function formatPrizeTier(key: string): string {
-  return titleCase(key.replace(/minor$/i, '').trim());
-}
-
-function colRangeForPattern(col: number, numberRange: number): [number, number] {
-  const colWidth = Math.floor(numberRange / 5);
-  const min = col * colWidth + 1;
-  const max = col === 4 ? numberRange : (col + 1) * colWidth;
-  return [min, max];
-}
-
-// ─── NumberPicker ─────────────────────────────────────────────────────────────
-
-function NumberPicker({
-  fillMode, numberRange, isPattern, selected, onChange,
-}: {
-  fillMode: FillMode;
-  numberRange: number;
-  isPattern: boolean;
-  selected: number[];
-  onChange: (nums: number[]) => void;
-}) {
-  if (fillMode === 'auto') return null;
-
-  const maxPicks = isPattern ? 20 : 15; // pattern: 4 per col×5=20; 90-ball: 15
-  const remaining = maxPicks - selected.length;
-  const isHybrid = fillMode === 'hybrid';
-
-  const toggle = (n: number) => {
-    if (selected.includes(n)) {
-      onChange(selected.filter((x) => x !== n));
-    } else if (selected.length < maxPicks) {
-      onChange([...selected, n]);
-    }
-  };
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: 'auto' }}
-      exit={{ opacity: 0, height: 0 }}
-      transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-      className="overflow-hidden"
-    >
-      <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3 space-y-3">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-            {isHybrid ? 'Pick some numbers (rest auto-filled)' : 'Pick your numbers'}
-          </span>
-          <div className="flex items-center gap-2">
-            <span className={`text-[10px] font-black ${remaining === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {selected.length}/{maxPicks}
-            </span>
-            {selected.length > 0 && (
-              <button
-                onClick={() => onChange([])}
-                className="text-[9px] text-slate-500 hover:text-slate-300 underline transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Pattern picker: 5 column layout (B-I-N-G-O) */}
-        {isPattern ? (
-          <div className="grid grid-cols-5 gap-1">
-            {BINGO_COLS.map((col, ci) => {
-              const [min, max] = colRangeForPattern(ci, numberRange);
-              const needed = ci === 2 ? 4 : 5; // center column has FREE
-              const colSelected = selected.filter((n) => n >= min && n <= max);
-              return (
-                <div key={col} className="space-y-0.5">
-                  <div
-                    className="text-center text-[10px] font-black py-1 rounded-t"
-                    style={{ background: ['#ef4444','#f97316','#22c55e','#3b82f6','#a855f7'][ci] + '22', color: ['#ef4444','#f97316','#22c55e','#3b82f6','#a855f7'][ci] }}
-                  >
-                    {col}
-                    <span className="block text-[7px] opacity-60">{colSelected.length}/{needed}</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    {Array.from({ length: max - min + 1 }, (_, i) => min + i).map((n) => {
-                      const picked = selected.includes(n);
-                      const colFull = colSelected.length >= needed && !picked;
-                      return (
-                        <button
-                          key={n}
-                          onClick={() => !colFull && toggle(n)}
-                          disabled={colFull && !picked}
-                          className={`w-full rounded text-[10px] font-bold py-0.5 transition-all duration-150 ${
-                            picked
-                              ? 'bg-amber-500 text-black font-black shadow-[0_0_6px_rgba(245,158,11,0.4)]'
-                              : colFull
-                                ? 'bg-white/[0.02] text-slate-700 cursor-not-allowed'
-                                : 'bg-white/[0.04] text-slate-400 hover:bg-white/[0.08] hover:text-slate-200'
-                          }`}
-                        >
-                          {n}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* 90-ball picker: flat 1-90 grid */
-          <div className="grid grid-cols-10 gap-1">
-            {Array.from({ length: 90 }, (_, i) => i + 1).map((n) => {
-              const picked = selected.includes(n);
-              const full = selected.length >= 15 && !picked;
-              return (
-                <button
-                  key={n}
-                  onClick={() => !full && toggle(n)}
-                  disabled={full}
-                  className={`aspect-square rounded text-[10px] font-bold transition-all duration-150 ${
-                    picked
-                      ? 'bg-amber-500 text-black font-black shadow-[0_0_5px_rgba(245,158,11,0.35)]'
-                      : full
-                        ? 'bg-white/[0.02] text-slate-700 cursor-not-allowed'
-                        : 'bg-white/[0.04] text-slate-400 hover:bg-amber-500/20 hover:text-amber-300'
-                  }`}
-                >
-                  {n}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Progress bar */}
-        <div className="h-1 bg-white/[0.05] rounded-full overflow-hidden">
-          <motion.div
-            className="h-full rounded-full bg-amber-500"
-            animate={{ width: `${(selected.length / maxPicks) * 100}%` }}
-            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-          />
-        </div>
-
-        {isHybrid && remaining > 0 && (
-          <p className="text-[9px] text-center text-slate-500">
-            {remaining} number{remaining !== 1 ? 's' : ''} will be auto-filled
-          </p>
-        )}
-        {fillMode === 'manual' && remaining > 0 && (
-          <p className="text-[9px] text-center text-amber-500/80">
-            Pick {remaining} more to fill your card
-          </p>
-        )}
-      </div>
-    </motion.div>
-  );
 }
 
 // ─── NumberBoard ─────────────────────────────────────────────────────────────
@@ -430,14 +272,15 @@ function DrawBall({ number, count, max, status }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function Bingo({ onBack }: BingoProps) {
-  const addToast      = useStore((s) => s.addToast);
-  const setWallet     = useStore((s) => s.setWallet);
-  const liveCounts    = useStore((s) => s.liveCounts);
-  const soundVolume   = useStore((s) => s.soundVolume);
-  const soundMuted    = useStore((s) => s.soundMuted);
-  const setSoundVolume = useStore((s) => s.setSoundVolume);
-  const setSoundMuted  = useStore((s) => s.setSoundMuted);
-  const currentUser   = useStore((s) => s.user);
+  const addToast         = useStore((s) => s.addToast);
+  const setWallet        = useStore((s) => s.setWallet);
+  const liveCounts       = useStore((s) => s.liveCounts);
+  const soundVolume      = useStore((s) => s.soundVolume);
+  const soundMuted       = useStore((s) => s.soundMuted);
+  const setSoundVolume   = useStore((s) => s.setSoundVolume);
+  const setSoundMuted    = useStore((s) => s.setSoundMuted);
+  const currentUser      = useStore((s) => s.user);
+  const isSocketConnected = useStore((s) => s.isSocketConnected);
 
   // ── Screen state machine ───────────────────────────────────────────────────
   const [screen, setScreen]               = useState<Screen>('lobby');
@@ -448,8 +291,6 @@ export function Bingo({ onBack }: BingoProps) {
   const [loadingState, setLoadingState]   = useState(false);
 
   // ── Configure state ────────────────────────────────────────────────────────
-  const [fillMode, setFillMode]           = useState<FillMode>('auto');
-  const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
   const [ticketCount, setTicketCount]     = useState(1);
   const [buying, setBuying]               = useState(false);
 
@@ -500,7 +341,15 @@ export function Bingo({ onBack }: BingoProps) {
 
   useEffect(() => { void loadRooms(); }, [loadRooms]);
 
-  // ── Socket ────────────────────────────────────────────────────────────────
+  // ── Socket: join/leave bingo room on mount so online count is correct ─────
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.emit('enter.game', { game: 'bingo' });
+    return () => { socket.emit('leave.game', { game: 'bingo' }); };
+  }, [isSocketConnected]);
+
+  // ── Socket: room-specific events ─────────────────────────────────────────
 
   useEffect(() => {
     if (!selectedRoomId) { setRoomState(null); return; }
@@ -509,15 +358,34 @@ export function Bingo({ onBack }: BingoProps) {
 
     const socket = getSocket();
     if (!socket) return;
-    socket.emit('enter.game', { game: 'bingo' });
 
     const onRoomUpdate = (p: { roomId?: string }) => {
       if (p.roomId === selectedRoomId) void loadRoomState(selectedRoomId);
       void loadRooms();
     };
-    const onNumberDrawn = (p: { roomId?: string }) => {
+    const onNumberDrawn = (p: { roomId?: string; number?: number }) => {
       if (p.roomId !== selectedRoomId) return;
       soundEngine.pop();
+      // Optimistic update: immediately mark the ball on all local ticket cards
+      if (p.number !== undefined) {
+        const drawn = p.number;
+        setRoomState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            drawnNumbers: prev.drawnNumbers.includes(drawn)
+              ? prev.drawnNumbers
+              : [...prev.drawnNumbers, drawn],
+            tickets: prev.tickets?.map((t) => {
+              if (t.markedNumbers.includes(drawn)) return t;
+              const isOnCard = t.grid.some((row) => row.some((cell) => cell === drawn));
+              if (!isOnCard) return t;
+              return { ...t, markedNumbers: [...t.markedNumbers, drawn] };
+            }),
+          };
+        });
+      }
+      // Full reload for completedLines, status, etc.
       void loadRoomState(selectedRoomId);
     };
     const onRoomCompleted = (p: { roomId?: string }) => {
@@ -536,7 +404,6 @@ export function Bingo({ onBack }: BingoProps) {
     socket.on('bingo.chat.message', onChatMessage);
 
     return () => {
-      socket.emit('leave.game', { game: 'bingo' });
       socket.off('bingo.room.updated', onRoomUpdate);
       socket.off('bingo.number.drawn', onNumberDrawn);
       socket.off('bingo.room.completed', onRoomCompleted);
@@ -604,8 +471,6 @@ export function Bingo({ onBack }: BingoProps) {
   const selectRoom = (room: BingoRoom) => {
     soundEngine.click();
     setSelectedRoomId(room.id);
-    setSelectedNumbers([]);
-    setFillMode('auto');
     setTicketCount(1);
     if (room.status === 'running' || room.status === 'completed') {
       setScreen('playing');
@@ -618,8 +483,7 @@ export function Bingo({ onBack }: BingoProps) {
     if (!selectedRoomId || !salesOpen) return;
     setBuying(true);
     try {
-      const nums = fillMode !== 'auto' ? selectedNumbers : undefined;
-      await bingoApi.purchaseTickets(selectedRoomId, ticketCount, createIdempotencyKey('bingo'), nums);
+      await bingoApi.purchaseTickets(selectedRoomId, ticketCount, createIdempotencyKey('bingo'));
       const [nextWallet] = await Promise.all([walletApi.getWallet(), loadRoomState(selectedRoomId), loadRooms()]);
       setWallet(nextWallet);
       soundEngine.cashout();
@@ -797,27 +661,25 @@ export function Bingo({ onBack }: BingoProps) {
                 )}
               </div>
 
-              {/* Prize tiers */}
-              {!isPatternMode && selectedRoom.prizes && (
-                <div className="grid grid-cols-3 gap-2 mt-1">
-                  {Object.entries(selectedRoom.prizes).map(([tier, amt]) => (
-                    <div key={tier} className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
-                      <span className="block text-[8px] font-bold uppercase text-slate-600 mb-0.5">{formatPrizeTier(tier)}</span>
-                      <span className="text-[11px] font-black text-amber-400">{formatCredits(amt)} Cr</span>
-                    </div>
-                  ))}
+              {/* Pot-based prize */}
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                <div className="rounded-lg bg-amber-500/8 border border-amber-500/20 p-2 text-center">
+                  <span className="block text-[8px] font-bold uppercase text-amber-600 mb-0.5">Prize Pot</span>
+                  <span className="text-[11px] font-black text-amber-400">
+                    {formatCredits(selectedRoom.prizeMinor)} Cr
+                  </span>
                 </div>
-              )}
-              {isPatternMode && selectedRoom.patternPrizes?.length > 0 && (
-                <div className="space-y-1 mt-1">
-                  {selectedRoom.patternPrizes.map((pp) => (
-                    <div key={pp.patternId} className="flex justify-between text-[10px]">
-                      <span className="text-slate-400">{pp.name}</span>
-                      <span className="font-black text-amber-400">{formatCredits(pp.prizeMinor)} Cr</span>
-                    </div>
-                  ))}
+                <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
+                  <span className="block text-[8px] font-bold uppercase text-slate-600 mb-0.5">Players</span>
+                  <span className="text-[11px] font-black text-slate-300">{selectedRoom.soldTickets}</span>
                 </div>
-              )}
+                <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
+                  <span className="block text-[8px] font-bold uppercase text-slate-600 mb-0.5">Stake</span>
+                  <span className="text-[11px] font-black text-slate-300">
+                    {formatCredits(selectedRoom.ticketPriceMinor)} Cr
+                  </span>
+                </div>
+              </div>
             </div>
 
             {/* Step 1: Tickets */}
@@ -847,46 +709,6 @@ export function Bingo({ onBack }: BingoProps) {
                   className="input text-center font-mono font-black w-16 py-2 text-sm"
                 />
               </div>
-            </div>
-
-            {/* Step 2: Fill mode */}
-            <div className="card space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Step 2 — How to fill your card?</p>
-              <div className="grid grid-cols-3 gap-2">
-                {([
-                  { id: 'auto',   icon: <Shuffle size={14} />,  label: 'Auto',   desc: 'Fully random' },
-                  { id: 'hybrid', icon: <Wand2 size={14} />,    label: 'Hybrid', desc: 'Pick some, auto-fill rest' },
-                  { id: 'manual', icon: <Hand size={14} />,     label: 'Manual', desc: 'Pick all numbers' },
-                ] as { id: FillMode; icon: React.ReactNode; label: string; desc: string }[]).map((opt) => (
-                  <motion.button
-                    key={opt.id}
-                    whileTap={{ scale: 0.93 }}
-                    onClick={() => { setFillMode(opt.id); setSelectedNumbers([]); }}
-                    className={`flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border transition-all ${
-                      fillMode === opt.id
-                        ? 'bg-amber-500/12 border-amber-500/40 text-amber-400'
-                        : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-white/[0.14]'
-                    }`}
-                  >
-                    {opt.icon}
-                    <span className="text-[11px] font-black">{opt.label}</span>
-                    <span className="text-[8px] text-slate-600 text-center leading-tight">{opt.desc}</span>
-                  </motion.button>
-                ))}
-              </div>
-
-              {/* Number picker */}
-              <AnimatePresence>
-                {fillMode !== 'auto' && (
-                  <NumberPicker
-                    fillMode={fillMode}
-                    numberRange={numberRange}
-                    isPattern={isPatternMode}
-                    selected={selectedNumbers}
-                    onChange={setSelectedNumbers}
-                  />
-                )}
-              </AnimatePresence>
             </div>
 
             {/* Buy button */}
@@ -982,6 +804,37 @@ export function Bingo({ onBack }: BingoProps) {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* ── Stats bar ── */}
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                {
+                  label: 'Derash',
+                  value: `${formatCredits(selectedRoom.prizeMinor)} Cr`,
+                  color: 'text-amber-400',
+                },
+                {
+                  label: 'Players',
+                  value: String(selectedRoom.soldTickets),
+                  color: 'text-slate-200',
+                },
+                {
+                  label: 'Stake',
+                  value: `${formatCredits(selectedRoom.ticketPriceMinor)} Cr`,
+                  color: 'text-slate-200',
+                },
+                {
+                  label: 'Call',
+                  value: `${drawnNumbers.length}/${numberRange}`,
+                  color: 'text-red-400',
+                },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-2 text-center">
+                  <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
+                  <span className={`text-[11px] font-black ${stat.color}`}>{stat.value}</span>
+                </div>
+              ))}
             </div>
 
             {/* ── My Tickets ── */}

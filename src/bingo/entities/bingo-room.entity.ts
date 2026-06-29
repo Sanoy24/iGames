@@ -76,6 +76,10 @@ export class BingoRoom {
   @Column({ type: 'json', default: '[]' })
   patternPrizes: BingoPatternPrize[];
 
+  /** House edge % at time of room creation — winner receives (100 - houseEdgePct)% of pot. */
+  @Column({ type: 'int', default: 20 })
+  houseEdgePct: number;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

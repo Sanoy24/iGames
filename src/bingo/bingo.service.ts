@@ -35,6 +35,8 @@ export type BingoRoomResponse = {
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
   settlementSummary: Record<string, unknown>;
+  houseEdgePct: number;
+  prizeMinor: number;
 };
 
 export type BingoTicketResponse = {
@@ -181,6 +183,7 @@ export class BingoService implements OnModuleInit {
       winMode: (cfg.defaultWinMode as 'line' | 'pattern') ?? 'line',
       numberRange: cfg.defaultNumberRange ?? 90,
       patternPrizes: [],
+      houseEdgePct: cfg.houseEdgePct ?? 20,
       scheduledStartAt,
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -233,6 +236,7 @@ export class BingoService implements OnModuleInit {
   }
 
   async createRoom(dto: CreateBingoRoomDto): Promise<BingoRoomResponse> {
+    const cfg = await this.getBingoConfig();
     const room = this.bingoRoomRepository.create({
       name: dto.name,
       status: 'open',
@@ -242,6 +246,7 @@ export class BingoService implements OnModuleInit {
       winMode: (dto.winMode as 'line' | 'pattern') ?? 'line',
       numberRange: dto.numberRange ?? 90,
       patternPrizes: dto.patternPrizes ?? [],
+      houseEdgePct: cfg.houseEdgePct ?? 20,
       scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : new Date(),
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -549,66 +554,72 @@ export class BingoService implements OnModuleInit {
       order: { createdAt: 'ASC' },
     });
 
-    const newlyQualifiedByTier = new Map<BingoPrizeTier, BingoTicket[]>([
-      ['one_line', []],
-      ['two_lines', []],
-      ['full_house', []],
-    ]);
-
+    // Update markedNumbers and completedLines for all tickets
     for (const ticket of tickets) {
       const state = this.bingoRulesService.evaluateTicket(ticket.grid, room.drawnNumbers);
       ticket.markedNumbers = state.markedNumbers;
       ticket.completedLines = state.completedLines;
-
-      for (const tier of state.achievedTiers) {
-        if (!room.settledTiers.includes(tier) && !ticket.wonTiers.includes(tier)) {
-          newlyQualifiedByTier.get(tier)?.push(ticket);
-        }
-      }
       await manager.save(ticket);
     }
 
-    for (const tier of ['one_line', 'two_lines', 'full_house'] as BingoPrizeTier[]) {
-      const winners = newlyQualifiedByTier.get(tier) ?? [];
-      if (winners.length === 0 || room.settledTiers.includes(tier)) continue;
+    // Single winner model: first ticket to achieve full_house wins the entire pot
+    if (!room.settledTiers.includes('full_house')) {
+      const houseEdgePct = room.houseEdgePct ?? 20;
+      const totalPotMinor = tickets.length * room.ticketPriceMinor;
+      const prizePotMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
 
-      const shares = this.bingoRulesService.splitPrizeMinor(this.getPrizeMinor(room, tier), winners.length);
-      for (const [index, ticket] of winners.entries()) {
-        const share = shares[index];
-        ticket.wonTiers.push(tier);
-        ticket.payoutMinor += share;
-        ticket.status = 'won';
-        if (tier === 'full_house') ticket.settlementStatus = 'settled';
+      let winner: BingoTicket | null = null;
+      for (const ticket of tickets) {
+        const state = this.bingoRulesService.evaluateTicket(ticket.grid, room.drawnNumbers);
+        if (state.achievedTiers.includes('full_house')) {
+          winner = ticket;
+          break;
+        }
+      }
 
-        if (share > 0) {
+      if (winner) {
+        winner.wonTiers = [...winner.wonTiers, 'full_house'];
+        winner.payoutMinor += prizePotMinor;
+        winner.status = 'won';
+        winner.settlementStatus = 'settled';
+
+        if (prizePotMinor > 0) {
           const winCredit = await this.walletService.creditInSession(
             {
-              userId: ticket.userId,
-              amountMinor: share,
+              userId: winner.userId,
+              amountMinor: prizePotMinor,
               entryType: 'win',
               sourceType: 'bingo_ticket',
-              sourceId: ticket.id,
-              idempotencyKey: `bingo-settlement:${tier}:${ticket.id}`,
+              sourceId: winner.id,
+              idempotencyKey: `bingo-settlement:full_house:${winner.id}`,
               metadata: {
                 roomId: room.id,
-                tier,
+                tier: 'full_house',
                 drawnNumbers: room.drawnNumbers,
-                completedLines: ticket.completedLines,
+                completedLines: winner.completedLines,
+                totalPotMinor,
+                houseEdgePct,
               },
             },
             manager,
           );
-          ticket.walletCredits.push(winCredit);
+          winner.walletCredits = [...winner.walletCredits, winCredit];
         }
-        await manager.save(ticket);
-      }
+        await manager.save(winner);
 
-      room.settledTiers.push(tier);
-      room.winnersByTier = { ...room.winnersByTier, [tier]: winners.map((t) => t.id) };
-      room.settlementSummary = {
-        ...room.settlementSummary,
-        [tier]: { winnerCount: winners.length, prizeMinor: this.getPrizeMinor(room, tier), shares },
-      };
+        room.settledTiers = [...room.settledTiers, 'full_house'];
+        room.winnersByTier = { ...room.winnersByTier, full_house: [winner.id] };
+        room.settlementSummary = {
+          ...room.settlementSummary,
+          full_house: {
+            winnerCount: 1,
+            winnerId: winner.id,
+            prizeMinor: prizePotMinor,
+            totalPotMinor,
+            houseEdgePct,
+          },
+        };
+      }
     }
   }
 
@@ -754,6 +765,9 @@ export class BingoService implements OnModuleInit {
   }
 
   private toRoomResponse(room: BingoRoom, soldTickets: number): BingoRoomResponse {
+    const houseEdgePct = room.houseEdgePct ?? 20;
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const prizeMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     return {
       id: room.id,
       name: room.name,
@@ -774,6 +788,8 @@ export class BingoService implements OnModuleInit {
       settledTiers: room.settledTiers,
       winnersByTier: room.winnersByTier,
       settlementSummary: room.settlementSummary || {},
+      houseEdgePct,
+      prizeMinor,
     };
   }
 

@@ -431,8 +431,24 @@ export class BingoService implements OnModuleInit {
 
       const maxNumber = room.winMode === 'pattern' ? (room.numberRange ?? 75) : 90;
 
+      // All numbers drawn but room still running — settle any outstanding tiers
+      // and mark the room completed instead of throwing forever on every tick.
       if (room.drawnNumbers.length >= maxNumber) {
-        throw new ConflictException('All Bingo numbers have already been drawn');
+        if (room.winMode === 'pattern') {
+          const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
+          const patterns =
+            patternIds.length > 0
+              ? await manager.find(BingoPattern, { where: { id: In(patternIds) } })
+              : [];
+          await this.evaluateAndSettlePatterns(room, patterns, manager);
+        } else {
+          await this.evaluateAndSettleTiers(room, manager);
+        }
+        room.status = 'completed';
+        await this.markRemainingTicketsLost(room, manager);
+        await manager.save(room);
+        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        return this.toRoomResponse(room, soldTickets);
       }
 
       room.status = 'running';

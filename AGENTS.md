@@ -2,6 +2,38 @@
 
 Practical working reference for AI coding agents. Read alongside `CLAUDE.md` (domain rules) — this file covers how to navigate, run, test, and change the codebase.
 
+## Session Start Protocol
+
+Before writing any code:
+
+1. Read `PROGRESS.md` — current verified state and next actions
+2. Check `feature_list.json` — pick the first `not_started` or `in_progress` feature
+3. Work on **one feature at a time** (WIP=1). Only move to the next after the verification command passes.
+4. Run `bash .harness/init.sh` if starting from a fresh environment
+
+## Session End Protocol
+
+Before closing:
+
+1. Run verification commands for everything you changed (see `feature_list.json` for each feature's command)
+2. Update `PROGRESS.md` with what changed and what's next
+3. Update `feature_list.json` status + evidence fields
+4. Complete `.harness/clean-state-checklist.md`
+5. Add any non-obvious design decisions to `DECISIONS.md`
+
+## Harness Files
+
+| File | Purpose |
+| --- | --- |
+| `PROGRESS.md` | Current verified state, session log, next actions |
+| `feature_list.json` | All features with state machine (not_started → passing) |
+| `DECISIONS.md` | Settled design decisions — do not re-open without discussion |
+| `.harness/init.sh` | Bootstrap script for new environments |
+| `.harness/session-handoff.md` | Template: fill out at end of each session |
+| `.harness/clean-state-checklist.md` | End-of-session verification checklist |
+| `.harness/evaluator-rubric.md` | 6-dimension quality rubric for reviewing output |
+| `.harness/quality-document.md` | Module-by-module codebase health tracker |
+
 ---
 
 ## Repository Layout
@@ -27,7 +59,7 @@ iGames/
 │   ├── scheduler/        # Keno cron scheduler (every minute)
 │   ├── telegram/         # Grammy bot, Mini App auth, phone-number handler
 │   ├── users/            # User + AuthIdentity schemas, profile, agent creation
-│   └── wallet/           # Wallet debit/credit, always in MongoDB transactions
+│   └── wallet/           # Wallet debit/credit, always inside a TypeORM transaction
 ├── frontend/             # React 19 + Vite + TypeScript Mini App / web client
 │   └── src/
 │       ├── components/   # BottomNav, WalletBar, Toasts, CredentialsLogin
@@ -47,7 +79,7 @@ iGames/
 ### Prerequisites
 
 - Node.js 20+
-- MongoDB 6+ with replica set (required for transactions): `mongod --replSet rs0 --port 27018`
+- MySQL 8+ — create the database and set `DB_*` env vars before starting
 - Redis: `redis-server`
 
 ### Backend
@@ -108,7 +140,7 @@ These endpoints are disabled when `NODE_ENV=production`.
 | Variable | Purpose |
 |---|---|
 | `PORT` | Backend HTTP port (default 3000) |
-| `MONGODB_URI` | MongoDB connection with `replicaSet=rs0` (transactions require this) |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASS` | MySQL connection — TypeORM reads these |
 | `REDIS_URL` | Redis for distributed draw lock and Socket.IO adapter |
 | `JWT_ACCESS_SECRET` | Sign access tokens (min 32 chars random) |
 | `JWT_REFRESH_SECRET` | Sign refresh tokens (different from access secret) |
@@ -144,8 +176,8 @@ Agents are created by admins via `POST /admin/agents` (phone number + display na
 **All amounts are integer minor units (credits).** Never use floats.
 
 - 100 minor = 1 Birr (configurable via `TELEBIRR_CREDIT_MINOR_PER_BIRR`)
-- Always debit/credit through `WalletService`, never write to the Wallet document directly
-- Every wallet mutation creates an immutable `LedgerEntry` in the same MongoDB transaction
+- Always debit/credit through `WalletService`, never write to the `wallet` row directly
+- Every wallet mutation creates an immutable `LedgerEntry` in the same TypeORM transaction
 - Idempotency keys prevent double debits/credits — always pass them for ticket purchases and settlements
 
 ---
@@ -155,15 +187,15 @@ Agents are created by admins via `POST /admin/agents` (phone number + display na
 ### Wallet + Ledger (always together)
 
 ```typescript
-await walletService.debitInSession({ userId, amountMinor, entryType, sourceType, sourceId, idempotencyKey, metadata }, session);
-await walletService.creditInSession({ ... }, session);
+await walletService.debitInSession({ userId, amountMinor, entryType, sourceType, sourceId, idempotencyKey, metadata }, manager);
+await walletService.creditInSession({ ... }, manager);
 ```
 
-Both methods create a ledger entry inside the provided MongoDB session.
+Both methods create a ledger entry inside the provided `EntityManager`.
 
-### MongoDB Transactions
+### TypeORM Transactions
 
-Game-critical operations (ticket purchase, draw execution, settlement) run inside `session.withTransaction(async () => { ... })`. Always pass `{ session }` to every Mongoose call inside the callback.
+Game-critical operations (ticket purchase, draw execution, settlement) run inside `dataSource.transaction(async (manager) => { ... })`. Pass `manager` to every repository call inside the callback.
 
 ### Distributed Draw Lock
 
@@ -173,7 +205,7 @@ if (!lock) return; // another instance has it
 try { ... } finally { await lockService.releaseLock(lock); }
 ```
 
-The lock prevents duplicate execution when multiple backend instances run behind a load balancer. The draw's status transition to `locked` acts as a second DB-level guard.
+The lock prevents duplicate execution when multiple backend instances run behind a load balancer. The draw's status column transition to `locked` acts as a second DB-level guard.
 
 ### Role Guards
 
@@ -244,10 +276,10 @@ bingo.number.drawn     → bingo real-time number reveal
 
 ## Adding a New Feature — Checklist
 
-1. **Backend module** — new controller + service + schema in its own directory; wire into `AppModule`
+1. **Backend module** — new controller + service + entity in its own directory; wire into `AppModule` and `TypeOrmModule.forFeature([...])`
 2. **DTO** — validate all inputs with `class-validator`; add `@ApiTags` + `@ApiOkResponse` decorators
-3. **Guard** — protect write endpoints with `JwtAuthGuard` + `RolesGuard`
-4. **Money mutations** — go through `WalletService` inside a MongoDB session, never direct writes
+3. **Guard** — protect write endpoints with `JwtAuthGuard` + `RolesGuard`; import `JwtModule.register({})` in the module
+4. **Money mutations** — go through `WalletService` inside a `dataSource.transaction()`, never direct row writes
 5. **Frontend model** — add the new type to `frontend/src/lib/models.ts`
 6. **Frontend API call** — add to the relevant group in `frontend/src/lib/api.ts`
 7. **TypeScript check** — `npx tsc --noEmit` in both repo root and `frontend/` before considering done
@@ -257,7 +289,7 @@ bingo.number.drawn     → bingo real-time number reveal
 ## What NOT to Change Without Being Asked
 
 - Do not add real-money payment gateways, KYC, AML, or compliance flows
-- Do not hardcode game odds, prices, or prize values — all must be MongoDB-backed config
+- Do not hardcode game odds, prices, or prize values — all must be database-backed config rows
 - Do not call `Math.random()` for any game outcome — use `RngService`
 - Do not mutate wallet documents directly — always use `WalletService`
 - Do not change Keno draw size (20 numbers from 1–80) or Bingo grid spec (3×9, 15 numbers, 1–90) unless explicitly asked

@@ -180,29 +180,33 @@ export class GameEventsGateway
   }
 
   @SubscribeMessage('enter.game')
-  async handleEnterGame(client: Socket, payload: { game: 'keno' | 'bingo' }) {
+  async handleEnterGame(client: Socket, payload: { game: 'keno' | 'bingo' | 'crash' }) {
     if (payload?.game === 'keno') {
       await client.join('game_keno');
       this.logger.debug(`Client ${client.id} entered Keno`);
-      await this.broadcastLiveCounts();
     } else if (payload?.game === 'bingo') {
       await client.join('game_bingo');
       this.logger.debug(`Client ${client.id} entered Bingo`);
-      await this.broadcastLiveCounts();
+    } else if (payload?.game === 'crash') {
+      await client.join('game_crash');
+      this.logger.debug(`Client ${client.id} entered Crash`);
     }
+    await this.broadcastLiveCounts();
   }
 
   @SubscribeMessage('leave.game')
-  async handleLeaveGame(client: Socket, payload: { game: 'keno' | 'bingo' }) {
+  async handleLeaveGame(client: Socket, payload: { game: 'keno' | 'bingo' | 'crash' }) {
     if (payload?.game === 'keno') {
       await client.leave('game_keno');
       this.logger.debug(`Client ${client.id} left Keno`);
-      await this.broadcastLiveCounts();
     } else if (payload?.game === 'bingo') {
       await client.leave('game_bingo');
       this.logger.debug(`Client ${client.id} left Bingo`);
-      await this.broadcastLiveCounts();
+    } else if (payload?.game === 'crash') {
+      await client.leave('game_crash');
+      this.logger.debug(`Client ${client.id} left Crash`);
     }
+    await this.broadcastLiveCounts();
   }
 
   emitWalletUpdated(userId: string, wallet: WalletSummary): void {

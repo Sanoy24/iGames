@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 import { CrashService } from '../crash/crash.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { RedisLockService } from '../redis/redis-lock.service';
+import { BotsService } from '../bots/bots.service';
 
 const CRASH_LOCK_KEY = 'igames:crash:scheduler-lock';
 const CRASH_LOCK_TTL_MS = 30_000;
@@ -31,6 +32,7 @@ export class CrashScheduler implements OnApplicationBootstrap, OnApplicationShut
     private readonly crashService: CrashService,
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly lockService: RedisLockService,
+    private readonly botsService: BotsService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {

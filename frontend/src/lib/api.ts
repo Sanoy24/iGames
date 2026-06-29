@@ -6,6 +6,9 @@ import type {
   BingoRoom,
   BingoRoomState,
   BingoTicket,
+  CrashBet,
+  CrashConfig,
+  CrashRound,
   KenoConfig,
   KenoDraw,
   KenoTicket,
@@ -161,6 +164,23 @@ export const bingoApi = {
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
       .then((r) => r.data as BingoTicket[]),
+};
+
+// ── Crash ─────────────────────────────────────────────────────────
+export const crashApi = {
+  getConfig: () => api.get<CrashConfig>('/crash/config').then((r) => r.data),
+  getActiveRound: () => api.get<CrashRound | null>('/crash/active').then((r) => r.data),
+  getRecentRounds: (limit = 20) => api.get<CrashRound[]>(`/crash/rounds?limit=${limit}`).then((r) => r.data),
+  getMyBets: (limit = 20) => api.get<CrashBet[]>(`/crash/bets?limit=${limit}`).then((r) => r.data),
+  getMyBetsForRound: (roundId: string) => api.get<CrashBet[]>(`/crash/rounds/${roundId}/bets`).then((r) => r.data),
+  placeBet: (roundId: string, stakeMinor: number, idempotencyKey: string, autoCashoutAt?: number) =>
+    api.post<CrashBet>(
+      `/crash/rounds/${roundId}/bet`,
+      { stakeMinor, ...(autoCashoutAt ? { autoCashoutAt } : {}) },
+      { headers: { 'Idempotency-Key': idempotencyKey } },
+    ).then((r) => r.data),
+  cashOut: (roundId: string, multiplierX100: number) =>
+    api.post<CrashBet>(`/crash/rounds/${roundId}/cashout`, { multiplierX100 }).then((r) => r.data),
 };
 
 // ── Users / Profile ───────────────────────────────────────────────

@@ -1,21 +1,24 @@
 import { useState, type CSSProperties } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, Users, Clock, Trophy, Star } from 'lucide-react';
+import { Zap, Users, Clock, Trophy, Star, TrendingUp } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
-type Filter = 'all' | 'keno' | 'bingo';
+type Filter = 'all' | 'keno' | 'bingo' | 'crash';
 
 const BINGO_LETTERS = ['B', 'I', 'N', 'G', 'O'];
 const BINGO_COLORS = ['#4ade80', '#facc15', '#60a5fa', '#f87171', '#c084fc'];
 const KENO_BALLS = [7, 23, 45, 68, 80];
+const CRASH_MULTS = ['1.23×', '2.50×', '5.00×', '1.05×'];
+const CRASH_COLORS = ['#10b981', '#10b981', '#ef4444', '#ef4444'];
 
 const FILTER_CHIPS: { id: Filter; label: string; icon: string }[] = [
   { id: 'all',   label: 'All Games',   icon: '🎮' },
   { id: 'keno',  label: 'Fast Draw',   icon: '⚡' },
   { id: 'bingo', label: 'Live Rooms',  icon: '🎯' },
+  { id: 'crash', label: 'Crash',       icon: '🚀' },
 ];
 
 const containerVariants = {
@@ -34,6 +37,7 @@ export function Games({ onNavigate }: Props) {
 
   const showKeno  = filter === 'all' || filter === 'keno';
   const showBingo = filter === 'all' || filter === 'bingo';
+  const showCrash = filter === 'all' || filter === 'crash';
 
   return (
     <motion.div
@@ -221,6 +225,53 @@ export function Games({ onNavigate }: Props) {
                     transition={{ duration: 2 + i * 0.3, delay: i * 0.18, repeat: Infinity, ease: 'easeInOut' }}
                   >
                     {n}
+                  </motion.span>
+                ))}
+              </div>
+            </motion.button>
+          )}
+          {/* ── Crash ── */}
+          {showCrash && (
+            <motion.button
+              layout
+              key="crash"
+              variants={itemVariants}
+              className="game-banner game-banner-crash"
+              onClick={() => onNavigate('crash')}
+              exit={{ opacity: 0, y: -12, scale: 0.97 }}
+              whileHover={{ scale: 1.015, y: -3 }}
+              whileTap={{ scale: 0.975 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+            >
+              <div className="game-banner-content">
+                <span className="game-banner-tag">
+                  Provably Fair
+                </span>
+                <h2 className="game-banner-title">Crash</h2>
+                <p className="game-banner-desc">
+                  Watch the multiplier climb, cash out before it crashes — the longer you wait, the bigger the risk.
+                </p>
+                <div className="game-banner-stats">
+                  <span className="game-stat-pill"><TrendingUp size={10} style={{ display:'inline', marginRight:3 }} />Live multiplier</span>
+                  <span className="game-stat-pill">🚀 Auto cashout</span>
+                  <span className="game-stat-pill">🔒 Seed hash</span>
+                </div>
+                <span className="game-banner-cta">Play Now →</span>
+              </div>
+              <div className="game-banner-deco" style={{ gap: 6 }}>
+                {CRASH_MULTS.map((m, i) => (
+                  <motion.span
+                    key={m + i}
+                    style={{
+                      fontSize: 13, fontWeight: 800,
+                      color: CRASH_COLORS[i],
+                      fontFamily: 'var(--font-display)',
+                      opacity: 0.9,
+                    }}
+                    animate={{ y: [0, -5, 0] }}
+                    transition={{ duration: 1.8 + i * 0.3, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    {m}
                   </motion.span>
                 ))}
               </div>

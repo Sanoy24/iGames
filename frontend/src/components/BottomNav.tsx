@@ -32,7 +32,7 @@ export function BottomNav({ active, onChange }: Props) {
   const isAgent  = roles.includes('agent');
 
   const isActive = (id: AppTab) =>
-    active === id || (id === 'games' && (active === 'keno' || active === 'bingo'));
+    active === id || (id === 'games' && (active === 'keno' || active === 'bingo' || active === 'crash'));
 
   const playerTabs: NavEntry[] = [
     { id: 'home',        label: 'Home',        icon: <Home size={22} strokeWidth={1.6} />,       activeIcon: <House size={22} strokeWidth={2.4} /> },

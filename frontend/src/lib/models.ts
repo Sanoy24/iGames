@@ -197,6 +197,42 @@ export type SpectatorCard = {
   status: string;
 };
 
+export type CrashConfig = {
+  key: string;
+  enabled: boolean;
+  houseEdgePct: number;
+  minBetMinor: number;
+  maxBetMinor: number;
+  waitingDurationSeconds: number;
+  tickIntervalMs: number;
+  maxMultiplierX100: number;
+  botBetMinor: number;
+  globalBotWinInterval: number;
+};
+
+export type CrashRound = {
+  id: string;
+  status: 'waiting' | 'running' | 'crashed';
+  seedHash: string;
+  seed?: string | null;
+  crashPointX100?: number | null;
+  startedAt?: string | null;
+  crashedAt?: string | null;
+  elapsedMs?: number | null;
+  settlementSummary?: Record<string, unknown> | null;
+};
+
+export type CrashBet = {
+  id: string;
+  userId: string;
+  roundId: string;
+  stakeMinor: number;
+  autoCashoutX100?: number | null;
+  cashedOutAtX100?: number | null;
+  payoutMinor: number;
+  status: 'active' | 'won' | 'lost';
+};
+
 export type Withdrawal = {
   id: string;
   userId: string;

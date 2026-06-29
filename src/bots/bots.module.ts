@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { BingoModule } from '../bingo/bingo.module';
+import { CrashModule } from '../crash/crash.module';
 import { KenoModule } from '../keno/keno.module';
 import { User } from '../users/entities/user.entity';
 import { WalletModule } from '../wallet/wallet.module';
@@ -17,6 +18,7 @@ import { BotsService } from './bots.service';
     WalletModule,
     KenoModule,
     BingoModule,
+    CrashModule,
   ],
   controllers: [BotsController],
   providers: [BotsService, JwtAuthGuard, RolesGuard],

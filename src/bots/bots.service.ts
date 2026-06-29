@@ -9,6 +9,7 @@ import { randomInt } from 'crypto';
 import { Repository, DataSource, In, MoreThan } from 'typeorm';
 import { KenoService } from '../keno/keno.service';
 import { BingoService } from '../bingo/bingo.service';
+import { CrashService } from '../crash/crash.service';
 import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { User } from '../users/entities/user.entity';
 import { WalletService } from '../wallet/wallet.service';
@@ -41,6 +42,7 @@ export class BotsService {
     private readonly walletService: WalletService,
     private readonly kenoService: KenoService,
     private readonly bingoService: BingoService,
+    private readonly crashService: CrashService,
   ) {}
 
   async createBot(dto: CreateBotDto): Promise<BotResponse> {
@@ -217,6 +219,38 @@ export class BotsService {
       );
     } catch (err) {
       this.logger.error(`Failed to credit bot win for room ${roomId}`, err instanceof Error ? err.stack : err);
+    }
+  }
+
+  /**
+   * Called by the crash scheduler right after a new round enters the waiting phase.
+   * Each active bot randomly decides to participate (~60% chance) and places one bet.
+   */
+  async placeBetsForCrashRound(roundId: string): Promise<void> {
+    const bots = await this.getActiveBots();
+    if (bots.length === 0) return;
+
+    const cfg = await this.crashService.getConfig();
+    if (!cfg.enabled || cfg.botBetMinor <= 0) return;
+
+    for (const bot of bots) {
+      // ~60% participation rate per round
+      if (randomInt(0, 10) >= 6) continue;
+
+      const idempotencyKey = `crash-bot-bet:${roundId}:${bot.id}`;
+      // Bot auto-cashout: random between 1.20× and 2.50× (120–250)
+      const autoCashoutX100 = 120 + randomInt(0, 131);
+
+      try {
+        await this.crashService.placeBet(
+          bot.id,
+          roundId,
+          { stakeMinor: cfg.botBetMinor, autoCashoutAt: autoCashoutX100 / 100 },
+          idempotencyKey,
+        );
+      } catch {
+        // Duplicate key, insufficient balance, or round no longer waiting — skip silently
+      }
     }
   }
 

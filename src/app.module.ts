@@ -22,6 +22,7 @@ import { UsersModule } from "./users/users.module";
 import { WalletModule } from "./wallet/wallet.module";
 import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
+import { CrashModule } from "./crash/crash.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -78,6 +79,7 @@ const isDev = process.env.NODE_ENV !== "production";
         BotsModule,
         AdminModule,
         AgentsModule,
+        CrashModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

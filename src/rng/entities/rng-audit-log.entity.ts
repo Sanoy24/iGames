@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
-export type RngGameType = 'keno' | 'bingo';
+export type RngGameType = 'keno' | 'bingo' | 'crash';
 
 @Entity('rng_audit_logs')
 @Index(['gameType', 'gameReference'])
@@ -9,7 +9,7 @@ export class RngAuditLog {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'enum', enum: ['keno', 'bingo'] })
+  @Column({ type: 'enum', enum: ['keno', 'bingo', 'crash'] })
   @Index()
   gameType: RngGameType;
 

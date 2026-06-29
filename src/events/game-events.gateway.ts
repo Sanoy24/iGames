@@ -53,6 +53,20 @@ export type WithdrawalPendingPayload = {
   destinationAccount: string;
 };
 
+export type CrashRoundPayload = {
+  roundId: string;
+  status: string;
+  seedHash: string;
+  elapsedMs?: number;
+  crashPointX100?: number | null;
+};
+
+export type CrashTickPayload = {
+  roundId: string;
+  multiplierX100: number;
+  elapsedMs: number;
+};
+
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class GameEventsGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown
@@ -245,6 +259,40 @@ export class GameEventsGateway
       settlementSummary: room.settlementSummary
     };
     this.server.emit('bingo.room.completed', payload);
+  }
+
+  emitCrashRoundWaiting(payload: CrashRoundPayload): void {
+    this.server.emit('crash.round.waiting', payload);
+  }
+
+  emitCrashRoundStarted(payload: CrashRoundPayload): void {
+    this.server.emit('crash.round.started', payload);
+  }
+
+  emitCrashTick(payload: CrashTickPayload): void {
+    this.server.emit('crash.tick', payload);
+  }
+
+  emitCrashRoundCrashed(payload: CrashRoundPayload & { seed: string }): void {
+    this.server.emit('crash.round.crashed', payload);
+  }
+
+  emitCrashBetPlaced(userId: string, payload: Record<string, unknown>): void {
+    this.server.to(`user_${userId}`).emit('crash.bet.placed', payload);
+  }
+
+  emitCrashCashedOut(userId: string, payload: Record<string, unknown>): void {
+    this.server.to(`user_${userId}`).emit('crash.bet.cashedout', payload);
+  }
+
+  @SubscribeMessage('enter.crash')
+  async handleEnterCrash(client: Socket) {
+    await client.join('game_crash');
+  }
+
+  @SubscribeMessage('leave.crash')
+  async handleLeaveCrash(client: Socket) {
+    await client.leave('game_crash');
   }
 
   @SubscribeMessage('bingo.chat.send')

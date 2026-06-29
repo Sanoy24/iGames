@@ -130,12 +130,34 @@ export const walletApi = {
 };
 
 // ── Payments ──────────────────────────────────────────────────────
+
+export type TelebirrPreview = {
+  receiptNo: string;
+  amountMinor: number;
+  payerName?: string;
+  payerPhone?: string;
+  receiverName?: string;
+  transactionStatus?: string;
+  date?: string;
+};
+
+function extractTelebirrReceiptBody(rawText: string): { receiptUrl: string } | { receiptNo: string } {
+  const trimmed = rawText.trim();
+  // 1. Full URL anywhere in the text
+  const urlMatch = trimmed.match(/https?:\/\/transactioninfo\.ethiotelecom\.et\/receipt\/([A-Za-z0-9_-]+)/i);
+  if (urlMatch) return { receiptUrl: urlMatch[0] };
+  // 2. The entire input is already a URL
+  if (/^https?:\/\//i.test(trimmed)) return { receiptUrl: trimmed };
+  // 3. Plain receipt number
+  return { receiptNo: trimmed };
+}
+
 export const paymentsApi = {
-  submitTelebirrReceipt: (receipt: string) => {
-    const trimmed = receipt.trim();
-    const body = /^https?:\/\//i.test(trimmed) ? { receiptUrl: trimmed } : { receiptNo: trimmed };
-    return api.post('/payments/telebirr/receipts', body).then((r) => r.data);
-  },
+  previewTelebirrReceipt: (rawText: string) =>
+    api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
+
+  submitTelebirrReceipt: (rawText: string) =>
+    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
 };
 
 // ── Keno ──────────────────────────────────────────────────────────

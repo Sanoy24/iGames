@@ -7,6 +7,16 @@ import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
 
+export type TelebirrReceiptPreview = {
+  receiptNo: string;
+  amountMinor: number;
+  payerName?: string;
+  payerPhone?: string;
+  receiverName?: string;
+  transactionStatus?: string;
+  date?: string;
+};
+
 export type TelebirrDepositResponse = {
   id: string;
   receiptNo: string;
@@ -28,6 +38,27 @@ export class PaymentsService {
     private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
     private readonly walletService: WalletService
   ) {}
+
+  async previewTelebirrReceipt(
+    userId: string,
+    dto: SubmitTelebirrReceiptDto,
+  ): Promise<TelebirrReceiptPreview> {
+    const submittedReceipt = dto.receiptNo ?? dto.receiptUrl;
+    if (!submittedReceipt) {
+      throw new ConflictException('receiptNo or receiptUrl is required');
+    }
+    const verified = await this.telebirrReceiptVerifierService.verifyReceipt(submittedReceipt, userId);
+    const p = verified.parsedReceipt;
+    return {
+      receiptNo: verified.receiptNo,
+      amountMinor: verified.amountMinor,
+      payerName:        typeof p.payer_name         === 'string' ? p.payer_name         : undefined,
+      payerPhone:       typeof p.payer_phone        === 'string' ? p.payer_phone        : undefined,
+      receiverName:     typeof p.credited_party_name === 'string' ? p.credited_party_name : undefined,
+      transactionStatus: typeof p.transaction_status === 'string' ? p.transaction_status : undefined,
+      date:             typeof p.date               === 'string' ? p.date               : undefined,
+    };
+  }
 
   async submitTelebirrReceipt(
     userId: string,

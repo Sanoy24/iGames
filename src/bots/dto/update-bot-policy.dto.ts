@@ -3,22 +3,20 @@ import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateBotPolicyDto {
   @ApiPropertyOptional({ example: 2 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(12)
+  @IsOptional() @IsInt() @Min(1) @Max(12)
   ticketsPerRound?: number;
 
   @ApiPropertyOptional({ example: 4 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(12)
+  @IsOptional() @IsInt() @Min(1) @Max(12)
   spotCount?: number;
 
-
   @ApiPropertyOptional({ example: false })
-  @IsOptional()
-  @IsBoolean()
+  @IsOptional() @IsBoolean()
   active?: boolean;
+}
+
+export class TopupBotDto {
+  @ApiPropertyOptional({ example: 100000, description: 'Amount to add in minor units' })
+  @IsInt() @Min(1)
+  amountMinor: number;
 }

@@ -29,6 +29,7 @@ export type BotResponse = {
   id: string;
   displayName: string;
   botPolicy: BotPolicy;
+  walletBalanceMinor?: number;
 };
 
 @Injectable()
@@ -88,7 +89,47 @@ export class BotsService {
       .where("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
       .orderBy('user.createdAt', 'DESC')
       .getMany();
-    return bots.map((b) => this.toBotResponse(b));
+
+    return Promise.all(
+      bots.map(async (b) => {
+        let walletBalanceMinor: number | undefined;
+        try {
+          const ws = await this.walletService.getDefaultWalletSummary(b.id);
+          walletBalanceMinor = ws.availableMinor;
+        } catch { /* bot may not have a wallet yet */ }
+        return { ...this.toBotResponse(b), walletBalanceMinor };
+      }),
+    );
+  }
+
+  async deleteBot(botId: string): Promise<void> {
+    const bot = await this.findBot(botId);
+    // Mark as inactive + strip bot policy so it no longer participates in games
+    const policy = bot.productMetadata!.botPolicy as BotPolicy;
+    bot.productMetadata = { ...bot.productMetadata!, botPolicy: { ...policy, active: false } };
+    bot.status = 'suspended';
+    await this.userRepository.save(bot);
+    this.logger.log(`Bot ${botId} (${bot.displayName}) deleted`);
+  }
+
+  async topupBot(botId: string, amountMinor: number): Promise<BotResponse> {
+    const bot = await this.findBot(botId);
+    await this.dataSource.transaction(async (manager) => {
+      await this.walletService.creditInSession(
+        {
+          userId: bot.id,
+          amountMinor,
+          entryType: 'bonus',
+          sourceType: 'bot_topup',
+          sourceId: bot.id,
+          idempotencyKey: `bot-topup:${bot.id}:${Date.now()}`,
+          metadata: { reason: 'admin_topup' },
+        },
+        manager,
+      );
+    });
+    const ws = await this.walletService.getDefaultWalletSummary(bot.id);
+    return { ...this.toBotResponse(bot), walletBalanceMinor: ws.availableMinor };
   }
 
   async updatePolicy(botId: string, dto: UpdateBotPolicyDto): Promise<BotResponse> {

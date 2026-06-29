@@ -351,8 +351,8 @@ export class CrashService {
     // Use the RNG service for audit — we draw 1 "number" between 0 and 999999
     // to get a uniform random value, then apply the house-edge crash formula
     const result = await this.rngService.drawUniqueNumbers({
-      min: 0,
-      max: 999999,
+      min: 1,
+      max: 1_000_000,
       count: 1,
       gameType: 'crash',
       gameReference: roundId,
@@ -360,7 +360,7 @@ export class CrashService {
       manager,
     });
 
-    const e = result.numbers[0] / 1_000_000; // uniform [0, 1)
+    const e = (result.numbers[0] - 1) / 1_000_000; // uniform [0, 1)
 
     // Standard crash formula with house edge:
     // crashPoint = max(100, floor(100 * 100 / (100 * e + houseEdge))) / 100

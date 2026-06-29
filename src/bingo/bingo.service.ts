@@ -475,7 +475,7 @@ export class BingoService implements OnModuleInit {
         if (room.drawnNumbers.length >= minDrawsBeforeWin) {
           await this.evaluateAndSettleTiers(room, manager);
         }
-        if (room.settledTiers.includes('full_house')) {
+        if (room.settledTiers.includes('full_house') || room.drawnNumbers.length >= maxNumber) {
           room.status = 'completed';
           await this.markRemainingTicketsLost(room, manager);
         }

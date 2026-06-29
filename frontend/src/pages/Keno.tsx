@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Play, Pause, Trash2, ChevronDown, ChevronUp,
-  Volume2, VolumeX, Trophy, Award, Zap,
+  Volume2, VolumeX, Trophy, Award, Zap, X, RotateCcw,
 } from 'lucide-react';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoConfig, KenoDraw, KenoTicket } from '../lib/models';
@@ -242,8 +242,16 @@ export function Keno({ onBack }: KenoProps) {
   const [autoPlayStopLoss, setAutoPlayStopLoss]         = useState('');
   const [autoPlayStats, setAutoPlayStats]               = useState({ roundsPlayed: 0, netProfit: 0 });
 
+  // Pay-first-then-pick: the grid stays locked until the player has paid for the
+  // active draw. After paying we hold the ticket id and PATCH number edits to it.
+  const [paidTicketId, setPaidTicketId] = useState<string | null>(null);
+  const [savingPicks, setSavingPicks]   = useState(false);
+  const [bottomTab, setBottomTab]       = useState<'draws' | 'tickets'>('draws');
+
   const ticketsRef             = useRef<KenoTicket[]>([]);
   const lastPurchasedDrawId    = useRef<string | null>(null);
+  const syncedTicketRef        = useRef<string | null>(null);
+  const patchTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scheduledAt = activeDraw?.status === 'open' ? activeDraw.scheduledAt : null;
   const { display: countdown, urgent: countdownUrgent, expired: countdownExpired, seconds: countdownSeconds } =
@@ -432,48 +440,107 @@ export function Keno({ onBack }: KenoProps) {
     return () => clearInterval(id);
   }, [countdownExpired, activeDraw]);
 
-  const handleQuickPick = () => {
-    soundEngine.click();
+  const drawOpen = !!activeDraw && activeDraw.status === 'open';
+  // The number grid is interactive only after the player has paid for the
+  // current open draw (and not while the draw is being revealed).
+  const gridLocked = !paidTicketId || !drawOpen || gameState === 'drawing';
+
+  const quickPickNumbers = useCallback((count: number) => {
     const pool = [...numbers];
     const picked: number[] = [];
-    for (let i = 0; i < spotTarget; i++) {
+    for (let i = 0; i < count && pool.length > 0; i++) {
       const idx = Math.floor(Math.random() * pool.length);
       picked.push(pool.splice(idx, 1)[0]);
     }
-    setSelectedNumbers(picked.sort((a, b) => a - b));
+    return picked.sort((a, b) => a - b);
+  }, [numbers]);
+
+  // Debounced save of edited picks to the already-paid ticket.
+  const savePicks = useCallback((ticketId: string, picks: number[]) => {
+    if (patchTimerRef.current) clearTimeout(patchTimerRef.current);
+    patchTimerRef.current = setTimeout(async () => {
+      try {
+        setSavingPicks(true);
+        await kenoApi.updateTicketNumbers(ticketId, picks);
+        const fresh = await kenoApi.listTickets(15);
+        setTickets(fresh);
+      } catch (err) {
+        addToast('error', getErrorMessage(err));
+      } finally {
+        setSavingPicks(false);
+      }
+    }, 600);
+  }, [addToast]);
+
+  // Sync local selection from the player's ticket once per ticket, so paying
+  // pre-fills the grid without clobbering subsequent in-progress edits.
+  useEffect(() => {
+    if (!activeDraw) {
+      syncedTicketRef.current = null;
+      setPaidTicketId(null);
+      return;
+    }
+    const mine = tickets.find((t) => t.drawId === activeDraw.id);
+    if (mine && syncedTicketRef.current !== mine.id) {
+      syncedTicketRef.current = mine.id;
+      setPaidTicketId(mine.id);
+      setSpotTarget(mine.selectedNumbers.length);
+      setSelectedNumbers([...mine.selectedNumbers].sort((a, b) => a - b));
+    } else if (!mine && syncedTicketRef.current !== null) {
+      syncedTicketRef.current = null;
+      setPaidTicketId(null);
+      setSelectedNumbers([]);
+    }
+  }, [activeDraw, tickets]);
+
+  const handleQuickPick = () => {
+    if (gridLocked || !paidTicketId) return;
+    soundEngine.click();
+    const picks = quickPickNumbers(spotTarget);
+    setSelectedNumbers(picks);
+    savePicks(paidTicketId, picks);
   };
 
   const handleClearSelection = () => {
+    if (gridLocked) return;
     soundEngine.click();
     setSelectedNumbers([]);
   };
 
   const toggleNumber = (value: number) => {
+    if (gridLocked || !paidTicketId) return;
     soundEngine.click();
-    setSelectedNumbers((cur) => {
-      if (cur.includes(value)) return cur.filter((n) => n !== value);
-      if (cur.length >= spotTarget) return cur;
-      return [...cur, value].sort((a, b) => a - b);
-    });
+    const cur = selectedNumbers;
+    let next: number[];
+    if (cur.includes(value)) {
+      next = cur.filter((n) => n !== value);
+    } else {
+      if (cur.length >= spotTarget) return;
+      next = [...cur, value].sort((a, b) => a - b);
+    }
+    setSelectedNumbers(next);
+    if (next.length === spotTarget) savePicks(paidTicketId, next);
   };
 
-  const handleBuyTicket = async () => {
-    if (selectedNumbers.length !== spotTarget) {
-      addToast('info', `Please select exactly ${spotTarget} numbers.`);
-      return;
-    }
-    if (!activeDraw || activeDraw.status !== 'open') {
+  // Pay first — buys a ticket (with a quick-pick) for the open draw. The grid
+  // then unlocks so the player can adjust the specific numbers.
+  const handleBuyIn = async () => {
+    if (!drawOpen) {
       addToast('info', 'Wait for next draw to open.');
       return;
     }
     setSubmitting(true);
     try {
-      await kenoApi.purchaseTicket(selectedNumbers, createIdempotencyKey('keno'));
+      const picks = quickPickNumbers(spotTarget);
+      const ticket = await kenoApi.purchaseTicket(picks, createIdempotencyKey('keno'));
       const [nextWallet] = await Promise.all([walletApi.getWallet(), loadKeno()]);
       setWallet(nextWallet);
+      syncedTicketRef.current = ticket.id;
+      setPaidTicketId(ticket.id);
+      setSelectedNumbers([...ticket.selectedNumbers].sort((a, b) => a - b));
       setGameState('waiting');
       soundEngine.cashout();
-      addToast('success', 'Ticket successfully purchased!');
+      addToast('success', 'Paid! Now pick your numbers.');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -500,11 +567,6 @@ export function Keno({ onBack }: KenoProps) {
     setAutoPlayEnabled(false);
     addToast('info', 'Auto Play paused.');
   };
-
-  const hasTicketForActiveDraw = useMemo(
-    () => !!activeDraw && tickets.some((t) => t.drawId === activeDraw.id),
-    [tickets, activeDraw],
-  );
 
   const intervalSecs = config ? getKenoIntervalSeconds(config) : DEFAULT_KENO_INTERVAL_SECONDS;
   const paytableEntries = config?.paytable
@@ -623,77 +685,88 @@ export function Keno({ onBack }: KenoProps) {
         )}
       </motion.div>
 
-      {/* Result panel */}
+      {/* Result modal — win / lose popup with Play Again */}
       <AnimatePresence>
         {drawResult && (
           <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.97 }}
-            transition={{ type: 'spring', stiffness: 280, damping: 22 }}
-            className={`card border-2 relative overflow-hidden ${
-              drawResult.totalPayout > 0 ? 'border-amber-500/40' : 'border-white/[0.07]'
-            }`}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
+            onClick={() => { soundEngine.click(); setDrawResult(null); }}
           >
-            {drawResult.totalPayout > 0 && (
-              <div className="absolute inset-0 pointer-events-none"
-                style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.08) 0%, transparent 60%)' }} />
-            )}
-            <div className="flex justify-between items-center gap-4 mb-4">
-              <div className="flex items-center gap-3">
-                <div className={`p-3 rounded-2xl ${
-                  drawResult.totalPayout > 0
-                    ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
-                    : 'bg-white/[0.04] border border-white/[0.06] text-slate-400'
-                }`}>
-                  {drawResult.totalPayout > 0 ? <Trophy size={28} /> : <Award size={28} />}
-                </div>
-                <div>
-                  <h4 className="text-base font-black text-slate-100">
-                    {drawResult.totalPayout > 0 ? 'You Won!' : 'Round Complete'}
-                  </h4>
-                  <p className="text-[11px] text-slate-500">Draw #{drawResult.drawId.slice(-6)}</p>
-                </div>
-              </div>
-              {drawResult.totalPayout > 0 && (
-                <span className="text-xl font-black text-emerald-400 font-mono">
-                  +{formatCreditsFull(drawResult.totalPayout)}
-                </span>
-              )}
-            </div>
-            <div className="space-y-2 border-t border-white/[0.05] pt-3">
-              {drawResult.userTickets.map((t) => {
-                const hits = t.selectedNumbers.filter((n) => drawResult.drawnNumbers.includes(n));
-                return (
-                  <div key={t.id} className="rounded-xl bg-black/30 border border-white/[0.05] p-3 flex flex-col gap-2">
-                    <div className="text-xs">
-                      <span className="font-bold text-slate-300">{t.selectedNumbers.length}-Spot</span>
-                      <span className="text-slate-500 ml-2">
-                        {t.matches} match{t.matches !== 1 ? 'es' : ''}
-                        {hits.length > 0 && <span className="text-amber-400 ml-1">({hits.join(', ')})</span>}
-                      </span>
-                    </div>
-                    <div className="flex gap-1 flex-wrap">
-                      {t.selectedNumbers.map((n) => (
-                        <span key={n}
-                          className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-[10px] ${
-                            hits.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
-                          }`}
-                        >
-                          {n}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <button
-              onClick={() => { soundEngine.click(); setDrawResult(null); }}
-              className="btn btn-secondary btn-full btn-sm mt-3"
+            <motion.div
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.85, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              className={`relative w-full max-w-sm rounded-3xl border-2 p-6 overflow-hidden ${
+                drawResult.totalPayout > 0 ? 'border-amber-500/50' : 'border-white/[0.1]'
+              }`}
+              style={{ background: 'linear-gradient(135deg, #14110a 0%, #0a0a12 60%, #080814 100%)' }}
             >
-              Dismiss
-            </button>
+              <button
+                onClick={() => { soundEngine.click(); setDrawResult(null); }}
+                className="absolute top-3 right-3 text-slate-500 hover:text-slate-300"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+
+              <div className="text-center mb-4">
+                <div className={`inline-flex p-4 rounded-2xl mb-3 ${
+                  drawResult.totalPayout > 0
+                    ? 'bg-amber-500/10 border border-amber-500/25 text-amber-400'
+                    : 'bg-white/[0.04] border border-white/[0.08] text-slate-400'
+                }`}>
+                  {drawResult.totalPayout > 0 ? <Trophy size={36} /> : <Award size={36} />}
+                </div>
+                <h2 className={`text-2xl font-black ${drawResult.totalPayout > 0 ? 'text-amber-400' : 'text-slate-300'}`}>
+                  {drawResult.totalPayout > 0 ? 'You Won!' : 'You Lost'}
+                </h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">Draw #{drawResult.drawId.slice(-6)}</p>
+                {drawResult.totalPayout > 0 && (
+                  <div className="mt-3 inline-block bg-emerald-500/10 border border-emerald-500/25 rounded-2xl px-5 py-2">
+                    <span className="block text-[9px] font-black uppercase tracking-widest text-emerald-600">Total Win</span>
+                    <span className="text-2xl font-black text-emerald-400 font-mono">+{formatCreditsFull(drawResult.totalPayout)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 border-t border-white/[0.06] pt-3 max-h-[40vh] overflow-y-auto">
+                {drawResult.userTickets.map((t) => {
+                  const hits = t.selectedNumbers.filter((n) => drawResult.drawnNumbers.includes(n));
+                  return (
+                    <div key={t.id} className="rounded-xl bg-black/30 border border-white/[0.05] p-3 flex flex-col gap-2">
+                      <div className="text-xs">
+                        <span className="font-bold text-slate-300">{t.selectedNumbers.length}-Spot</span>
+                        <span className="text-slate-500 ml-2">
+                          {t.matches} match{t.matches !== 1 ? 'es' : ''}
+                          {hits.length > 0 && <span className="text-amber-400 ml-1">({hits.join(', ')})</span>}
+                        </span>
+                      </div>
+                      <div className="flex gap-1 flex-wrap">
+                        {t.selectedNumbers.map((n) => (
+                          <span key={n}
+                            className={`w-6 h-6 rounded-full font-bold flex items-center justify-center text-[10px] ${
+                              hits.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
+                            }`}
+                          >
+                            {n}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => { soundEngine.click(); setDrawResult(null); }}
+                className="btn btn-primary btn-full mt-4 flex items-center justify-center gap-2"
+              >
+                <RotateCcw size={15} /> Play Again
+              </button>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -703,21 +776,24 @@ export function Keno({ onBack }: KenoProps) {
         <div className="absolute inset-0 pointer-events-none rounded-[var(--radius-lg)]"
           style={{ background: 'radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.04) 0%, transparent 60%)' }} />
 
-        {/* Spot selector */}
+        {/* Spot selector — chooses the stake tier; locked once the player has paid */}
         <div className="mb-3">
           <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-2">
-            Pick spots ({selectedNumbers.length}/{spotTarget})
+            {paidTicketId ? `Pick your numbers (${selectedNumbers.length}/${spotTarget})` : `Choose spots — stake tier`}
           </label>
           <div className="grid grid-cols-6 gap-1.5">
             {allowedSpots.map((spots) => (
               <motion.button
                 key={spots}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => { soundEngine.click(); setSpotTarget(spots); setSelectedNumbers([]); }}
+                whileTap={paidTicketId ? undefined : { scale: 0.9 }}
+                disabled={!!paidTicketId}
+                onClick={() => { if (paidTicketId) return; soundEngine.click(); setSpotTarget(spots); setSelectedNumbers([]); }}
                 className={`py-1.5 text-xs font-black rounded-xl border transition-all ${
                   spots === spotTarget
                     ? 'bg-[var(--gold)] border-[var(--gold)] text-black shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                    : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-amber-500/40 hover:text-amber-400'
+                    : paidTicketId
+                      ? 'bg-white/[0.02] border-white/[0.04] text-slate-700 cursor-not-allowed'
+                      : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-amber-500/40 hover:text-amber-400'
                 }`}
               >
                 {spots}
@@ -726,49 +802,67 @@ export function Keno({ onBack }: KenoProps) {
           </div>
         </div>
 
-        {/* Grid */}
-        <div className="grid grid-cols-10 gap-1 sm:gap-1.5 mb-4">
-          {numbers.map((value) => (
-            <KenoTile
-              key={value}
-              value={value}
-              state={getTileState(value, selectedNumbers, revealedNumbers, drawComplete)}
-              onClick={() => toggleNumber(value)}
-              disabled={gameState === 'drawing'}
-            />
-          ))}
+        {/* Grid — locked until the player has paid for this draw */}
+        <div className="relative">
+          <div className={`grid grid-cols-10 gap-1 sm:gap-1.5 mb-4 ${gridLocked ? 'opacity-50' : ''}`}>
+            {numbers.map((value) => (
+              <KenoTile
+                key={value}
+                value={value}
+                state={getTileState(value, selectedNumbers, revealedNumbers, drawComplete)}
+                onClick={() => toggleNumber(value)}
+                disabled={gridLocked}
+              />
+            ))}
+          </div>
+          {!paidTicketId && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none mb-4">
+              <span className="text-[11px] font-black uppercase tracking-wider text-amber-400/90 bg-black/60 border border-amber-500/30 rounded-lg px-3 py-1.5">
+                Buy in to pick numbers
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Action bar */}
-        <div className="flex gap-2 mb-4">
-          <button onClick={handleQuickPick} disabled={gameState === 'drawing'}
-            className="btn btn-ghost btn-sm flex-1">
-            <Zap size={13} /> Quick Pick
-          </button>
-          <button onClick={handleClearSelection} disabled={gameState === 'drawing' || selectedNumbers.length === 0}
-            className="btn btn-ghost btn-sm flex-1">
-            <Trash2 size={13} /> Clear
-          </button>
-        </div>
+        {/* Action bar — only meaningful once unlocked */}
+        {paidTicketId && (
+          <div className="flex gap-2 mb-4 items-center">
+            <button onClick={handleQuickPick} disabled={gridLocked}
+              className="btn btn-ghost btn-sm flex-1">
+              <Zap size={13} /> Quick Pick
+            </button>
+            <button onClick={handleClearSelection} disabled={gridLocked || selectedNumbers.length === 0}
+              className="btn btn-ghost btn-sm flex-1">
+              <Trash2 size={13} /> Clear
+            </button>
+            <span className="text-[10px] font-bold text-slate-500 min-w-[52px] text-right">
+              {savingPicks ? 'Saving…' : selectedNumbers.length === spotTarget ? '✓ Saved' : `${selectedNumbers.length}/${spotTarget}`}
+            </span>
+          </div>
+        )}
 
-        {/* Buy / Auto play status */}
+        {/* Buy in / Auto play status */}
         {!autoPlayEnabled ? (
+          paidTicketId ? (
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-center">
+              <p className="text-sm font-black text-emerald-400">✓ Paid — {spotTarget}-Spot ticket active</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {drawOpen ? 'Adjust your numbers above — changes save automatically.' : 'Numbers locked — awaiting the draw.'}
+              </p>
+            </div>
+          ) : (
           <motion.button
-            whileHover={selectedNumbers.length === spotTarget && activeDraw?.status === 'open' ? { scale: 1.02 } : {}}
+            whileHover={drawOpen ? { scale: 1.02 } : {}}
             whileTap={{ scale: 0.97 }}
-            onClick={handleBuyTicket}
-            disabled={submitting || selectedNumbers.length !== spotTarget || !activeDraw || activeDraw.status !== 'open'}
-            className={`btn btn-full ${
-              selectedNumbers.length === spotTarget && activeDraw?.status === 'open'
-                ? 'btn-primary'
-                : 'btn-secondary opacity-50'
-            }`}
+            onClick={handleBuyIn}
+            disabled={submitting || !drawOpen}
+            className={`btn btn-full ${drawOpen ? 'btn-primary' : 'btn-secondary opacity-50'}`}
           >
-            {submitting ? 'Submitting...'
-              : hasTicketForActiveDraw ? '✓ Ticket Purchased — Awaiting Draw'
-              : !activeDraw || activeDraw.status !== 'open' ? 'Draw Locked / Running'
-              : `Place ${spotTarget}-Spot Bet · ${config ? formatCredits(config.ticketPriceMinor) : '—'} Cr`}
+            {submitting ? 'Processing…'
+              : !drawOpen ? 'Draw Locked / Running'
+              : `Buy In · ${spotTarget}-Spot — ${config ? formatCredits(config.ticketPriceMinor) : '—'} Cr`}
           </motion.button>
+          )
         ) : (
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 flex items-center justify-between">
             <div className="text-xs text-slate-300">
@@ -840,100 +934,115 @@ export function Keno({ onBack }: KenoProps) {
         )}
       </CollapsibleSection>
 
-      {/* Recent draws — collapsible */}
-      <CollapsibleSection title="Recent Draws">
-        {draws.length === 0 ? (
-          <div className="text-center text-slate-500 text-sm py-4">No draws yet.</div>
-        ) : (
-          <div className="space-y-3">
-            {draws.slice(0, 5).map((draw) => {
-              const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
-              const userPicks = [...new Set(drawTickets.flatMap((t) => t.selectedNumbers))].sort((a, b) => a - b);
-              return (
-                <article key={draw.id} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-3 space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <h4 className="text-xs font-extrabold text-slate-200">Draw #{draw.id.slice(-6)}</h4>
-                      <span className="text-[10px] text-slate-500">{formatDateTime(draw.scheduledAt)}</span>
+      {/* History — tabbed: Recent Draws / My Tickets */}
+      <div className="card">
+        <div className="flex gap-1 p-1 mb-3 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+          {([['draws', 'Recent Draws'], ['tickets', `My Tickets (${tickets.length})`]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => { soundEngine.click(); setBottomTab(key); }}
+              className={`flex-1 py-2 text-xs font-black rounded-lg transition-all ${
+                bottomTab === key
+                  ? 'bg-[var(--gold)] text-black'
+                  : 'text-slate-400 hover:text-amber-400'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {bottomTab === 'draws' ? (
+          draws.length === 0 ? (
+            <div className="text-center text-slate-500 text-sm py-4">No draws yet.</div>
+          ) : (
+            <div className="space-y-3">
+              {draws.slice(0, 5).map((draw) => {
+                const drawTickets = ticketsByDrawId.get(draw.id) ?? [];
+                const userPicks = [...new Set(drawTickets.flatMap((t) => t.selectedNumbers))].sort((a, b) => a - b);
+                return (
+                  <article key={draw.id} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-3 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h4 className="text-xs font-extrabold text-slate-200">Draw #{draw.id.slice(-6)}</h4>
+                        <span className="text-[10px] text-slate-500">{formatDateTime(draw.scheduledAt)}</span>
+                      </div>
+                      <span className={
+                        draw.status === 'settled' ? 'badge badge-green'
+                        : draw.status === 'cancelled' ? 'badge badge-red'
+                        : 'badge badge-violet'
+                      }>{draw.status}</span>
                     </div>
-                    <span className={
-                      draw.status === 'settled' ? 'badge badge-green'
-                      : draw.status === 'cancelled' ? 'badge badge-red'
-                      : 'badge badge-violet'
-                    }>{draw.status}</span>
-                  </div>
-                  {userPicks.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {userPicks.map((p) => (
-                        <span key={p}
-                          className={`w-5 h-5 rounded-full font-bold flex items-center justify-center text-[9px] ${
-                            draw.drawnNumbers.includes(p) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
+                    {userPicks.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {userPicks.map((p) => (
+                          <span key={p}
+                            className={`w-5 h-5 rounded-full font-bold flex items-center justify-center text-[9px] ${
+                              draw.drawnNumbers.includes(p) ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] text-slate-500'
+                            }`}
+                          >{p}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-0.5">
+                      {draw.drawnNumbers.map((n) => (
+                        <span key={n}
+                          className={`w-5 h-5 rounded-full font-mono text-[9px] flex items-center justify-center ${
+                            userPicks.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.05] text-slate-500'
                           }`}
-                        >{p}</span>
+                        >{n}</span>
                       ))}
                     </div>
-                  )}
-                  <div className="flex flex-wrap gap-0.5">
-                    {draw.drawnNumbers.map((n) => (
-                      <span key={n}
-                        className={`w-5 h-5 rounded-full font-mono text-[9px] flex items-center justify-center ${
-                          userPicks.includes(n) ? 'bg-emerald-500 text-black' : 'bg-white/[0.05] text-slate-500'
-                        }`}
-                      >{n}</span>
-                    ))}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </CollapsibleSection>
-
-      {/* My tickets — collapsible */}
-      <CollapsibleSection title={`My Tickets (${tickets.length})`}>
-        {tickets.length === 0 ? (
-          <div className="text-center text-slate-500 text-sm py-4">No tickets yet.</div>
+                  </article>
+                );
+              })}
+            </div>
+          )
         ) : (
-          <div className="space-y-3">
-            {tickets.map((t) => {
-              const settled = t.settlementStatus === 'settled';
-              const won = t.payoutMinor > 0;
-              const draw = draws.find((d) => d.id === t.drawId);
-              const drawnNums = draw?.drawnNumbers ?? [];
-              return (
-                <article key={t.id}
-                  className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-3 flex justify-between gap-3"
-                >
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-extrabold text-slate-200">#{t.id.slice(-6)}</span>
-                      <span className="text-[10px] text-slate-500">Draw #{t.drawId.slice(-6)}</span>
+          tickets.length === 0 ? (
+            <div className="text-center text-slate-500 text-sm py-4">No tickets yet.</div>
+          ) : (
+            <div className="space-y-3">
+              {tickets.map((t) => {
+                const settled = t.settlementStatus === 'settled';
+                const won = t.payoutMinor > 0;
+                const draw = draws.find((d) => d.id === t.drawId);
+                const drawnNums = draw?.drawnNumbers ?? [];
+                return (
+                  <article key={t.id}
+                    className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-3 flex justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-extrabold text-slate-200">#{t.id.slice(-6)}</span>
+                        <span className="text-[10px] text-slate-500">Draw #{t.drawId.slice(-6)}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {t.selectedNumbers.map((n) => {
+                          const isHit = settled && drawnNums.includes(n);
+                          return (
+                            <span key={n}
+                              className={`w-5 h-5 rounded-full font-bold flex items-center justify-center text-[9px] ${
+                                isHit ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
+                              }`}
+                            >{n}</span>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-1">
-                      {t.selectedNumbers.map((n) => {
-                        const isHit = settled && drawnNums.includes(n);
-                        return (
-                          <span key={n}
-                            className={`w-5 h-5 rounded-full font-bold flex items-center justify-center text-[9px] ${
-                              isHit ? 'bg-emerald-500 text-black' : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
-                            }`}
-                          >{n}</span>
-                        );
-                      })}
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <span className={`badge ${won ? 'badge-green' : settled ? 'text-slate-500 bg-white/[0.03] border border-white/[0.07]' : 'badge-gold'}`}>
+                        {won ? 'Won' : settled ? 'No Win' : 'Pending'}
+                      </span>
+                      {won && <span className="text-xs font-black text-emerald-400">+{formatCredits(t.payoutMinor)}</span>}
                     </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <span className={`badge ${won ? 'badge-green' : settled ? 'text-slate-500 bg-white/[0.03] border border-white/[0.07]' : 'badge-gold'}`}>
-                      {won ? 'Won' : settled ? 'No Win' : 'Pending'}
-                    </span>
-                    {won && <span className="text-xs font-black text-emerald-400">+{formatCredits(t.payoutMinor)}</span>}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+                  </article>
+                );
+              })}
+            </div>
+          )
         )}
-      </CollapsibleSection>
+      </div>
     </div>
   );
 }

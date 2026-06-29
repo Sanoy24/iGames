@@ -18,8 +18,8 @@ import {
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
-import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Withdrawal } from '../lib/models';
-import { formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
+import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
+import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
 type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney' | 'account';
@@ -1278,7 +1278,9 @@ function BingoAdmin() {
     defaultOneLineMinor: 20000,
     defaultTwoLinesMinor: 50000,
     defaultFullHouseMinor: 100000,
-    drawIntervalSeconds: 5,
+    drawIntervalSeconds: 2,
+    salesWindowSeconds: 40,
+    resultDisplaySeconds: 10,
     defaultWinMode: 'line',
     defaultNumberRange: 75,
     minDrawsBeforeWin: 0,
@@ -1307,6 +1309,8 @@ function BingoAdmin() {
         defaultTwoLinesMinor: c.defaultTwoLinesMinor,
         defaultFullHouseMinor: c.defaultFullHouseMinor,
         drawIntervalSeconds: c.drawIntervalSeconds,
+        salesWindowSeconds: c.salesWindowSeconds ?? 40,
+        resultDisplaySeconds: c.resultDisplaySeconds ?? 10,
         defaultWinMode: c.defaultWinMode ?? 'line',
         defaultNumberRange: c.defaultNumberRange ?? 75,
         minDrawsBeforeWin: c.minDrawsBeforeWin ?? 0,
@@ -1501,6 +1505,16 @@ function BingoAdmin() {
               <span>Number Draw Interval (seconds)</span>
               <input className="input" type="number" min={1} max={60} value={cfgForm.drawIntervalSeconds}
                 onChange={(e) => setCfgForm((f) => ({ ...f, drawIntervalSeconds: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Buy-in / Sales Window (seconds)</span>
+              <input className="input" type="number" min={5} max={600} value={cfgForm.salesWindowSeconds ?? 40}
+                onChange={(e) => setCfgForm((f) => ({ ...f, salesWindowSeconds: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Result Display (seconds)</span>
+              <input className="input" type="number" min={0} max={120} value={cfgForm.resultDisplaySeconds ?? 10}
+                onChange={(e) => setCfgForm((f) => ({ ...f, resultDisplaySeconds: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
               <span>Default Ticket Price (credits)</span>
@@ -2323,6 +2337,127 @@ function EMoneyAdmin() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Account — admin's own wallet, top-up, and transfer-to-agent
+// ══════════════════════════════════════════════════════════════════
+function AccountAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const user = useStore((s) => s.user);
+  const setWallet = useStore((s) => s.setWallet);
+
+  const [wallet, setLocalWallet] = useState<WalletType | null>(null);
+  const [agents, setAgents] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const [topupCr, setTopupCr] = useState('');
+  const [transferAgentId, setTransferAgentId] = useState('');
+  const [transferCr, setTransferCr] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [w, agentsPage] = await Promise.all([
+        walletApi.getWallet(),
+        adminAgentsApi.listAgents(1, 100),
+      ]);
+      setLocalWallet(w);
+      setWallet(w);
+      setAgents(agentsPage.data);
+      if (!transferAgentId && agentsPage.data.length > 0) setTransferAgentId(agentsPage.data[0].id);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setLoading(false); }
+  }, [addToast, setWallet, transferAgentId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const doTopup = async () => {
+    const cr = parseFloat(topupCr);
+    if (!cr || cr <= 0) { addToast('info', 'Enter a valid amount.'); return; }
+    setBusy('topup');
+    try {
+      const w = await adminApi.topupWallet(Math.round(cr * 100), createIdempotencyKey('admin-topup'));
+      setLocalWallet(w);
+      setWallet(w);
+      setTopupCr('');
+      addToast('success', `Topped up ${cr} Cr.`);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const doTransfer = async () => {
+    const cr = parseFloat(transferCr);
+    if (!transferAgentId) { addToast('info', 'Select an agent.'); return; }
+    if (!cr || cr <= 0) { addToast('info', 'Enter a valid amount.'); return; }
+    setBusy('transfer');
+    try {
+      const { adminWallet } = await adminApi.transferToAgent(transferAgentId, Math.round(cr * 100), createIdempotencyKey('admin-transfer'));
+      setLocalWallet(adminWallet);
+      setWallet(adminWallet);
+      setTransferCr('');
+      addToast('success', `Transferred ${cr} Cr to agent.`);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  if (loading) return <div className="adm-empty">Loading account…</div>;
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="My Admin Account" sub="Your administrator identity, wallet balance, and treasury actions.">
+        <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
+      </SectionHead>
+
+      {/* Identity + balance */}
+      <div className="adm-kpi-grid">
+        <Kpi label="Display Name" value={user?.displayName ?? '—'} color="#8b5cf6" />
+        <Kpi label="Roles" value={(user?.roles ?? []).join(', ') || '—'} color="#3b82f6" />
+        <Kpi label="Wallet Available" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
+        <Kpi label="Wallet Reserved" value={formatCreditsFull(wallet?.reservedMinor ?? 0)} color="#f59e0b" />
+      </div>
+
+      {/* Top up own wallet */}
+      <div className="adm-panel">
+        <div className="adm-panel-head">Top Up My Wallet</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', padding: 16 }}>
+          <label className="adm-field" style={{ flex: 1, minWidth: 180 }}>
+            <span>Amount (Cr)</span>
+            <input className="input" type="number" min={1} placeholder="e.g. 1000"
+              value={topupCr} onChange={(e) => setTopupCr(e.target.value)} />
+          </label>
+          <button className="btn btn-primary" disabled={busy === 'topup'} onClick={doTopup}>
+            {busy === 'topup' ? 'Processing…' : 'Top Up'}
+          </button>
+        </div>
+      </div>
+
+      {/* Transfer to agent */}
+      <div className="adm-panel">
+        <div className="adm-panel-head">Transfer Credits to Agent</div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', padding: 16 }}>
+          <label className="adm-field" style={{ flex: 1, minWidth: 180 }}>
+            <span>Agent</span>
+            <select className="input" value={transferAgentId} onChange={(e) => setTransferAgentId(e.target.value)}>
+              {agents.length === 0 && <option value="">No agents</option>}
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>{a.displayName ?? a.id.slice(-6)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="adm-field" style={{ flex: 1, minWidth: 140 }}>
+            <span>Amount (Cr)</span>
+            <input className="input" type="number" min={1} placeholder="e.g. 500"
+              value={transferCr} onChange={(e) => setTransferCr(e.target.value)} />
+          </label>
+          <button className="btn btn-primary" disabled={busy === 'transfer' || agents.length === 0} onClick={doTransfer}>
+            {busy === 'transfer' ? 'Processing…' : 'Transfer'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Root Admin
 // ══════════════════════════════════════════════════════════════════
 export function Admin() {
@@ -2364,28 +2499,30 @@ export function Admin() {
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="adm-tab-bar">
-        {TABS.map((t) => (
-          <button key={t.id} className={`adm-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
-            {t.icon}
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </div>
+      {/* Body: sidebar nav + content */}
+      <div className="adm-body">
+        <nav className="adm-tab-bar">
+          {TABS.map((t) => (
+            <button key={t.id} className={`adm-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
 
-      {/* Content */}
-      <div className="adm-content">
-        {tab === 'overview'      && <OverviewAdmin />}
-        {tab === 'players'       && <PlayersAdmin />}
-        {tab === 'agents'        && <AgentsAdmin />}
-        {tab === 'agent-actions' && <AgentActionsAdmin />}
-        {tab === 'keno'          && <KenoAdmin />}
-        {tab === 'bingo'         && <BingoAdmin />}
-        {tab === 'bots'          && <BotsAdmin />}
-        {tab === 'withdrawals'   && <WithdrawalsAdmin />}
-        {tab === 'config'        && <ConfigAdmin />}
-        {tab === 'emoney'        && <EMoneyAdmin />}
+        <div className="adm-content">
+          {tab === 'overview'      && <OverviewAdmin />}
+          {tab === 'players'       && <PlayersAdmin />}
+          {tab === 'agents'        && <AgentsAdmin />}
+          {tab === 'agent-actions' && <AgentActionsAdmin />}
+          {tab === 'keno'          && <KenoAdmin />}
+          {tab === 'bingo'         && <BingoAdmin />}
+          {tab === 'bots'          && <BotsAdmin />}
+          {tab === 'withdrawals'   && <WithdrawalsAdmin />}
+          {tab === 'config'        && <ConfigAdmin />}
+          {tab === 'emoney'        && <EMoneyAdmin />}
+          {tab === 'account'       && <AccountAdmin />}
+        </div>
       </div>
     </div>
   );

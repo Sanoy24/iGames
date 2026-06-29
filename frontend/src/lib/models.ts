@@ -176,6 +176,8 @@ export type BingoConfig = {
   defaultTwoLinesMinor: number;
   defaultFullHouseMinor: number;
   drawIntervalSeconds: number;
+  salesWindowSeconds?: number;
+  resultDisplaySeconds?: number;
   defaultWinMode?: string;
   defaultNumberRange?: number;
   minDrawsBeforeWin?: number;

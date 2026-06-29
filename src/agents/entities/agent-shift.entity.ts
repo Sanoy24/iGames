@@ -1,7 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 
-@Entity('agent_shifts')
+@Entity({ name: 'agent_shifts', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['agentId', 'isActive'])
 export class AgentShift {
   @PrimaryGeneratedColumn('uuid')

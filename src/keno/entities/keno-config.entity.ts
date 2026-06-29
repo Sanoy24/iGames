@@ -8,7 +8,7 @@ export class KenoPaytableEntry {
   payoutMultiplier: number;
 }
 
-@Entity('keno_configs')
+@Entity({ name: 'keno_configs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class KenoConfig {
   @PrimaryGeneratedColumn('uuid')
   id: string;

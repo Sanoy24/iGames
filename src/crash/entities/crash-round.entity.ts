@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 
 export type CrashRoundStatus = 'waiting' | 'running' | 'crashed';
 
-@Entity('crash_rounds')
+@Entity({ name: 'crash_rounds', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'createdAt'])
 export class CrashRound {
   @PrimaryGeneratedColumn('uuid')

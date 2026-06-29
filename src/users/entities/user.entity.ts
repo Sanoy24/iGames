@@ -6,7 +6,7 @@ import { AgentShift } from '../../agents/entities/agent-shift.entity';
 export type UserRole = 'player' | 'admin' | 'agent' | 'system';
 export type UserStatus = 'active' | 'suspended' | 'closed';
 
-@Entity('users')
+@Entity({ name: 'users', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 
 export type RngGameType = 'keno' | 'bingo' | 'crash';
 
-@Entity('rng_audit_logs')
+@Entity({ name: 'rng_audit_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['gameType', 'gameReference'])
 @Index(['createdAt'])
 export class RngAuditLog {

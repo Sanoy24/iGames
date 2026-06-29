@@ -6,7 +6,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-@Entity('bingo_config')
+@Entity({ name: 'bingo_config', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class BingoConfig {
   @PrimaryColumn({ type: 'varchar', length: 32 })
   key: string;

@@ -8,7 +8,7 @@ const bigintTransformer = {
   from: (value: string | null) => value ? Number(value) : 0
 };
 
-@Entity('withdrawals')
+@Entity({ name: 'withdrawals', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['agentId', 'status'])
 export class Withdrawal {
   @PrimaryGeneratedColumn('uuid')

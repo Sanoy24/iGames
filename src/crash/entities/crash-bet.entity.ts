@@ -9,7 +9,7 @@ const bigintTransformer = {
   from: (value: string | null) => (value ? Number(value) : 0),
 };
 
-@Entity('crash_bets')
+@Entity({ name: 'crash_bets', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['userId', 'createdAt'])
 @Index(['roundId', 'status'])
 @Index(['userId', 'roundId'], { unique: true })

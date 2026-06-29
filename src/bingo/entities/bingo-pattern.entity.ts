@@ -2,7 +2,7 @@ import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateCol
 
 export type PatternType = 'fixed' | 'any_row' | 'any_col' | 'any_diagonal' | 'any_line' | 'coverall';
 
-@Entity('bingo_patterns')
+@Entity({ name: 'bingo_patterns', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class BingoPattern {
   @PrimaryGeneratedColumn('uuid')
   id: string;

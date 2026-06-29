@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
 
-@Entity('admin_audit_logs')
+@Entity({ name: 'admin_audit_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class AdminAuditLog {
   @PrimaryGeneratedColumn('uuid')
   id: string;

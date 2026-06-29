@@ -15,7 +15,7 @@ export type AgentActionType =
   | 'withdrawal_completed'
   | 'telebirr_deposit_receipt';
 
-@Entity('agent_action_logs')
+@Entity({ name: 'agent_action_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['agentId', 'createdAt'])
 export class AgentActionLog {
   @PrimaryGeneratedColumn('uuid')

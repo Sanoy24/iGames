@@ -1,6 +1,6 @@
 import { Entity, Column, PrimaryColumn } from 'typeorm';
 
-@Entity('platform_stats')
+@Entity({ name: 'platform_stats', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class PlatformStats {
   @PrimaryColumn({ type: 'varchar', length: 50, default: 'global' })
   key: string;

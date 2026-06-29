@@ -16,7 +16,7 @@ export class BingoPatternPrize {
   prizeMinor: number;
 }
 
-@Entity('bingo_rooms')
+@Entity({ name: 'bingo_rooms', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'scheduledStartAt'])
 export class BingoRoom {
   @PrimaryGeneratedColumn('uuid')

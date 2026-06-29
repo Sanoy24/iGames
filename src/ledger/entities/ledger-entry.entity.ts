@@ -19,7 +19,7 @@ const bigintTransformer = {
   from: (value: string | null) => value ? Number(value) : 0
 };
 
-@Entity('ledger_entries')
+@Entity({ name: 'ledger_entries', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['userId', 'createdAt'])
 @Index(['sourceType', 'sourceId'])
 @Index(['userId', 'sourceType', 'idempotencyKey'], { unique: true })

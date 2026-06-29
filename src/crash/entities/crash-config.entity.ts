@@ -1,6 +1,6 @@
 import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
-@Entity('crash_config')
+@Entity({ name: 'crash_config', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class CrashConfig {
   @PrimaryColumn({ type: 'varchar', length: 64, default: 'default' })
   key: string;

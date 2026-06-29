@@ -3,7 +3,7 @@ import { User } from '../../users/entities/user.entity';
 
 export type IdempotencyStatus = 'pending' | 'completed' | 'failed';
 
-@Entity('idempotency_records')
+@Entity({ name: 'idempotency_records', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['key', 'userId', 'action'], { unique: true })
 export class IdempotencyRecord {
   @PrimaryGeneratedColumn('uuid')

@@ -3,7 +3,7 @@ import { KenoConfig } from './keno-config.entity';
 
 export type KenoDrawStatus = 'open' | 'locked' | 'drawn' | 'settled' | 'cancelled';
 
-@Entity('keno_draws')
+@Entity({ name: 'keno_draws', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'scheduledAt'])
 export class KenoDraw {
   @PrimaryGeneratedColumn('uuid')

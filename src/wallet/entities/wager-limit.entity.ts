@@ -6,7 +6,7 @@ const bigintTransformer = {
   from: (value: string | null) => value ? Number(value) : 0
 };
 
-@Entity('wager_limits')
+@Entity({ name: 'wager_limits', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class WagerLimit {
   @PrimaryGeneratedColumn('uuid')
   id: string;

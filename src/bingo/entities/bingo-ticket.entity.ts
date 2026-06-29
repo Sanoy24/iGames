@@ -11,7 +11,7 @@ const bigintTransformer = {
   from: (value: string | null) => value ? Number(value) : 0
 };
 
-@Entity('bingo_tickets')
+@Entity({ name: 'bingo_tickets', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['userId', 'createdAt'])
 @Index(['roomId', 'userId', 'purchaseIdempotencyKey'])
 @Index(['roomId', 'settlementStatus'])

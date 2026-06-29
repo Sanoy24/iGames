@@ -3,7 +3,7 @@ import { User } from './user.entity';
 
 export type AuthProvider = 'telegram' | 'password';
 
-@Entity('auth_identities')
+@Entity({ name: 'auth_identities', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['provider', 'providerUserId'], { unique: true })
 export class AuthIdentity {
   @PrimaryGeneratedColumn('uuid')

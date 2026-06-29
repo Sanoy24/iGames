@@ -1,7 +1,7 @@
 import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 
-@Entity('refresh_sessions')
+@Entity({ name: 'refresh_sessions', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class RefreshSession {
   @PrimaryColumn({ type: 'varchar', length: 255 })
   id: string;

@@ -487,23 +487,35 @@ export class BingoService implements OnModuleInit {
 
       const maxNumber = room.winMode === 'pattern' ? (room.numberRange ?? 75) : 90;
 
-      // All numbers drawn but room still running — settle any outstanding tiers
-      // and mark the room completed instead of throwing forever on every tick.
+      // All numbers drawn but room still running — settle any outstanding tiers and
+      // mark completed. Use a targeted UPDATE (not manager.save) to avoid re-writing
+      // the large drawnNumbers / rngAuditLogIds JSON columns that are already in DB.
       if (room.drawnNumbers.length >= maxNumber) {
-        if (room.winMode === 'pattern') {
-          const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
-          const patterns =
-            patternIds.length > 0
-              ? await manager.find(BingoPattern, { where: { id: In(patternIds) } })
-              : [];
-          await this.evaluateAndSettlePatterns(room, patterns, manager);
-        } else {
-          await this.evaluateAndSettleTiers(room, manager);
+        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        if (soldTickets > 0) {
+          if (room.winMode === 'pattern') {
+            const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
+            const patterns =
+              patternIds.length > 0
+                ? await manager.find(BingoPattern, { where: { id: In(patternIds) } })
+                : [];
+            await this.evaluateAndSettlePatterns(room, patterns, manager);
+          } else {
+            await this.evaluateAndSettleTiers(room, manager);
+          }
+          await this.markRemainingTicketsLost(room, manager);
         }
         room.status = 'completed';
-        await this.markRemainingTicketsLost(room, manager);
-        await manager.save(room);
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        // Only write the columns that change — avoids row-size issues from large JSON arrays.
+        await manager.query(
+          `UPDATE bingo_room SET status = 'completed', settledTiers = ?, winnersByTier = ?, settlementSummary = ? WHERE id = ?`,
+          [
+            JSON.stringify(room.settledTiers),
+            JSON.stringify(room.winnersByTier),
+            JSON.stringify(room.settlementSummary ?? null),
+            validRoomId,
+          ],
+        );
         return this.toRoomResponse(room, soldTickets);
       }
 
@@ -523,8 +535,9 @@ export class BingoService implements OnModuleInit {
       });
 
       const drawnNumber = remainingNumbers[rngResult.numbers[0] - 1];
-      room.drawnNumbers.push(drawnNumber);
-      if (rngResult.auditLogId) room.rngAuditLogIds.push(rngResult.auditLogId);
+      // Assign new arrays (not push) so TypeORM detects the change via reference diff.
+      room.drawnNumbers = [...room.drawnNumbers, drawnNumber];
+      if (rngResult.auditLogId) room.rngAuditLogIds = [...room.rngAuditLogIds, rngResult.auditLogId];
 
       if (room.winMode === 'pattern') {
         const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);

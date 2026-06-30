@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  ArrowLeft, Hash, Trophy, Sparkles,
+  ArrowLeft, Trophy, Sparkles,
   Volume2, VolumeX, Users, MessageSquare, RefreshCw,
 } from 'lucide-react';
 import { bingoApi, walletApi } from '../lib/api';
@@ -18,9 +18,39 @@ type Phase = 'loading' | 'buy' | 'playing' | 'result';
 type ChatMessage = { userId?: string; displayName: string; text: string; timestamp: string; isSystem?: boolean };
 type BingoProps = { onBack: () => void };
 
-const BINGO_COLS = ['B', 'I', 'N', 'G', 'O'];
 const RESULT_DISPLAY_MS = 10_000;
 const POLL_INTERVAL_MS = 5_000;
+
+// ─── Color config ─────────────────────────────────────────────────────────────
+
+// 75-ball (pattern): B/I/N/G/O columns of 15
+const BINGO_COLS_75 = [
+  { letter: 'B', from: 1,  to: 15,  color: '#ef4444', glow: 'rgba(239,68,68,0.6)',  bg: 'rgba(239,68,68,0.18)'  },
+  { letter: 'I', from: 16, to: 30,  color: '#3b82f6', glow: 'rgba(59,130,246,0.6)', bg: 'rgba(59,130,246,0.18)' },
+  { letter: 'N', from: 31, to: 45,  color: '#22c55e', glow: 'rgba(34,197,94,0.6)',  bg: 'rgba(34,197,94,0.18)'  },
+  { letter: 'G', from: 46, to: 60,  color: '#a855f7', glow: 'rgba(168,85,247,0.6)', bg: 'rgba(168,85,247,0.18)' },
+  { letter: 'O', from: 61, to: 75,  color: '#06b6d4', glow: 'rgba(6,182,212,0.6)',  bg: 'rgba(6,182,212,0.18)'  },
+];
+
+// 90-ball: 9 groups of 10
+const BALL_GROUPS_90 = [
+  { from: 1,  to: 10, color: '#ef4444', glow: 'rgba(239,68,68,0.6)',   bg: 'rgba(239,68,68,0.18)'   },
+  { from: 11, to: 20, color: '#3b82f6', glow: 'rgba(59,130,246,0.6)',  bg: 'rgba(59,130,246,0.18)'  },
+  { from: 21, to: 30, color: '#22c55e', glow: 'rgba(34,197,94,0.6)',   bg: 'rgba(34,197,94,0.18)'   },
+  { from: 31, to: 40, color: '#a855f7', glow: 'rgba(168,85,247,0.6)',  bg: 'rgba(168,85,247,0.18)'  },
+  { from: 41, to: 50, color: '#06b6d4', glow: 'rgba(6,182,212,0.6)',   bg: 'rgba(6,182,212,0.18)'   },
+  { from: 51, to: 60, color: '#f97316', glow: 'rgba(249,115,22,0.6)',  bg: 'rgba(249,115,22,0.18)'  },
+  { from: 61, to: 70, color: '#ec4899', glow: 'rgba(236,72,153,0.6)',  bg: 'rgba(236,72,153,0.18)'  },
+  { from: 71, to: 80, color: '#14b8a6', glow: 'rgba(20,184,166,0.6)',  bg: 'rgba(20,184,166,0.18)'  },
+  { from: 81, to: 90, color: '#f59e0b', glow: 'rgba(245,158,11,0.6)',  bg: 'rgba(245,158,11,0.18)'  },
+];
+
+function getBallStyle(n: number, isPatternMode: boolean) {
+  if (isPatternMode) {
+    return BINGO_COLS_75.find(c => n >= c.from && n <= c.to) ?? BINGO_COLS_75[0];
+  }
+  return BALL_GROUPS_90.find(g => n >= g.from && n <= g.to) ?? BALL_GROUPS_90[0];
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -28,32 +58,195 @@ function isPatternGrid(grid: Array<Array<number | null>>): boolean {
   return grid.length === 5 && (grid[0]?.length ?? 0) === 5;
 }
 
-// ─── NumberBoard ─────────────────────────────────────────────────────────────
+// ─── Number Board ─────────────────────────────────────────────────────────────
 
-const NumberBoard = memo(({ drawnNumbers, numberRange }: { drawnNumbers: number[]; numberRange: number }) => (
-  <div className="space-y-1">
-    <div className="grid grid-cols-10 gap-1">
-      {Array.from({ length: numberRange }, (_, i) => i + 1).map((val) => {
-        const called = drawnNumbers.includes(val);
-        return (
-          <motion.span
-            key={val}
-            animate={called ? { scale: [1, 1.3, 1.05], backgroundColor: '#dc2626' } : {}}
-            transition={{ duration: 0.4, ease: 'backOut' }}
-            className={`aspect-square rounded flex items-center justify-center text-[9px] font-bold font-mono ${
-              called
-                ? 'bg-red-600 border border-red-400/50 text-white'
-                : 'bg-white/[0.03] border border-white/[0.05] text-slate-600'
-            }`}
+const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode, myCardNums }: {
+  drawnNumbers: number[];
+  numberRange: number;
+  isPatternMode: boolean;
+  myCardNums: Set<number>;
+}) => {
+  const drawnSet = useMemo(() => new Set(drawnNumbers), [drawnNumbers]);
+
+  if (isPatternMode) {
+    // 5 columns × 15 rows (B/I/N/G/O)
+    return (
+      <div className="grid grid-cols-5 gap-1">
+        {BINGO_COLS_75.map(col => (
+          <div key={col.letter} className="flex flex-col gap-0.5">
+            <div
+              className="text-center text-[10px] font-black py-0.5 rounded-sm mb-0.5"
+              style={{ color: col.color, background: col.bg }}
+            >
+              {col.letter}
+            </div>
+            {Array.from({ length: col.to - col.from + 1 }, (_, i) => col.from + i).map(n => {
+              const called = drawnSet.has(n);
+              const onCard = myCardNums.has(n);
+              return (
+                <motion.div
+                  key={n}
+                  animate={called ? { scale: [1, 1.25, 1] } : {}}
+                  transition={{ duration: 0.3, ease: 'backOut' }}
+                  className="aspect-square rounded-full flex items-center justify-center text-[9px] font-bold font-mono"
+                  style={
+                    called
+                      ? {
+                          background: col.color,
+                          color: '#fff',
+                          boxShadow: onCard ? `0 0 8px ${col.glow}, 0 0 2px #fff inset` : undefined,
+                          outline: onCard ? '2px solid #fff' : undefined,
+                          outlineOffset: onCard ? '1px' : undefined,
+                        }
+                      : onCard
+                      ? { background: col.bg, color: col.color, border: `1px dashed ${col.color}` }
+                      : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.25)' }
+                  }
+                >
+                  {n}
+                </motion.div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // 90-ball: 9 columns (groups of 10), 10 rows
+  const groups = BALL_GROUPS_90.filter(g => g.from <= numberRange);
+  return (
+    <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${groups.length}, 1fr)` }}>
+      {groups.map(group => (
+        <div key={group.from} className="flex flex-col gap-0.5">
+          <div
+            className="text-center text-[7px] font-black py-0.5 rounded-sm mb-0.5"
+            style={{ color: group.color, background: group.bg }}
           >
-            {val}
-          </motion.span>
-        );
-      })}
+            {group.from}–{Math.min(group.to, numberRange)}
+          </div>
+          {Array.from(
+            { length: Math.min(group.to, numberRange) - group.from + 1 },
+            (_, i) => group.from + i,
+          ).map(n => {
+            const called = drawnSet.has(n);
+            const onCard = myCardNums.has(n);
+            return (
+              <motion.div
+                key={n}
+                animate={called ? { scale: [1, 1.2, 1] } : {}}
+                transition={{ duration: 0.3, ease: 'backOut' }}
+                className="aspect-square rounded-full flex items-center justify-center text-[8px] font-bold font-mono"
+                style={
+                  called
+                    ? {
+                        background: group.color,
+                        color: '#fff',
+                        boxShadow: onCard ? `0 0 8px ${group.glow}` : undefined,
+                        outline: onCard ? '2px solid #fff' : undefined,
+                        outlineOffset: onCard ? '1px' : undefined,
+                      }
+                    : onCard
+                    ? { background: group.bg, color: group.color, border: `1px dashed ${group.color}` }
+                    : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.22)' }
+                }
+              >
+                {n}
+              </motion.div>
+            );
+          })}
+        </div>
+      ))}
     </div>
-  </div>
-));
+  );
+});
 NumberBoard.displayName = 'NumberBoard';
+
+// ─── Draw Section (current + recent balls) ───────────────────────────────────
+
+function DrawSection({ drawnNumbers, isPatternMode, status, count, max }: {
+  drawnNumbers: number[];
+  isPatternMode: boolean;
+  status: string;
+  count: number;
+  max: number;
+}) {
+  const currentBall = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+  const recentPrev = drawnNumbers.slice(-4, -1);
+
+  if (status === 'completed') {
+    return (
+      <div className="flex flex-col items-center justify-center gap-1 py-2">
+        <Trophy size={32} className="text-amber-400" />
+        <span className="text-[10px] font-black text-amber-500 uppercase tracking-wider">Complete</span>
+      </div>
+    );
+  }
+
+  if (status === 'open' || currentBall === null) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-1 py-2">
+        <motion.div
+          animate={{ opacity: [0.4, 1, 0.4] }}
+          transition={{ duration: 1.4, repeat: Infinity }}
+          className="w-16 h-16 rounded-full border-2 border-dashed border-white/20 flex items-center justify-center"
+        >
+          <span className="text-[9px] font-black text-white/40 uppercase">Waiting</span>
+        </motion.div>
+        <span className="text-[9px] text-slate-500">{count}/{max} called</span>
+      </div>
+    );
+  }
+
+  const curStyle = getBallStyle(currentBall, isPatternMode);
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      {/* Previous 3 balls */}
+      {recentPrev.length > 0 && (
+        <div className="flex gap-1.5 justify-center">
+          {recentPrev.map((n) => {
+            const s = getBallStyle(n, isPatternMode);
+            return (
+              <div
+                key={n}
+                className="w-9 h-9 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                style={{ background: s.color, opacity: 0.75 }}
+              >
+                {isPatternMode
+                  ? (BINGO_COLS_75.find(c => n >= c.from && n <= c.to)?.letter ?? '') + n
+                  : n}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Current ball — large and glowing */}
+      <AnimatePresence mode="popLayout">
+        <motion.div
+          key={currentBall}
+          initial={{ scale: 0.3, rotate: -270, opacity: 0 }}
+          animate={{ scale: 1, rotate: 0, opacity: 1 }}
+          exit={{ scale: 0.5, opacity: 0 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+          className="w-20 h-20 rounded-full flex items-center justify-center font-black text-white"
+          style={{
+            background: `radial-gradient(circle at 35% 35%, ${curStyle.color}ee, ${curStyle.color}99)`,
+            boxShadow: `0 0 28px ${curStyle.glow}, 0 0 8px ${curStyle.glow}`,
+            fontSize: currentBall >= 10 ? 22 : 26,
+          }}
+        >
+          {isPatternMode
+            ? (BINGO_COLS_75.find(c => currentBall >= c.from && currentBall <= c.to)?.letter ?? '') + currentBall
+            : currentBall}
+        </motion.div>
+      </AnimatePresence>
+
+      <span className="text-[9px] text-slate-500 font-mono">#{count} of {max}</span>
+    </div>
+  );
+}
 
 // ─── Ticket Cards ─────────────────────────────────────────────────────────────
 
@@ -83,8 +276,8 @@ const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
         </p>
       )}
       <div className="grid grid-cols-5 gap-0.5">
-        {BINGO_COLS.map((col) => (
-          <div key={col} className="text-center text-[9px] font-black text-red-400">{col}</div>
+        {BINGO_COLS_75.map((col) => (
+          <div key={col.letter} className="text-center text-[9px] font-black" style={{ color: col.color }}>{col.letter}</div>
         ))}
       </div>
       <div className="grid grid-cols-5 gap-0.5">
@@ -92,14 +285,15 @@ const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
           row.map((value, ci) => {
             const isFree = value === null;
             const isMarked = isFree || ticket.markedNumbers.includes(value!);
+            const colStyle = isMarked && !isFree ? getBallStyle(value!, true) : null;
             return (
               <motion.span
                 key={`${ticket.id}-${ri}-${ci}`}
-                animate={isMarked && !isFree ? { backgroundColor: '#ef4444', color: '#ffffff' } : {}}
+                animate={isMarked && !isFree ? { backgroundColor: colStyle!.color } : {}}
                 transition={{ duration: 0.3, ease: 'backOut' }}
                 className={`aspect-square rounded flex items-center justify-center text-[9px] font-bold font-mono ${
                   isFree ? 'bg-red-600/25 border border-red-500/30 text-red-400 text-[7px]'
-                    : isMarked ? 'bg-red-600 border border-red-400/60 text-white'
+                    : isMarked ? 'text-white'
                     : 'bg-white/[0.04] border border-white/[0.06] text-slate-400'
                 }`}
               >
@@ -172,7 +366,7 @@ const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
         })}
       </div>
       <div className="flex justify-between text-[9px] text-slate-600 pt-1 border-t border-white/[0.05]">
-        <span>Stake {formatCredits(ticket.stakeMinor)} Cr</span>
+        <span>Stake {formatCredits(ticket.stakeMinor)} ETB</span>
         <span>{ticket.completedLines.length}/3 lines</span>
       </div>
     </motion.article>
@@ -181,7 +375,6 @@ const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
 BingoTicketCard.displayName = 'BingoTicketCard';
 
 // ─── Room Result Overlay ──────────────────────────────────────────────────────
-// Shown for all players when a room completes: winner name, prize, countdown.
 
 function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
   room: BingoRoomState;
@@ -192,7 +385,6 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
   const totalWin = myTickets.reduce((s, t) => s + t.payoutMinor, 0);
   const iWon = totalWin > 0;
 
-  // Extract winner info from settlement summary
   const summary = room.settlementSummary ?? {};
   const fullHouse = summary.full_house as Record<string, unknown> | undefined;
   const winnerDisplayName = (fullHouse?.winnerDisplayName as string | undefined) ?? 'A lucky player';
@@ -219,7 +411,6 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
           borderColor: iWon ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.4)',
         }}
       >
-        {/* Glow effect */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
@@ -228,8 +419,6 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
               : 'radial-gradient(ellipse at 50% 0%, rgba(239,68,68,0.15) 0%, transparent 60%)',
           }}
         />
-
-        {/* Header */}
         <div className="relative z-10 text-center pt-7 pb-3 px-6">
           <motion.h1
             animate={{ scale: [1, 1.05, 1] }}
@@ -242,11 +431,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
           <div className="flex items-center justify-center gap-2 flex-wrap">
             <span
               className="font-black text-sm px-3 py-1 rounded-full border"
-              style={{
-                background: 'rgba(16,185,129,0.15)',
-                borderColor: 'rgba(16,185,129,0.35)',
-                color: '#34d399',
-              }}
+              style={{ background: 'rgba(16,185,129,0.15)', borderColor: 'rgba(16,185,129,0.35)', color: '#34d399' }}
             >
               {winnerDisplayName}
             </span>
@@ -254,33 +439,21 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
           </div>
         </div>
 
-        {/* Winning ticket card (only for current user if they won) */}
         {iWon && winnerTicket && !isPatternGrid(winnerTicket.grid) && (
           <div className="relative z-10 px-5 pb-3">
-            <div
-              className="rounded-2xl border p-3"
-              style={{
-                background: 'rgba(245,158,11,0.06)',
-                borderColor: 'rgba(245,158,11,0.25)',
-              }}
-            >
+            <div className="rounded-2xl border p-3" style={{ background: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.25)' }}>
               <div className="space-y-1">
                 {winnerTicket.grid.map((row, ri) => {
                   const isRowComplete = winnerTicket.completedLines.includes(ri);
                   return (
-                    <div
-                      key={ri}
-                      className={`grid grid-cols-9 gap-0.5 rounded p-0.5 ${isRowComplete ? 'bg-amber-500/10' : ''}`}
-                    >
+                    <div key={ri} className={`grid grid-cols-9 gap-0.5 rounded p-0.5 ${isRowComplete ? 'bg-amber-500/10' : ''}`}>
                       {row.map((value, ci) =>
                         value ? (
                           <span
                             key={ci}
                             className={`aspect-square rounded flex items-center justify-center text-[9px] font-black font-mono ${
                               winnerTicket.markedNumbers.includes(value)
-                                ? isRowComplete
-                                  ? 'bg-amber-400 text-black'
-                                  : 'bg-red-600 text-white border border-red-400/60'
+                                ? isRowComplete ? 'bg-amber-400 text-black' : 'bg-red-600 text-white border border-red-400/60'
                                 : 'bg-white/[0.04] border border-white/[0.06] text-slate-500'
                             }`}
                           >
@@ -295,34 +468,22 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
                 })}
               </div>
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.06]">
-                <span className="text-[10px] font-black text-amber-400">
-                  Prize: {formatCreditsFull(winnerTicket.payoutMinor)} Cr
-                </span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  Card #{winnerTicket.id.slice(-3)}
-                </span>
+                <span className="text-[10px] font-black text-amber-400">Prize: {formatCreditsFull(winnerTicket.payoutMinor)} ETB</span>
+                <span className="text-[10px] text-slate-500 font-mono">Card #{winnerTicket.id.slice(-3)}</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* Prize display (for non-winners or pattern-mode) */}
         {(!iWon || isPatternGrid(winnerTicket?.grid ?? [])) && prizeMinor > 0 && (
           <div className="relative z-10 flex justify-center pb-3 px-5">
-            <div
-              className="rounded-2xl border px-6 py-3 text-center"
-              style={{
-                background: 'rgba(239,68,68,0.08)',
-                borderColor: 'rgba(239,68,68,0.2)',
-              }}
-            >
+            <div className="rounded-2xl border px-6 py-3 text-center" style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.2)' }}>
               <span className="block text-[9px] font-black uppercase tracking-widest text-red-400/70 mb-0.5">Prize</span>
-              <span className="text-2xl font-black text-white font-mono">{formatCreditsFull(prizeMinor)} Cr</span>
+              <span className="text-2xl font-black text-white font-mono">{formatCreditsFull(prizeMinor)} ETB</span>
             </div>
           </div>
         )}
 
-        {/* Countdown */}
         <div className="relative z-10 px-5 pb-6">
           <div className="text-center mb-2">
             <span className="text-3xl font-black font-mono text-red-400">{resultSecs}s</span>
@@ -341,49 +502,6 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
   );
 }
 
-// ─── Draw Machine (compact) ───────────────────────────────────────────────────
-
-function DrawBall({ number, count, max, status }: {
-  number: number | null; count: number; max: number; status: string;
-}) {
-  if (status === 'completed') {
-    return (
-      <div className="flex flex-col items-center gap-1">
-        <Trophy size={28} className="text-amber-400" />
-        <span className="text-[9px] font-black text-amber-500 uppercase tracking-wider">Complete</span>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <AnimatePresence mode="popLayout">
-        {number !== null ? (
-          <motion.div
-            key={number}
-            initial={{ scale: 0.3, rotate: -270, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
-            exit={{ scale: 0.6, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 240, damping: 16 }}
-            className="w-14 h-14 rounded-full bg-gradient-to-br from-red-600 to-rose-700 border-2 border-red-400 flex items-center justify-center shadow-[0_0_18px_rgba(239,68,68,0.5)]"
-          >
-            <span className="text-xl font-black text-white font-mono">{number}</span>
-          </motion.div>
-        ) : (
-          <motion.div key="waiting"
-            animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 1.4, repeat: Infinity }}
-            className="w-14 h-14 rounded-full border-2 border-dashed border-red-500/30 flex items-center justify-center"
-          >
-            <span className="text-[9px] font-black text-red-400 uppercase">{status === 'open' ? 'Open' : '...'}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {count > 0 && (
-        <span className="text-[9px] font-bold text-slate-400">#{count} of {max}</span>
-      )}
-    </div>
-  );
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function Bingo({ onBack }: BingoProps) {
@@ -397,51 +515,37 @@ export function Bingo({ onBack }: BingoProps) {
   const currentUser       = useStore((s) => s.user);
   const isSocketConnected = useStore((s) => s.isSocketConnected);
 
-  // ── Core state ──────────────────────────────────────────────────────────────
   const [room, setRoom]                   = useState<BingoRoomState | null>(null);
   const [loading, setLoading]             = useState(true);
   const [holdingResult, setHoldingResult] = useState(false);
-
-  // ── Buy state ───────────────────────────────────────────────────────────────
   const [buying, setBuying]               = useState(false);
-
-  // Local fallback: tickets bought in this session so the card is always shown
-  // even if a fast room transition clears room.tickets before the re-fetch lands.
   const [localTickets, setLocalTickets]   = useState<BingoTicket[]>([]);
   const localRoomIdRef                    = useRef<string | null>(null);
-
-  // ── Playing / result state ─────────────────────────────────────────────────
-  const [showBoard, setShowBoard]         = useState(true);
-
-  // ── Countdown ───────────────────────────────────────────────────────────────
+  const [showChat, setShowChat]           = useState(false);
   const [timeRemainingSecs, setTimeRemainingSecs] = useState<number | null>(null);
   const [resultSecs, setResultSecs]       = useState<number>(0);
 
-  // ── Refs ────────────────────────────────────────────────────────────────────
-  const roomIdRef          = useRef<string | null>(null);
-  const holdingResultRef   = useRef(false);
-  const victoryRoomRef     = useRef<string | null>(null);
-  const reconcileTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resultTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const countdownRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const roomIdRef         = useRef<string | null>(null);
+  const holdingResultRef  = useRef(false);
+  const victoryRoomRef    = useRef<string | null>(null);
+  const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resultTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownRef      = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Chat ────────────────────────────────────────────────────────────────────
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { displayName: 'System', text: 'Welcome to iGames Bingo!', timestamp: new Date().toISOString(), isSystem: true },
   ]);
   const [chatInput, setChatInput] = useState('');
-  const [showChat, setShowChat]   = useState(false);
-  const chatEndRef                = useRef<HTMLDivElement>(null);
-  const chatInputRef              = useRef<HTMLInputElement>(null);
+  const chatEndRef  = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Load the single active room ─────────────────────────────────────────────
+  // ── Load ────────────────────────────────────────────────────────────────────
 
   const loadCurrent = useCallback(async () => {
     try {
       const next = await bingoApi.getCurrentRoom();
       setRoom(next);
       roomIdRef.current = next?.id ?? null;
-      // Clear local ticket cache when the room changes
       if (next?.id !== localRoomIdRef.current) {
         setLocalTickets([]);
         localRoomIdRef.current = next?.id ?? null;
@@ -461,7 +565,7 @@ export function Bingo({ onBack }: BingoProps) {
     return () => clearInterval(id);
   }, [loadCurrent]);
 
-  // ── Socket: presence (online count) ─────────────────────────────────────────
+  // ── Socket: presence ─────────────────────────────────────────────────────────
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -469,7 +573,7 @@ export function Bingo({ onBack }: BingoProps) {
     return () => { socket.emit('leave.game', { game: 'bingo' }); };
   }, [isSocketConnected]);
 
-  // ── Socket: live room events ────────────────────────────────────────────────
+  // ── Socket: game events ──────────────────────────────────────────────────────
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -499,7 +603,6 @@ export function Bingo({ onBack }: BingoProps) {
           }),
         };
       });
-      // Also update locally stored tickets for same-session reliability
       setLocalTickets((prev) =>
         prev.map((t) => {
           if (t.markedNumbers.includes(drawn)) return t;
@@ -540,7 +643,7 @@ export function Bingo({ onBack }: BingoProps) {
     };
   }, [isSocketConnected, loadCurrent]);
 
-  // ── Result hold: freeze on completed room for RESULT_DISPLAY_MS ─────────────
+  // ── Result hold ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!room) return;
     const done = room.status === 'completed' || room.status === 'cancelled';
@@ -571,7 +674,7 @@ export function Bingo({ onBack }: BingoProps) {
     };
   }, [room?.id, room?.status, loadCurrent]);
 
-  // ── Buy-window countdown ────────────────────────────────────────────────────
+  // ── Buy-window countdown ─────────────────────────────────────────────────────
   useEffect(() => {
     setTimeRemainingSecs(null);
     if (!room || room.status !== 'open') return;
@@ -584,7 +687,7 @@ export function Bingo({ onBack }: BingoProps) {
     return () => clearInterval(id);
   }, [room?.id, room?.status, room?.scheduledStartAt]);
 
-  // ── Win detection: confetti on my win ───────────────────────────────────────
+  // ── Win detection ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (room?.status !== 'completed') return;
     if (victoryRoomRef.current === room.id) return;
@@ -596,10 +699,10 @@ export function Bingo({ onBack }: BingoProps) {
     confetti({ particleCount: 200, spread: 90, origin: { y: 0.55 }, colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'] });
   }, [room?.status, room?.tickets, room?.id, localTickets]);
 
-  // ── Chat auto-scroll ────────────────────────────────────────────────────────
+  // ── Chat scroll ──────────────────────────────────────────────────────────────
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
 
-  // ── Derived ─────────────────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const phase: Phase = !room ? 'loading'
     : holdingResult ? 'result'
     : room.status === 'open' ? 'buy'
@@ -613,29 +716,31 @@ export function Bingo({ onBack }: BingoProps) {
   const isPatternMode    = room?.winMode === 'pattern';
   const numberRange      = room?.numberRange ?? (isPatternMode ? 75 : 90);
   const drawnNumbers     = room?.drawnNumbers ?? [];
-  const lastNumber       = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
   const salesOpen        = room?.status === 'open';
 
-  // Merge API-returned tickets with locally-stored ones (local is fallback)
   const myTickets = useMemo(() => {
     const apiTickets = room?.tickets ?? [];
     if (apiTickets.length > 0) return apiTickets;
-    // Only use local tickets if they match the current room
     if (localRoomIdRef.current === room?.id) return localTickets;
     return [];
   }, [room?.tickets, room?.id, localTickets]);
 
-  // Has the current user already bought a ticket for this room?
-  const alreadyBought = myTickets.length > 0 || (localRoomIdRef.current === room?.id && localTickets.length > 0);
+  const alreadyBought = myTickets.length > 0;
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  // Numbers on the player's card(s) — highlighted on the number board
+  const myCardNums = useMemo(() => {
+    const nums = new Set<number>();
+    myTickets.forEach((t) => t.grid.forEach((row) => row.forEach((n) => { if (n !== null) nums.add(n); })));
+    return nums;
+  }, [myTickets]);
+
+  // ── Buy ──────────────────────────────────────────────────────────────────────
   const buyTickets = async () => {
     if (!room || !salesOpen || alreadyBought) return;
     setBuying(true);
     try {
       const bought = await bingoApi.purchaseTickets(room.id, 1, createIdempotencyKey('bingo'));
-      // Store purchased tickets locally as reliable fallback
       localRoomIdRef.current = room.id;
       setLocalTickets(bought);
       const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
@@ -659,10 +764,10 @@ export function Bingo({ onBack }: BingoProps) {
     chatInputRef.current?.focus();
   }, [chatInput, room]);
 
-  // ── RENDER ──────────────────────────────────────────────────────────────────
+  // ── RENDER ───────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4 max-w-3xl mx-auto pb-20">
-      {/* Room result overlay (shown for all players on completion) */}
+    <div className="max-w-3xl mx-auto pb-20 space-y-3">
+      {/* Room result overlay */}
       <AnimatePresence>
         {phase === 'result' && room && room.status === 'completed' && (
           <RoomResultOverlay
@@ -684,7 +789,6 @@ export function Bingo({ onBack }: BingoProps) {
         <button onClick={onBack} className="btn btn-ghost btn-sm flex items-center gap-2">
           <ArrowLeft size={14} /> Home
         </button>
-
         <div className="flex items-center gap-2">
           {liveCounts && liveCounts.bingoOnline > 0 && (
             <span className="live-badge-pulse">
@@ -703,7 +807,7 @@ export function Bingo({ onBack }: BingoProps) {
         </div>
       </div>
 
-      {/* ── Loading / empty ── */}
+      {/* ── Loading ── */}
       {phase === 'loading' && (
         <div className="centered-loader py-16"><div className="spinner" /></div>
       )}
@@ -724,85 +828,83 @@ export function Bingo({ onBack }: BingoProps) {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-          className="space-y-4"
+          className="space-y-3"
         >
-          {/* ── Draw header ── */}
-          <div className="card">
-            <div className="flex items-center gap-4">
-              <DrawBall number={lastNumber} count={drawnNumbers.length} max={numberRange} status={room.status} />
-              <div className="flex-1 min-w-0 space-y-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-black text-sm text-slate-100">{room.name}</span>
-                  <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
-                    room.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' :
+          {/* ── Stats bar ── */}
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'Derash',   value: `${formatCredits(room.prizeMinor)} ETB`,    color: 'text-amber-400' },
+              { label: 'Players',  value: String(room.soldTickets),                   color: 'text-slate-200' },
+              { label: 'Stake',    value: `${formatCredits(room.ticketPriceMinor)} ETB`, color: 'text-slate-200' },
+              { label: 'Call',     value: `${drawnNumbers.length}/${numberRange}`,    color: 'text-red-400'   },
+            ].map((stat) => (
+              <div key={stat.label} className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
+                <span className={`text-[10px] font-black leading-tight ${stat.color}`}>{stat.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Main game area: number board (left) + draw display (right) ── */}
+          <div className="card p-2">
+            <div className="flex gap-2">
+              {/* Left: Number board */}
+              <div className="flex-1 min-w-0">
+                {/* Room / status label */}
+                <div className="flex items-center gap-1.5 mb-2 px-0.5">
+                  <span className="text-[9px] font-black text-slate-400 truncate">{room.name}</span>
+                  <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
+                    room.status === 'open'    ? 'bg-emerald-500/10 text-emerald-400' :
                     room.status === 'running' ? 'bg-red-500/10 text-red-400 animate-pulse' :
                     'bg-slate-700 text-slate-400'
-                  }`}>{phase === 'buy' ? 'buy in' : room.status}</span>
+                  }`}>
+                    {phase === 'buy' ? 'open' : room.status}
+                  </span>
                   {isPatternMode && (
-                    <span className="text-[8px] font-black bg-violet-500/10 text-violet-400 px-1.5 py-0.5 rounded">PATTERN</span>
+                    <span className="text-[7px] font-black bg-violet-500/10 text-violet-400 px-1 py-0.5 rounded flex-shrink-0">75-BALL</span>
                   )}
                 </div>
+                <NumberBoard
+                  drawnNumbers={drawnNumbers}
+                  numberRange={numberRange}
+                  isPatternMode={isPatternMode}
+                  myCardNums={myCardNums}
+                />
+              </div>
+
+              {/* Right: Draw display */}
+              <div className="w-28 flex-shrink-0 flex flex-col items-center justify-start pt-6">
+                <DrawSection
+                  drawnNumbers={drawnNumbers}
+                  isPatternMode={isPatternMode}
+                  status={room.status}
+                  count={drawnNumbers.length}
+                  max={numberRange}
+                />
 
                 {/* Buy-window countdown */}
                 {phase === 'buy' && timeRemainingSecs !== null && (
-                  <p className="text-[10px] text-slate-500">
-                    Starts in{' '}
-                    <span className={`font-mono font-black ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
+                  <div className="mt-3 text-center">
+                    <div className="text-[8px] text-slate-500 mb-0.5">Starts in</div>
+                    <span className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
                       {String(Math.floor(timeRemainingSecs / 60)).padStart(2, '0')}:{String(timeRemainingSecs % 60).padStart(2, '0')}
                     </span>
-                  </p>
-                )}
-
-                {/* Recent balls */}
-                {drawnNumbers.length > 0 && (
-                  <div className="flex gap-1 flex-wrap">
-                    {drawnNumbers.slice(-10).map((n, i, arr) => (
-                      <motion.span
-                        key={`${n}-${i}`}
-                        initial={{ scale: 0, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black ${
-                          i === arr.length - 1
-                            ? 'bg-red-600 border border-red-400/60 text-white'
-                            : 'bg-white/[0.06] border border-white/[0.08] text-slate-400'
-                        }`}
-                      >
-                        {n}
-                      </motion.span>
-                    ))}
                   </div>
                 )}
 
-                {phase === 'result' && (
-                  <p className="text-[10px] font-bold text-emerald-400">
-                    {room.settledTiers.length > 0
-                      ? `${room.settledTiers.length} prize tier${room.settledTiers.length > 1 ? 's' : ''} settled`
-                      : 'No winners this round'}
-                    {resultSecs > 0 && <span className="text-slate-500"> · next game in {resultSecs}s</span>}
-                  </p>
+                {phase === 'result' && resultSecs > 0 && (
+                  <div className="mt-3 text-center">
+                    <div className="text-[8px] text-emerald-400 mb-0.5">Next game in</div>
+                    <span className="font-mono font-black text-sm text-emerald-400">{resultSecs}s</span>
+                  </div>
                 )}
               </div>
             </div>
           </div>
 
-          {/* ── Stats bar ── */}
-          <div className="grid grid-cols-4 gap-2">
-            {[
-              { label: 'Derash', value: `${formatCredits(room.prizeMinor)} ETB`, color: 'text-amber-400' },
-              { label: 'Players', value: String(room.soldTickets), color: 'text-slate-200' },
-              { label: 'Stake', value: `${formatCredits(room.ticketPriceMinor)} ETB`, color: 'text-slate-200' },
-              { label: 'Call', value: `${drawnNumbers.length}/${numberRange}`, color: 'text-red-400' },
-            ].map((stat) => (
-              <div key={stat.label} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-2 text-center">
-                <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
-                <span className={`text-[11px] font-black ${stat.color}`}>{stat.value}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* ── Buy panel (only during buy window, only if not already bought) ── */}
+          {/* ── Buy panel ── */}
           {phase === 'buy' && !alreadyBought && (
-            <div className="card space-y-3">
+            <div className="card space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Buy a card</p>
                 <span className="text-[10px] text-slate-500">{remainingTickets} spots left</span>
@@ -825,7 +927,6 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
           )}
 
-          {/* Already bought notice (during buy window) */}
           {phase === 'buy' && alreadyBought && (
             <div className="card flex items-center gap-3 py-3">
               <span className="text-emerald-400 text-lg">✓</span>
@@ -836,9 +937,9 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
           )}
 
-          {/* ── My cards ── */}
+          {/* ── My card(s) ── */}
           {myTickets.length > 0 ? (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Card</h3>
               <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
                 {myTickets.map((ticket) => (
@@ -854,29 +955,6 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
           )}
 
-          {/* ── Number board (collapsible) ── */}
-          <div className="card space-y-2">
-            <button onClick={() => setShowBoard((v) => !v)} className="w-full flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                <Hash size={11} /> Called Numbers · {drawnNumbers.length}/{numberRange}
-              </span>
-              <span className="text-[9px] text-slate-600">{showBoard ? '▲' : '▼'}</span>
-            </button>
-            <AnimatePresence>
-              {showBoard && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden"
-                >
-                  <NumberBoard drawnNumbers={drawnNumbers} numberRange={numberRange} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
           {/* ── Chat (collapsible) ── */}
           <div className="card space-y-2">
             <button onClick={() => setShowChat((v) => !v)} className="w-full flex items-center justify-between">
@@ -891,7 +969,6 @@ export function Bingo({ onBack }: BingoProps) {
                 <span className="text-[9px] text-slate-600">{showChat ? '▲' : '▼'}</span>
               </span>
             </button>
-
             <AnimatePresence>
               {showChat && (
                 <motion.div
@@ -911,15 +988,13 @@ export function Bingo({ onBack }: BingoProps) {
                               {isOwn ? 'You' : msg.displayName}
                             </span>
                           )}
-                          <div
-                            className={`text-[11px] px-2 py-1 max-w-[85%] leading-snug ${
-                              msg.isSystem
-                                ? 'text-slate-500 bg-white/[0.02] rounded-md border border-white/[0.04]'
-                                : isOwn
-                                  ? 'bg-amber-500/12 border border-amber-500/20 rounded-[10px_10px_2px_10px] text-slate-300'
-                                  : 'bg-blue-500/8 border border-blue-500/15 rounded-[10px_10px_10px_2px] text-slate-300'
-                            }`}
-                          >
+                          <div className={`text-[11px] px-2 py-1 max-w-[85%] leading-snug ${
+                            msg.isSystem
+                              ? 'text-slate-500 bg-white/[0.02] rounded-md border border-white/[0.04]'
+                              : isOwn
+                                ? 'bg-amber-500/12 border border-amber-500/20 rounded-[10px_10px_2px_10px] text-slate-300'
+                                : 'bg-blue-500/8 border border-blue-500/15 rounded-[10px_10px_10px_2px] text-slate-300'
+                          }`}>
                             {msg.text}
                           </div>
                         </div>
@@ -937,9 +1012,7 @@ export function Bingo({ onBack }: BingoProps) {
                       onChange={(e) => setChatInput(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }}
                     />
-                    <button onClick={sendChat} disabled={!chatInput.trim()} className="btn btn-primary btn-sm">
-                      Send
-                    </button>
+                    <button onClick={sendChat} disabled={!chatInput.trim()} className="btn btn-primary btn-sm">Send</button>
                   </div>
                 </motion.div>
               )}

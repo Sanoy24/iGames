@@ -675,18 +675,37 @@ export function Bingo({ onBack }: BingoProps) {
       if (p.roomId === roomIdRef.current || roomIdRef.current === null) void loadCurrent();
     };
 
-    const onRoomCompleted = (p: { roomId?: string }) => {
+    const onRoomCompleted = (p: {
+      roomId?: string;
+      drawnNumbers?: number[];
+      winnersByTier?: Record<string, string[]>;
+      settlementSummary?: Record<string, unknown>;
+    }) => {
       if (p.roomId !== roomIdRef.current) return;
-      // Immediately mark current room as completed so the result overlay fires
-      // without waiting on a loadCurrent() that might return the next room already.
+      const completedId = p.roomId;
+      // Lock onto the result view SYNCHRONOUSLY so no poll/loadCurrent can swap
+      // us to the next (already-opened) room before the overlay renders.
+      holdingResultRef.current = true;
+      // Apply the completion payload immediately — it carries the winner name
+      // (settlementSummary) so the overlay can render right away.
       setRoom((prev) => {
-        if (!prev || prev.id !== p.roomId) return prev;
-        return { ...prev, status: 'completed' as const };
+        if (!prev || prev.id !== completedId) return prev;
+        return {
+          ...prev,
+          status: 'completed' as const,
+          drawnNumbers: p.drawnNumbers ?? prev.drawnNumbers,
+          winnersByTier: p.winnersByTier ?? prev.winnersByTier,
+          settlementSummary: p.settlementSummary ?? prev.settlementSummary,
+        };
       });
-      // Then fetch settlement data (winnerDisplayName etc.). loadCurrent will
-      // refuse to switch rooms while holdingResult is true, so if the backend
-      // has already opened the next room we simply keep the completed room shown.
-      void loadCurrent();
+      // Fetch the completed room BY ID (not getCurrentRoom, which now returns the
+      // next room) to pick up settled ticket payouts for the winner-card display.
+      void bingoApi.getRoomState(completedId)
+        .then((full) => {
+          if (full.id !== completedId) return;
+          setRoom((prev) => (prev && prev.id === completedId ? full : prev));
+        })
+        .catch(() => undefined);
     };
 
     const onChatMessage = (p: { roomId: string; userId?: string; displayName: string; text: string; timestamp: string }) => {
@@ -780,8 +799,10 @@ export function Bingo({ onBack }: BingoProps) {
     () => new Map((room?.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name])),
     [room],
   );
-  const numberRange      = room?.numberRange ?? 90;
-  const isPatternMode    = numberRange <= 75;
+  // winMode is the source of truth: 'pattern' = 75-ball (BINGO board, draws 1–75),
+  // 'line' = 90-ball (draws 1–90, regardless of the room's numberRange field).
+  const isPatternMode    = room?.winMode === 'pattern';
+  const ballCount        = isPatternMode ? (room?.numberRange ?? 75) : 90;
   const drawnNumbers     = room?.drawnNumbers ?? [];
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
   const salesOpen        = room?.status === 'open';
@@ -903,7 +924,7 @@ export function Bingo({ onBack }: BingoProps) {
               { label: 'Derash',   value: `${formatCredits(room.prizeMinor)} ETB`, color: 'text-amber-400' },
               { label: 'Players',  value: String(room.soldTickets),                color: 'text-slate-200' },
               { label: 'Stake',    value: `${formatCredits(room.ticketPriceMinor)} ETB`, color: 'text-slate-200' },
-              { label: 'Called',   value: `${drawnNumbers.length}/${numberRange}`, color: 'text-red-400'   },
+              { label: 'Called',   value: `${drawnNumbers.length}/${ballCount}`, color: 'text-red-400'   },
             ].map((stat) => (
               <div key={stat.label} className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center">
                 <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
@@ -937,7 +958,7 @@ export function Bingo({ onBack }: BingoProps) {
                 </div>
                 <NumberBoard
                   drawnNumbers={drawnNumbers}
-                  numberRange={numberRange}
+                  numberRange={ballCount}
                   isPatternMode={isPatternMode}
                   myCardNums={myCardNums}
                 />
@@ -950,7 +971,7 @@ export function Bingo({ onBack }: BingoProps) {
                   isPatternMode={isPatternMode}
                   status={room.status}
                   count={drawnNumbers.length}
-                  max={numberRange}
+                  max={ballCount}
                 />
                 {phase === 'buy' && timeRemainingSecs !== null && (
                   <div className="mt-1 text-center">

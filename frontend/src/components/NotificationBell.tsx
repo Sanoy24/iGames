@@ -23,7 +23,7 @@ export function NotificationBell() {
       addNotification({
         type: 'win',
         title: 'Keno Win!',
-        message: `You won ${data.payoutMinor} Cr in Keno`,
+        message: `You won ${data.payoutMinor} ETB in Keno`,
       });
     };
 
@@ -32,7 +32,7 @@ export function NotificationBell() {
       addNotification({
         type: 'win',
         title: 'Bingo Win!',
-        message: `You won ${data.payoutMinor} Cr — ${data.tier ?? 'Prize'}`,
+        message: `You won ${data.payoutMinor} ETB — ${data.tier ?? 'Prize'}`,
       });
     };
 

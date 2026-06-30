@@ -434,7 +434,7 @@ function PlayersAdmin() {
                     </td>
                     <td>
                       <strong>{formatCredits(bal)}</strong>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>e-Birr</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>ETB</span>
                     </td>
                     <td>
                       <span className={`badge ${u.status === 'active' || !u.status ? 'badge-green' : 'badge-red'}`}>
@@ -1490,7 +1490,7 @@ function BingoAdmin() {
       {cfg && (
         <div className="adm-info-strip">
           <span>{cfg.enabled ? '✅ Auto-Bingo ON' : '⏸ Auto-Bingo OFF'}</span>
-          <span>{cfg.defaultTicketPriceMinor} Cr/ticket</span>
+          <span>{cfg.defaultTicketPriceMinor} ETB/ticket</span>
           <span>Max {cfg.defaultMaxTickets} tickets</span>
           <span>Draw every {cfg.drawIntervalSeconds}s</span>
           <span>Mode: {cfg.defaultWinMode ?? 'line'}</span>
@@ -1831,7 +1831,7 @@ function BotsAdmin() {
     setBusy(bot.id + '-topup');
     try {
       await adminBotsApi.topupBot(bot.id, minor);
-      addToast('success', `Added ${topupAmount} Cr to ${bot.displayName}`);
+      addToast('success', `Added ${topupAmount} ETB to ${bot.displayName}`);
       setTopupId(null);
       setTopupAmount('');
       await load();
@@ -1873,7 +1873,7 @@ function BotsAdmin() {
         <Kpi label="Active" value={String(activeBots)} color="#10b981" />
         <Kpi label="Paused" value={String(bots.length - activeBots)} color="#94a3b8" />
         <Kpi label="Total Balance"
-          value={`${formatCreditsFull(bots.reduce((s, b) => s + (b.walletBalanceMinor ?? 0), 0))} Cr`}
+          value={`${formatCreditsFull(bots.reduce((s, b) => s + (b.walletBalanceMinor ?? 0), 0))} ETB`}
           color="#f59e0b" />
       </div>
 
@@ -1884,7 +1884,7 @@ function BotsAdmin() {
           <div className="adm-field-grid">
             <label className="adm-field"><span>Display Name</span><input className="input" {...f('displayName')} /></label>
             <label className="adm-field">
-              <span>Starting Balance (Cr)</span>
+              <span>Starting Balance (ETB)</span>
               <input className="input" type="number" min={0} {...f('initialBalanceMinor')} />
             </label>
             <label className="adm-field">
@@ -2007,7 +2007,7 @@ function BotsAdmin() {
                     {isTopping && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                         <label className="adm-field" style={{ flex: 1, minWidth: 160 }}>
-                          <span>Add credits (Cr)</span>
+                          <span>Add credits (ETB)</span>
                           <input className="input" type="number" min={1}
                             placeholder="e.g. 500"
                             value={topupAmount}
@@ -2341,7 +2341,7 @@ function EMoneyAdmin() {
                 className="input"
                 type="number"
                 min="1"
-                placeholder="e.g. 100000 for 1000 e-Birr"
+                placeholder="e.g. 100000 for 1000 ETB"
                 value={topupAmount}
                 onChange={(e) => setTopupAmount(e.target.value)}
                 required
@@ -2387,7 +2387,7 @@ function EMoneyAdmin() {
                 className="input"
                 type="number"
                 min="1"
-                placeholder="e.g. 50000 for 500 e-Birr"
+                placeholder="e.g. 50000 for 500 ETB"
                 value={transferAmount}
                 onChange={(e) => setTransferAmount(e.target.value)}
                 required
@@ -2449,7 +2449,7 @@ function AccountAdmin() {
       setLocalWallet(w);
       setWallet(w);
       setTopupCr('');
-      addToast('success', `Topped up ${cr} Cr.`);
+      addToast('success', `Topped up ${cr} ETB.`);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -2464,7 +2464,7 @@ function AccountAdmin() {
       setLocalWallet(adminWallet);
       setWallet(adminWallet);
       setTransferCr('');
-      addToast('success', `Transferred ${cr} Cr to agent.`);
+      addToast('success', `Transferred ${cr} ETB to agent.`);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -2490,7 +2490,7 @@ function AccountAdmin() {
         <div className="adm-panel-head">Top Up My Wallet</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', padding: 16 }}>
           <label className="adm-field" style={{ flex: 1, minWidth: 180 }}>
-            <span>Amount (Cr)</span>
+            <span>Amount (ETB)</span>
             <input className="input" type="number" min={1} placeholder="e.g. 1000"
               value={topupCr} onChange={(e) => setTopupCr(e.target.value)} />
           </label>
@@ -2514,7 +2514,7 @@ function AccountAdmin() {
             </select>
           </label>
           <label className="adm-field" style={{ flex: 1, minWidth: 140 }}>
-            <span>Amount (Cr)</span>
+            <span>Amount (ETB)</span>
             <input className="input" type="number" min={1} placeholder="e.g. 500"
               value={transferCr} onChange={(e) => setTransferCr(e.target.value)} />
           </label>

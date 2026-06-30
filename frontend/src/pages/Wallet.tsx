@@ -12,7 +12,7 @@ const ENTRY_LABELS: Record<string, string> = {
   ticket_refund: 'Ticket Refund',
   deposit: 'Deposit',
   withdrawal: 'Withdrawal',
-  bonus: 'Bonus Credit',
+  bonus: 'Bonus ETBedit',
   admin_adjustment: 'Balance Adjustment',
   agent_receipt: 'Agent Transfer',
   reserve: 'Hold',
@@ -179,7 +179,7 @@ export function Wallet() {
     const amountMinor = Math.round(credits);
     const available   = wallet?.availableMinor ?? 0;
     if (amountMinor > available) {
-      addToast('error', `Insufficient balance — available: ${new Intl.NumberFormat().format(available)} e‑Birr`);
+      addToast('error', `Insufficient balance — available: ${new Intl.NumberFormat().format(available)} ETB`);
       return;
     }
     if (!withdrawPhone.trim()) { addToast('error', 'Please enter your Telebirr phone number'); return; }
@@ -227,7 +227,7 @@ export function Wallet() {
 
         <div className="jackpot-value" style={{ fontSize: '2.2rem', margin: '8px 0 4px' }}>
           <AnimatedBalance value={available} />
-          <span style={{ fontSize: '1rem', marginLeft: 6, color: 'var(--text-muted)', fontWeight: 600 }}>e‑Birr</span>
+          <span style={{ fontSize: '1rem', marginLeft: 6, color: 'var(--text-muted)', fontWeight: 600 }}>ETB</span>
         </div>
 
         <div className="stats-grid" style={{ marginBottom: 16 }}>
@@ -329,7 +329,7 @@ export function Wallet() {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: 12 }}>
                         <div>
                           <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Amount</span>
-                          <strong style={{ fontSize: 18, color: '#10b981' }}>{formatCreditsFull(preview.amountMinor)} Cr</strong>
+                          <strong style={{ fontSize: 18, color: '#10b981' }}>{formatCreditsFull(preview.amountMinor)} ETB</strong>
                         </div>
                         {preview.payerName && (
                           <div>
@@ -430,7 +430,7 @@ export function Wallet() {
                 </div>
 
                 <div style={{ marginBottom: 12 }}>
-                  <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Amount (e‑Birr)</label>
+                  <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Amount (ETB)</label>
                   <input
                     type="number" step="1" min="1" max={available}
                     className="input"
@@ -491,7 +491,7 @@ export function Wallet() {
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <span className="badge" style={{ display: 'block', marginBottom: 4 }}>
-                        {new Intl.NumberFormat().format(w.amountMinor)} e‑Birr
+                        {new Intl.NumberFormat().format(w.amountMinor)} ETB
                       </span>
                       <span className={`badge ${
                         w.status === 'completed'  ? 'badge-green'  :

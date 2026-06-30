@@ -19,10 +19,7 @@ type ChatMessage = { userId?: string; displayName: string; text: string; timesta
 type BingoProps = { onBack: () => void };
 
 const BINGO_COLS = ['B', 'I', 'N', 'G', 'O'];
-// How long the completed-room result stays on screen before auto-advancing to
-// the next room. Mirrors the backend resultDisplaySeconds default.
 const RESULT_DISPLAY_MS = 10_000;
-// Light fallback poll so room transitions are caught even if a socket event is missed.
 const POLL_INTERVAL_MS = 5_000;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -77,7 +74,7 @@ const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
       <div className="flex justify-between items-center">
         <span className="text-[10px] font-black text-slate-400">#{ticket.id.slice(-5)}</span>
         <span className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}>
-          {won ? `+${formatCredits(ticket.payoutMinor)} Cr` : ticket.settlementStatus}
+          {won ? `+${formatCredits(ticket.payoutMinor)} ETB` : ticket.settlementStatus}
         </span>
       </div>
       {ticket.completedPatterns?.length > 0 && (
@@ -136,7 +133,7 @@ const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
       <div className="flex justify-between items-center">
         <span className="text-[10px] font-black text-slate-400">#{ticket.id.slice(-5)}</span>
         <span className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}>
-          {won ? `+${formatCredits(ticket.payoutMinor)} Cr` : ticket.settlementStatus}
+          {won ? `+${formatCredits(ticket.payoutMinor)} ETB` : ticket.settlementStatus}
         </span>
       </div>
       {ticket.wonTiers.length > 0 && (
@@ -183,49 +180,162 @@ const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
 });
 BingoTicketCard.displayName = 'BingoTicketCard';
 
-// ─── Victory Overlay ──────────────────────────────────────────────────────────
+// ─── Room Result Overlay ──────────────────────────────────────────────────────
+// Shown for all players when a room completes: winner name, prize, countdown.
 
-function VictoryOverlay({ tickets, room, onClose }: {
-  tickets: BingoTicket[]; room: BingoRoomState | null; onClose: () => void;
+function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
+  room: BingoRoomState;
+  myTickets: BingoTicket[];
+  resultSecs: number;
+  onClose: () => void;
 }) {
-  const totalWin = tickets.reduce((s, t) => s + t.payoutMinor, 0);
-  let topLabel = 'You Won!';
-  if (room?.winMode === 'pattern') {
-    const pm = new Map((room.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name]));
-    const names = [...new Set(tickets.flatMap((t) => t.completedPatterns ?? []))].map((pid) => pm.get(pid)).filter(Boolean);
-    topLabel = names.length > 0 ? names.join(' & ') + '!' : 'Pattern Win!';
-  } else {
-    topLabel = tickets.some((t) => t.wonTiers.includes('full_house')) ? 'Full House!'
-      : tickets.some((t) => t.wonTiers.includes('two_lines')) ? 'Two Lines!' : 'Line Win!';
-  }
+  const totalWin = myTickets.reduce((s, t) => s + t.payoutMinor, 0);
+  const iWon = totalWin > 0;
+
+  // Extract winner info from settlement summary
+  const summary = room.settlementSummary ?? {};
+  const fullHouse = summary.full_house as Record<string, unknown> | undefined;
+  const winnerDisplayName = (fullHouse?.winnerDisplayName as string | undefined) ?? 'A lucky player';
+  const prizeMinor = (fullHouse?.prizeMinor as number | undefined) ?? room.prizeMinor;
+  const winnerTicket = iWon ? myTickets.find((t) => t.payoutMinor > 0) ?? null : null;
+
+  const progressPct = Math.max(0, Math.min(100, (resultSecs / (RESULT_DISPLAY_MS / 1000)) * 100));
+
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
     >
       <motion.div
-        initial={{ scale: 0.7, rotate: -6 }}
-        animate={{ scale: 1, rotate: 0 }}
-        exit={{ scale: 0.8, opacity: 0 }}
-        transition={{ type: 'spring', stiffness: 280, damping: 18 }}
-        className="relative max-w-sm w-full mx-4 rounded-3xl border-2 border-amber-500/50 p-8 text-center overflow-hidden"
-        style={{ background: 'linear-gradient(135deg, #1a0a00 0%, #0d0505 50%, #080814 100%)' }}
+        initial={{ scale: 0.75, y: 24 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.85, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 280, damping: 20 }}
+        onClick={(e) => e.stopPropagation()}
+        className="relative max-w-sm w-full mx-4 rounded-3xl border-2 overflow-hidden"
+        style={{
+          background: 'linear-gradient(160deg, #0a1628 0%, #060d1a 50%, #0a0a14 100%)',
+          borderColor: iWon ? 'rgba(245,158,11,0.5)' : 'rgba(239,68,68,0.4)',
+        }}
       >
-        <div className="absolute inset-0 pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse at 50% 10%, rgba(245,158,11,0.15) 0%, transparent 60%)' }} />
-        <motion.div animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.1, 1] }}
-          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }} className="relative z-10 mb-4 inline-block">
-          <Trophy size={60} className="text-amber-400" style={{ filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.7))' }} />
-        </motion.div>
-        <h2 className="relative z-10 text-3xl font-black text-amber-400 mb-2">{topLabel}</h2>
-        <div className="relative z-10 inline-block bg-amber-500/10 border border-amber-500/30 rounded-2xl px-6 py-3 mb-6">
-          <span className="block text-[9px] font-black uppercase tracking-widest text-amber-600 mb-0.5">Total Prize</span>
-          <span className="text-3xl font-black text-amber-400 font-mono">+{formatCreditsFull(totalWin)}</span>
+        {/* Glow effect */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: iWon
+              ? 'radial-gradient(ellipse at 50% 0%, rgba(245,158,11,0.18) 0%, transparent 60%)'
+              : 'radial-gradient(ellipse at 50% 0%, rgba(239,68,68,0.15) 0%, transparent 60%)',
+          }}
+        />
+
+        {/* Header */}
+        <div className="relative z-10 text-center pt-7 pb-3 px-6">
+          <motion.h1
+            animate={{ scale: [1, 1.05, 1] }}
+            transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+            className="text-5xl font-black tracking-wider mb-3"
+            style={{ color: '#fff', textShadow: '0 0 30px rgba(239,68,68,0.8), 0 0 60px rgba(239,68,68,0.4)' }}
+          >
+            BINGO!
+          </motion.h1>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <span
+              className="font-black text-sm px-3 py-1 rounded-full border"
+              style={{
+                background: 'rgba(16,185,129,0.15)',
+                borderColor: 'rgba(16,185,129,0.35)',
+                color: '#34d399',
+              }}
+            >
+              {winnerDisplayName}
+            </span>
+            <span className="text-white/70 text-sm font-semibold">has won the game</span>
+          </div>
         </div>
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }}
-          onClick={onClose} className="relative z-10 btn btn-primary btn-full">
-          Claim &amp; Continue
-        </motion.button>
+
+        {/* Winning ticket card (only for current user if they won) */}
+        {iWon && winnerTicket && !isPatternGrid(winnerTicket.grid) && (
+          <div className="relative z-10 px-5 pb-3">
+            <div
+              className="rounded-2xl border p-3"
+              style={{
+                background: 'rgba(245,158,11,0.06)',
+                borderColor: 'rgba(245,158,11,0.25)',
+              }}
+            >
+              <div className="space-y-1">
+                {winnerTicket.grid.map((row, ri) => {
+                  const isRowComplete = winnerTicket.completedLines.includes(ri);
+                  return (
+                    <div
+                      key={ri}
+                      className={`grid grid-cols-9 gap-0.5 rounded p-0.5 ${isRowComplete ? 'bg-amber-500/10' : ''}`}
+                    >
+                      {row.map((value, ci) =>
+                        value ? (
+                          <span
+                            key={ci}
+                            className={`aspect-square rounded flex items-center justify-center text-[9px] font-black font-mono ${
+                              winnerTicket.markedNumbers.includes(value)
+                                ? isRowComplete
+                                  ? 'bg-amber-400 text-black'
+                                  : 'bg-red-600 text-white border border-red-400/60'
+                                : 'bg-white/[0.04] border border-white/[0.06] text-slate-500'
+                            }`}
+                          >
+                            {value}
+                          </span>
+                        ) : (
+                          <span key={ci} className="aspect-square bg-black/20 rounded border border-white/[0.03]" />
+                        )
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.06]">
+                <span className="text-[10px] font-black text-amber-400">
+                  Prize: {formatCreditsFull(winnerTicket.payoutMinor)} Cr
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  Card #{winnerTicket.id.slice(-3)}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Prize display (for non-winners or pattern-mode) */}
+        {(!iWon || isPatternGrid(winnerTicket?.grid ?? [])) && prizeMinor > 0 && (
+          <div className="relative z-10 flex justify-center pb-3 px-5">
+            <div
+              className="rounded-2xl border px-6 py-3 text-center"
+              style={{
+                background: 'rgba(239,68,68,0.08)',
+                borderColor: 'rgba(239,68,68,0.2)',
+              }}
+            >
+              <span className="block text-[9px] font-black uppercase tracking-widest text-red-400/70 mb-0.5">Prize</span>
+              <span className="text-2xl font-black text-white font-mono">{formatCreditsFull(prizeMinor)} Cr</span>
+            </div>
+          </div>
+        )}
+
+        {/* Countdown */}
+        <div className="relative z-10 px-5 pb-6">
+          <div className="text-center mb-2">
+            <span className="text-3xl font-black font-mono text-red-400">{resultSecs}s</span>
+          </div>
+          <div className="h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.07)' }}>
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: 'linear-gradient(90deg, #10b981, #34d399)' }}
+              animate={{ width: `${progressPct}%` }}
+              transition={{ duration: 0.9, ease: 'linear' }}
+            />
+          </div>
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -293,12 +403,14 @@ export function Bingo({ onBack }: BingoProps) {
   const [holdingResult, setHoldingResult] = useState(false);
 
   // ── Buy state ───────────────────────────────────────────────────────────────
-  const [ticketCount, setTicketCount]     = useState(1);
   const [buying, setBuying]               = useState(false);
 
+  // Local fallback: tickets bought in this session so the card is always shown
+  // even if a fast room transition clears room.tickets before the re-fetch lands.
+  const [localTickets, setLocalTickets]   = useState<BingoTicket[]>([]);
+  const localRoomIdRef                    = useRef<string | null>(null);
+
   // ── Playing / result state ─────────────────────────────────────────────────
-  const [showVictory, setShowVictory]     = useState(false);
-  const [victoryTickets, setVictoryTickets] = useState<BingoTicket[]>([]);
   const [showBoard, setShowBoard]         = useState(true);
 
   // ── Countdown ───────────────────────────────────────────────────────────────
@@ -329,6 +441,11 @@ export function Bingo({ onBack }: BingoProps) {
       const next = await bingoApi.getCurrentRoom();
       setRoom(next);
       roomIdRef.current = next?.id ?? null;
+      // Clear local ticket cache when the room changes
+      if (next?.id !== localRoomIdRef.current) {
+        setLocalTickets([]);
+        localRoomIdRef.current = next?.id ?? null;
+      }
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -336,8 +453,6 @@ export function Bingo({ onBack }: BingoProps) {
     }
   }, [addToast]);
 
-  // Initial load + light fallback poll. While the result is being held we skip
-  // re-fetching so we don't jump to the next room before the 10s window ends.
   useEffect(() => {
     void loadCurrent();
     const id = setInterval(() => {
@@ -361,8 +476,6 @@ export function Bingo({ onBack }: BingoProps) {
 
     const scheduleReconcile = () => {
       if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
-      // Debounce: after the burst of balls settles, do one authoritative reload
-      // to sync completedLines / winners that we can't derive optimistically.
       reconcileTimerRef.current = setTimeout(() => {
         if (!holdingResultRef.current) void loadCurrent();
       }, 1200);
@@ -386,18 +499,26 @@ export function Bingo({ onBack }: BingoProps) {
           }),
         };
       });
+      // Also update locally stored tickets for same-session reliability
+      setLocalTickets((prev) =>
+        prev.map((t) => {
+          if (t.markedNumbers.includes(drawn)) return t;
+          const isOnCard = t.grid.some((row) => row.some((cell) => cell === drawn));
+          if (!isOnCard) return t;
+          return { ...t, markedNumbers: [...t.markedNumbers, drawn] };
+        }),
+      );
       scheduleReconcile();
     };
 
     const onRoomUpdate = (p: { roomId?: string }) => {
-      // open→running transition, new-room creation, etc. Ignore while holding result.
       if (holdingResultRef.current) return;
       if (p.roomId === roomIdRef.current || roomIdRef.current === null) void loadCurrent();
     };
 
     const onRoomCompleted = (p: { roomId?: string }) => {
       if (p.roomId !== roomIdRef.current) return;
-      void loadCurrent(); // pull settled tickets; the status effect starts the hold
+      void loadCurrent();
     };
 
     const onChatMessage = (p: { roomId: string; userId?: string; displayName: string; text: string; timestamp: string }) => {
@@ -419,7 +540,7 @@ export function Bingo({ onBack }: BingoProps) {
     };
   }, [isSocketConnected, loadCurrent]);
 
-  // ── Result hold: when a room completes, freeze on it for RESULT_DISPLAY_MS ──
+  // ── Result hold: freeze on completed room for RESULT_DISPLAY_MS ─────────────
   useEffect(() => {
     if (!room) return;
     const done = room.status === 'completed' || room.status === 'cancelled';
@@ -463,18 +584,17 @@ export function Bingo({ onBack }: BingoProps) {
     return () => clearInterval(id);
   }, [room?.id, room?.status, room?.scheduledStartAt]);
 
-  // ── Win detection ───────────────────────────────────────────────────────────
+  // ── Win detection: confetti on my win ───────────────────────────────────────
   useEffect(() => {
-    if (room?.status !== 'completed' || !room.tickets?.length) return;
-    if (victoryRoomRef.current === room.id) return; // already celebrated this room
-    const winners = room.tickets.filter((t) => t.payoutMinor > 0);
+    if (room?.status !== 'completed') return;
+    if (victoryRoomRef.current === room.id) return;
+    const allTickets = [...(room.tickets ?? []), ...localTickets];
+    const winners = allTickets.filter((t) => t.payoutMinor > 0);
     if (!winners.length) return;
     victoryRoomRef.current = room.id;
     soundEngine.win();
     confetti({ particleCount: 200, spread: 90, origin: { y: 0.55 }, colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'] });
-    setVictoryTickets(winners);
-    setShowVictory(true);
-  }, [room?.status, room?.tickets, room?.id]);
+  }, [room?.status, room?.tickets, room?.id, localTickets]);
 
   // ── Chat auto-scroll ────────────────────────────────────────────────────────
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
@@ -495,19 +615,33 @@ export function Bingo({ onBack }: BingoProps) {
   const drawnNumbers     = room?.drawnNumbers ?? [];
   const lastNumber       = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
-  const myTickets        = room?.tickets ?? [];
   const salesOpen        = room?.status === 'open';
+
+  // Merge API-returned tickets with locally-stored ones (local is fallback)
+  const myTickets = useMemo(() => {
+    const apiTickets = room?.tickets ?? [];
+    if (apiTickets.length > 0) return apiTickets;
+    // Only use local tickets if they match the current room
+    if (localRoomIdRef.current === room?.id) return localTickets;
+    return [];
+  }, [room?.tickets, room?.id, localTickets]);
+
+  // Has the current user already bought a ticket for this room?
+  const alreadyBought = myTickets.length > 0 || (localRoomIdRef.current === room?.id && localTickets.length > 0);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   const buyTickets = async () => {
-    if (!room || !salesOpen) return;
+    if (!room || !salesOpen || alreadyBought) return;
     setBuying(true);
     try {
-      await bingoApi.purchaseTickets(room.id, ticketCount, createIdempotencyKey('bingo'));
+      const bought = await bingoApi.purchaseTickets(room.id, 1, createIdempotencyKey('bingo'));
+      // Store purchased tickets locally as reliable fallback
+      localRoomIdRef.current = room.id;
+      setLocalTickets(bought);
       const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
       setWallet(nextWallet);
       soundEngine.cashout();
-      addToast('success', `Bought ${ticketCount} Bingo ticket${ticketCount > 1 ? 's' : ''}!`);
+      addToast('success', 'Bought 1 Bingo card!');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -528,13 +662,19 @@ export function Bingo({ onBack }: BingoProps) {
   // ── RENDER ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4 max-w-3xl mx-auto pb-20">
-      {/* Victory overlay */}
+      {/* Room result overlay (shown for all players on completion) */}
       <AnimatePresence>
-        {showVictory && victoryTickets.length > 0 && (
-          <VictoryOverlay
-            tickets={victoryTickets}
+        {phase === 'result' && room && room.status === 'completed' && (
+          <RoomResultOverlay
             room={room}
-            onClose={() => { soundEngine.click(); setShowVictory(false); }}
+            myTickets={myTickets}
+            resultSecs={resultSecs}
+            onClose={() => {
+              soundEngine.click();
+              holdingResultRef.current = false;
+              setHoldingResult(false);
+              void loadCurrent();
+            }}
           />
         )}
       </AnimatePresence>
@@ -549,7 +689,7 @@ export function Bingo({ onBack }: BingoProps) {
           {liveCounts && liveCounts.bingoOnline > 0 && (
             <span className="live-badge-pulse">
               <span className="pulse-dot" />
-              {liveCounts.bingoOnline}
+              {liveCounts.bingoOnline} playing
             </span>
           )}
           <button onClick={() => setSoundMuted(!soundMuted)} className="btn btn-ghost btn-sm icon-btn">
@@ -648,9 +788,9 @@ export function Bingo({ onBack }: BingoProps) {
           {/* ── Stats bar ── */}
           <div className="grid grid-cols-4 gap-2">
             {[
-              { label: 'Derash', value: `${formatCredits(room.prizeMinor)} Cr`, color: 'text-amber-400' },
+              { label: 'Derash', value: `${formatCredits(room.prizeMinor)} ETB`, color: 'text-amber-400' },
               { label: 'Players', value: String(room.soldTickets), color: 'text-slate-200' },
-              { label: 'Stake', value: `${formatCredits(room.ticketPriceMinor)} Cr`, color: 'text-slate-200' },
+              { label: 'Stake', value: `${formatCredits(room.ticketPriceMinor)} ETB`, color: 'text-slate-200' },
               { label: 'Call', value: `${drawnNumbers.length}/${numberRange}`, color: 'text-red-400' },
             ].map((stat) => (
               <div key={stat.label} className="rounded-xl bg-white/[0.025] border border-white/[0.06] p-2 text-center">
@@ -660,36 +800,12 @@ export function Bingo({ onBack }: BingoProps) {
             ))}
           </div>
 
-          {/* ── Buy panel (only during buy window) ── */}
-          {phase === 'buy' && (
+          {/* ── Buy panel (only during buy window, only if not already bought) ── */}
+          {phase === 'buy' && !alreadyBought && (
             <div className="card space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">How many cards?</p>
-                <span className="text-[10px] text-slate-500">{remainingTickets} left</span>
-              </div>
-              <div className="flex gap-2">
-                {[1, 2, 3, 5].map((n) => (
-                  <motion.button
-                    key={n}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setTicketCount(n)}
-                    disabled={n > Math.min(24, remainingTickets)}
-                    className={`flex-1 py-2 rounded-xl font-black text-sm border transition-all ${
-                      ticketCount === n
-                        ? 'bg-amber-500/15 border-amber-500/40 text-amber-400'
-                        : n > Math.min(24, remainingTickets)
-                          ? 'bg-white/[0.01] border-white/[0.04] text-slate-700 cursor-not-allowed'
-                          : 'bg-white/[0.04] border-white/[0.07] text-slate-300 hover:border-amber-500/20'
-                    }`}
-                  >
-                    {n}
-                  </motion.button>
-                ))}
-                <input
-                  type="number" min={1} max={Math.min(24, remainingTickets)} value={ticketCount}
-                  onChange={(e) => setTicketCount(Math.max(1, Math.min(24, Number(e.target.value) || 1)))}
-                  className="input text-center font-mono font-black w-16 py-2 text-sm"
-                />
+                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Buy a card</p>
+                <span className="text-[10px] text-slate-500">{remainingTickets} spots left</span>
               </div>
               <motion.button
                 whileHover={!buying && remainingTickets > 0 ? { scale: 1.02, y: -2 } : {}}
@@ -703,16 +819,27 @@ export function Bingo({ onBack }: BingoProps) {
                 ) : remainingTickets <= 0 ? (
                   'Room Full'
                 ) : (
-                  `Buy ${ticketCount} Card${ticketCount > 1 ? 's' : ''} — ${formatCreditsFull(room.ticketPriceMinor * ticketCount)} Cr`
+                  `Buy Card — ${formatCreditsFull(room.ticketPriceMinor)} ETB`
                 )}
               </motion.button>
+            </div>
+          )}
+
+          {/* Already bought notice (during buy window) */}
+          {phase === 'buy' && alreadyBought && (
+            <div className="card flex items-center gap-3 py-3">
+              <span className="text-emerald-400 text-lg">✓</span>
+              <div>
+                <p className="text-[11px] font-black text-emerald-400">Card purchased</p>
+                <p className="text-[10px] text-slate-500">Waiting for the draw to begin…</p>
+              </div>
             </div>
           )}
 
           {/* ── My cards ── */}
           {myTickets.length > 0 ? (
             <div className="space-y-3">
-              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Cards</h3>
+              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Card</h3>
               <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
                 {myTickets.map((ticket) => (
                   <BingoTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
@@ -722,7 +849,7 @@ export function Bingo({ onBack }: BingoProps) {
           ) : phase !== 'buy' && (
             <div className="card text-center py-6 space-y-1">
               <Sparkles size={20} className="mx-auto text-slate-600" />
-              <p className="text-slate-500 text-xs">You didn’t buy a card for this round.</p>
+              <p className="text-slate-500 text-xs">You didn't buy a card for this round.</p>
               <p className="text-slate-600 text-[10px]">Hang tight — the next game opens for buy-in soon.</p>
             </div>
           )}

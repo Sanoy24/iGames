@@ -246,11 +246,11 @@ export function Crash({ onBack }: { onBack: () => void }) {
     const stakeMinor = Math.round(stakeVal * 100);
     const cfg = configRef.current;
     if (cfg && stakeMinor < cfg.minBetMinor) {
-      setBetError(`Min bet: ${cfg.minBetMinor / 100} Cr`);
+      setBetError(`Min bet: ${cfg.minBetMinor / 100} ETB`);
       return;
     }
     if (cfg && stakeMinor > cfg.maxBetMinor) {
-      setBetError(`Max bet: ${cfg.maxBetMinor / 100} Cr`);
+      setBetError(`Max bet: ${cfg.maxBetMinor / 100} ETB`);
       return;
     }
     const acVal = autoCashout ? parseFloat(autoCashout) : undefined;
@@ -462,7 +462,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div>
                     <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Stake (Cr)
+                      Stake (ETB)
                     </label>
                     <input
                       className="input"
@@ -737,9 +737,9 @@ export function Crash({ onBack }: { onBack: () => void }) {
                     color: won ? '#10b981' : lost ? '#ef4444' : 'var(--text-muted)',
                   }}>
                     {won
-                      ? `+${(b.payoutMinor / 100).toFixed(0)} Cr`
+                      ? `+${(b.payoutMinor / 100).toFixed(0)} ETB`
                       : lost
-                      ? `-${(b.stakeMinor / 100).toFixed(0)} Cr`
+                      ? `-${(b.stakeMinor / 100).toFixed(0)} ETB`
                       : 'Active'}
                   </span>
                 </div>

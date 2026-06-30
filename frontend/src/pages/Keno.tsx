@@ -672,7 +672,7 @@ export function Keno({ onBack }: KenoProps) {
         {config && (
           <div className="grid grid-cols-3 gap-2 mt-4">
             {[
-              { label: 'Price', value: `${formatCredits(config.ticketPriceMinor)} Cr`, color: 'text-amber-400' },
+              { label: 'Price', value: `${formatCredits(config.ticketPriceMinor)} ETB`, color: 'text-amber-400' },
               { label: 'Draws', value: `${config.drawSize}`, color: 'text-indigo-400' },
               { label: 'Interval', value: formatKenoInterval(config), color: 'text-teal-400' },
             ].map(({ label, value, color }) => (
@@ -860,7 +860,7 @@ export function Keno({ onBack }: KenoProps) {
           >
             {submitting ? 'Processing…'
               : !drawOpen ? 'Draw Locked / Running'
-              : `Buy In · ${spotTarget}-Spot — ${config ? formatCredits(config.ticketPriceMinor) : '—'} Cr`}
+              : `Buy In · ${spotTarget}-Spot — ${config ? formatCredits(config.ticketPriceMinor) : '—'} ETB`}
           </motion.button>
           )
         ) : (

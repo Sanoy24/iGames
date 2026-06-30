@@ -69,7 +69,7 @@ export function WalletBar({ onNavigate }: Props) {
         <EBirrIcon size={20} />
         <span className={`wallet-bar-balance ${flashClass}`}>
           {formatted}
-          <span className="wallet-bar-unit"> e‑Birr</span>
+          <span className="wallet-bar-unit"> ETB</span>
         </span>
       </div>
 

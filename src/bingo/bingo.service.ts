@@ -18,6 +18,7 @@ import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoRoom, BingoPrizeTier } from './entities/bingo-room.entity';
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
+import { User } from '../users/entities/user.entity';
 
 export type BingoRoomResponse = {
   id: string;
@@ -678,6 +679,7 @@ export class BingoService implements OnModuleInit {
         }
         await manager.save(winner);
 
+        const winnerUser = await manager.findOne(User, { where: { id: winner.userId }, select: ['displayName'] });
         room.settledTiers = [...room.settledTiers, 'full_house'];
         room.winnersByTier = { ...room.winnersByTier, full_house: [winner.id] };
         room.settlementSummary = {
@@ -685,6 +687,7 @@ export class BingoService implements OnModuleInit {
           full_house: {
             winnerCount: 1,
             winnerId: winner.id,
+            winnerDisplayName: winnerUser?.displayName ?? 'Player',
             prizeMinor: prizePotMinor,
             totalPotMinor,
             houseEdgePct,
@@ -776,6 +779,11 @@ export class BingoService implements OnModuleInit {
         await manager.save(ticket);
       }
 
+      const winnerUsers = await Promise.all(
+        winners.map((t) => manager.findOne(User, { where: { id: t.userId }, select: ['displayName'] })),
+      );
+      const winnerDisplayNames = winnerUsers.map((u) => u?.displayName ?? 'Player');
+
       room.settledTiers = [...room.settledTiers, pattern.id];
       room.winnersByTier = { ...room.winnersByTier, [pattern.id]: winners.map((t) => t.id) };
       room.settlementSummary = {
@@ -783,6 +791,7 @@ export class BingoService implements OnModuleInit {
         [pattern.id]: {
           patternName: pattern.name,
           winnerCount: winners.length,
+          winnerDisplayNames,
           prizeMinor,
           shares,
         },

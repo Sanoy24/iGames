@@ -63,7 +63,7 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
             <Trophy size={11} style={{ color: 'var(--gold)', flexShrink: 0 }} />
             <span className="ticker-item-name">{w.displayName}</span>
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>won</span>
-            <span className="ticker-item-win">{new Intl.NumberFormat().format(w.amountMinor)} e‑Birr</span>
+            <span className="ticker-item-win">{new Intl.NumberFormat().format(w.amountMinor)} ETB</span>
             <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>on {w.game}</span>
             <span style={{ color: 'rgba(255,255,255,0.1)', margin: '0 4px' }}>•</span>
           </span>
@@ -78,7 +78,7 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
 const FAQ = [
   { q: 'How does Keno work?', a: 'Pick 1–12 numbers from 1–80. When the draw runs, 20 numbers are randomly selected. Your payout depends on how many of your picks match.' },
   { q: 'How does Bingo work?', a: 'Join a room and buy tickets. Numbers are drawn one at a time. Match one row, two rows, or a full card to win prize tiers.' },
-  { q: 'What is e‑Birr?', a: '100 e‑Birr = 1 ETB Birr. All game stakes and payouts are in e‑Birr.' },
+  { q: 'What currency does iGames use?', a: 'All balances, stakes, and payouts are shown in ETB (Ethiopian Birr).' },
   { q: 'How do I top up?', a: 'Wallet → Top Up (Telebirr). Transfer the amount, then paste the SMS confirmation to instantly credit your account.' },
   { q: 'How do I withdraw?', a: 'Wallet → Request Payout. Enter the amount and your Telebirr phone number. An agent processes the transfer.' },
   { q: 'Are winnings instant?', a: 'Yes — credited to your wallet immediately after each draw or room settlement.' },
@@ -255,7 +255,7 @@ export function Home({ onNavigate }: Props) {
             >
               {formattedBalance}
             </motion.div>
-            <div className="jackpot-sub" style={{ textAlign: 'left' }}>e‑Birr available</div>
+            <div className="jackpot-sub" style={{ textAlign: 'left' }}>ETB available</div>
           </div>
           <motion.button
             className="btn btn-primary btn-glow btn-sm"

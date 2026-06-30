@@ -210,7 +210,7 @@ export function Agent() {
         padding: 16,
         marginBottom: 12,
       }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Transfer Credits to Player</div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Transfer ETBedits to Player</div>
         <form onSubmit={handleTransferToUser} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <input
             className="input"
@@ -223,7 +223,7 @@ export function Agent() {
             className="input"
             type="number"
             min="1"
-            placeholder="Amount in Credits"
+            placeholder="Amount in ETBedits"
             value={transferAmount}
             onChange={(e) => setTransferAmount(e.target.value)}
             required
@@ -315,11 +315,11 @@ export function Agent() {
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>Gross</span>
-                        <span>{formatCredits(w.amountMinor)} Cr</span>
+                        <span>{formatCredits(w.amountMinor)} ETB</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>Fee ({serviceChargePct}%)</span>
-                        <span>−{formatCredits(serviceCharge)} Cr</span>
+                        <span>−{formatCredits(serviceCharge)} ETB</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
                         <strong>You transfer</strong>
@@ -472,7 +472,7 @@ export function Agent() {
                           <div>
                             <div style={{ fontWeight: 600, fontSize: 13 }}>#{w.id.slice(-6)}</div>
                             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                              {w.destinationAccount} · {formatCredits(w.amountMinor)} Cr
+                              {w.destinationAccount} · {formatCredits(w.amountMinor)} ETB
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                               You send: {formatCreditsFull(net)}

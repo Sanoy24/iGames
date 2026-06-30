@@ -625,7 +625,7 @@ body::before {
 .ticker-inner {
   display: inline-flex;
   gap: 28px;
-  animation: ticker-scroll 26s linear infinite;
+  animation: ticker-scroll 50s linear infinite;
 }
 .ticker-inner:hover { animation-play-state: paused; }
 

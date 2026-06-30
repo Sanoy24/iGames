@@ -94,23 +94,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async notifyUserWin(userId: string, amountMinor: number, gameName: string): Promise<void> {
-    if (!this.bot) return;
-    try {
-      const identity = await this.dataSource.getRepository(AuthIdentity).findOne({
-        where: { userId, provider: 'telegram' },
-        select: ['providerUserId'],
-      });
-      if (!identity?.providerUserId) return;
-
-      const credits = (amountMinor / 100).toFixed(0);
-      await this.bot.api.sendMessage(
-        Number(identity.providerUserId),
-        `🎉 You won ${credits} Cr playing ${gameName}! Open iGames to play again.`,
-      );
-    } catch (err) {
-      this.logger.warn(`Failed to send Telegram win notification to user ${userId}: ${err instanceof Error ? err.message : err}`);
-    }
+  async notifyUserWin(_userId: string, _amountMinor: number, _gameName: string): Promise<void> {
+    // Win push notifications are disabled.
   }
 
   public handleWebhookRequest(req: any, res: any) {

@@ -593,11 +593,18 @@ export function Bingo({ onBack }: BingoProps) {
   const loadCurrent = useCallback(async () => {
     try {
       const next = await bingoApi.getCurrentRoom();
-      setRoom(next);
-      roomIdRef.current = next?.id ?? null;
-      if (next?.id !== localRoomIdRef.current) {
-        setLocalTickets([]);
-        localRoomIdRef.current = next?.id ?? null;
+      setRoom((prev) => {
+        // During result hold, don't switch to a different (newer) room —
+        // only allow updating the same room (e.g. to pick up settlement data).
+        if (holdingResultRef.current && next?.id !== prev?.id) return prev;
+        return next;
+      });
+      if (!holdingResultRef.current) {
+        roomIdRef.current = next?.id ?? null;
+        if (next?.id !== localRoomIdRef.current) {
+          setLocalTickets([]);
+          localRoomIdRef.current = next?.id ?? null;
+        }
       }
     } catch (err) {
       addToast('error', getErrorMessage(err));
@@ -670,6 +677,15 @@ export function Bingo({ onBack }: BingoProps) {
 
     const onRoomCompleted = (p: { roomId?: string }) => {
       if (p.roomId !== roomIdRef.current) return;
+      // Immediately mark current room as completed so the result overlay fires
+      // without waiting on a loadCurrent() that might return the next room already.
+      setRoom((prev) => {
+        if (!prev || prev.id !== p.roomId) return prev;
+        return { ...prev, status: 'completed' as const };
+      });
+      // Then fetch settlement data (winnerDisplayName etc.). loadCurrent will
+      // refuse to switch rooms while holdingResult is true, so if the backend
+      // has already opened the next room we simply keep the completed room shown.
       void loadCurrent();
     };
 
@@ -707,8 +723,10 @@ export function Bingo({ onBack }: BingoProps) {
 
     if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
     resultTimerRef.current = setTimeout(() => {
+      // Clear hold first so loadCurrent() is free to switch to the next room.
       holdingResultRef.current = false;
       setHoldingResult(false);
+      roomIdRef.current = null; // force roomIdRef to reset so next room is accepted
       void loadCurrent();
     }, RESULT_DISPLAY_MS);
 
@@ -762,8 +780,8 @@ export function Bingo({ onBack }: BingoProps) {
     () => new Map((room?.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name])),
     [room],
   );
-  const isPatternMode    = room?.winMode === 'pattern';
-  const numberRange      = room?.numberRange ?? (isPatternMode ? 75 : 90);
+  const numberRange      = room?.numberRange ?? 90;
+  const isPatternMode    = numberRange <= 75;
   const drawnNumbers     = room?.drawnNumbers ?? [];
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
   const salesOpen        = room?.status === 'open';
@@ -826,6 +844,7 @@ export function Bingo({ onBack }: BingoProps) {
               soundEngine.click();
               holdingResultRef.current = false;
               setHoldingResult(false);
+              roomIdRef.current = null;
               void loadCurrent();
             }}
           />

@@ -58,14 +58,12 @@ function isPatternGrid(grid: Array<Array<number | null>>): boolean {
 
 // ─── Number Board ─────────────────────────────────────────────────────────────
 // Flat grid of rounded-square cells. Called numbers glow with their group color.
-// Numbers on the player's card get a subtle tinted border while uncalled,
-// and a bright glow + checkmark overlay when called.
+// Player card numbers are shown separately in the "My Card" section below.
 
-const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode, myCardNums }: {
+const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode }: {
   drawnNumbers: number[];
   numberRange: number;
   isPatternMode: boolean;
-  myCardNums: Set<number>;
 }) => {
   const drawnSet = useMemo(() => new Set(drawnNumbers), [drawnNumbers]);
 
@@ -90,8 +88,7 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode, myCardNums
             {BINGO_COLS_75.map(col => {
               const n = col.from + row;
               const called = drawnSet.has(n);
-              const onCard = myCardNums.has(n);
-              return <NumberCell key={n} n={n} called={called} onCard={onCard} style={col} />;
+              return <NumberCell key={n} n={n} called={called} style={col} />;
             })}
           </div>
         ))}
@@ -122,8 +119,7 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode, myCardNums
             const n = g.from + row;
             if (n > Math.min(g.to, numberRange)) return <span key={g.from} />;
             const called = drawnSet.has(n);
-            const onCard = myCardNums.has(n);
-            return <NumberCell key={n} n={n} called={called} onCard={onCard} style={g} />;
+            return <NumberCell key={n} n={n} called={called} style={g} />;
           })}
         </div>
       ))}
@@ -132,10 +128,9 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode, myCardNums
 });
 NumberBoard.displayName = 'NumberBoard';
 
-const NumberCell = memo(({ n, called, onCard, style }: {
+const NumberCell = memo(({ n, called, style }: {
   n: number;
   called: boolean;
-  onCard: boolean;
   style: { color: string; glow: string; bg: string };
 }) => (
   <motion.div
@@ -147,15 +142,7 @@ const NumberCell = memo(({ n, called, onCard, style }: {
         ? {
             background: `linear-gradient(135deg, ${style.color}cc, ${style.color}88)`,
             color: '#fff',
-            boxShadow: onCard ? `0 0 10px ${style.glow}, 0 0 3px ${style.glow}` : `0 1px 4px rgba(0,0,0,0.4)`,
-            outline: onCard ? `2px solid ${style.color}` : undefined,
-            outlineOffset: onCard ? '1px' : undefined,
-          }
-        : onCard
-        ? {
-            background: style.bg,
-            color: style.color,
-            border: `1px solid ${style.color}55`,
+            boxShadow: `0 1px 4px rgba(0,0,0,0.4)`,
           }
         : {
             background: 'rgba(255,255,255,0.03)',
@@ -415,10 +402,11 @@ BingoTicketCard.displayName = 'BingoTicketCard';
 
 // ─── Room Result Overlay ──────────────────────────────────────────────────────
 
-function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
+function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onClose }: {
   room: BingoRoomState;
   myTickets: BingoTicket[];
   resultSecs: number;
+  totalDisplaySecs: number;
   onClose: () => void;
 }) {
   const totalWin = myTickets.reduce((s, t) => s + t.payoutMinor, 0);
@@ -430,7 +418,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, onClose }: {
   const prizeMinor = (fullHouse?.prizeMinor as number | undefined) ?? room.prizeMinor;
   const winnerTicket = iWon ? myTickets.find((t) => t.payoutMinor > 0) ?? null : null;
 
-  const progressPct = Math.max(0, Math.min(100, (resultSecs / (RESULT_DISPLAY_MS / 1000)) * 100));
+  const progressPct = Math.max(0, Math.min(100, (resultSecs / totalDisplaySecs) * 100));
 
   return (
     <motion.div
@@ -736,9 +724,11 @@ export function Bingo({ onBack }: BingoProps) {
       setHoldingResult(false);
       return;
     }
+    // Use resultDisplaySeconds from the room config if available, else fall back to constant.
+    const displayMs = ((room.resultDisplaySeconds ?? (RESULT_DISPLAY_MS / 1000)) * 1000);
     holdingResultRef.current = true;
     setHoldingResult(true);
-    setResultSecs(Math.ceil(RESULT_DISPLAY_MS / 1000));
+    setResultSecs(Math.ceil(displayMs / 1000));
 
     if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
     resultTimerRef.current = setTimeout(() => {
@@ -747,7 +737,7 @@ export function Bingo({ onBack }: BingoProps) {
       setHoldingResult(false);
       roomIdRef.current = null; // force roomIdRef to reset so next room is accepted
       void loadCurrent();
-    }, RESULT_DISPLAY_MS);
+    }, displayMs);
 
     if (countdownRef.current) clearInterval(countdownRef.current);
     countdownRef.current = setInterval(() => {
@@ -861,6 +851,7 @@ export function Bingo({ onBack }: BingoProps) {
             room={room}
             myTickets={myTickets}
             resultSecs={resultSecs}
+            totalDisplaySecs={room.resultDisplaySeconds ?? (RESULT_DISPLAY_MS / 1000)}
             onClose={() => {
               soundEngine.click();
               holdingResultRef.current = false;
@@ -960,7 +951,6 @@ export function Bingo({ onBack }: BingoProps) {
                   drawnNumbers={drawnNumbers}
                   numberRange={ballCount}
                   isPatternMode={isPatternMode}
-                  myCardNums={myCardNums}
                 />
               </div>
 

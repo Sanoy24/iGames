@@ -82,7 +82,7 @@ export class BingoController {
       userId: user.id,
       roomId,
       count: dto.count,
-      spotNumber: dto.spotNumber,
+      cartelaNumbers: dto.cartelaNumbers,
       idempotencyKey,
       selectedNumbers: dto.selectedNumbers,
     });

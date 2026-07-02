@@ -16,7 +16,8 @@
     "test:cov": "jest --coverage",
     "test:unit": "jest src/keno/keno-rules.service.spec.ts src/bingo/bingo-rules.service.spec.ts src/rng/rng.service.spec.ts src/wallet/wallet.service.spec.ts src/crash/crash.service.spec.ts src/keno/keno.service.spec.ts src/bingo/bingo.service.spec.ts --forceExit --no-coverage",
     "test:unit:watch": "jest src/keno/keno-rules.service.spec.ts src/bingo/bingo-rules.service.spec.ts src/rng/rng.service.spec.ts src/wallet/wallet.service.spec.ts src/crash/crash.service.spec.ts src/keno/keno.service.spec.ts src/bingo/bingo.service.spec.ts --watch",
-    "seed:dev": "node scripts/seed-dev.mjs"
+    "seed:dev": "node scripts/seed-dev.mjs",
+    "seed:bingo-patterns": "ts-node scripts/seed-bingo-patterns.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

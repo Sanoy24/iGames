@@ -47,6 +47,7 @@ export type BingoTicketResponse = {
   id: string;
   userId: string;
   roomId: string;
+  cartelaNumber?: number | null;
   grid: Array<Array<number | null>>;
   markedNumbers: number[];
   completedLines: number[];
@@ -153,6 +154,7 @@ export class BingoService implements OnModuleInit {
         prefilledSecondPlacePct: 0,
         prefilledThirdPlaceEnabled: false,
         prefilledThirdPlacePct: 0,
+        prefilledWinPatternId: null,
       });
       await this.bingoConfigRepository.save(cfg);
     }
@@ -197,7 +199,8 @@ export class BingoService implements OnModuleInit {
         fullHouseMinor: cfg.defaultFullHouseMinor,
       },
       winMode,
-      numberRange: winMode === 'prefilled' ? gridSize : (cfg.defaultNumberRange ?? 90),
+      // Ball pool: prefilled/pattern use the configured range (75-ball); line is 90.
+      numberRange: winMode === 'line' ? 90 : (cfg.defaultNumberRange ?? 75),
       gridSize,
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
@@ -308,7 +311,7 @@ export class BingoService implements OnModuleInit {
       maxTickets: winMode === 'prefilled' ? gridSize : dto.maxTickets,
       prizes: dto.prizes,
       winMode,
-      numberRange: winMode === 'prefilled' ? gridSize : (dto.numberRange ?? 90),
+      numberRange: winMode === 'line' ? 90 : (dto.numberRange ?? cfg.defaultNumberRange ?? 75),
       gridSize,
       patternPrizes: dto.patternPrizes ?? [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
@@ -396,7 +399,7 @@ export class BingoService implements OnModuleInit {
     userId: string;
     roomId: string;
     count?: number;
-    spotNumber?: number;
+    cartelaNumbers?: number[];
     idempotencyKey: string;
     selectedNumbers?: number[];
   }): Promise<BingoTicketResponse[]> {
@@ -419,60 +422,78 @@ export class BingoService implements OnModuleInit {
       if (!room) throw new NotFoundException('Bingo room not found');
       if (room.status !== 'open') throw new ConflictException('Bingo room is not open for ticket sales');
 
-      // ── Prefilled mode: buy a single numbered spot ───────────────────────────
+      // ── Prefilled / derash mode: buy one or more cartela cards ───────────────
       if (room.winMode === 'prefilled') {
-        const spotNumber = input.spotNumber;
-        if (!spotNumber || !Number.isSafeInteger(spotNumber) || spotNumber < 1 || spotNumber > (room.gridSize ?? 200)) {
-          throw new BadRequestException(`Spot number must be between 1 and ${room.gridSize ?? 200}`);
+        const gridSize = room.gridSize ?? 200;
+        const requested = input.cartelaNumbers ?? [];
+        // De-duplicate within the batch, preserving order.
+        const cartelaNumbers = [...new Set(requested)];
+        if (cartelaNumbers.length === 0) {
+          throw new BadRequestException('Select at least one cartela number');
+        }
+        for (const n of cartelaNumbers) {
+          if (!Number.isSafeInteger(n) || n < 1 || n > gridSize) {
+            throw new BadRequestException(`Cartela number must be between 1 and ${gridSize}`);
+          }
+        }
+        if (room.soldTickets + cartelaNumbers.length > room.maxTickets) {
+          throw new ConflictException('Not enough cartelas remaining in this room');
         }
 
-        // Lock check: is this spot already taken?
-        const takenRows = await manager.query(
-          `SELECT id FROM bingo_tickets WHERE roomId = ? AND JSON_EXTRACT(grid, '$[0][0]') = ? AND status != 'cancelled' LIMIT 1`,
-          [roomId, spotNumber],
-        );
-        if (takenRows.length > 0) {
-          throw new ConflictException('This spot is already taken');
+        const ballPool = room.numberRange ?? 75;
+        const createdTickets: BingoTicket[] = [];
+
+        for (const [index, cartelaNumber] of cartelaNumbers.entries()) {
+          // Lock check: is this cartela already taken by anyone?
+          const takenRows = await manager.query(
+            `SELECT id FROM bingo_tickets WHERE roomId = ? AND cartelaNumber = ? AND status != 'cancelled' LIMIT 1`,
+            [roomId, cartelaNumber],
+          );
+          if (takenRows.length > 0) {
+            throw new ConflictException(`Cartela #${cartelaNumber} is already taken`);
+          }
+
+          const ticket = manager.create(BingoTicket, {
+            userId,
+            roomId,
+            cartelaNumber,
+            grid: this.bingoRulesService.generatePatternCard(ballPool),
+            markedNumbers: [],
+            completedLines: [],
+            wonTiers: [],
+            completedPatterns: [],
+            stakeMinor: room.ticketPriceMinor,
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            purchaseIdempotencyKey: input.idempotencyKey,
+            walletCredits: [],
+          });
+
+          await manager.save(ticket);
+
+          const walletDebit = await this.walletService.debitInSession(
+            {
+              userId: input.userId,
+              amountMinor: room.ticketPriceMinor,
+              entryType: 'stake',
+              sourceType: 'bingo_ticket',
+              sourceId: ticket.id,
+              idempotencyKey: `bingo-ticket:${input.idempotencyKey}:${index}`,
+              metadata: { roomId: room.id, cartelaNumber },
+            },
+            manager,
+          );
+
+          ticket.walletDebit = walletDebit;
+          await manager.save(ticket);
+          createdTickets.push(ticket);
         }
 
-        const ticket = manager.create(BingoTicket, {
-          userId,
-          roomId,
-          grid: [[spotNumber]] as BingoGrid,
-          markedNumbers: [],
-          completedLines: [],
-          wonTiers: [],
-          completedPatterns: [],
-          stakeMinor: room.ticketPriceMinor,
-          payoutMinor: 0,
-          status: 'active',
-          settlementStatus: 'pending',
-          purchaseIdempotencyKey: input.idempotencyKey,
-          walletCredits: [],
-        });
-
-        await manager.save(ticket);
-
-        const walletDebit = await this.walletService.debitInSession(
-          {
-            userId: input.userId,
-            amountMinor: room.ticketPriceMinor,
-            entryType: 'stake',
-            sourceType: 'bingo_ticket',
-            sourceId: ticket.id,
-            idempotencyKey: `bingo-ticket:${input.idempotencyKey}:0`,
-            metadata: { roomId: room.id, spotNumber },
-          },
-          manager,
-        );
-
-        ticket.walletDebit = walletDebit;
-        await manager.save(ticket);
-
-        room.soldTickets += 1;
+        room.soldTickets += cartelaNumbers.length;
         await manager.save(room);
 
-        return [this.toTicketResponse(ticket)];
+        return createdTickets.map((ticket) => this.toTicketResponse(ticket));
       }
 
       // ── Line / Pattern mode: buy N random cards ──────────────────────────────
@@ -560,12 +581,9 @@ export class BingoService implements OnModuleInit {
         return this.toRoomResponse(room, soldTickets, takenSpots);
       }
 
-      const maxNumber =
-        room.winMode === 'prefilled'
-          ? (room.gridSize ?? 200)
-          : room.winMode === 'pattern'
-          ? (room.numberRange ?? 75)
-          : 90;
+      // Ball pool drawn from: line is fixed 90-ball; prefilled/pattern use the
+      // configured range (75-ball). gridSize is the cartela count, not the pool.
+      const maxNumber = room.winMode === 'line' ? 90 : (room.numberRange ?? 75);
 
       // All numbers drawn but room still running — complete it.
       if (room.drawnNumbers.length >= maxNumber) {
@@ -620,7 +638,7 @@ export class BingoService implements OnModuleInit {
 
       if (room.winMode === 'prefilled') {
         if (room.drawnNumbers.length >= minDrawsBeforeWin) {
-          await this.evaluateAndSettlePrefilled(room, drawnNumber, cfg, manager);
+          await this.evaluateAndSettleDerash(room, cfg, manager);
         }
 
         const totalPlaces = 1
@@ -725,27 +743,44 @@ export class BingoService implements OnModuleInit {
 
   // ── Private settlement helpers ────────────────────────────────────────────────
 
-  private async evaluateAndSettlePrefilled(
+  /**
+   * Derash settlement. Each cartela is a mapped 5×5 card; a card wins by
+   * completing the configured winning pattern. On every draw all active cards
+   * are re-marked, and any that newly complete the pattern take the next open
+   * place (1st → 2nd → 3rd). Cards that complete on the same draw share that
+   * place's prize; each place pays a configured % of the (house-adjusted) pot.
+   */
+  private async evaluateAndSettleDerash(
     room: BingoRoom,
-    drawnNumber: number,
     cfg: BingoConfig,
     manager: EntityManager,
   ): Promise<void> {
-    // Determine which place is next to be awarded.
-    const nextPlace = this.nextOpenPrefilledPlace(room, cfg);
-    if (!nextPlace) return;
+    const winPattern = await this.resolvePrefilledWinPattern(cfg, manager);
+    if (!winPattern) return;
 
-    // Find the active ticket that owns this drawn spot. Load real entities
-    // (not a raw query) so manager.save() has entity metadata to persist with.
     const activeTickets = await manager.find(BingoTicket, {
       where: { roomId: room.id, status: 'active' },
+      order: { createdAt: 'ASC' },
     });
-    const ticket = activeTickets.find(
-      (t) => (t.grid as Array<Array<number | null>>)?.[0]?.[0] === drawnNumber,
-    );
-    if (!ticket) return;
+    if (activeTickets.length === 0) return;
 
-    ticket.markedNumbers = [drawnNumber];
+    // Re-mark every active card and collect those that now complete the pattern.
+    const winners: BingoTicket[] = [];
+    for (const ticket of activeTickets) {
+      const state = this.bingoRulesService.evaluatePatternTicket(
+        ticket.grid,
+        room.drawnNumbers,
+        [winPattern],
+      );
+      ticket.markedNumbers = state.markedNumbers;
+      if (state.completedPatternIds.includes(winPattern.id)) {
+        winners.push(ticket);
+      }
+      await manager.save(ticket);
+    }
+
+    const nextPlace = this.nextOpenPrefilledPlace(room, cfg);
+    if (!nextPlace || winners.length === 0) return;
 
     const totalPotMinor = room.soldTickets * room.ticketPriceMinor;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - (room.houseEdgePct ?? 20) / 100));
@@ -757,46 +792,79 @@ export class BingoService implements OnModuleInit {
         ? (cfg.prefilledSecondPlacePct ?? 0)
         : (cfg.prefilledThirdPlacePct ?? 0);
 
-    const prizeMinor = Math.floor(prizePoolMinor * pct / 100);
+    const placePrizeMinor = Math.floor(prizePoolMinor * pct / 100);
+    const shares = this.bingoRulesService.splitPrizeMinor(placePrizeMinor, winners.length);
 
-    ticket.wonTiers = [...(ticket.wonTiers ?? []), nextPlace];
-    ticket.payoutMinor += prizeMinor;
-    ticket.status = 'won';
-    ticket.settlementStatus = 'settled';
+    for (const [index, ticket] of winners.entries()) {
+      const share = shares[index];
+      ticket.wonTiers = [...(ticket.wonTiers ?? []), nextPlace];
+      ticket.payoutMinor += share;
+      ticket.status = 'won';
+      ticket.settlementStatus = 'settled';
 
-    if (prizeMinor > 0) {
-      const winCredit = await this.walletService.creditInSession(
-        {
-          userId: ticket.userId,
-          amountMinor: prizeMinor,
-          entryType: 'win',
-          sourceType: 'bingo_ticket',
-          sourceId: ticket.id,
-          idempotencyKey: `bingo-settlement:${nextPlace}:${ticket.id}`,
-          metadata: { roomId: room.id, place: nextPlace, drawnNumber, totalPotMinor, prizePoolMinor },
-        },
-        manager,
-      );
-      ticket.walletCredits = [...(ticket.walletCredits ?? []), winCredit];
+      if (share > 0) {
+        const winCredit = await this.walletService.creditInSession(
+          {
+            userId: ticket.userId,
+            amountMinor: share,
+            entryType: 'win',
+            sourceType: 'bingo_ticket',
+            sourceId: ticket.id,
+            idempotencyKey: `bingo-settlement:${nextPlace}:${ticket.id}`,
+            metadata: {
+              roomId: room.id,
+              place: nextPlace,
+              cartelaNumber: ticket.cartelaNumber,
+              patternId: winPattern.id,
+              totalPotMinor,
+              prizePoolMinor,
+            },
+          },
+          manager,
+        );
+        ticket.walletCredits = [...(ticket.walletCredits ?? []), winCredit];
+      }
+
+      await manager.save(ticket);
     }
 
-    await manager.save(ticket);
+    const winnerUsers = await Promise.all(
+      winners.map((t) => manager.findOne(User, { where: { id: t.userId }, select: ['displayName'] })),
+    );
 
-    const winnerUser = await manager.findOne(User, { where: { id: ticket.userId }, select: ['displayName'] });
     room.settledTiers = [...room.settledTiers, nextPlace];
-    room.winnersByTier = { ...room.winnersByTier, [nextPlace]: [ticket.id] };
+    room.winnersByTier = { ...room.winnersByTier, [nextPlace]: winners.map((t) => t.id) };
     room.settlementSummary = {
       ...room.settlementSummary,
       [nextPlace]: {
-        winnerCount: 1,
-        winnerId: ticket.id,
-        winnerDisplayName: winnerUser?.displayName ?? 'Player',
-        drawnNumber,
-        prizeMinor,
+        winnerCount: winners.length,
+        winnerId: winners[0].id,
+        winnerDisplayName: winnerUsers[0]?.displayName ?? 'Player',
+        winnerDisplayNames: winnerUsers.map((u) => u?.displayName ?? 'Player'),
+        cartelaNumbers: winners.map((t) => t.cartelaNumber),
+        // Winner card so every client in the room can render the result (not just the winner).
+        winnerCartelaNumber: winners[0].cartelaNumber,
+        winnerGrid: winners[0].grid,
+        winnerMarkedNumbers: winners[0].markedNumbers,
+        patternName: winPattern.name,
+        prizeMinor: placePrizeMinor,
+        shares,
         totalPotMinor,
         prizePoolMinor,
       },
     };
+  }
+
+  /** Resolve the configured derash winning pattern, defaulting to "Any Line". */
+  private async resolvePrefilledWinPattern(
+    cfg: BingoConfig,
+    manager: EntityManager,
+  ): Promise<BingoPattern | null> {
+    if (cfg.prefilledWinPatternId) {
+      const chosen = await manager.findOne(BingoPattern, { where: { id: cfg.prefilledWinPatternId } });
+      if (chosen) return chosen;
+    }
+    return manager.findOne(BingoPattern, { where: { name: 'Any Line' } });
   }
 
   private nextOpenPrefilledPlace(room: BingoRoom, cfg: BingoConfig): '1st' | '2nd' | '3rd' | null {
@@ -1007,16 +1075,13 @@ export class BingoService implements OnModuleInit {
   }
 
   private async getTakenSpots(roomId: string): Promise<number[]> {
-    const rows: Array<{ grid: unknown }> = await this.bingoTicketRepository.query(
-      `SELECT grid FROM bingo_tickets WHERE roomId = ? AND status != 'cancelled'`,
+    const rows: Array<{ cartelaNumber: number | string | null }> = await this.bingoTicketRepository.query(
+      `SELECT cartelaNumber FROM bingo_tickets WHERE roomId = ? AND status != 'cancelled' AND cartelaNumber IS NOT NULL`,
       [roomId],
     );
     return rows
-      .map((r) => {
-        const g = typeof r.grid === 'string' ? JSON.parse(r.grid) : r.grid;
-        return (g as number[][])[0]?.[0];
-      })
-      .filter((n): n is number => n != null);
+      .map((r) => Number(r.cartelaNumber))
+      .filter((n) => Number.isFinite(n));
   }
 
   private async markRemainingTicketsLost(room: BingoRoom, manager: EntityManager): Promise<void> {
@@ -1069,6 +1134,7 @@ export class BingoService implements OnModuleInit {
       id: ticket.id,
       userId: ticket.userId,
       roomId: ticket.roomId,
+      cartelaNumber: ticket.cartelaNumber ?? null,
       grid: ticket.grid,
       markedNumbers: ticket.markedNumbers,
       completedLines: ticket.completedLines,

@@ -175,19 +175,20 @@ const NumberCell = memo(({ n, called, style }: {
 ));
 NumberCell.displayName = 'NumberCell';
 
-// ─── Prefilled Grid ───────────────────────────────────────────────────────────
-// Shows all N numbered spots. Click an available spot to buy it instantly.
+// ─── Cartela Grid ───────────────────────────────────────────────────────────
+// Derash cartela picker. Each number maps to a hidden 5×5 card (no preview).
+// Tap to select/deselect one or more cartelas, then pay once. Taken cartelas
+// (owned by anyone in this room) are locked.
 
-const PrefilledGrid = memo(({
-  gridSize, takenSet, mySpotSet, drawnSet, salesOpen, buyingSpot, onBuy,
+const CartelaGrid = memo(({
+  gridSize, takenSet, mySet, selectedSet, salesOpen, onToggle,
 }: {
   gridSize: number;
   takenSet: Set<number>;
-  mySpotSet: Set<number>;
-  drawnSet: Set<number>;
+  mySet: Set<number>;
+  selectedSet: Set<number>;
   salesOpen: boolean;
-  buyingSpot: number | null;
-  onBuy: (n: number) => void;
+  onToggle: (n: number) => void;
 }) => {
   const cols = 10;
   const nums = useMemo(() => Array.from({ length: gridSize }, (_, i) => i + 1), [gridSize]);
@@ -195,57 +196,54 @@ const PrefilledGrid = memo(({
   return (
     <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
       {nums.map((n) => {
-        const drawn = drawnSet.has(n);
-        const mine  = mySpotSet.has(n);
-        const taken = takenSet.has(n);
-        const isBuying = buyingSpot === n;
+        const mine     = mySet.has(n);
+        const taken    = takenSet.has(n);
+        const selected = selectedSet.has(n);
         const s = getPrefilledStyle(n, gridSize);
 
         let cellStyle: React.CSSProperties;
         let textStyle: React.CSSProperties = {};
 
-        if (drawn && mine) {
-          cellStyle = { background: `linear-gradient(135deg,${s.color}ee,${s.color}aa)`, border: `1.5px solid ${s.color}`, boxShadow: `0 0 6px ${s.glow}` };
-          textStyle = { color: '#fff', fontWeight: 900 };
-        } else if (drawn) {
-          cellStyle = { background: `linear-gradient(135deg,${s.color}55,${s.color}33)` };
-          textStyle = { color: 'rgba(255,255,255,0.85)' };
-        } else if (mine) {
-          cellStyle = { background: 'rgba(251,191,36,0.12)', border: '1.5px solid rgba(251,191,36,0.55)' };
+        if (mine) {
+          // Cartelas I own → green.
+          cellStyle = { background: 'rgba(52,211,153,0.18)', border: '1.5px solid rgba(52,211,153,0.7)' };
+          textStyle = { color: '#34d399', fontWeight: 900 };
+        } else if (selected) {
+          cellStyle = { background: 'rgba(251,191,36,0.20)', border: '1.5px solid rgba(251,191,36,0.85)', boxShadow: '0 0 6px rgba(251,191,36,0.4)' };
           textStyle = { color: '#fbbf24', fontWeight: 900 };
         } else if (taken) {
-          cellStyle = { background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)' };
-          textStyle = { color: 'rgba(255,255,255,0.10)' };
+          // Taken by someone else → red (locked).
+          cellStyle = { background: 'rgba(248,113,113,0.16)', border: '1px solid rgba(248,113,113,0.5)' };
+          textStyle = { color: '#f87171', fontWeight: 800 };
         } else {
           cellStyle = { background: s.bg, border: `1px solid ${s.color}22` };
           textStyle = { color: s.color };
         }
 
-        const canBuy = !taken && salesOpen && !isBuying;
+        const canToggle = !taken && !mine && salesOpen;
 
         return (
           <motion.button
             key={n}
-            animate={drawn ? { scale: [1, 1.2, 1] } : {}}
-            transition={{ duration: 0.22, ease: 'backOut' }}
-            disabled={taken || isBuying || !salesOpen}
-            onClick={() => canBuy && onBuy(n)}
+            whileTap={canToggle ? { scale: 0.86 } : {}}
+            disabled={!canToggle}
+            onClick={() => canToggle && onToggle(n)}
             className="aspect-square rounded-[2px] flex items-center justify-center text-[7px] font-bold font-mono select-none transition-all duration-75"
             style={{
               ...cellStyle,
               ...textStyle,
-              cursor: canBuy ? 'pointer' : 'default',
+              cursor: canToggle ? 'pointer' : 'default',
               minWidth: 0,
             }}
           >
-            {isBuying ? '·' : n}
+            {n}
           </motion.button>
         );
       })}
     </div>
   );
 });
-PrefilledGrid.displayName = 'PrefilledGrid';
+CartelaGrid.displayName = 'CartelaGrid';
 
 // ─── Recent-calls strip ───────────────────────────────────────────────────────
 // Horizontal scrolling pill strip showing the last N drawn numbers.
@@ -381,7 +379,9 @@ const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
       }`}
     >
       <div className="flex justify-between items-center">
-        <span className="text-[10px] font-black text-slate-400">#{ticket.id.slice(-5)}</span>
+        <span className="text-[10px] font-black text-slate-400">
+          {ticket.cartelaNumber != null ? `Cartela #${ticket.cartelaNumber}` : `#${ticket.id.slice(-5)}`}
+        </span>
         <span className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}>
           {won ? `+${formatCredits(ticket.payoutMinor)} ETB` : ticket.settlementStatus}
         </span>
@@ -491,41 +491,73 @@ const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
 });
 BingoTicketCard.displayName = 'BingoTicketCard';
 
-// ─── Prefilled My Spots ───────────────────────────────────────────────────────
-// Shows the player's owned spots as chips with drawn/won state.
+// ─── Winner Bingo Card (derash result) ────────────────────────────────────────
+// Renders the winner's mapped 5×5 card the way the reference result screen does:
+// coloured B/I/N/G/O header discs, green cells on the completed winning line(s),
+// red for other called hits, white for un-called numbers, FREE centre, and the
+// final called number highlighted.
 
-function PrefilledMySpots({ myTickets, drawnSet }: {
-  myTickets: BingoTicket[];
-  drawnSet: Set<number>;
+const WIN_HEADER = [
+  { letter: 'B', color: '#f59e0b' },
+  { letter: 'I', color: '#22c55e' },
+  { letter: 'N', color: '#3b82f6' },
+  { letter: 'G', color: '#ef4444' },
+  { letter: 'O', color: '#a855f7' },
+];
+
+function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
+  grid: Array<Array<number | null>>;
+  drawnNumbers: number[];
+  lastCalled: number | null;
 }) {
-  if (myTickets.length === 0) return null;
+  const drawn = new Set(drawnNumbers);
+  const rows = grid.length;
+  const cols = grid[0]?.length ?? 0;
+  const marked = grid.map((row) => row.map((cell) => cell === null || drawn.has(cell)));
+  const win = grid.map((row) => row.map(() => false));
+  for (let r = 0; r < rows; r++) if (marked[r].every(Boolean)) for (let c = 0; c < cols; c++) win[r][c] = true;
+  for (let c = 0; c < cols; c++) if (marked.every((row) => row[c])) for (let r = 0; r < rows; r++) win[r][c] = true;
+  if (rows === 5 && cols === 5) {
+    if ([0, 1, 2, 3, 4].every((i) => marked[i][i])) [0, 1, 2, 3, 4].forEach((i) => { win[i][i] = true; });
+    if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i])) [0, 1, 2, 3, 4].forEach((i) => { win[i][4 - i] = true; });
+  }
+
   return (
-    <div className="space-y-2">
-      <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Spots</h3>
-      <div className="card p-3">
-        <div className="flex flex-wrap gap-2">
-          {myTickets.map((ticket) => {
-            const n = (ticket.grid as Array<Array<number | null>>)[0]?.[0];
-            if (n == null) return null;
-            const drawn = drawnSet.has(n);
-            const won   = ticket.payoutMinor > 0;
+    <div className="rounded-2xl p-3" style={{ background: 'linear-gradient(160deg,#356b5e,#274c43)' }}>
+      <div className="grid grid-cols-5 gap-1.5 mb-1.5">
+        {WIN_HEADER.map((h) => (
+          <div key={h.letter} className="aspect-square rounded-full flex items-center justify-center text-white font-black text-lg" style={{ background: h.color }}>
+            {h.letter}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-5 gap-1.5">
+        {grid.map((row, r) =>
+          row.map((cell, c) => {
+            const isFree = cell === null;
+            const isWin = win[r][c];
+            const isHit = !isFree && marked[r][c] && !isWin;
+            const isLast = !isFree && cell === lastCalled;
+            let bg = '#f8fafc';
+            let color = '#1f2937';
+            if (isFree || isWin) { bg = '#15803d'; color = '#fff'; }
+            else if (isHit) { bg = '#dc2626'; color = '#fff'; }
             return (
               <div
-                key={ticket.id}
-                className={`rounded-xl border px-3 py-2 flex flex-col items-center gap-0.5 min-w-[56px] ${
-                  won  ? 'bg-gradient-to-br from-amber-950/30 to-black/40 border-amber-500/40'
-                  : drawn ? 'bg-red-950/20 border-red-500/30'
-                  : 'bg-white/[0.025] border-white/[0.06]'
-                }`}
+                key={`${r}-${c}`}
+                className="aspect-square rounded-lg flex items-center justify-center font-black font-mono"
+                style={{
+                  background: bg,
+                  color,
+                  fontSize: isLast ? 22 : 15,
+                  boxShadow: isLast ? '0 0 0 2px #fff, 0 0 14px rgba(255,255,255,0.6)' : undefined,
+                }}
               >
-                <span className={`text-xl font-black font-mono leading-none ${won ? 'text-amber-400' : drawn ? 'text-red-400' : 'text-white'}`}>{n}</span>
-                <span className={`text-[8px] font-black uppercase ${won ? 'text-amber-500' : drawn ? 'text-red-500/70' : 'text-slate-600'}`}>
-                  {won ? `+${formatCredits(ticket.payoutMinor)}` : drawn ? 'Drawn' : 'Active'}
-                </span>
+                {isFree ? 'F' : cell}
               </div>
             );
-          })}
-        </div>
+          }),
+        )}
       </div>
     </div>
   );
@@ -553,6 +585,72 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
   const winnerTicket = iWon ? myTickets.find((t) => t.payoutMinor > 0) ?? null : null;
 
   const progressPct = Math.max(0, Math.min(100, (resultSecs / totalDisplaySecs) * 100));
+
+  // ── Derash / prefilled: image-style result shown to everyone in the room ──
+  if (isPrefilledMode) {
+    const winnerGrid = (winEntry?.winnerGrid as Array<Array<number | null>> | undefined) ?? winnerTicket?.grid ?? null;
+    const winnerCartela = (winEntry?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
+    const lastCalled = room.drawnNumbers.length > 0 ? room.drawnNumbers[room.drawnNumbers.length - 1] : null;
+    const accent = iWon ? '#fbbf24' : '#34d399';
+
+    return (
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.8, y: 24 }}
+          animate={{ scale: 1, y: 0 }}
+          exit={{ scale: 0.88, opacity: 0 }}
+          transition={{ type: 'spring', stiffness: 280, damping: 20 }}
+          onClick={(e) => e.stopPropagation()}
+          className="relative max-w-sm w-full mx-4 rounded-3xl overflow-hidden p-4 space-y-4"
+          style={{ background: 'linear-gradient(160deg,#2a2a3e,#1a1a28)', border: `1px solid ${accent}66` }}
+        >
+          {/* Header panel */}
+          <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <div className="text-4xl font-black tracking-[0.12em] mb-1" style={{ color: '#fff', textShadow: `0 0 22px ${accent}` }}>
+              BINGO!
+            </div>
+            <p className="text-slate-200 text-sm">
+              <span className="font-black" style={{ color: accent }}>
+                {winnerDisplayName}{winnerCartela != null ? ` ( *${winnerCartela} )` : ''}
+              </span>{' '}
+              {iWon ? 'you won the game!' : 'has won the game'}
+            </p>
+          </div>
+
+          {/* Winner card */}
+          {winnerGrid && (
+            <div className="rounded-2xl p-2" style={{ background: `${accent}22`, border: `2px solid ${accent}88` }}>
+              <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
+              <div className="flex items-center justify-between px-2 pt-2">
+                <span className="text-[13px] font-black" style={{ color: accent }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
+                {winnerCartela != null && <span className="text-[13px] font-black text-slate-300">Card# {winnerCartela}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Countdown bar */}
+          <div className="rounded-2xl py-3 px-4" style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-[9px] text-slate-400">Next game starting soon</span>
+              <span className="font-mono font-black text-sm" style={{ color: accent }}>{resultSecs}s</span>
+            </div>
+            <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: accent }}
+                animate={{ width: `${progressPct}%` }}
+                transition={{ duration: 0.9, ease: 'linear' }}
+              />
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -592,30 +690,16 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
                 : '0 0 20px rgba(248,113,113,0.7), 0 2px 0 rgba(0,0,0,0.6)',
             }}
           >
-            {iWon ? '🏆 You Won!' : isPrefilledMode ? 'WINNER!' : 'BINGO!'}
+            {iWon ? '🏆 You Won!' : 'BINGO!'}
           </div>
           <p className="text-slate-300 text-sm">
             <span className="font-bold text-white">{winnerDisplayName}</span>{' '}
-            {iWon ? '— that\'s you!' : isPrefilledMode ? 'wins 1st place!' : 'wins the full house'}
+            {iWon ? '— that\'s you!' : 'wins the full house'}
           </p>
         </div>
 
-        {/* Winner spot (if I won, prefilled mode) */}
-        {iWon && winnerTicket && isPrefilledMode && (
-          <div className="relative z-10 flex justify-center px-5 pb-3">
-            <div className="rounded-2xl border px-8 py-4 text-center"
-              style={{ background: 'rgba(251,191,36,0.07)', borderColor: 'rgba(251,191,36,0.25)' }}>
-              <span className="block text-[9px] font-black uppercase tracking-widest text-amber-400/60 mb-1">Your winning spot</span>
-              <span className="text-5xl font-black text-amber-400 font-mono leading-none">
-                {(winnerTicket.grid as Array<Array<number | null>>)[0]?.[0]}
-              </span>
-              <span className="block text-[10px] font-black text-amber-500 mt-1">+{formatCreditsFull(winnerTicket.payoutMinor)} ETB</span>
-            </div>
-          </div>
-        )}
-
         {/* Winner ticket (if I won, 90-ball) */}
-        {iWon && winnerTicket && !isPrefilledMode && !isPatternGrid(winnerTicket.grid) && (
+        {iWon && winnerTicket && !isPatternGrid(winnerTicket.grid) && (
           <div className="relative z-10 px-5 pb-3">
             <div
               className="rounded-2xl border p-3"
@@ -704,7 +788,7 @@ export function Bingo({ onBack }: BingoProps) {
   const [loading, setLoading]             = useState(true);
   const [holdingResult, setHoldingResult] = useState(false);
   const [buying, setBuying]               = useState(false);
-  const [buyingSpot, setBuyingSpot]       = useState<number | null>(null);
+  const [selectedCartelas, setSelectedCartelas] = useState<Set<number>>(new Set());
   const [localTickets, setLocalTickets]   = useState<BingoTicket[]>([]);
   const localRoomIdRef                    = useRef<string | null>(null);
   const [showChat, setShowChat]           = useState(false);
@@ -922,7 +1006,9 @@ export function Bingo({ onBack }: BingoProps) {
     victoryRoomRef.current = room.id;
     soundEngine.win();
     confetti({ particleCount: 200, spread: 90, origin: { y: 0.55 }, colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'] });
-  }, [room?.status, room?.tickets, room?.id, localTickets]);
+    // The win credit landed server-side — pull the fresh balance into the header.
+    walletApi.getWallet().then(setWallet).catch(() => undefined);
+  }, [room?.status, room?.tickets, room?.id, localTickets, setWallet]);
 
   // ── Chat scroll ──────────────────────────────────────────────────────────────
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
@@ -941,10 +1027,12 @@ export function Bingo({ onBack }: BingoProps) {
   // winMode is the source of truth for which board to show.
   const isPatternMode    = room?.winMode === 'pattern';
   const isPrefilledMode  = room?.winMode === 'prefilled';
-  const ballCount        = isPatternMode ? (room?.numberRange ?? 75) : 90;
+  // Prefilled/derash and pattern both draw from the configured 75-ball pool.
+  const ballCount        = (isPatternMode || isPrefilledMode) ? (room?.numberRange ?? 75) : 90;
+  // Prefilled cards are 75-ball 5×5, so the board uses the B/I/N/G/O layout.
+  const boardBingoStyle  = isPatternMode || isPrefilledMode;
   const gridSize         = room?.gridSize ?? 200;
   const drawnNumbers     = room?.drawnNumbers ?? [];
-  const drawnSet         = useMemo(() => new Set(drawnNumbers), [drawnNumbers]);
   const takenSet         = useMemo(() => new Set(room?.takenSpots ?? []), [room?.takenSpots]);
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
   const salesOpen        = room?.status === 'open';
@@ -958,11 +1046,14 @@ export function Bingo({ onBack }: BingoProps) {
 
   const alreadyBought = myTickets.length > 0;
 
-  const myCardNums = useMemo(() => {
+  // Cartela numbers the player already owns in this room.
+  const myCartelaSet = useMemo(() => {
     const nums = new Set<number>();
-    myTickets.forEach((t) => t.grid.forEach((row) => row.forEach((n) => { if (n !== null) nums.add(n); })));
+    myTickets.forEach((t) => { if (t.cartelaNumber != null) nums.add(t.cartelaNumber); });
     return nums;
   }, [myTickets]);
+
+  const selectedTotalMinor = room ? selectedCartelas.size * room.ticketPriceMinor : 0;
 
   // ── Buy ──────────────────────────────────────────────────────────────────────
   const buyTickets = async () => {
@@ -983,27 +1074,39 @@ export function Bingo({ onBack }: BingoProps) {
     }
   };
 
-  const buySpot = useCallback(async (n: number) => {
-    if (!room || room.status !== 'open') return;
-    if (!currentUser) { addToast('error', 'Log in to buy spots'); return; }
-    setBuyingSpot(n);
+  const toggleCartela = useCallback((n: number) => {
+    setSelectedCartelas((prev) => {
+      const next = new Set(prev);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  }, []);
+
+  const buyCartelas = useCallback(async () => {
+    if (!room || room.status !== 'open' || selectedCartelas.size === 0 || buying) return;
+    if (!currentUser) { addToast('error', 'Log in to buy cartelas'); return; }
+    const numbers = Array.from(selectedCartelas);
+    setBuying(true);
     try {
-      const bought = await bingoApi.purchaseSpot(room.id, n, createIdempotencyKey(`bingo-spot-${n}`));
+      const bought = await bingoApi.purchaseCartelas(room.id, numbers, createIdempotencyKey('bingo-cartelas'));
       localRoomIdRef.current = room.id;
       setLocalTickets((prev) => [...prev, ...bought]);
+      setSelectedCartelas(new Set());
       const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
       setWallet(nextWallet);
       soundEngine.cashout();
-      addToast('success', `Spot #${n} purchased!`);
+      addToast('success', numbers.length === 1 ? `Cartela #${numbers[0]} purchased!` : `${numbers.length} cartelas purchased!`);
     } catch (err) {
       const msg = getErrorMessage(err);
-      if (msg.toLowerCase().includes('taken')) addToast('error', 'Spot already taken — pick another');
+      if (msg.toLowerCase().includes('taken')) addToast('error', 'A cartela was just taken — adjust your picks');
       else if (msg.toLowerCase().includes('balance') || msg.toLowerCase().includes('insufficient') || msg.toLowerCase().includes('enough')) addToast('error', 'Insufficient balance');
       else addToast('error', msg);
+      void loadCurrent();
     } finally {
-      setBuyingSpot(null);
+      setBuying(false);
     }
-  }, [room, currentUser, addToast, loadCurrent, setWallet]);
+  }, [room, currentUser, selectedCartelas, buying, addToast, loadCurrent, setWallet]);
 
   const sendChat = useCallback(() => {
     const text = chatInput.trim();
@@ -1100,68 +1203,32 @@ export function Bingo({ onBack }: BingoProps) {
 
           {/* ── Recent calls strip ── */}
           {drawnNumbers.length > 0 && (
-            <RecentCallsStrip drawnNumbers={drawnNumbers} isPatternMode={isPatternMode} />
+            <RecentCallsStrip drawnNumbers={drawnNumbers} isPatternMode={boardBingoStyle} />
           )}
 
-          {/* ── Number board / Prefilled grid ── */}
+          {/* ── Cartela picker (derash buy phase) / Number board ── */}
           <div className="card p-3">
-            {isPrefilledMode ? (
+            {isPrefilledMode && phase === 'buy' ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[9px] font-black text-slate-400 truncate">{room.name}</span>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[7px] font-black bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded">DERASH</span>
-                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
-                      room.status === 'open'    ? 'bg-emerald-500/10 text-emerald-400' :
-                      room.status === 'running' ? 'bg-red-500/10 text-red-400' :
-                      'bg-slate-700/50 text-slate-400'
-                    }`}>
-                      {room.status === 'open' ? 'Buy open' : room.status}
-                    </span>
-                  </div>
-                </div>
-                {/* Last drawn number + countdown */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {drawnNumbers.length > 0 && (() => {
-                      const last = drawnNumbers[drawnNumbers.length - 1];
-                      const s = getPrefilledStyle(last, gridSize);
-                      return (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[8px] text-slate-500 font-black uppercase">Last:</span>
-                          <motion.div
-                            key={last}
-                            initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                            transition={{ type: 'spring', stiffness: 320, damping: 18 }}
-                            className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm font-mono"
-                            style={{ background: `linear-gradient(135deg,${s.color}cc,${s.color}88)`, color: '#fff', boxShadow: `0 0 10px ${s.glow}` }}
-                          >
-                            {last}
-                          </motion.div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  {phase === 'buy' && timeRemainingSecs !== null && (
-                    <div className="text-right">
-                      <div className="text-[8px] text-slate-500">Starts in</div>
+                    {timeRemainingSecs !== null && (
                       <span className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
                         {String(Math.floor(timeRemainingSecs / 60)).padStart(2, '0')}:{String(timeRemainingSecs % 60).padStart(2, '0')}
                       </span>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
-                {salesOpen && (
-                  <p className="text-[9px] text-slate-500">Tap any spot to buy it instantly. First drawn wins!</p>
-                )}
-                <PrefilledGrid
+                <p className="text-[9px] text-slate-500">Pick one or more cartelas, then pay. Each cartela is a hidden bingo card.</p>
+                <CartelaGrid
                   gridSize={gridSize}
                   takenSet={takenSet}
-                  mySpotSet={myCardNums}
-                  drawnSet={drawnSet}
+                  mySet={myCartelaSet}
+                  selectedSet={selectedCartelas}
                   salesOpen={salesOpen}
-                  buyingSpot={buyingSpot}
-                  onBuy={buySpot}
+                  onToggle={toggleCartela}
                 />
               </div>
             ) : (
@@ -1177,21 +1244,23 @@ export function Bingo({ onBack }: BingoProps) {
                     }`}>
                       {room.status === 'open' ? 'Buy open' : room.status}
                     </span>
-                    {isPatternMode && (
+                    {isPrefilledMode ? (
+                      <span className="text-[7px] font-black bg-amber-500/10 text-amber-400 px-1 py-0.5 rounded flex-shrink-0">DERASH</span>
+                    ) : isPatternMode && (
                       <span className="text-[7px] font-black bg-violet-500/10 text-violet-400 px-1 py-0.5 rounded flex-shrink-0">75-BALL</span>
                     )}
                   </div>
                   <NumberBoard
                     drawnNumbers={drawnNumbers}
                     numberRange={ballCount}
-                    isPatternMode={isPatternMode}
+                    isPatternMode={boardBingoStyle}
                   />
                 </div>
-                {/* Current ball + countdown */}
-                <div className="w-24 flex-shrink-0 flex flex-col items-center">
+                {/* Now calling + (derash) my mapped cards stacked below */}
+                <div className={`flex-shrink-0 flex flex-col items-center gap-2 ${isPrefilledMode && myTickets.length > 0 ? 'w-32 sm:w-40' : 'w-24'}`}>
                   <CurrentBallDisplay
                     drawnNumbers={drawnNumbers}
-                    isPatternMode={isPatternMode}
+                    isPatternMode={boardBingoStyle}
                     status={room.status}
                     count={drawnNumbers.length}
                     max={ballCount}
@@ -1204,10 +1273,44 @@ export function Bingo({ onBack }: BingoProps) {
                       </span>
                     </div>
                   )}
+                  {/* Derash: mapped 5×5 card(s), vertically stacked, under the caller */}
+                  {isPrefilledMode && myTickets.map((ticket) => (
+                    <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
+                  ))}
                 </div>
               </div>
             )}
           </div>
+
+          {/* ── Pay-once bar (derash) ── */}
+          {isPrefilledMode && phase === 'buy' && (
+            <div className="card space-y-2">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="font-black uppercase tracking-wider text-slate-400">
+                  Selected: <span className="text-amber-400">{selectedCartelas.size}</span>
+                  {myCartelaSet.size > 0 && <span className="text-emerald-400"> · Owned: {myCartelaSet.size}</span>}
+                </span>
+                <span className="text-slate-500">{remainingTickets} cartelas left</span>
+              </div>
+              <motion.button
+                whileHover={!buying && selectedCartelas.size > 0 ? { scale: 1.02, y: -2 } : {}}
+                whileTap={{ scale: 0.97 }}
+                onClick={buyCartelas}
+                disabled={buying || selectedCartelas.size === 0}
+                className="btn btn-primary btn-full py-3.5 text-base font-black"
+              >
+                {buying ? (
+                  <span className="flex items-center gap-2 justify-center">
+                    <RefreshCw size={15} className="animate-spin" /> Processing…
+                  </span>
+                ) : selectedCartelas.size === 0 ? (
+                  'Select cartelas to buy'
+                ) : (
+                  `Buy ${selectedCartelas.size} cartela${selectedCartelas.size > 1 ? 's' : ''} — ${formatCreditsFull(selectedTotalMinor)} ETB`
+                )}
+              </motion.button>
+            </div>
+          )}
 
           {/* ── Buy panel (line/pattern mode only — prefilled buys via grid) ── */}
           {!isPrefilledMode && phase === 'buy' && !alreadyBought && (
@@ -1246,29 +1349,26 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
           )}
 
-          {/* ── My card(s) / My spots ── */}
-          {isPrefilledMode ? (
-            myTickets.length > 0
-              ? <PrefilledMySpots myTickets={myTickets} drawnSet={drawnSet} />
-              : phase !== 'buy' && (
-                <div className="card text-center py-6 space-y-1">
-                  <Sparkles size={20} className="mx-auto text-slate-600" />
-                  <p className="text-slate-500 text-xs">You didn't buy any spots for this round.</p>
-                </div>
-              )
-          ) : myTickets.length > 0 ? (
+          {/* ── My card(s) ──
+             Derash shows purchased cartelas here during buy-in; once the draw
+             starts they move up beside the caller, so we skip the bottom list. */}
+          {myTickets.length > 0 && !(isPrefilledMode && phase !== 'buy') ? (
             <div className="space-y-2">
-              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Card</h3>
+              <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">
+                {isPrefilledMode ? `My Cartelas (${myTickets.length})` : 'My Card'}
+              </h3>
               <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
                 {myTickets.map((ticket) => (
                   <BingoTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
                 ))}
               </div>
             </div>
-          ) : phase !== 'buy' && (
+          ) : myTickets.length === 0 && phase !== 'buy' && (
             <div className="card text-center py-6 space-y-1">
               <Sparkles size={20} className="mx-auto text-slate-600" />
-              <p className="text-slate-500 text-xs">You didn't buy a card for this round.</p>
+              <p className="text-slate-500 text-xs">
+                {isPrefilledMode ? "You didn't buy any cartelas for this round." : "You didn't buy a card for this round."}
+              </p>
               <p className="text-slate-600 text-[10px]">The next game opens for buy-in soon.</p>
             </div>
           )}

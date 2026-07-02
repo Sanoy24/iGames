@@ -211,12 +211,34 @@ export class BotsService {
     const bots = await this.getActiveBots();
     if (bots.length === 0) return;
 
+    // Derash rooms are bought by cartela number, not by count. Build a shuffled
+    // pool of free cartelas once and hand them out to bots so the pot fills.
+    const state = await this.bingoService.getRoomState({ roomId });
+    const isPrefilled = state.winMode === 'prefilled';
+    const freeCartelas: number[] = [];
+    if (isPrefilled) {
+      const taken = new Set(state.takenSpots ?? []);
+      for (let n = 1; n <= (state.gridSize ?? 200); n += 1) {
+        if (!taken.has(n)) freeCartelas.push(n);
+      }
+      for (let i = freeCartelas.length - 1; i > 0; i -= 1) {
+        const j = randomInt(0, i + 1);
+        [freeCartelas[i], freeCartelas[j]] = [freeCartelas[j], freeCartelas[i]];
+      }
+    }
+
     for (const bot of bots) {
       const policy = bot.productMetadata!.botPolicy as BotPolicy;
       const count = Math.min(policy.ticketsPerRound ?? 1, 5);
       const idempotencyKey = `bot-bingo:${roomId}:${bot.id}`;
       try {
-        await this.bingoService.purchaseTickets({ userId: bot.id, roomId, count, idempotencyKey });
+        if (isPrefilled) {
+          const cartelaNumbers = freeCartelas.splice(0, count);
+          if (cartelaNumbers.length === 0) break; // no cartelas left
+          await this.bingoService.purchaseTickets({ userId: bot.id, roomId, cartelaNumbers, idempotencyKey });
+        } else {
+          await this.bingoService.purchaseTickets({ userId: bot.id, roomId, count, idempotencyKey });
+        }
       } catch {
         // Room full, insufficient balance, or duplicate key — skip silently
       }

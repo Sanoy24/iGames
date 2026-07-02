@@ -1372,6 +1372,7 @@ function BingoAdmin() {
     prefilledSecondPlacePct: 0,
     prefilledThirdPlaceEnabled: false,
     prefilledThirdPlacePct: 0,
+    prefilledWinPatternId: null as string | null,
   });
 
   const load = useCallback(async () => {
@@ -1408,6 +1409,7 @@ function BingoAdmin() {
         prefilledSecondPlacePct: c.prefilledSecondPlacePct ?? 0,
         prefilledThirdPlaceEnabled: c.prefilledThirdPlaceEnabled ?? false,
         prefilledThirdPlacePct: c.prefilledThirdPlacePct ?? 0,
+        prefilledWinPatternId: c.prefilledWinPatternId ?? null,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -1584,15 +1586,16 @@ function BingoAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>Prefilled Grid Size (number of spots)</span>
+              <span>Derash Grid Size (number of cartelas)</span>
               <input className="input" type="number" min={10} max={1000} value={cfgForm.defaultGridSize ?? 200}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultGridSize: Number(e.target.value) }))} />
-              <span className="adm-field-hint">How many numbered spots appear in the Derash grid (e.g. 200).</span>
+              <span className="adm-field-hint">How many cartela cards players can pick from (e.g. 200). Each maps to a hidden 5×5 card.</span>
             </label>
             <label className="adm-field">
-              <span>Default Number Range (pattern mode)</span>
+              <span>Ball Pool (pattern & derash)</span>
               <input className="input" type="number" min={25} max={140} value={cfgForm.defaultNumberRange ?? 75}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultNumberRange: Number(e.target.value) }))} />
+              <span className="adm-field-hint">Numbers drawn per game (75 = standard B/I/N/G/O). Not the cartela count.</span>
             </label>
             <label className="adm-field">
               <span>Repeat Delay After Completion (minutes, 0 = instant)</span>
@@ -1672,10 +1675,24 @@ function BingoAdmin() {
           <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
           <div className="adm-field-grid">
             <label className="adm-field">
+              <span>Winning Pattern</span>
+              <select
+                className="input"
+                value={cfgForm.prefilledWinPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledWinPatternId: e.target.value || null }))}
+              >
+                <option value="">Any Line (default)</option>
+                {patterns.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <span className="adm-field-hint">The pattern a cartela card must complete to win a place. Seed patterns below if empty.</span>
+            </label>
+            <label className="adm-field">
               <span>1st Place Prize (% of pot after house edge)</span>
               <input className="input" type="number" min={1} max={100} value={cfgForm.prefilledFirstPlacePct ?? 80}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPlacePct: Math.min(100, Number(e.target.value)) }))} />
-              <span className="adm-field-hint">The first drawn number that has an owner wins this % of the prize pool.</span>
+              <span className="adm-field-hint">The first cartela to complete the winning pattern takes this % of the prize pool.</span>
             </label>
             <label className="adm-field">
               <span>2nd Place Enabled</span>

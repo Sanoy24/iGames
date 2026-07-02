@@ -154,6 +154,7 @@ export type BingoTicket = {
   id: string;
   userId: string;
   roomId: string;
+  cartelaNumber?: number | null;
   grid: Array<Array<number | null>>;
   markedNumbers: number[];
   completedLines: number[];
@@ -193,6 +194,7 @@ export type BingoConfig = {
   prefilledSecondPlacePct?: number;
   prefilledThirdPlaceEnabled?: boolean;
   prefilledThirdPlacePct?: number;
+  prefilledWinPatternId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };

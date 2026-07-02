@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class UpdateBingoConfigDto {
   @IsOptional() @IsBoolean()
@@ -66,4 +66,8 @@ export class UpdateBingoConfigDto {
 
   @IsOptional() @IsInt() @Min(0) @Max(100)
   prefilledThirdPlacePct?: number;
+
+  /** BingoPattern id that wins a place in prefilled/derash mode (null = Any Line). */
+  @IsOptional() @IsString()
+  prefilledWinPatternId?: string | null;
 }

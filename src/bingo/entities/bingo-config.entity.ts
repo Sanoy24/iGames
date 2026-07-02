@@ -73,6 +73,13 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   prefilledThirdPlacePct: number;
 
+  /**
+   * Winning pattern for prefilled/derash mode — the BingoPattern a cartela card
+   * must complete to win a place. Null falls back to the built-in "Any Line".
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledWinPatternId?: string | null;
+
   /** Minimum balls drawn before any prize tier can be settled (0 = immediate). */
   @Column({ type: 'int', default: 0 })
   minDrawsBeforeWin: number;

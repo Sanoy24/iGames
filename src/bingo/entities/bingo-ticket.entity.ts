@@ -36,6 +36,13 @@ export class BingoTicket {
   @Column({ type: 'json' })
   grid: BingoGrid;
 
+  /**
+   * Prefilled/derash mode: the cartela number the player picked from the grid
+   * (1..gridSize). Null for line/pattern tickets. The mapped card lives in `grid`.
+   */
+  @Column({ type: 'int', nullable: true })
+  cartelaNumber?: number | null;
+
   @Column({ type: 'json' })
   markedNumbers: number[];
 

@@ -192,11 +192,11 @@ export const bingoApi = {
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
       .then((r) => r.data as BingoTicket[]),
-  purchaseSpot: (roomId: string, spotNumber: number, idempotencyKey: string) =>
+  purchaseCartelas: (roomId: string, cartelaNumbers: number[], idempotencyKey: string) =>
     api
       .post(
         `/bingo/rooms/${roomId}/tickets`,
-        { spotNumber },
+        { cartelaNumbers },
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
       .then((r) => r.data as BingoTicket[]),

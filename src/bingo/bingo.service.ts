@@ -179,12 +179,11 @@ export class BingoService implements OnModuleInit {
     const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
     const gridSize = cfg.defaultGridSize ?? 200;
 
-    // If an open room already exists, keep it — unless its win mode no longer
-    // matches the admin config (e.g. admin switched to Derash while a stale
-    // line/pattern room was still open, or an old room predates a mode change).
-    // In that case cancel the mismatched room (refunding any buyers) so the
-    // freshly created room reflects the configured mode. This is what makes an
-    // admin mode change take effect instead of appearing to "revert" on restart.
+    // Cancel any open room whose win mode no longer matches the admin config
+    // (e.g. admin switched to Derash while a stale line/pattern room was still
+    // open). Open rooms have no game in progress, so refunding buyers is safe —
+    // this is what makes an admin mode change take effect instead of appearing
+    // to "revert". A matching open room is left as-is.
     const openRooms = await this.bingoRoomRepository.find({ where: { status: 'open' } });
     const matching = openRooms.find((r) => r.winMode === winMode);
     if (matching) return null;
@@ -193,6 +192,11 @@ export class BingoService implements OnModuleInit {
         this.logger.warn(`Failed to cancel stale ${stale.winMode} room ${stale.id}`, err),
       );
     }
+
+    // One game at a time: never OPEN the next room while another is still
+    // running. The next room is created only once the current game finishes.
+    const runningCount = await this.bingoRoomRepository.countBy({ status: 'running' });
+    if (runningCount > 0) return null;
 
     const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
     const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);
@@ -254,7 +258,11 @@ export class BingoService implements OnModuleInit {
   }
 
   async getCurrentRoom(userId?: string): Promise<(BingoRoomResponse & { tickets?: BingoTicketResponse[] }) | null> {
-    let room =
+    // Pure read: never create rooms here. Room creation is owned solely by the
+    // scheduler (single instance, Redis-locked). Creating rooms from this
+    // client-polled endpoint caused a race where many concurrent polls each
+    // spawned a room, producing several games running at once.
+    const room =
       (await this.bingoRoomRepository.findOne({
         where: { status: 'running' },
         order: { scheduledStartAt: 'ASC' },
@@ -262,24 +270,13 @@ export class BingoService implements OnModuleInit {
       (await this.bingoRoomRepository.findOne({
         where: { status: 'open' },
         order: { scheduledStartAt: 'ASC' },
-      }));
-
-    if (!room) {
-      room = await this.bingoRoomRepository.findOne({
+      })) ??
+      (await this.bingoRoomRepository.findOne({
         where: { status: 'completed' },
         order: { updatedAt: 'DESC' },
-      });
-      await this.autoCreateNextRoom().catch(() => undefined);
-      if (!room) {
-        const created = await this.bingoRoomRepository.findOne({
-          where: { status: 'open' },
-          order: { scheduledStartAt: 'ASC' },
-        });
-        if (!created) return null;
-        room = created;
-      }
-    }
+      }));
 
+    if (!room) return null;
     return this.getRoomState({ roomId: room.id, userId });
   }
 

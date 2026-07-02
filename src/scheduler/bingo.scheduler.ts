@@ -66,7 +66,6 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       const cfg = await this.bingoService.getBingoConfig();
       const intervalSeconds = Math.max(1, cfg.drawIntervalSeconds ?? 2);
       const dueRoomIds = await this.bingoService.findRunningRoomIdsDue(intervalSeconds);
-      let anyCompleted = false;
 
       for (const roomId of dueRoomIds) {
         if (this.shuttingDown) break;
@@ -77,7 +76,6 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           if (updated.status === 'completed') {
             this.logger.log(`Bingo room ${updated.id} completed`);
             this.gameEventsGateway.emitBingoRoomCompleted(updated);
-            anyCompleted = true;
             try {
               await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
             } catch (err) {
@@ -117,8 +115,13 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         }
       }
 
-      // After any room completes, auto-create the next one and have bots buy in
-      if (anyCompleted && !this.shuttingDown) {
+      // Ensure exactly one upcoming room exists. autoCreateNextRoom self-guards
+      // (no-op while a game is open or running), so this both opens the next
+      // room after a completion and recovers if no room exists at all. Running
+      // it only here — inside the Redis lock + isRunning guard — makes room
+      // creation single-writer, which prevents the duplicate/concurrent rooms
+      // that arose when the client-polled getCurrentRoom created rooms.
+      if (!this.shuttingDown) {
         try {
           const newRoom = await this.bingoService.autoCreateNextRoom();
           if (newRoom) {

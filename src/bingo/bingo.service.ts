@@ -175,6 +175,51 @@ export class BingoService implements OnModuleInit {
     return saved;
   }
 
+  /**
+   * Enforce the invariant "at most one active Bingo room, and it matches the
+   * current admin config". Cancels (and refunds) every active — open OR running
+   * — room except the single well-formed one to keep.
+   *
+   * "Well-formed" means the room's win mode matches the config AND its ball pool
+   * matches (e.g. a stale `DERASH 1-200` room is cancelled while the config says
+   * 75). Preferring a *running* well-formed room avoids killing a game already in
+   * progress; otherwise the earliest well-formed open room is kept. Returns the
+   * kept room, or null if none survived (so the caller can create a fresh one).
+   *
+   * This is the single guard that stops the "two games at once / count jumps
+   * 75 → 45 / draws to /200" symptoms, regardless of legacy rows in the DB.
+   */
+  async reconcileActiveRooms(cfg?: BingoConfig): Promise<BingoRoom | null> {
+    const config = cfg ?? (await this.getBingoConfig());
+    const winMode = (config.defaultWinMode as BingoWinMode) ?? 'prefilled';
+    const expectedRange = winMode === 'line' ? 90 : (config.defaultNumberRange ?? 75);
+
+    const active = await this.bingoRoomRepository.find({
+      where: { status: In(['open', 'running']) },
+      order: { scheduledStartAt: 'ASC' },
+    });
+    if (active.length === 0) return null;
+
+    const matches = (r: BingoRoom) =>
+      r.winMode === winMode && (r.numberRange ?? expectedRange) === expectedRange;
+
+    const keep =
+      active.find((r) => r.status === 'running' && matches(r)) ??
+      active.find((r) => matches(r)) ??
+      null;
+
+    for (const room of active) {
+      if (keep && room.id === keep.id) continue;
+      await this.cancelRoom(room.id).catch((err) =>
+        this.logger.warn(
+          `reconcile: failed to cancel stale room ${room.id} (${room.winMode} range=${room.numberRange} status=${room.status})`,
+          err,
+        ),
+      );
+    }
+    return keep;
+  }
+
   async autoCreateNextRoom(): Promise<BingoRoomResponse | null> {
     const cfg = await this.getBingoConfig();
     if (!cfg.enabled) return null;
@@ -182,33 +227,10 @@ export class BingoService implements OnModuleInit {
     const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
     const gridSize = cfg.defaultGridSize ?? 75;
 
-    // Enforce a single upcoming room. Keep at most ONE open room — the earliest
-    // one whose win mode matches the admin config — and cancel every other open
-    // room. This covers two cases at once:
-    //   • a stale room in the wrong win mode (admin switched to Derash while a
-    //     line/pattern room was still open) — cancelling it makes the mode change
-    //     take effect instead of appearing to "revert";
-    //   • duplicate same-mode rooms that slipped past the active-game guard
-    //     (rows created before the guard existed, or a missing unique index) —
-    //     which is what produced several "OPEN" rooms at once.
-    // Open rooms have no game in progress, so refunding buyers is safe.
-    const openRooms = await this.bingoRoomRepository.find({
-      where: { status: 'open' },
-      order: { scheduledStartAt: 'ASC' },
-    });
-    const keep = openRooms.find((r) => r.winMode === winMode) ?? null;
-    for (const room of openRooms) {
-      if (keep && room.id === keep.id) continue;
-      await this.cancelRoom(room.id).catch((err) =>
-        this.logger.warn(`Failed to cancel extra ${room.winMode} room ${room.id}`, err),
-      );
-    }
-    if (keep) return null;
-
-    // One game at a time: never OPEN the next room while another is still
-    // running. The next room is created only once the current game finishes.
-    const runningCount = await this.bingoRoomRepository.countBy({ status: 'running' });
-    if (runningCount > 0) return null;
+    // Collapse to a single well-formed active room. If one already exists (open
+    // or running) we do not create another — one game at a time.
+    const kept = await this.reconcileActiveRooms(cfg);
+    if (kept) return null;
 
     const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
     const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);

@@ -64,6 +64,17 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
 
     try {
       const cfg = await this.bingoService.getBingoConfig();
+
+      // First thing every tick: collapse to a single well-formed active room.
+      // This cancels stale/duplicate rooms — including a leftover running room
+      // with the wrong ball pool (e.g. DERASH 1-200) — before it can draw again,
+      // which is what caused "two games at once" and the count reaching /200.
+      try {
+        await this.bingoService.reconcileActiveRooms(cfg);
+      } catch (err) {
+        this.logger.error('Bingo reconcile failed', err instanceof Error ? err.stack : err);
+      }
+
       const intervalSeconds = Math.max(1, cfg.drawIntervalSeconds ?? 2);
       const dueRoomIds = await this.bingoService.findRunningRoomIdsDue(intervalSeconds);
 

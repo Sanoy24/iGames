@@ -523,10 +523,10 @@ function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
   }
 
   return (
-    <div className="rounded-2xl p-3" style={{ background: 'linear-gradient(160deg,#356b5e,#274c43)' }}>
+    <div className="rounded-xl p-2.5" style={{ background: 'linear-gradient(150deg,#cdd2d8 0%,#d6cbbe 60%,#e6c9a8 100%)' }}>
       <div className="grid grid-cols-5 gap-1.5 mb-1.5">
         {WIN_HEADER.map((h) => (
-          <div key={h.letter} className="aspect-square rounded-full flex items-center justify-center text-white font-black text-lg" style={{ background: h.color }}>
+          <div key={h.letter} className="h-9 rounded-full flex items-center justify-center text-white font-black text-xl" style={{ background: h.color }}>
             {h.letter}
           </div>
         ))}
@@ -538,10 +538,10 @@ function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
             const isWin = win[r][c];
             const isHit = !isFree && marked[r][c] && !isWin;
             const isLast = !isFree && cell === lastCalled;
-            let bg = '#f8fafc';
+            let bg = '#ffffff';
             let color = '#1f2937';
-            if (isFree || isWin) { bg = '#15803d'; color = '#fff'; }
-            else if (isHit) { bg = '#dc2626'; color = '#fff'; }
+            if (isFree || isWin) { bg = '#1b7a2f'; color = '#fff'; }
+            else if (isHit) { bg = '#d92d2d'; color = '#fff'; }
             return (
               <div
                 key={`${r}-${c}`}
@@ -550,7 +550,7 @@ function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
                   background: bg,
                   color,
                   fontSize: isLast ? 22 : 15,
-                  boxShadow: isLast ? '0 0 0 2px #fff, 0 0 14px rgba(255,255,255,0.6)' : undefined,
+                  boxShadow: isLast ? '0 0 0 3px #f59e0b' : '0 1px 2px rgba(0,0,0,0.15)',
                 }}
               >
                 {isFree ? 'F' : cell}
@@ -592,7 +592,6 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
     const winnerCartela = (winEntry?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
     const winnerPhoneLast4 = (winEntry?.winnerPhoneLast4 as string | undefined) ?? '';
     const lastCalled = room.drawnNumbers.length > 0 ? room.drawnNumbers[room.drawnNumbers.length - 1] : null;
-    const accent = iWon ? '#fbbf24' : '#34d399';
 
     return (
       <motion.div
@@ -606,43 +605,48 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           exit={{ scale: 0.88, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 280, damping: 20 }}
           onClick={(e) => e.stopPropagation()}
-          className="relative max-w-sm w-full mx-4 rounded-3xl overflow-hidden p-4 space-y-4"
-          style={{ background: 'linear-gradient(160deg,#2a2a3e,#1a1a28)', border: `1px solid ${accent}66` }}
+          className="relative max-w-sm w-full mx-4 rounded-3xl p-4 space-y-4"
+          style={{
+            background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
+            border: '3px solid rgba(167,139,250,0.7)',
+            boxShadow: '0 0 34px rgba(167,139,250,0.45)',
+          }}
         >
           {/* Header panel */}
-          <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(255,255,255,0.04)' }}>
-            <div className="text-4xl font-black tracking-[0.12em] mb-1" style={{ color: '#fff', textShadow: `0 0 22px ${accent}` }}>
+          <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(20,60,60,0.55)' }}>
+            <div className="text-4xl font-black tracking-[0.12em] mb-2" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
               BINGO!
             </div>
-            <p className="text-slate-200 text-sm">
-              <span className="font-black" style={{ color: accent }}>
+            <p className="text-slate-100 text-base font-bold flex items-center justify-center gap-2 flex-wrap">
+              <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
                 {winnerDisplayName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
-              </span>{' '}
-              {iWon ? 'you won the game!' : 'has won the game'}
+              </span>
+              <span>{iWon ? 'you won the game' : 'has won the game'}</span>
             </p>
           </div>
 
-          {/* Winner card */}
+          {/* Winner card — purple outer frame + amber inner frame */}
           {winnerGrid && (
-            <div className="rounded-2xl p-2" style={{ background: `${accent}22`, border: `2px solid ${accent}88` }}>
-              <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
-              <div className="flex items-center justify-between px-2 pt-2">
-                <span className="text-[13px] font-black" style={{ color: accent }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
-                {winnerCartela != null && <span className="text-[13px] font-black text-slate-300">Card# {winnerCartela}</span>}
+            <div className="rounded-2xl p-2" style={{ background: 'rgba(20,60,60,0.4)', border: '3px solid rgba(167,139,250,0.6)' }}>
+              <div className="rounded-xl p-2" style={{ border: '3px solid rgba(245,158,11,0.85)' }}>
+                <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
+                <div className="flex items-center justify-between px-1 pt-2">
+                  <span className="text-[15px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
+                  {winnerCartela != null && <span className="text-[15px] font-black text-slate-100">Card# {winnerCartela}</span>}
+                </div>
               </div>
             </div>
           )}
 
           {/* Countdown bar */}
-          <div className="rounded-2xl py-3 px-4" style={{ background: 'rgba(255,255,255,0.04)' }}>
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-[9px] text-slate-400">Next game starting soon</span>
-              <span className="font-mono font-black text-sm" style={{ color: accent }}>{resultSecs}s</span>
+          <div className="rounded-2xl py-3 px-4" style={{ background: 'rgba(20,60,60,0.55)' }}>
+            <div className="flex justify-center items-center mb-1.5">
+              <span className="font-mono font-black text-2xl text-red-500">{resultSecs}s</span>
             </div>
-            <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}>
               <motion.div
                 className="h-full rounded-full"
-                style={{ background: accent }}
+                style={{ background: 'linear-gradient(90deg,#34d399,#10b981)' }}
                 animate={{ width: `${progressPct}%` }}
                 transition={{ duration: 0.9, ease: 'linear' }}
               />
@@ -1274,15 +1278,15 @@ export function Bingo({ onBack }: BingoProps) {
                       </span>
                     </div>
                   )}
-                  {/* Derash: mapped 5×5 card(s), vertically stacked, under the caller.
-                     Scrolls once the player owns more than two cartelas. */}
+                  {/* Derash: mapped 5×5 card(s), vertically stacked under the caller,
+                     with the owned-count label. The stack scrolls so many cartelas
+                     never blow out the layout. */}
                   {isPrefilledMode && myTickets.length > 0 && (
                     <>
                       <div className="w-full text-center text-[9px] font-black uppercase tracking-wider text-slate-500">
                         {myTickets.length} {myTickets.length === 1 ? 'card' : 'cards'}
                       </div>
-                      <div className={`w-full flex flex-col gap-2 ${myTickets.length > 2 ? 'overflow-y-auto pr-1' : ''}`}
-                        style={myTickets.length > 2 ? { maxHeight: 320 } : undefined}>
+                      <div className="w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide" style={{ maxHeight: 340 }}>
                         {myTickets.map((ticket) => (
                           <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
                         ))}

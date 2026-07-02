@@ -164,15 +164,35 @@ export class BingoService implements OnModuleInit {
   async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
     const cfg = await this.getBingoConfig();
     Object.assign(cfg, dto);
-    return this.bingoConfigRepository.save(cfg);
+    const saved = await this.bingoConfigRepository.save(cfg);
+    // Apply a win-mode change right away: if the currently open room no longer
+    // matches the configured mode, autoCreateNextRoom cancels it and opens a
+    // fresh room in the new mode (no-op when the open room already matches).
+    await this.autoCreateNextRoom().catch(() => undefined);
+    return saved;
   }
 
   async autoCreateNextRoom(): Promise<BingoRoomResponse | null> {
     const cfg = await this.getBingoConfig();
     if (!cfg.enabled) return null;
 
-    const existing = await this.bingoRoomRepository.countBy({ status: 'open' });
-    if (existing > 0) return null;
+    const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
+    const gridSize = cfg.defaultGridSize ?? 200;
+
+    // If an open room already exists, keep it — unless its win mode no longer
+    // matches the admin config (e.g. admin switched to Derash while a stale
+    // line/pattern room was still open, or an old room predates a mode change).
+    // In that case cancel the mismatched room (refunding any buyers) so the
+    // freshly created room reflects the configured mode. This is what makes an
+    // admin mode change take effect instead of appearing to "revert" on restart.
+    const openRooms = await this.bingoRoomRepository.find({ where: { status: 'open' } });
+    const matching = openRooms.find((r) => r.winMode === winMode);
+    if (matching) return null;
+    for (const stale of openRooms) {
+      await this.cancelRoom(stale.id).catch((err) =>
+        this.logger.warn(`Failed to cancel stale ${stale.winMode} room ${stale.id}`, err),
+      );
+    }
 
     const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
     const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);
@@ -184,9 +204,6 @@ export class BingoService implements OnModuleInit {
       hour12: false,
     });
     const name = `Bingo ${timestamp}`;
-
-    const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
-    const gridSize = cfg.defaultGridSize ?? 200;
 
     const room = this.bingoRoomRepository.create({
       name,

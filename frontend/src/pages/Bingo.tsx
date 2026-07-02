@@ -626,7 +626,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           </div>
 
           {/* Winner card — purple outer frame + amber inner frame */}
-          {winnerGrid && (
+          {winnerGrid ? (
             <div className="rounded-2xl p-2" style={{ background: 'rgba(20,60,60,0.4)', border: '3px solid rgba(167,139,250,0.6)' }}>
               <div className="rounded-xl p-2" style={{ border: '3px solid rgba(245,158,11,0.85)' }}>
                 <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
@@ -635,6 +635,12 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
                   {winnerCartela != null && <span className="text-[15px] font-black text-slate-100">Card# {winnerCartela}</span>}
                 </div>
               </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(20,60,60,0.4)', border: '3px solid rgba(245,158,11,0.55)' }}>
+              <span className="block text-[10px] font-black uppercase tracking-widest text-emerald-300/70 mb-1">Prize won</span>
+              <span className="text-3xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(prizeMinor)} ETB</span>
+              {winnerCartela != null && <span className="block text-[13px] font-black text-slate-200 mt-1">Card# {winnerCartela}</span>}
             </div>
           )}
 

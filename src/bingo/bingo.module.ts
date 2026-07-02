@@ -10,6 +10,7 @@ import { BingoAdminController } from './bingo-admin.controller';
 import { BingoController } from './bingo.controller';
 import { BingoRulesService } from './bingo-rules.service';
 import { BingoService } from './bingo.service';
+import { BingoCard } from './entities/bingo-card.entity';
 import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { BingoRoom } from './entities/bingo-room.entity';
@@ -21,7 +22,7 @@ import { BingoTicket } from './entities/bingo-ticket.entity';
     RngModule,
     WalletModule,
     GameEventsModule,
-    TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoConfig, BingoPattern])
+    TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoPattern])
   ],
   controllers: [BingoController, BingoAdminController],
   providers: [BingoService, BingoRulesService, JwtAuthGuard, RolesGuard],

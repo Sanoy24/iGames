@@ -89,6 +89,15 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     }),
   };
 
+  const mockCardRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    countBy: jest.fn().mockResolvedValue(0),
+    query: jest.fn().mockResolvedValue([]),
+    save: jest.fn().mockImplementation((c) => Promise.resolve(c)),
+    create: jest.fn().mockImplementation((dto) => dto),
+  };
+
   const mockConfigRepo = {
     findOneBy: jest.fn().mockResolvedValue({
       key: 'default',
@@ -119,11 +128,12 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     { transaction: jest.fn() } as any,
     mockRoomRepo as any,
     mockTicketRepo as any,
+    mockCardRepo as any,
     mockConfigRepo as any,
     mockPatternRepo as any,
+    new (require('./bingo-rules.service').BingoRulesService)(),
     { drawUniqueNumbers: jest.fn() } as any,
     { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
-    new (require('./bingo-rules.service').BingoRulesService)(),
   );
 
   return { service, mockRoomRepo };
@@ -204,11 +214,12 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { transaction: jest.fn() } as any,
       mockRoomRepo,
       { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn().mockResolvedValue([]) }) } as any,
+      { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40, resultDisplaySeconds: 10, enabled: true, defaultTicketPriceMinor: 100, defaultMaxTickets: 100, defaultOneLineMinor: 5000, defaultTwoLinesMinor: 10000, defaultFullHouseMinor: 20000, autoRepeatIntervalMinutes: 5, minTicketsToStart: 1 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
+      new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
       { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
-      new (require('./bingo-rules.service').BingoRulesService)(),
     );
 
     const ids = await service.findRunningRoomIdsDue(2);
@@ -233,11 +244,12 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { transaction: jest.fn() } as any,
       mockRoomRepo,
       { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn().mockResolvedValue([]) }) } as any,
+      { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
+      new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
       { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
-      new (require('./bingo-rules.service').BingoRulesService)(),
     );
 
     const ids = await service.findRunningRoomIdsDue(2);

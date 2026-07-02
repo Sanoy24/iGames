@@ -1362,7 +1362,7 @@ function BingoAdmin() {
     resultDisplaySeconds: 10,
     defaultWinMode: 'prefilled',
     defaultNumberRange: 75,
-    defaultGridSize: 200,
+    defaultGridSize: 75,
     minDrawsBeforeWin: 0,
     minTicketsToStart: 0,
     houseEdgePct: 20,
@@ -1399,7 +1399,7 @@ function BingoAdmin() {
         resultDisplaySeconds: c.resultDisplaySeconds ?? 10,
         defaultWinMode: c.defaultWinMode ?? 'prefilled',
         defaultNumberRange: c.defaultNumberRange ?? 75,
-        defaultGridSize: c.defaultGridSize ?? 200,
+        defaultGridSize: c.defaultGridSize ?? 75,
         minDrawsBeforeWin: c.minDrawsBeforeWin ?? 0,
         minTicketsToStart: c.minTicketsToStart ?? 0,
         houseEdgePct: c.houseEdgePct ?? 20,
@@ -1587,9 +1587,9 @@ function BingoAdmin() {
             </label>
             <label className="adm-field">
               <span>Derash Grid Size (number of cartelas)</span>
-              <input className="input" type="number" min={10} max={1000} value={cfgForm.defaultGridSize ?? 200}
+              <input className="input" type="number" min={10} max={1000} value={cfgForm.defaultGridSize ?? 75}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultGridSize: Number(e.target.value) }))} />
-              <span className="adm-field-hint">How many cartela cards players can pick from (e.g. 200). Each maps to a hidden 5×5 card.</span>
+              <span className="adm-field-hint">How many cartela cards players can pick from (e.g. 75). Each maps to a hidden 5×5 card.</span>
             </label>
             <label className="adm-field">
               <span>Ball Pool (pattern & derash)</span>
@@ -1819,13 +1819,18 @@ function BingoAdmin() {
               <tbody>
                 {rooms.map((room) => {
                   const isActive = room.status === 'open' || room.status === 'running';
-                  const maxNum = room.winMode === 'pattern' ? (room.numberRange ?? 75) : 90;
+                  const maxNum = room.winMode === 'line' ? 90 : (room.numberRange ?? 75);
+                  const modeLabel =
+                    room.winMode === 'pattern' ? `Pattern 1-${room.numberRange ?? 75}`
+                    : room.winMode === 'prefilled' ? `Derash 1-${room.numberRange ?? 75}`
+                    : 'Line 1-90';
+                  const modeBadge = room.winMode === 'pattern' ? 'badge-violet' : 'badge-gold';
                   return (
                     <tr key={room.id} className="adm-tr">
                       <td><strong>{room.name}</strong></td>
                       <td className="adm-td-muted">
-                        <span className={`badge ${room.winMode === 'pattern' ? 'badge-violet' : 'badge-gold'}`} style={{ fontSize: 10 }}>
-                          {room.winMode === 'pattern' ? `Pattern 1-${room.numberRange ?? 75}` : 'Line 1-90'}
+                        <span className={`badge ${modeBadge}`} style={{ fontSize: 10 }}>
+                          {modeLabel}
                         </span>
                       </td>
                       <td className="adm-td-muted">{room.soldTickets}/{room.maxTickets}</td>

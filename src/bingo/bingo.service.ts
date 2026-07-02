@@ -7,7 +7,7 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager, DataSource, In, LessThan, LessThanOrEqual, Not } from 'typeorm';
+import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, Not } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BingoRulesService, BUILT_IN_PATTERNS } from './bingo-rules.service';
@@ -17,6 +17,7 @@ import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo
 import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoRoom, BingoPrizeTier, BingoWinMode } from './entities/bingo-room.entity';
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
+import { BingoCard } from './entities/bingo-card.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { User } from '../users/entities/user.entity';
 
@@ -71,6 +72,8 @@ export class BingoService implements OnModuleInit {
     private readonly bingoRoomRepository: Repository<BingoRoom>,
     @InjectRepository(BingoTicket)
     private readonly bingoTicketRepository: Repository<BingoTicket>,
+    @InjectRepository(BingoCard)
+    private readonly bingoCardRepository: Repository<BingoCard>,
     @InjectRepository(BingoConfig)
     private readonly bingoConfigRepository: Repository<BingoConfig>,
     @InjectRepository(BingoPattern)
@@ -148,7 +151,7 @@ export class BingoService implements OnModuleInit {
         resultDisplaySeconds: 10,
         defaultWinMode: 'prefilled',
         defaultNumberRange: 75,
-        defaultGridSize: 200,
+        defaultGridSize: 75,
         prefilledFirstPlacePct: 80,
         prefilledSecondPlaceEnabled: false,
         prefilledSecondPlacePct: 0,
@@ -177,21 +180,30 @@ export class BingoService implements OnModuleInit {
     if (!cfg.enabled) return null;
 
     const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
-    const gridSize = cfg.defaultGridSize ?? 200;
+    const gridSize = cfg.defaultGridSize ?? 75;
 
-    // Cancel any open room whose win mode no longer matches the admin config
-    // (e.g. admin switched to Derash while a stale line/pattern room was still
-    // open). Open rooms have no game in progress, so refunding buyers is safe —
-    // this is what makes an admin mode change take effect instead of appearing
-    // to "revert". A matching open room is left as-is.
-    const openRooms = await this.bingoRoomRepository.find({ where: { status: 'open' } });
-    const matching = openRooms.find((r) => r.winMode === winMode);
-    if (matching) return null;
-    for (const stale of openRooms) {
-      await this.cancelRoom(stale.id).catch((err) =>
-        this.logger.warn(`Failed to cancel stale ${stale.winMode} room ${stale.id}`, err),
+    // Enforce a single upcoming room. Keep at most ONE open room — the earliest
+    // one whose win mode matches the admin config — and cancel every other open
+    // room. This covers two cases at once:
+    //   • a stale room in the wrong win mode (admin switched to Derash while a
+    //     line/pattern room was still open) — cancelling it makes the mode change
+    //     take effect instead of appearing to "revert";
+    //   • duplicate same-mode rooms that slipped past the active-game guard
+    //     (rows created before the guard existed, or a missing unique index) —
+    //     which is what produced several "OPEN" rooms at once.
+    // Open rooms have no game in progress, so refunding buyers is safe.
+    const openRooms = await this.bingoRoomRepository.find({
+      where: { status: 'open' },
+      order: { scheduledStartAt: 'ASC' },
+    });
+    const keep = openRooms.find((r) => r.winMode === winMode) ?? null;
+    for (const room of openRooms) {
+      if (keep && room.id === keep.id) continue;
+      await this.cancelRoom(room.id).catch((err) =>
+        this.logger.warn(`Failed to cancel extra ${room.winMode} room ${room.id}`, err),
       );
     }
+    if (keep) return null;
 
     // One game at a time: never OPEN the next room while another is still
     // running. The next room is created only once the current game finishes.
@@ -235,7 +247,12 @@ export class BingoService implements OnModuleInit {
     });
 
     try {
-      await this.bingoRoomRepository.save(room);
+      // Room + its card pool are created atomically, so a room never becomes
+      // visible without its full pre-generated pool of cards.
+      await this.dataSource.transaction(async (manager) => {
+        await manager.save(room);
+        await this.generateCardPoolForRoom(room, manager);
+      });
     } catch (err) {
       // Another creator (concurrent request or separate instance) already holds
       // the active-game slot. Treat as "a room already exists" and back off.
@@ -247,6 +264,33 @@ export class BingoService implements OnModuleInit {
     }
     this.logger.log(`Auto-created Bingo room "${room.name}" (${winMode}) starting at ${scheduledStartAt.toISOString()}`);
     return this.toRoomResponse(room, 0, []);
+  }
+
+  /**
+   * Generate and persist a room's fixed card pool. Prefilled/derash only: the
+   * pool of `gridSize` unique 75-ball cards is created once, atomically with the
+   * room, before any ticket sales. Cartela numbers are 1..N in pool order.
+   */
+  private async generateCardPoolForRoom(room: BingoRoom, manager: EntityManager): Promise<void> {
+    if (room.winMode !== 'prefilled') return;
+    const count = room.gridSize ?? 75;
+    const numberRange = room.numberRange ?? 75;
+    const pool = this.bingoRulesService.generateUniqueCardPool(count, numberRange);
+    const cards = pool.map((c, index) =>
+      manager.create(BingoCard, {
+        roomId: room.id,
+        cartelaNumber: index + 1,
+        grid: c.grid,
+        cardHash: c.hash,
+        assignedTicketId: null,
+        assignedUserId: null,
+      }),
+    );
+    // Insert in chunks so a large pool (e.g. 500) stays within a bounded query size.
+    const CHUNK = 200;
+    for (let i = 0; i < cards.length; i += CHUNK) {
+      await manager.save(cards.slice(i, i + CHUNK));
+    }
   }
 
   private isDuplicateKeyError(err: unknown): boolean {
@@ -316,28 +360,29 @@ export class BingoService implements OnModuleInit {
   }
 
   async findRoomsToStart(): Promise<BingoRoomResponse[]> {
-    const rooms = await this.bingoRoomRepository.find({
+    // One game at a time. Never start another game while one is already running,
+    // and start only the single earliest due room even if several are open.
+    // This is what prevents the "called count reaches 75 then jumps back to 45"
+    // symptom: that happens when two rooms draw concurrently and the client flips
+    // from the finishing game to one that was already mid-draw. Extra open rooms
+    // are cancelled/refunded by autoCreateNextRoom on the same tick.
+    const runningCount = await this.bingoRoomRepository.countBy({ status: 'running' });
+    if (runningCount > 0) return [];
+
+    const room = await this.bingoRoomRepository.findOne({
       where: { status: 'open', scheduledStartAt: LessThanOrEqual(new Date()) },
+      order: { scheduledStartAt: 'ASC' },
     });
-    if (rooms.length === 0) return [];
+    if (!room) return [];
 
-    const roomIds = rooms.map((r) => r.id);
-    const counts = await this.bingoTicketRepository
-      .createQueryBuilder('ticket')
-      .select('ticket.roomId', 'roomId')
-      .addSelect('COUNT(ticket.id)', 'count')
-      .where('ticket.roomId IN (:...roomIds)', { roomIds })
-      .groupBy('ticket.roomId')
-      .getRawMany();
-
-    const countMap = new Map(counts.map((c) => [c.roomId, Number(c.count)]));
-    return rooms.map((room) => this.toRoomResponse(room, countMap.get(room.id) ?? 0));
+    const soldTickets = await this.bingoTicketRepository.countBy({ roomId: room.id });
+    return [this.toRoomResponse(room, soldTickets)];
   }
 
   async createRoom(dto: CreateBingoRoomDto): Promise<BingoRoomResponse> {
     const cfg = await this.getBingoConfig();
     const winMode = (dto.winMode as BingoWinMode) ?? 'prefilled';
-    const gridSize = dto.gridSize ?? cfg.defaultGridSize ?? 200;
+    const gridSize = dto.gridSize ?? cfg.defaultGridSize ?? 75;
 
     const room = this.bingoRoomRepository.create({
       name: dto.name,
@@ -358,7 +403,12 @@ export class BingoService implements OnModuleInit {
       settlementSummary: {},
     });
 
-    await this.bingoRoomRepository.save(room);
+    // Room + its card pool are created atomically (prefilled only) so ticket
+    // sales can never begin before the full pool exists.
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(room);
+      await this.generateCardPoolForRoom(room, manager);
+    });
     return this.toRoomResponse(room, 0, []);
   }
 
@@ -459,7 +509,7 @@ export class BingoService implements OnModuleInit {
 
       // ── Prefilled / derash mode: buy one or more cartela cards ───────────────
       if (room.winMode === 'prefilled') {
-        const gridSize = room.gridSize ?? 200;
+        const gridSize = room.gridSize ?? 75;
         const requested = input.cartelaNumbers ?? [];
         // De-duplicate within the batch, preserving order.
         const cartelaNumbers = [...new Set(requested)];
@@ -471,20 +521,41 @@ export class BingoService implements OnModuleInit {
             throw new BadRequestException(`Cartela number must be between 1 and ${gridSize}`);
           }
         }
-        if (room.soldTickets + cartelaNumbers.length > room.maxTickets) {
+        // Back-compat: a room created before the card-pool architecture has no
+        // pool. Build it once here (the room row is already locked FOR UPDATE, so
+        // this is race-safe) so legacy in-flight rooms keep selling instead of
+        // reporting "full". New rooms always have their pool from creation.
+        const poolSize = await manager.countBy(BingoCard, { roomId });
+        if (poolSize === 0) {
+          await this.generateCardPoolForRoom(room, manager);
+        }
+
+        // Game full: no unassigned cards left in the pool.
+        const availableCards = await manager.countBy(BingoCard, {
+          roomId,
+          assignedTicketId: IsNull(),
+        });
+        if (availableCards === 0) {
+          throw new ConflictException('Bingo room is full — all cards have been assigned');
+        }
+        if (cartelaNumbers.length > availableCards) {
           throw new ConflictException('Not enough cartelas remaining in this room');
         }
 
-        const ballPool = room.numberRange ?? 75;
         const createdTickets: BingoTicket[] = [];
 
         for (const [index, cartelaNumber] of cartelaNumbers.entries()) {
-          // Lock check: is this cartela already taken by anyone?
-          const takenRows = await manager.query(
-            `SELECT id FROM bingo_tickets WHERE roomId = ? AND cartelaNumber = ? AND status != 'cancelled' LIMIT 1`,
-            [roomId, cartelaNumber],
-          );
-          if (takenRows.length > 0) {
+          // Assign — never generate. Lock the pool card for this cartela and
+          // require it to be unassigned. The row lock makes concurrent buys of
+          // the same cartela race-safe (one wins, the other sees it taken).
+          const card = await manager.findOne(BingoCard, {
+            where: { roomId, cartelaNumber },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!card) {
+            throw new BadRequestException(`Cartela #${cartelaNumber} does not exist in this room`);
+          }
+          if (card.assignedTicketId) {
             throw new ConflictException(`Cartela #${cartelaNumber} is already taken`);
           }
 
@@ -492,7 +563,10 @@ export class BingoService implements OnModuleInit {
             userId,
             roomId,
             cartelaNumber,
-            grid: this.bingoRulesService.generatePatternCard(ballPool),
+            cardId: card.id,
+            // Immutable snapshot of the assigned pool card — settlement/winner
+            // logic keeps reading ticket.grid unchanged.
+            grid: card.grid,
             markedNumbers: [],
             completedLines: [],
             wonTiers: [],
@@ -506,6 +580,11 @@ export class BingoService implements OnModuleInit {
           });
 
           await manager.save(ticket);
+
+          // Mark the pool card as assigned so it can never be handed out again.
+          card.assignedTicketId = ticket.id;
+          card.assignedUserId = userId;
+          await manager.save(card);
 
           const walletDebit = await this.walletService.debitInSession(
             {
@@ -680,7 +759,20 @@ export class BingoService implements OnModuleInit {
         const totalPlaces = 1
           + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
           + (cfg.prefilledThirdPlaceEnabled ? 1 : 0);
-        if (room.settledTiers.length >= totalPlaces || room.drawnNumbers.length >= maxNumber) {
+        // End the game as soon as there is nothing left to draw for: all enabled
+        // places filled, the pool is exhausted, OR no still-eligible cartelas
+        // remain. The last case is what stops a game from "continuing to count"
+        // after the winner has been decided — e.g. a single player wins 1st while
+        // 2nd/3rd are enabled but no other cards exist to fill those places.
+        const remainingActive = await manager.countBy(BingoTicket, {
+          roomId: room.id,
+          status: 'active',
+        });
+        if (
+          room.settledTiers.length >= totalPlaces ||
+          remainingActive === 0 ||
+          room.drawnNumbers.length >= maxNumber
+        ) {
           room.status = 'completed';
           await this.markRemainingTicketsLost(room, manager);
         }
@@ -1117,8 +1209,10 @@ export class BingoService implements OnModuleInit {
   }
 
   private async getTakenSpots(roomId: string): Promise<number[]> {
-    const rows: Array<{ cartelaNumber: number | string | null }> = await this.bingoTicketRepository.query(
-      `SELECT cartelaNumber FROM bingo_tickets WHERE roomId = ? AND status != 'cancelled' AND cartelaNumber IS NOT NULL`,
+    // Source of truth is the card pool: a cartela is taken once its card has
+    // been assigned to a ticket.
+    const rows: Array<{ cartelaNumber: number | string | null }> = await this.bingoCardRepository.query(
+      `SELECT cartelaNumber FROM bingo_cards WHERE roomId = ? AND assignedTicketId IS NOT NULL`,
       [roomId],
     );
     return rows
@@ -1158,7 +1252,7 @@ export class BingoService implements OnModuleInit {
       },
       winMode: room.winMode ?? 'prefilled',
       numberRange: room.numberRange ?? 90,
-      gridSize: room.gridSize ?? 200,
+      gridSize: room.gridSize ?? 75,
       patternPrizes: room.patternPrizes ?? [],
       scheduledStartAt: room.scheduledStartAt,
       drawnNumbers: room.drawnNumbers,

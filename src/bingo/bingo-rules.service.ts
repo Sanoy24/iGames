@@ -232,6 +232,53 @@ export class BingoRulesService {
   }
 
   /**
+   * Canonical, order-stable fingerprint of a 5×5 card, used to guarantee every
+   * card in a room's pool is unique. Columns are already generated in ascending
+   * order, so serialising column-major (FREE center as "F") yields the same
+   * string for identical cards and different strings otherwise.
+   */
+  canonicalCardHash(grid: (number | null)[][]): string {
+    const cols = grid[0]?.length ?? 0;
+    const parts: string[] = [];
+    for (let col = 0; col < cols; col++) {
+      const colVals = grid.map((row) => (row[col] === null ? 'F' : String(row[col])));
+      parts.push(colVals.join('-'));
+    }
+    return parts.join('|');
+  }
+
+  /**
+   * Generate a pool of `count` unique 75-ball cards. Regenerates on collision
+   * until `count` distinct cards exist (or a safety cap is hit). Returns cards
+   * paired with their canonical hash; the caller assigns cartela numbers.
+   */
+  generateUniqueCardPool(
+    count: number,
+    numberRange: number,
+  ): Array<{ grid: (number | null)[][]; hash: string }> {
+    const seen = new Set<string>();
+    const pool: Array<{ grid: (number | null)[][]; hash: string }> = [];
+    // Generous cap: collisions are astronomically rare for 75-ball cards, but a
+    // bound prevents an infinite loop if `count` ever exceeds the feasible space.
+    const maxAttempts = count * 50 + 1000;
+    let attempts = 0;
+    while (pool.length < count && attempts < maxAttempts) {
+      attempts += 1;
+      const grid = this.generatePatternCard(numberRange);
+      const hash = this.canonicalCardHash(grid);
+      if (seen.has(hash)) continue;
+      seen.add(hash);
+      pool.push({ grid, hash });
+    }
+    if (pool.length < count) {
+      throw new BadRequestException(
+        `Unable to generate ${count} unique cards for a ${numberRange}-ball pool`,
+      );
+    }
+    return pool;
+  }
+
+  /**
    * Build a 5×5 pattern card seeding it with player-chosen numbers.
    * Numbers not provided (or that fall outside a column's range) are auto-filled.
    * Center cell [2][2] is always FREE.

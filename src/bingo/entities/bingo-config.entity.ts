@@ -49,8 +49,8 @@ export class BingoConfig {
   @Column({ type: 'int', default: 75 })
   defaultNumberRange: number;
 
-  /** Number of spots in the prefilled grid (default 200). */
-  @Column({ type: 'int', default: 200 })
+  /** Number of cartela cards in the prefilled/derash grid (default 75, matching the ball pool). */
+  @Column({ type: 'int', default: 75 })
   defaultGridSize: number;
 
   /** % of prize pool awarded to 1st place in prefilled mode. */

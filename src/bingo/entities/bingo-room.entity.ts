@@ -72,8 +72,8 @@ export class BingoRoom {
   @Column({ type: 'int', default: 90 })
   numberRange: number;
 
-  /** Grid size for prefilled mode — total numbered spots available (e.g. 200). */
-  @Column({ type: 'int', default: 200 })
+  /** Grid size for prefilled mode — total cartela cards available (e.g. 75). */
+  @Column({ type: 'int', default: 75 })
   gridSize: number;
 
   /** Active patterns and their prizes — only relevant when winMode === 'pattern'. */

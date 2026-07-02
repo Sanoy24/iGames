@@ -584,6 +584,15 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
   const prizeMinor = (winEntry?.prizeMinor as number | undefined) ?? room.prizeMinor;
   const winnerTicket = iWon ? myTickets.find((t) => t.payoutMinor > 0) ?? null : null;
 
+  // Did anyone actually win, and were there any players at all? A round can end
+  // with no winner (nobody completed the pattern) or with no players (empty room).
+  // In those cases we must NOT render a fabricated winner.
+  const hasPlayers = room.soldTickets > 0;
+  const hasWinner =
+    !!winEntry ||
+    Object.values(room.winnersByTier ?? {}).some((ids) => Array.isArray(ids) && ids.length > 0);
+  const noWinReason = !hasPlayers ? 'No players — no win this round' : 'No winner this round';
+
   const progressPct = Math.max(0, Math.min(100, (resultSecs / totalDisplaySecs) * 100));
 
   // ── Derash / prefilled: image-style result shown to everyone in the room ──
@@ -614,19 +623,31 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
         >
           {/* Header panel */}
           <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(20,60,60,0.55)' }}>
-            <div className="text-4xl font-black tracking-[0.12em] mb-2" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
-              BINGO!
-            </div>
-            <p className="text-slate-100 text-base font-bold flex items-center justify-center gap-2 flex-wrap">
-              <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
-                {winnerDisplayName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
-              </span>
-              <span>{iWon ? 'you won the game' : 'has won the game'}</span>
-            </p>
+            {hasWinner ? (
+              <>
+                <div className="text-4xl font-black tracking-[0.12em] mb-2" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
+                  BINGO!
+                </div>
+                <p className="text-slate-100 text-base font-bold flex items-center justify-center gap-2 flex-wrap">
+                  <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
+                    {winnerDisplayName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
+                  </span>
+                  <span>{iWon ? 'you won the game' : 'has won the game'}</span>
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="text-3xl font-black tracking-[0.1em] mb-2" style={{ color: '#fbbf24', textShadow: '0 0 22px rgba(251,191,36,0.5)' }}>
+                  NO WIN
+                </div>
+                <p className="text-slate-200 text-sm font-bold">{noWinReason}</p>
+              </>
+            )}
           </div>
 
-          {/* Winner card — purple outer frame + amber inner frame */}
-          {winnerGrid ? (
+          {/* Winner card — purple outer frame + amber inner frame. Only when a
+              cartela actually won; a no-win round shows no prize/card. */}
+          {hasWinner && (winnerGrid ? (
             <div className="rounded-2xl p-2" style={{ background: 'rgba(20,60,60,0.4)', border: '3px solid rgba(167,139,250,0.6)' }}>
               <div className="rounded-xl p-2" style={{ border: '3px solid rgba(245,158,11,0.85)' }}>
                 <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
@@ -642,7 +663,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
               <span className="text-3xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(prizeMinor)} ETB</span>
               {winnerCartela != null && <span className="block text-[13px] font-black text-slate-200 mt-1">Card# {winnerCartela}</span>}
             </div>
-          )}
+          ))}
 
           {/* Countdown bar */}
           <div className="rounded-2xl py-3 px-4" style={{ background: 'rgba(20,60,60,0.55)' }}>
@@ -701,11 +722,16 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
                 : '0 0 20px rgba(248,113,113,0.7), 0 2px 0 rgba(0,0,0,0.6)',
             }}
           >
-            {iWon ? '🏆 You Won!' : 'BINGO!'}
+            {iWon ? '🏆 You Won!' : hasWinner ? 'BINGO!' : 'NO WIN'}
           </div>
           <p className="text-slate-300 text-sm">
-            <span className="font-bold text-white">{winnerDisplayName}</span>{' '}
-            {iWon ? '— that\'s you!' : 'wins the full house'}
+            {iWon ? (
+              <><span className="font-bold text-white">{winnerDisplayName}</span> — that&apos;s you!</>
+            ) : hasWinner ? (
+              <><span className="font-bold text-white">{winnerDisplayName}</span> wins the full house</>
+            ) : (
+              noWinReason
+            )}
           </p>
         </div>
 
@@ -749,8 +775,8 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           </div>
         )}
 
-        {/* Prize pill when I didn't win */}
-        {!iWon && prizeMinor > 0 && (
+        {/* Prize pill when I didn't win (only when someone actually won) */}
+        {!iWon && hasWinner && prizeMinor > 0 && (
           <div className="relative z-10 flex justify-center pb-4 px-5">
             <div
               className="rounded-2xl border px-6 py-3 text-center"
@@ -1042,7 +1068,7 @@ export function Bingo({ onBack }: BingoProps) {
   const ballCount        = (isPatternMode || isPrefilledMode) ? (room?.numberRange ?? 75) : 90;
   // Prefilled cards are 75-ball 5×5, so the board uses the B/I/N/G/O layout.
   const boardBingoStyle  = isPatternMode || isPrefilledMode;
-  const gridSize         = room?.gridSize ?? 200;
+  const gridSize         = room?.gridSize ?? 75;
   const drawnNumbers     = room?.drawnNumbers ?? [];
   const takenSet         = useMemo(() => new Set(room?.takenSpots ?? []), [room?.takenSpots]);
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;

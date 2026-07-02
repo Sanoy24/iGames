@@ -43,6 +43,14 @@ export class BingoTicket {
   @Column({ type: 'int', nullable: true })
   cartelaNumber?: number | null;
 
+  /**
+   * Prefilled/derash mode: the pre-generated pool card assigned to this ticket.
+   * `grid` above holds an immutable snapshot of that card at assignment time, so
+   * settlement/winner logic keeps reading `grid` unchanged. Null for line/pattern.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  cardId?: string | null;
+
   @Column({ type: 'json' })
   markedNumbers: number[];
 

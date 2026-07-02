@@ -523,15 +523,15 @@ function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
   }
 
   return (
-    <div className="rounded-xl p-2.5" style={{ background: 'linear-gradient(150deg,#cdd2d8 0%,#d6cbbe 60%,#e6c9a8 100%)' }}>
-      <div className="grid grid-cols-5 gap-1.5 mb-1.5">
+    <div className="rounded-lg p-2" style={{ background: 'linear-gradient(150deg,#cdd2d8 0%,#d6cbbe 60%,#e6c9a8 100%)' }}>
+      <div className="grid grid-cols-5 gap-1 mb-1">
         {WIN_HEADER.map((h) => (
-          <div key={h.letter} className="h-9 rounded-full flex items-center justify-center text-white font-black text-xl" style={{ background: h.color }}>
+          <div key={h.letter} className="h-7 rounded-full flex items-center justify-center text-white font-black text-base" style={{ background: h.color }}>
             {h.letter}
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-5 gap-1.5">
+      <div className="grid grid-cols-5 gap-1">
         {grid.map((row, r) =>
           row.map((cell, c) => {
             const isFree = cell === null;
@@ -545,12 +545,12 @@ function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
             return (
               <div
                 key={`${r}-${c}`}
-                className="aspect-square rounded-lg flex items-center justify-center font-black font-mono"
+                className="aspect-square rounded-md flex items-center justify-center font-black font-mono"
                 style={{
                   background: bg,
                   color,
-                  fontSize: isLast ? 22 : 15,
-                  boxShadow: isLast ? '0 0 0 3px #f59e0b' : '0 1px 2px rgba(0,0,0,0.15)',
+                  fontSize: isLast ? 17 : 13,
+                  boxShadow: isLast ? '0 0 0 2px #f59e0b' : '0 1px 2px rgba(0,0,0,0.15)',
                 }}
               >
                 {isFree ? 'F' : cell}
@@ -614,21 +614,21 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           exit={{ scale: 0.88, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 280, damping: 20 }}
           onClick={(e) => e.stopPropagation()}
-          className="relative max-w-sm w-full mx-4 rounded-3xl p-4 space-y-4"
+          className="relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5"
           style={{
             background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
-            border: '3px solid rgba(167,139,250,0.7)',
+            border: '2px solid rgba(167,139,250,0.7)',
             boxShadow: '0 0 34px rgba(167,139,250,0.45)',
           }}
         >
           {/* Header panel */}
-          <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(20,60,60,0.55)' }}>
+          <div className="rounded-xl py-2.5 px-4 text-center" style={{ background: 'rgba(20,60,60,0.55)' }}>
             {hasWinner ? (
               <>
-                <div className="text-4xl font-black tracking-[0.12em] mb-2" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
+                <div className="text-2xl font-black tracking-[0.12em] mb-1" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
                   BINGO!
                 </div>
-                <p className="text-slate-100 text-base font-bold flex items-center justify-center gap-2 flex-wrap">
+                <p className="text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap">
                   <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
                     {winnerDisplayName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
                   </span>
@@ -648,29 +648,29 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           {/* Winner card — purple outer frame + amber inner frame. Only when a
               cartela actually won; a no-win round shows no prize/card. */}
           {hasWinner && (winnerGrid ? (
-            <div className="rounded-2xl p-2" style={{ background: 'rgba(20,60,60,0.4)', border: '3px solid rgba(167,139,250,0.6)' }}>
-              <div className="rounded-xl p-2" style={{ border: '3px solid rgba(245,158,11,0.85)' }}>
+            <div className="rounded-xl p-1.5" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(167,139,250,0.6)' }}>
+              <div className="rounded-lg p-1.5" style={{ border: '2px solid rgba(245,158,11,0.85)' }}>
                 <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
-                <div className="flex items-center justify-between px-1 pt-2">
-                  <span className="text-[15px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
-                  {winnerCartela != null && <span className="text-[15px] font-black text-slate-100">Card# {winnerCartela}</span>}
+                <div className="flex items-center justify-between px-1 pt-1.5">
+                  <span className="text-[13px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
+                  {winnerCartela != null && <span className="text-[13px] font-black text-slate-100">Card# {winnerCartela}</span>}
                 </div>
               </div>
             </div>
           ) : (
-            <div className="rounded-2xl py-4 px-5 text-center" style={{ background: 'rgba(20,60,60,0.4)', border: '3px solid rgba(245,158,11,0.55)' }}>
+            <div className="rounded-xl py-3 px-4 text-center" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(245,158,11,0.55)' }}>
               <span className="block text-[10px] font-black uppercase tracking-widest text-emerald-300/70 mb-1">Prize won</span>
-              <span className="text-3xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(prizeMinor)} ETB</span>
+              <span className="text-2xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(prizeMinor)} ETB</span>
               {winnerCartela != null && <span className="block text-[13px] font-black text-slate-200 mt-1">Card# {winnerCartela}</span>}
             </div>
           ))}
 
           {/* Countdown bar */}
-          <div className="rounded-2xl py-3 px-4" style={{ background: 'rgba(20,60,60,0.55)' }}>
-            <div className="flex justify-center items-center mb-1.5">
-              <span className="font-mono font-black text-2xl text-red-500">{resultSecs}s</span>
+          <div className="rounded-xl py-2 px-4" style={{ background: 'rgba(20,60,60,0.55)' }}>
+            <div className="flex justify-center items-center mb-1">
+              <span className="font-mono font-black text-xl text-red-500">{resultSecs}s</span>
             </div>
-            <div className="h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}>
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}>
               <motion.div
                 className="h-full rounded-full"
                 style={{ background: 'linear-gradient(90deg,#34d399,#10b981)' }}
@@ -1158,9 +1158,12 @@ export function Bingo({ onBack }: BingoProps) {
   // ── RENDER ───────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-2xl mx-auto pb-20 space-y-3">
-      {/* Room result overlay */}
+      {/* Room result overlay — gated on the timed `holdingResult` flag, not the
+          derived phase. A completed room's phase stays 'result' until the next
+          room loads, so gating on phase left the dialog stuck open after the
+          countdown hit 0. holdingResult flips false exactly when the timer ends. */}
       <AnimatePresence>
-        {phase === 'result' && room && room.status === 'completed' && (
+        {holdingResult && room && room.status === 'completed' && (
           <RoomResultOverlay
             room={room}
             myTickets={myTickets}

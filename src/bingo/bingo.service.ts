@@ -232,6 +232,15 @@ export class BingoService implements OnModuleInit {
     const kept = await this.reconcileActiveRooms(cfg);
     if (kept) return null;
 
+    // No active room exists, so the single "active game" slot must be free. If a
+    // completed/cancelled room leaked its activeGuard (never got cleared), the
+    // unique index would reject the next INSERT and the game would stop restarting
+    // after a win — exactly the "no new round after the result dialog" symptom.
+    // Release any leaked slot before claiming it below.
+    await this.bingoRoomRepository.query(
+      `UPDATE bingo_rooms SET activeGuard = NULL WHERE activeGuard IS NOT NULL AND status IN ('completed','cancelled')`,
+    );
+
     const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
     const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);
     const scheduledStartAt = new Date(Date.now() + delayMs);

@@ -43,11 +43,35 @@ export class BingoConfig {
   @Column({ type: 'int', default: 10 })
   resultDisplaySeconds: number;
 
-  @Column({ type: 'varchar', length: 10, default: 'line' })
+  @Column({ type: 'varchar', length: 10, default: 'prefilled' })
   defaultWinMode: string;
 
   @Column({ type: 'int', default: 75 })
   defaultNumberRange: number;
+
+  /** Number of spots in the prefilled grid (default 200). */
+  @Column({ type: 'int', default: 200 })
+  defaultGridSize: number;
+
+  /** % of prize pool awarded to 1st place in prefilled mode. */
+  @Column({ type: 'int', default: 80 })
+  prefilledFirstPlacePct: number;
+
+  /** Enable 2nd place prize in prefilled mode. */
+  @Column({ type: 'boolean', default: false })
+  prefilledSecondPlaceEnabled: boolean;
+
+  /** % of prize pool awarded to 2nd place (only when enabled). */
+  @Column({ type: 'int', default: 0 })
+  prefilledSecondPlacePct: number;
+
+  /** Enable 3rd place prize in prefilled mode. */
+  @Column({ type: 'boolean', default: false })
+  prefilledThirdPlaceEnabled: boolean;
+
+  /** % of prize pool awarded to 3rd place (only when enabled). */
+  @Column({ type: 'int', default: 0 })
+  prefilledThirdPlacePct: number;
 
   /** Minimum balls drawn before any prize tier can be settled (0 = immediate). */
   @Column({ type: 'int', default: 0 })

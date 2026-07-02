@@ -31,11 +31,14 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0)
   resultDisplaySeconds?: number;
 
-  @IsOptional() @IsIn(['line', 'pattern'])
+  @IsOptional() @IsIn(['line', 'pattern', 'prefilled'])
   defaultWinMode?: string;
 
   @IsOptional() @IsInt() @Min(10)
   defaultNumberRange?: number;
+
+  @IsOptional() @IsInt() @Min(10)
+  defaultGridSize?: number;
 
   @IsOptional() @IsInt() @Min(0)
   minDrawsBeforeWin?: number;
@@ -48,4 +51,19 @@ export class UpdateBingoConfigDto {
 
   @IsOptional() @IsInt() @Min(0)
   globalBingoBotWinInterval?: number;
+
+  @IsOptional() @IsInt() @Min(1) @Max(100)
+  prefilledFirstPlacePct?: number;
+
+  @IsOptional() @IsBoolean()
+  prefilledSecondPlaceEnabled?: boolean;
+
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  prefilledSecondPlacePct?: number;
+
+  @IsOptional() @IsBoolean()
+  prefilledThirdPlaceEnabled?: boolean;
+
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  prefilledThirdPlacePct?: number;
 }

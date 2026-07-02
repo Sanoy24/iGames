@@ -48,13 +48,18 @@ export class CreateBingoRoomDto {
   scheduledStartAt?: string;
 
   @IsOptional()
-  @IsIn(['line', 'pattern'])
+  @IsIn(['line', 'pattern', 'prefilled'])
   winMode?: string;
 
   @IsOptional()
   @IsInt()
   @Min(10)
   numberRange?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(10)
+  gridSize?: number;
 
   @IsOptional()
   @IsArray()

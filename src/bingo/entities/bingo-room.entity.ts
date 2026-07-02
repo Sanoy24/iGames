@@ -1,8 +1,8 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
 export type BingoRoomStatus = 'open' | 'running' | 'completed' | 'cancelled';
-export type BingoPrizeTier = 'one_line' | 'two_lines' | 'full_house';
-export type BingoWinMode = 'line' | 'pattern';
+export type BingoPrizeTier = 'one_line' | 'two_lines' | 'full_house' | '1st' | '2nd' | '3rd';
+export type BingoWinMode = 'line' | 'pattern' | 'prefilled';
 
 export class BingoPrizeConfig {
   oneLineMinor: number;
@@ -64,13 +64,17 @@ export class BingoRoom {
   @Column({ type: 'json', nullable: true })
   settlementSummary?: Record<string, unknown>;
 
-  /** 'line' = 90-ball 3×9 with one/two/full_house tiers. 'pattern' = 5×5 pattern card. */
-  @Column({ type: 'varchar', length: 10, default: 'line' })
+  /** 'line' = 90-ball 3×9, 'pattern' = 5×5 pattern card, 'prefilled' = numbered grid lottery. */
+  @Column({ type: 'varchar', length: 10, default: 'prefilled' })
   winMode: BingoWinMode;
 
-  /** Number pool size for this room (90 for line mode, configurable for pattern mode). */
+  /** Number pool size for this room (90 for line mode, configurable for pattern/prefilled mode). */
   @Column({ type: 'int', default: 90 })
   numberRange: number;
+
+  /** Grid size for prefilled mode — total numbered spots available (e.g. 200). */
+  @Column({ type: 'int', default: 200 })
+  gridSize: number;
 
   /** Active patterns and their prizes — only relevant when winMode === 'pattern'. */
   @Column({ type: 'json', default: '[]' })

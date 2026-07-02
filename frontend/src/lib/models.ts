@@ -135,8 +135,9 @@ export type BingoRoom = {
   maxTickets: number;
   soldTickets: number;
   prizes: Record<string, number>;
-  winMode: 'line' | 'pattern';
+  winMode: 'line' | 'pattern' | 'prefilled';
   numberRange: number;
+  gridSize: number;
   patternPrizes: BingoPatternPrize[];
   scheduledStartAt: string;
   drawnNumbers: number[];
@@ -145,6 +146,8 @@ export type BingoRoom = {
   settlementSummary: Record<string, unknown>;
   houseEdgePct: number;
   prizeMinor: number;
+  takenSpots?: number[];
+  resultDisplaySeconds?: number;
 };
 
 export type BingoTicket = {
@@ -180,10 +183,16 @@ export type BingoConfig = {
   resultDisplaySeconds?: number;
   defaultWinMode?: string;
   defaultNumberRange?: number;
+  defaultGridSize?: number;
   minDrawsBeforeWin?: number;
   minTicketsToStart?: number;
   houseEdgePct?: number;
   globalBingoBotWinInterval?: number;
+  prefilledFirstPlacePct?: number;
+  prefilledSecondPlaceEnabled?: boolean;
+  prefilledSecondPlacePct?: number;
+  prefilledThirdPlaceEnabled?: boolean;
+  prefilledThirdPlacePct?: number;
   createdAt?: string;
   updatedAt?: string;
 };

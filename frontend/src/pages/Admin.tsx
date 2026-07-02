@@ -845,9 +845,18 @@ function ConfigAdmin() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const toFormValues = (c: SystemConfig) => ({
+    telebirrCreditMinorPerBirr: c.telebirrCreditMinorPerBirr,
+    welcomeBonusMinor: c.welcomeBonusMinor,
+    withdrawalServiceChargePct: c.withdrawalServiceChargePct,
+    withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
+    withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
+    maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
+  });
+
   useEffect(() => {
     adminApi.getConfig()
-      .then((c) => { setConfig(c); setForm(c); })
+      .then((c) => { setConfig(c); setForm(toFormValues(c)); })
       .catch((e) => addToast('error', getErrorMessage(e)))
       .finally(() => setLoading(false));
   }, [addToast]);
@@ -856,7 +865,7 @@ function ConfigAdmin() {
     setSaving(true);
     try {
       const updated = await adminApi.updateConfig(form);
-      setConfig(updated); setForm(updated);
+      setConfig(updated); setForm(toFormValues(updated));
       addToast('success', 'Configuration saved.');
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setSaving(false); }
@@ -1351,12 +1360,18 @@ function BingoAdmin() {
     drawIntervalSeconds: 2,
     salesWindowSeconds: 40,
     resultDisplaySeconds: 10,
-    defaultWinMode: 'line',
+    defaultWinMode: 'prefilled',
     defaultNumberRange: 75,
+    defaultGridSize: 200,
     minDrawsBeforeWin: 0,
     minTicketsToStart: 0,
     houseEdgePct: 20,
     globalBingoBotWinInterval: 0,
+    prefilledFirstPlacePct: 80,
+    prefilledSecondPlaceEnabled: false,
+    prefilledSecondPlacePct: 0,
+    prefilledThirdPlaceEnabled: false,
+    prefilledThirdPlacePct: 0,
   });
 
   const load = useCallback(async () => {
@@ -1381,12 +1396,18 @@ function BingoAdmin() {
         drawIntervalSeconds: c.drawIntervalSeconds,
         salesWindowSeconds: c.salesWindowSeconds ?? 40,
         resultDisplaySeconds: c.resultDisplaySeconds ?? 10,
-        defaultWinMode: c.defaultWinMode ?? 'line',
+        defaultWinMode: c.defaultWinMode ?? 'prefilled',
         defaultNumberRange: c.defaultNumberRange ?? 75,
+        defaultGridSize: c.defaultGridSize ?? 200,
         minDrawsBeforeWin: c.minDrawsBeforeWin ?? 0,
         minTicketsToStart: c.minTicketsToStart ?? 0,
         houseEdgePct: c.houseEdgePct ?? 20,
         globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
+        prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
+        prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
+        prefilledSecondPlacePct: c.prefilledSecondPlacePct ?? 0,
+        prefilledThirdPlaceEnabled: c.prefilledThirdPlaceEnabled ?? false,
+        prefilledThirdPlacePct: c.prefilledThirdPlacePct ?? 0,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -1554,12 +1575,19 @@ function BingoAdmin() {
               <span>Default Win Mode</span>
               <select
                 className="input"
-                value={cfgForm.defaultWinMode ?? 'line'}
+                value={cfgForm.defaultWinMode ?? 'prefilled'}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultWinMode: e.target.value }))}
               >
+                <option value="prefilled">Prefilled / Derash (numbered grid)</option>
                 <option value="line">Line (90-ball 3×9 card)</option>
                 <option value="pattern">Pattern (5×5 BINGO card)</option>
               </select>
+            </label>
+            <label className="adm-field">
+              <span>Prefilled Grid Size (number of spots)</span>
+              <input className="input" type="number" min={10} max={1000} value={cfgForm.defaultGridSize ?? 200}
+                onChange={(e) => setCfgForm((f) => ({ ...f, defaultGridSize: Number(e.target.value) }))} />
+              <span className="adm-field-hint">How many numbered spots appear in the Derash grid (e.g. 200).</span>
             </label>
             <label className="adm-field">
               <span>Default Number Range (pattern mode)</span>
@@ -1638,6 +1666,50 @@ function BingoAdmin() {
               <input className="input" type="number" min={0} value={cfgForm.globalBingoBotWinInterval ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, globalBingoBotWinInterval: Number(e.target.value) }))} />
               <span className="adm-field-hint">After every N completed rooms a random active bot receives a bonus credit. Creates visible bot activity on the wins ticker.</span>
+            </label>
+          </div>
+
+          <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>1st Place Prize (% of pot after house edge)</span>
+              <input className="input" type="number" min={1} max={100} value={cfgForm.prefilledFirstPlacePct ?? 80}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPlacePct: Math.min(100, Number(e.target.value)) }))} />
+              <span className="adm-field-hint">The first drawn number that has an owner wins this % of the prize pool.</span>
+            </label>
+            <label className="adm-field">
+              <span>2nd Place Enabled</span>
+              <select
+                className="input"
+                value={cfgForm.prefilledSecondPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlaceEnabled: e.target.value === 'true' }))}
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>2nd Place Prize (% of pot)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledSecondPlacePct ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlacePct: Math.min(100, Number(e.target.value)) }))}
+                disabled={!cfgForm.prefilledSecondPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>3rd Place Enabled</span>
+              <select
+                className="input"
+                value={cfgForm.prefilledThirdPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlaceEnabled: e.target.value === 'true' }))}
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>3rd Place Prize (% of pot)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledThirdPlacePct ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlacePct: Math.min(100, Number(e.target.value)) }))}
+                disabled={!cfgForm.prefilledThirdPlaceEnabled} />
             </label>
           </div>
 

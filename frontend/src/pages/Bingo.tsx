@@ -21,6 +21,25 @@ type BingoProps = { onBack: () => void };
 const RESULT_DISPLAY_MS = 10_000;
 const POLL_INTERVAL_MS = 5_000;
 
+// 10 cycling colors for the prefilled number grid
+const CYCLE_COLORS = [
+  { color: '#f87171', glow: 'rgba(248,113,113,0.5)', bg: 'rgba(248,113,113,0.08)' },
+  { color: '#60a5fa', glow: 'rgba(96,165,250,0.5)',  bg: 'rgba(96,165,250,0.08)'  },
+  { color: '#4ade80', glow: 'rgba(74,222,128,0.5)',  bg: 'rgba(74,222,128,0.08)'  },
+  { color: '#c084fc', glow: 'rgba(192,132,252,0.5)', bg: 'rgba(192,132,252,0.08)' },
+  { color: '#38bdf8', glow: 'rgba(56,189,248,0.5)',  bg: 'rgba(56,189,248,0.08)'  },
+  { color: '#fb923c', glow: 'rgba(251,146,60,0.5)',  bg: 'rgba(251,146,60,0.08)'  },
+  { color: '#f472b6', glow: 'rgba(244,114,182,0.5)', bg: 'rgba(244,114,182,0.08)' },
+  { color: '#2dd4bf', glow: 'rgba(45,212,191,0.5)',  bg: 'rgba(45,212,191,0.08)'  },
+  { color: '#fbbf24', glow: 'rgba(251,191,36,0.5)',  bg: 'rgba(251,191,36,0.08)'  },
+  { color: '#a78bfa', glow: 'rgba(167,139,250,0.5)', bg: 'rgba(167,139,250,0.08)' },
+];
+
+function getPrefilledStyle(n: number, gridSize: number) {
+  const groupSize = Math.max(1, Math.ceil(gridSize / CYCLE_COLORS.length));
+  return CYCLE_COLORS[Math.floor((n - 1) / groupSize) % CYCLE_COLORS.length];
+}
+
 // ─── Group definitions ────────────────────────────────────────────────────────
 
 // 75-ball: B/I/N/G/O columns — each is a distinct accent
@@ -155,6 +174,78 @@ const NumberCell = memo(({ n, called, style }: {
   </motion.div>
 ));
 NumberCell.displayName = 'NumberCell';
+
+// ─── Prefilled Grid ───────────────────────────────────────────────────────────
+// Shows all N numbered spots. Click an available spot to buy it instantly.
+
+const PrefilledGrid = memo(({
+  gridSize, takenSet, mySpotSet, drawnSet, salesOpen, buyingSpot, onBuy,
+}: {
+  gridSize: number;
+  takenSet: Set<number>;
+  mySpotSet: Set<number>;
+  drawnSet: Set<number>;
+  salesOpen: boolean;
+  buyingSpot: number | null;
+  onBuy: (n: number) => void;
+}) => {
+  const cols = 10;
+  const nums = useMemo(() => Array.from({ length: gridSize }, (_, i) => i + 1), [gridSize]);
+
+  return (
+    <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+      {nums.map((n) => {
+        const drawn = drawnSet.has(n);
+        const mine  = mySpotSet.has(n);
+        const taken = takenSet.has(n);
+        const isBuying = buyingSpot === n;
+        const s = getPrefilledStyle(n, gridSize);
+
+        let cellStyle: React.CSSProperties;
+        let textStyle: React.CSSProperties = {};
+
+        if (drawn && mine) {
+          cellStyle = { background: `linear-gradient(135deg,${s.color}ee,${s.color}aa)`, border: `1.5px solid ${s.color}`, boxShadow: `0 0 6px ${s.glow}` };
+          textStyle = { color: '#fff', fontWeight: 900 };
+        } else if (drawn) {
+          cellStyle = { background: `linear-gradient(135deg,${s.color}55,${s.color}33)` };
+          textStyle = { color: 'rgba(255,255,255,0.85)' };
+        } else if (mine) {
+          cellStyle = { background: 'rgba(251,191,36,0.12)', border: '1.5px solid rgba(251,191,36,0.55)' };
+          textStyle = { color: '#fbbf24', fontWeight: 900 };
+        } else if (taken) {
+          cellStyle = { background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)' };
+          textStyle = { color: 'rgba(255,255,255,0.10)' };
+        } else {
+          cellStyle = { background: s.bg, border: `1px solid ${s.color}22` };
+          textStyle = { color: s.color };
+        }
+
+        const canBuy = !taken && salesOpen && !isBuying;
+
+        return (
+          <motion.button
+            key={n}
+            animate={drawn ? { scale: [1, 1.2, 1] } : {}}
+            transition={{ duration: 0.22, ease: 'backOut' }}
+            disabled={taken || isBuying || !salesOpen}
+            onClick={() => canBuy && onBuy(n)}
+            className="aspect-square rounded-[2px] flex items-center justify-center text-[7px] font-bold font-mono select-none transition-all duration-75"
+            style={{
+              ...cellStyle,
+              ...textStyle,
+              cursor: canBuy ? 'pointer' : 'default',
+              minWidth: 0,
+            }}
+          >
+            {isBuying ? '·' : n}
+          </motion.button>
+        );
+      })}
+    </div>
+  );
+});
+PrefilledGrid.displayName = 'PrefilledGrid';
 
 // ─── Recent-calls strip ───────────────────────────────────────────────────────
 // Horizontal scrolling pill strip showing the last N drawn numbers.
@@ -400,6 +491,46 @@ const BingoTicketCard = memo(({ ticket, patternPrizeMap }: {
 });
 BingoTicketCard.displayName = 'BingoTicketCard';
 
+// ─── Prefilled My Spots ───────────────────────────────────────────────────────
+// Shows the player's owned spots as chips with drawn/won state.
+
+function PrefilledMySpots({ myTickets, drawnSet }: {
+  myTickets: BingoTicket[];
+  drawnSet: Set<number>;
+}) {
+  if (myTickets.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Spots</h3>
+      <div className="card p-3">
+        <div className="flex flex-wrap gap-2">
+          {myTickets.map((ticket) => {
+            const n = (ticket.grid as Array<Array<number | null>>)[0]?.[0];
+            if (n == null) return null;
+            const drawn = drawnSet.has(n);
+            const won   = ticket.payoutMinor > 0;
+            return (
+              <div
+                key={ticket.id}
+                className={`rounded-xl border px-3 py-2 flex flex-col items-center gap-0.5 min-w-[56px] ${
+                  won  ? 'bg-gradient-to-br from-amber-950/30 to-black/40 border-amber-500/40'
+                  : drawn ? 'bg-red-950/20 border-red-500/30'
+                  : 'bg-white/[0.025] border-white/[0.06]'
+                }`}
+              >
+                <span className={`text-xl font-black font-mono leading-none ${won ? 'text-amber-400' : drawn ? 'text-red-400' : 'text-white'}`}>{n}</span>
+                <span className={`text-[8px] font-black uppercase ${won ? 'text-amber-500' : drawn ? 'text-red-500/70' : 'text-slate-600'}`}>
+                  {won ? `+${formatCredits(ticket.payoutMinor)}` : drawn ? 'Drawn' : 'Active'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Room Result Overlay ──────────────────────────────────────────────────────
 
 function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onClose }: {
@@ -411,11 +542,14 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
 }) {
   const totalWin = myTickets.reduce((s, t) => s + t.payoutMinor, 0);
   const iWon = totalWin > 0;
+  const isPrefilledMode = room.winMode === 'prefilled';
 
   const summary = room.settlementSummary ?? {};
-  const fullHouse = summary.full_house as Record<string, unknown> | undefined;
-  const winnerDisplayName = (fullHouse?.winnerDisplayName as string | undefined) ?? 'A lucky player';
-  const prizeMinor = (fullHouse?.prizeMinor as number | undefined) ?? room.prizeMinor;
+  const winEntry = isPrefilledMode
+    ? (summary['1st'] as Record<string, unknown> | undefined)
+    : (summary.full_house as Record<string, unknown> | undefined);
+  const winnerDisplayName = (winEntry?.winnerDisplayName as string | undefined) ?? 'A lucky player';
+  const prizeMinor = (winEntry?.prizeMinor as number | undefined) ?? room.prizeMinor;
   const winnerTicket = iWon ? myTickets.find((t) => t.payoutMinor > 0) ?? null : null;
 
   const progressPct = Math.max(0, Math.min(100, (resultSecs / totalDisplaySecs) * 100));
@@ -458,16 +592,30 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
                 : '0 0 20px rgba(248,113,113,0.7), 0 2px 0 rgba(0,0,0,0.6)',
             }}
           >
-            {iWon ? '🏆 You Won!' : 'BINGO!'}
+            {iWon ? '🏆 You Won!' : isPrefilledMode ? 'WINNER!' : 'BINGO!'}
           </div>
           <p className="text-slate-300 text-sm">
             <span className="font-bold text-white">{winnerDisplayName}</span>{' '}
-            {iWon ? '— that\'s you!' : 'wins the full house'}
+            {iWon ? '— that\'s you!' : isPrefilledMode ? 'wins 1st place!' : 'wins the full house'}
           </p>
         </div>
 
+        {/* Winner spot (if I won, prefilled mode) */}
+        {iWon && winnerTicket && isPrefilledMode && (
+          <div className="relative z-10 flex justify-center px-5 pb-3">
+            <div className="rounded-2xl border px-8 py-4 text-center"
+              style={{ background: 'rgba(251,191,36,0.07)', borderColor: 'rgba(251,191,36,0.25)' }}>
+              <span className="block text-[9px] font-black uppercase tracking-widest text-amber-400/60 mb-1">Your winning spot</span>
+              <span className="text-5xl font-black text-amber-400 font-mono leading-none">
+                {(winnerTicket.grid as Array<Array<number | null>>)[0]?.[0]}
+              </span>
+              <span className="block text-[10px] font-black text-amber-500 mt-1">+{formatCreditsFull(winnerTicket.payoutMinor)} ETB</span>
+            </div>
+          </div>
+        )}
+
         {/* Winner ticket (if I won, 90-ball) */}
-        {iWon && winnerTicket && !isPatternGrid(winnerTicket.grid) && (
+        {iWon && winnerTicket && !isPrefilledMode && !isPatternGrid(winnerTicket.grid) && (
           <div className="relative z-10 px-5 pb-3">
             <div
               className="rounded-2xl border p-3"
@@ -556,6 +704,7 @@ export function Bingo({ onBack }: BingoProps) {
   const [loading, setLoading]             = useState(true);
   const [holdingResult, setHoldingResult] = useState(false);
   const [buying, setBuying]               = useState(false);
+  const [buyingSpot, setBuyingSpot]       = useState<number | null>(null);
   const [localTickets, setLocalTickets]   = useState<BingoTicket[]>([]);
   const localRoomIdRef                    = useRef<string | null>(null);
   const [showChat, setShowChat]           = useState(false);
@@ -789,11 +938,14 @@ export function Bingo({ onBack }: BingoProps) {
     () => new Map((room?.patternPrizes ?? []).map((pp) => [pp.patternId, pp.name])),
     [room],
   );
-  // winMode is the source of truth: 'pattern' = 75-ball (BINGO board, draws 1–75),
-  // 'line' = 90-ball (draws 1–90, regardless of the room's numberRange field).
+  // winMode is the source of truth for which board to show.
   const isPatternMode    = room?.winMode === 'pattern';
+  const isPrefilledMode  = room?.winMode === 'prefilled';
   const ballCount        = isPatternMode ? (room?.numberRange ?? 75) : 90;
+  const gridSize         = room?.gridSize ?? 200;
   const drawnNumbers     = room?.drawnNumbers ?? [];
+  const drawnSet         = useMemo(() => new Set(drawnNumbers), [drawnNumbers]);
+  const takenSet         = useMemo(() => new Set(room?.takenSpots ?? []), [room?.takenSpots]);
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
   const salesOpen        = room?.status === 'open';
 
@@ -830,6 +982,28 @@ export function Bingo({ onBack }: BingoProps) {
       setBuying(false);
     }
   };
+
+  const buySpot = useCallback(async (n: number) => {
+    if (!room || room.status !== 'open') return;
+    if (!currentUser) { addToast('error', 'Log in to buy spots'); return; }
+    setBuyingSpot(n);
+    try {
+      const bought = await bingoApi.purchaseSpot(room.id, n, createIdempotencyKey(`bingo-spot-${n}`));
+      localRoomIdRef.current = room.id;
+      setLocalTickets((prev) => [...prev, ...bought]);
+      const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
+      setWallet(nextWallet);
+      soundEngine.cashout();
+      addToast('success', `Spot #${n} purchased!`);
+    } catch (err) {
+      const msg = getErrorMessage(err);
+      if (msg.toLowerCase().includes('taken')) addToast('error', 'Spot already taken — pick another');
+      else if (msg.toLowerCase().includes('balance') || msg.toLowerCase().includes('insufficient') || msg.toLowerCase().includes('enough')) addToast('error', 'Insufficient balance');
+      else addToast('error', msg);
+    } finally {
+      setBuyingSpot(null);
+    }
+  }, [room, currentUser, addToast, loadCurrent, setWallet]);
 
   const sendChat = useCallback(() => {
     const text = chatInput.trim();
@@ -915,7 +1089,7 @@ export function Bingo({ onBack }: BingoProps) {
               { label: 'Derash',   value: `${formatCredits(room.prizeMinor)} ETB`, color: 'text-amber-400' },
               { label: 'Players',  value: String(room.soldTickets),                color: 'text-slate-200' },
               { label: 'Stake',    value: `${formatCredits(room.ticketPriceMinor)} ETB`, color: 'text-slate-200' },
-              { label: 'Called',   value: `${drawnNumbers.length}/${ballCount}`, color: 'text-red-400'   },
+              { label: 'Called',   value: `${drawnNumbers.length}/${isPrefilledMode ? gridSize : ballCount}`, color: 'text-red-400'   },
             ].map((stat) => (
               <div key={stat.label} className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center">
                 <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
@@ -929,54 +1103,114 @@ export function Bingo({ onBack }: BingoProps) {
             <RecentCallsStrip drawnNumbers={drawnNumbers} isPatternMode={isPatternMode} />
           )}
 
-          {/* ── Number board + current ball side-by-side ── */}
+          {/* ── Number board / Prefilled grid ── */}
           <div className="card p-3">
-            <div className="flex items-start gap-3">
-              {/* Room name + status */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-2">
+            {isPrefilledMode ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
                   <span className="text-[9px] font-black text-slate-400 truncate">{room.name}</span>
-                  <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
-                    room.status === 'open'    ? 'bg-emerald-500/10 text-emerald-400' :
-                    room.status === 'running' ? 'bg-red-500/10 text-red-400' :
-                    'bg-slate-700/50 text-slate-400'
-                  }`}>
-                    {room.status === 'open' ? 'Buy open' : room.status}
-                  </span>
-                  {isPatternMode && (
-                    <span className="text-[7px] font-black bg-violet-500/10 text-violet-400 px-1 py-0.5 rounded flex-shrink-0">75-BALL</span>
-                  )}
-                </div>
-                <NumberBoard
-                  drawnNumbers={drawnNumbers}
-                  numberRange={ballCount}
-                  isPatternMode={isPatternMode}
-                />
-              </div>
-
-              {/* Current ball + countdown */}
-              <div className="w-24 flex-shrink-0 flex flex-col items-center">
-                <CurrentBallDisplay
-                  drawnNumbers={drawnNumbers}
-                  isPatternMode={isPatternMode}
-                  status={room.status}
-                  count={drawnNumbers.length}
-                  max={ballCount}
-                />
-                {phase === 'buy' && timeRemainingSecs !== null && (
-                  <div className="mt-1 text-center">
-                    <div className="text-[8px] text-slate-500 mb-0.5">Starts in</div>
-                    <span className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
-                      {String(Math.floor(timeRemainingSecs / 60)).padStart(2, '0')}:{String(timeRemainingSecs % 60).padStart(2, '0')}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[7px] font-black bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded">DERASH</span>
+                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                      room.status === 'open'    ? 'bg-emerald-500/10 text-emerald-400' :
+                      room.status === 'running' ? 'bg-red-500/10 text-red-400' :
+                      'bg-slate-700/50 text-slate-400'
+                    }`}>
+                      {room.status === 'open' ? 'Buy open' : room.status}
                     </span>
                   </div>
+                </div>
+                {/* Last drawn number + countdown */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {drawnNumbers.length > 0 && (() => {
+                      const last = drawnNumbers[drawnNumbers.length - 1];
+                      const s = getPrefilledStyle(last, gridSize);
+                      return (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] text-slate-500 font-black uppercase">Last:</span>
+                          <motion.div
+                            key={last}
+                            initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                            transition={{ type: 'spring', stiffness: 320, damping: 18 }}
+                            className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm font-mono"
+                            style={{ background: `linear-gradient(135deg,${s.color}cc,${s.color}88)`, color: '#fff', boxShadow: `0 0 10px ${s.glow}` }}
+                          >
+                            {last}
+                          </motion.div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {phase === 'buy' && timeRemainingSecs !== null && (
+                    <div className="text-right">
+                      <div className="text-[8px] text-slate-500">Starts in</div>
+                      <span className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
+                        {String(Math.floor(timeRemainingSecs / 60)).padStart(2, '0')}:{String(timeRemainingSecs % 60).padStart(2, '0')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {salesOpen && (
+                  <p className="text-[9px] text-slate-500">Tap any spot to buy it instantly. First drawn wins!</p>
                 )}
+                <PrefilledGrid
+                  gridSize={gridSize}
+                  takenSet={takenSet}
+                  mySpotSet={myCardNums}
+                  drawnSet={drawnSet}
+                  salesOpen={salesOpen}
+                  buyingSpot={buyingSpot}
+                  onBuy={buySpot}
+                />
               </div>
-            </div>
+            ) : (
+              <div className="flex items-start gap-3">
+                {/* Room name + status */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[9px] font-black text-slate-400 truncate">{room.name}</span>
+                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
+                      room.status === 'open'    ? 'bg-emerald-500/10 text-emerald-400' :
+                      room.status === 'running' ? 'bg-red-500/10 text-red-400' :
+                      'bg-slate-700/50 text-slate-400'
+                    }`}>
+                      {room.status === 'open' ? 'Buy open' : room.status}
+                    </span>
+                    {isPatternMode && (
+                      <span className="text-[7px] font-black bg-violet-500/10 text-violet-400 px-1 py-0.5 rounded flex-shrink-0">75-BALL</span>
+                    )}
+                  </div>
+                  <NumberBoard
+                    drawnNumbers={drawnNumbers}
+                    numberRange={ballCount}
+                    isPatternMode={isPatternMode}
+                  />
+                </div>
+                {/* Current ball + countdown */}
+                <div className="w-24 flex-shrink-0 flex flex-col items-center">
+                  <CurrentBallDisplay
+                    drawnNumbers={drawnNumbers}
+                    isPatternMode={isPatternMode}
+                    status={room.status}
+                    count={drawnNumbers.length}
+                    max={ballCount}
+                  />
+                  {phase === 'buy' && timeRemainingSecs !== null && (
+                    <div className="mt-1 text-center">
+                      <div className="text-[8px] text-slate-500 mb-0.5">Starts in</div>
+                      <span className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}>
+                        {String(Math.floor(timeRemainingSecs / 60)).padStart(2, '0')}:{String(timeRemainingSecs % 60).padStart(2, '0')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* ── Buy panel ── */}
-          {phase === 'buy' && !alreadyBought && (
+          {/* ── Buy panel (line/pattern mode only — prefilled buys via grid) ── */}
+          {!isPrefilledMode && phase === 'buy' && !alreadyBought && (
             <div className="card space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Buy a card</p>
@@ -1002,7 +1236,7 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
           )}
 
-          {phase === 'buy' && alreadyBought && (
+          {!isPrefilledMode && phase === 'buy' && alreadyBought && (
             <div className="card flex items-center gap-3 py-3">
               <span className="text-emerald-400 text-lg">✓</span>
               <div>
@@ -1012,8 +1246,17 @@ export function Bingo({ onBack }: BingoProps) {
             </div>
           )}
 
-          {/* ── My card(s) ── */}
-          {myTickets.length > 0 ? (
+          {/* ── My card(s) / My spots ── */}
+          {isPrefilledMode ? (
+            myTickets.length > 0
+              ? <PrefilledMySpots myTickets={myTickets} drawnSet={drawnSet} />
+              : phase !== 'buy' && (
+                <div className="card text-center py-6 space-y-1">
+                  <Sparkles size={20} className="mx-auto text-slate-600" />
+                  <p className="text-slate-500 text-xs">You didn't buy any spots for this round.</p>
+                </div>
+              )
+          ) : myTickets.length > 0 ? (
             <div className="space-y-2">
               <h3 className="text-[10px] font-black uppercase tracking-wider text-slate-500 px-1">My Card</h3>
               <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">

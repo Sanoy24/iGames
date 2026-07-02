@@ -590,6 +590,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
   if (isPrefilledMode) {
     const winnerGrid = (winEntry?.winnerGrid as Array<Array<number | null>> | undefined) ?? winnerTicket?.grid ?? null;
     const winnerCartela = (winEntry?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
+    const winnerPhoneLast4 = (winEntry?.winnerPhoneLast4 as string | undefined) ?? '';
     const lastCalled = room.drawnNumbers.length > 0 ? room.drawnNumbers[room.drawnNumbers.length - 1] : null;
     const accent = iWon ? '#fbbf24' : '#34d399';
 
@@ -615,7 +616,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
             </div>
             <p className="text-slate-200 text-sm">
               <span className="font-black" style={{ color: accent }}>
-                {winnerDisplayName}{winnerCartela != null ? ` ( *${winnerCartela} )` : ''}
+                {winnerDisplayName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
               </span>{' '}
               {iWon ? 'you won the game!' : 'has won the game'}
             </p>
@@ -1192,7 +1193,7 @@ export function Bingo({ onBack }: BingoProps) {
               { label: 'Derash',   value: `${formatCredits(room.prizeMinor)} ETB`, color: 'text-amber-400' },
               { label: 'Players',  value: String(room.soldTickets),                color: 'text-slate-200' },
               { label: 'Stake',    value: `${formatCredits(room.ticketPriceMinor)} ETB`, color: 'text-slate-200' },
-              { label: 'Called',   value: `${drawnNumbers.length}/${isPrefilledMode ? gridSize : ballCount}`, color: 'text-red-400'   },
+              { label: 'Called',   value: `${drawnNumbers.length}/${ballCount}`, color: 'text-red-400'   },
             ].map((stat) => (
               <div key={stat.label} className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center">
                 <span className="block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5">{stat.label}</span>
@@ -1273,10 +1274,21 @@ export function Bingo({ onBack }: BingoProps) {
                       </span>
                     </div>
                   )}
-                  {/* Derash: mapped 5×5 card(s), vertically stacked, under the caller */}
-                  {isPrefilledMode && myTickets.map((ticket) => (
-                    <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
-                  ))}
+                  {/* Derash: mapped 5×5 card(s), vertically stacked, under the caller.
+                     Scrolls once the player owns more than two cartelas. */}
+                  {isPrefilledMode && myTickets.length > 0 && (
+                    <>
+                      <div className="w-full text-center text-[9px] font-black uppercase tracking-wider text-slate-500">
+                        {myTickets.length} {myTickets.length === 1 ? 'card' : 'cards'}
+                      </div>
+                      <div className={`w-full flex flex-col gap-2 ${myTickets.length > 2 ? 'overflow-y-auto pr-1' : ''}`}
+                        style={myTickets.length > 2 ? { maxHeight: 320 } : undefined}>
+                        {myTickets.map((ticket) => (
+                          <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}

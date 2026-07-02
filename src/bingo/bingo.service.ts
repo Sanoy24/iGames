@@ -746,9 +746,10 @@ export class BingoService implements OnModuleInit {
   /**
    * Derash settlement. Each cartela is a mapped 5×5 card; a card wins by
    * completing the configured winning pattern. On every draw all active cards
-   * are re-marked, and any that newly complete the pattern take the next open
-   * place (1st → 2nd → 3rd). Cards that complete on the same draw share that
-   * place's prize; each place pays a configured % of the (house-adjusted) pot.
+   * are re-marked; each card that newly completes the pattern takes the next
+   * open place (1st → 2nd → 3rd) in completion order — one winner per place.
+   * When 2nd/3rd are disabled there is exactly one winner and the room ends.
+   * Each place pays a configured % of the (house-adjusted) pot.
    */
   private async evaluateAndSettleDerash(
     room: BingoRoom,
@@ -764,8 +765,9 @@ export class BingoService implements OnModuleInit {
     });
     if (activeTickets.length === 0) return;
 
-    // Re-mark every active card and collect those that now complete the pattern.
-    const winners: BingoTicket[] = [];
+    // Re-mark every active card and collect those that now complete the pattern,
+    // ordered by purchase time so the earliest buyer wins on a same-draw tie.
+    const completers: BingoTicket[] = [];
     for (const ticket of activeTickets) {
       const state = this.bingoRulesService.evaluatePatternTicket(
         ticket.grid,
@@ -774,46 +776,45 @@ export class BingoService implements OnModuleInit {
       );
       ticket.markedNumbers = state.markedNumbers;
       if (state.completedPatternIds.includes(winPattern.id)) {
-        winners.push(ticket);
+        completers.push(ticket);
       }
       await manager.save(ticket);
     }
-
-    const nextPlace = this.nextOpenPrefilledPlace(room, cfg);
-    if (!nextPlace || winners.length === 0) return;
+    if (completers.length === 0) return;
 
     const totalPotMinor = room.soldTickets * room.ticketPriceMinor;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - (room.houseEdgePct ?? 20) / 100));
 
-    const pct =
-      nextPlace === '1st'
-        ? (cfg.prefilledFirstPlacePct ?? 80)
-        : nextPlace === '2nd'
-        ? (cfg.prefilledSecondPlacePct ?? 0)
-        : (cfg.prefilledThirdPlacePct ?? 0);
+    // Award one winner per still-open place, in completion order.
+    for (const ticket of completers) {
+      const place = this.nextOpenPrefilledPlace(room, cfg);
+      if (!place) break;
 
-    const placePrizeMinor = Math.floor(prizePoolMinor * pct / 100);
-    const shares = this.bingoRulesService.splitPrizeMinor(placePrizeMinor, winners.length);
+      const pct =
+        place === '1st'
+          ? (cfg.prefilledFirstPlacePct ?? 80)
+          : place === '2nd'
+          ? (cfg.prefilledSecondPlacePct ?? 0)
+          : (cfg.prefilledThirdPlacePct ?? 0);
+      const prizeMinor = Math.floor(prizePoolMinor * pct / 100);
 
-    for (const [index, ticket] of winners.entries()) {
-      const share = shares[index];
-      ticket.wonTiers = [...(ticket.wonTiers ?? []), nextPlace];
-      ticket.payoutMinor += share;
+      ticket.wonTiers = [...(ticket.wonTiers ?? []), place];
+      ticket.payoutMinor += prizeMinor;
       ticket.status = 'won';
       ticket.settlementStatus = 'settled';
 
-      if (share > 0) {
+      if (prizeMinor > 0) {
         const winCredit = await this.walletService.creditInSession(
           {
             userId: ticket.userId,
-            amountMinor: share,
+            amountMinor: prizeMinor,
             entryType: 'win',
             sourceType: 'bingo_ticket',
             sourceId: ticket.id,
-            idempotencyKey: `bingo-settlement:${nextPlace}:${ticket.id}`,
+            idempotencyKey: `bingo-settlement:${place}:${ticket.id}`,
             metadata: {
               roomId: room.id,
-              place: nextPlace,
+              place,
               cartelaNumber: ticket.cartelaNumber,
               patternId: winPattern.id,
               totalPotMinor,
@@ -826,33 +827,33 @@ export class BingoService implements OnModuleInit {
       }
 
       await manager.save(ticket);
+
+      const winnerUser = await manager.findOne(User, {
+        where: { id: ticket.userId },
+        select: ['displayName', 'phoneNumber'],
+      });
+      const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+
+      room.settledTiers = [...room.settledTiers, place];
+      room.winnersByTier = { ...room.winnersByTier, [place]: [ticket.id] };
+      room.settlementSummary = {
+        ...room.settlementSummary,
+        [place]: {
+          winnerCount: 1,
+          winnerId: ticket.id,
+          winnerDisplayName: winnerUser?.displayName ?? 'Player',
+          winnerPhoneLast4: phoneLast4,
+          winnerCartelaNumber: ticket.cartelaNumber,
+          // Winner card so every client in the room can render the result.
+          winnerGrid: ticket.grid,
+          winnerMarkedNumbers: ticket.markedNumbers,
+          patternName: winPattern.name,
+          prizeMinor,
+          totalPotMinor,
+          prizePoolMinor,
+        },
+      };
     }
-
-    const winnerUsers = await Promise.all(
-      winners.map((t) => manager.findOne(User, { where: { id: t.userId }, select: ['displayName'] })),
-    );
-
-    room.settledTiers = [...room.settledTiers, nextPlace];
-    room.winnersByTier = { ...room.winnersByTier, [nextPlace]: winners.map((t) => t.id) };
-    room.settlementSummary = {
-      ...room.settlementSummary,
-      [nextPlace]: {
-        winnerCount: winners.length,
-        winnerId: winners[0].id,
-        winnerDisplayName: winnerUsers[0]?.displayName ?? 'Player',
-        winnerDisplayNames: winnerUsers.map((u) => u?.displayName ?? 'Player'),
-        cartelaNumbers: winners.map((t) => t.cartelaNumber),
-        // Winner card so every client in the room can render the result (not just the winner).
-        winnerCartelaNumber: winners[0].cartelaNumber,
-        winnerGrid: winners[0].grid,
-        winnerMarkedNumbers: winners[0].markedNumbers,
-        patternName: winPattern.name,
-        prizeMinor: placePrizeMinor,
-        shares,
-        totalPotMinor,
-        prizePoolMinor,
-      },
-    };
   }
 
   /** Resolve the configured derash winning pattern, defaulting to "Any Line". */

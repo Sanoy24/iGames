@@ -195,6 +195,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
 
     const mockRoomRepo = {
       find: jest.fn().mockResolvedValue([oldRoom]),
+      query: jest.fn().mockResolvedValue([{ id: oldRoom.id }]),
       findOne: jest.fn(),
       findOneBy: jest.fn(),
     } as any;
@@ -223,6 +224,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
 
     const mockRoomRepo = {
       find: jest.fn().mockResolvedValue([]),
+      query: jest.fn().mockResolvedValue([]),
       findOne: jest.fn(),
       findOneBy: jest.fn(),
     } as any;

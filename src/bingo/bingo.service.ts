@@ -264,12 +264,17 @@ export class BingoService implements OnModuleInit {
   }
 
   async findRunningRoomIdsDue(intervalSeconds: number): Promise<string[]> {
-    const cutoff = new Date(Date.now() - Math.max(1, intervalSeconds) * 1000);
-    const rooms = await this.bingoRoomRepository.find({
-      where: { status: 'running', updatedAt: LessThanOrEqual(cutoff) },
-      select: ['id'],
-    });
-    return rooms.map((r) => r.id);
+    // Compare updatedAt against the DB's own NOW() rather than an app-side JS Date.
+    // updatedAt is populated by the database, so mixing it with a driver-serialized
+    // Date can misfire under a non-UTC MySQL session timezone (the offset makes the
+    // row look "in the future" and it never becomes due). Comparing column-to-NOW()
+    // keeps both sides in the same session timezone, so the offset cancels out.
+    const seconds = Math.max(1, intervalSeconds);
+    const rows: Array<{ id: string }> = await this.bingoRoomRepository.query(
+      `SELECT id FROM bingo_rooms WHERE status = 'running' AND updatedAt <= (NOW() - INTERVAL ? SECOND)`,
+      [seconds],
+    );
+    return rows.map((r) => r.id);
   }
 
   async findRoomsToStart(): Promise<BingoRoomResponse[]> {

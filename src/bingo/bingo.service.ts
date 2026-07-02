@@ -231,11 +231,32 @@ export class BingoService implements OnModuleInit {
       settledTiers: [],
       winnersByTier: {},
       settlementSummary: {},
+      activeGuard: 1, // claims the single "active game" slot (unique index)
     });
 
-    await this.bingoRoomRepository.save(room);
+    try {
+      await this.bingoRoomRepository.save(room);
+    } catch (err) {
+      // Another creator (concurrent request or separate instance) already holds
+      // the active-game slot. Treat as "a room already exists" and back off.
+      if (this.isDuplicateKeyError(err)) {
+        this.logger.warn('Active Bingo room already exists (activeGuard conflict) — skipping creation');
+        return null;
+      }
+      throw err;
+    }
     this.logger.log(`Auto-created Bingo room "${room.name}" (${winMode}) starting at ${scheduledStartAt.toISOString()}`);
     return this.toRoomResponse(room, 0, []);
+  }
+
+  private isDuplicateKeyError(err: unknown): boolean {
+    const e = err as { code?: string; errno?: number; driverError?: { code?: string; errno?: number } };
+    return (
+      e?.code === 'ER_DUP_ENTRY' ||
+      e?.errno === 1062 ||
+      e?.driverError?.code === 'ER_DUP_ENTRY' ||
+      e?.driverError?.errno === 1062
+    );
   }
 
   // ── Rooms ────────────────────────────────────────────────────────────────────
@@ -618,8 +639,9 @@ export class BingoService implements OnModuleInit {
           await this.markRemainingTicketsLost(room, manager);
         }
         room.status = 'completed';
+        // Release the active-game slot so the next room can be created.
         await manager.query(
-          `UPDATE bingo_rooms SET status = 'completed', settledTiers = ?, winnersByTier = ?, settlementSummary = ? WHERE id = ?`,
+          `UPDATE bingo_rooms SET status = 'completed', activeGuard = NULL, settledTiers = ?, winnersByTier = ?, settlementSummary = ? WHERE id = ?`,
           [
             JSON.stringify(room.settledTiers),
             JSON.stringify(room.winnersByTier),
@@ -689,6 +711,10 @@ export class BingoService implements OnModuleInit {
         }
       }
 
+      // Release the active-game slot once the game is over so the next room
+      // can claim it (NULL is exempt from the unique index).
+      if (room.status === 'completed') room.activeGuard = null;
+
       await manager.save(room);
       const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
       const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
@@ -744,6 +770,7 @@ export class BingoService implements OnModuleInit {
       }
 
       room.status = 'cancelled';
+      room.activeGuard = null; // free the active-game slot
       room.settlementSummary = {
         ticketCount: tickets.length,
         totalRefundMinor,

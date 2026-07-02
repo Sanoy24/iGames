@@ -582,7 +582,7 @@ export class BingoService implements OnModuleInit {
         }
         room.status = 'completed';
         await manager.query(
-          `UPDATE bingo_room SET status = 'completed', settledTiers = ?, winnersByTier = ?, settlementSummary = ? WHERE id = ?`,
+          `UPDATE bingo_rooms SET status = 'completed', settledTiers = ?, winnersByTier = ?, settlementSummary = ? WHERE id = ?`,
           [
             JSON.stringify(room.settledTiers),
             JSON.stringify(room.winnersByTier),
@@ -730,14 +730,16 @@ export class BingoService implements OnModuleInit {
     const nextPlace = this.nextOpenPrefilledPlace(room, cfg);
     if (!nextPlace) return;
 
-    // Find the ticket that owns this drawn spot.
-    const rows: BingoTicket[] = await manager.query(
-      `SELECT * FROM bingo_tickets WHERE roomId = ? AND JSON_EXTRACT(grid, '$[0][0]') = ? AND status = 'active' LIMIT 1`,
-      [room.id, drawnNumber],
+    // Find the active ticket that owns this drawn spot. Load real entities
+    // (not a raw query) so manager.save() has entity metadata to persist with.
+    const activeTickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: 'active' },
+    });
+    const ticket = activeTickets.find(
+      (t) => (t.grid as Array<Array<number | null>>)?.[0]?.[0] === drawnNumber,
     );
-    if (rows.length === 0) return;
+    if (!ticket) return;
 
-    const ticket = rows[0];
     ticket.markedNumbers = [drawnNumber];
 
     const totalPotMinor = room.soldTickets * room.ticketPriceMinor;

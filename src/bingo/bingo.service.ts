@@ -7,7 +7,7 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, Not } from 'typeorm';
+import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, Not, FindOptionsWhere } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BingoRulesService, BUILT_IN_PATTERNS } from './bingo-rules.service';
@@ -441,7 +441,7 @@ export class BingoService implements OnModuleInit {
     });
     if (!room) return [];
 
-    const soldTickets = await this.bingoTicketRepository.countBy({ roomId: room.id });
+    const soldTickets = await this.countSoldTickets(room.id);
     return [this.toRoomResponse(room, soldTickets)];
   }
 
@@ -524,7 +524,7 @@ export class BingoService implements OnModuleInit {
   }): Promise<BingoRoomResponse & { tickets?: BingoTicketResponse[] }> {
     this.validateUuid(input.roomId, 'roomId');
     const room = await this.findRoom(input.roomId);
-    const soldTickets = await this.bingoTicketRepository.countBy({ roomId: room.id });
+    const soldTickets = await this.countSoldTickets(room.id);
 
     let takenSpots: number[] | undefined;
     if (room.winMode === 'prefilled') {
@@ -757,7 +757,7 @@ export class BingoService implements OnModuleInit {
       if (!room) throw new NotFoundException('Bingo room not found');
 
       if (room.status === 'completed' || room.status === 'cancelled') {
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        const soldTickets = await this.countSoldTickets(validRoomId, manager);
         const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
         return this.toRoomResponse(room, soldTickets, takenSpots);
       }
@@ -770,7 +770,7 @@ export class BingoService implements OnModuleInit {
 
       // All numbers drawn but room still running — complete it.
       if (room.drawnNumbers.length >= maxNumber) {
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        const soldTickets = await this.countSoldTickets(validRoomId, manager);
         if (soldTickets > 0) {
           if (room.winMode === 'prefilled') {
             // No more draws possible — mark all remaining active tickets as lost.
@@ -877,7 +877,7 @@ export class BingoService implements OnModuleInit {
       if (room.status === 'completed') room.activeGuard = null;
 
       await manager.save(room);
-      const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+      const soldTickets = await this.countSoldTickets(validRoomId, manager);
       const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
       return this.toRoomResponse(room, soldTickets, takenSpots);
     });
@@ -899,7 +899,7 @@ export class BingoService implements OnModuleInit {
         throw new ConflictException('Completed Bingo rooms cannot be cancelled');
       }
       if (room.status === 'cancelled') {
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        const soldTickets = await this.countSoldTickets(validRoomId, manager);
         return this.toRoomResponse(room, soldTickets);
       }
 
@@ -984,7 +984,10 @@ export class BingoService implements OnModuleInit {
     }
     if (completers.length === 0) return;
 
-    const totalPotMinor = room.soldTickets * room.ticketPriceMinor;
+    // Pot from the live, non-cancelled ticket rows — never the room.soldTickets
+    // counter — so the settled pot always equals the advertised pot.
+    const soldTickets = await this.countSoldTickets(room.id, manager);
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
     const houseEdgePct = room.houseEdgePct ?? 20;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
 
@@ -1330,6 +1333,21 @@ export class BingoService implements OnModuleInit {
       { roomId: room.id, status: 'active' },
       { status: 'lost', settlementStatus: 'settled' },
     );
+  }
+
+  /**
+   * Live count of tickets that count toward the pot — every row that is NOT
+   * cancelled (active/won/lost are all paid stakes; cancelled were refunded).
+   * Both the advertised prize (toRoomResponse) and settlement use THIS single
+   * source, so the paid pot can never drift from the advertised pot the way the
+   * persisted `room.soldTickets` counter could if an increment/decrement was
+   * ever missed.
+   */
+  private async countSoldTickets(roomId: string, manager?: EntityManager): Promise<number> {
+    const where: FindOptionsWhere<BingoTicket> = { roomId, status: Not('cancelled') };
+    return manager
+      ? manager.countBy(BingoTicket, where)
+      : this.bingoTicketRepository.countBy(where);
   }
 
   private async findRoom(roomId: string): Promise<BingoRoom> {

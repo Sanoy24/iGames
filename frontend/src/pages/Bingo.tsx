@@ -306,32 +306,10 @@ function CurrentBallDisplay({ drawnNumbers, isPatternMode, status, count, max }:
   count: number;
   max: number;
 }) {
-  // Play the balls through a queue so each drawn number is announced for a
-  // minimum time. Balls can arrive faster than a person can read them (a burst
-  // from a catch-up poll, or a fast draw interval), which made the "Now calling"
-  // display skip (1, then 3, then 5) even though every number is in the history.
-  // `playedCount` catches up to the real draw count one ball at a time, ~1/sec,
-  // and the ball's reveal sound is played in sync with the visual.
-  const [playedCount, setPlayedCount] = useState(drawnNumbers.length);
-  useEffect(() => {
-    if (playedCount > drawnNumbers.length) {
-      setPlayedCount(drawnNumbers.length); // new room — array shrank; resync
-      return;
-    }
-    if (playedCount >= drawnNumbers.length) return;
-    // Comfortable ~1/sec when keeping up; speed up if a backlog builds so the
-    // display never lags far behind the real draw (fast intervals / catch-up).
-    const backlog = drawnNumbers.length - playedCount;
-    const delay = backlog > 6 ? 250 : backlog > 3 ? 550 : 950;
-    const id = setTimeout(() => {
-      setPlayedCount((c) => Math.min(c + 1, drawnNumbers.length));
-      soundEngine.pop();
-    }, delay);
-    return () => clearTimeout(id);
-  }, [playedCount, drawnNumbers.length]);
-
-  const idx = Math.min(playedCount, drawnNumbers.length);
-  const n = idx > 0 ? drawnNumbers[idx - 1] : null;
+  // `drawnNumbers` is the parent's already-paced "revealed" list, so the last
+  // entry here is exactly the ball currently lit on the board and cards — they
+  // all advance together.
+  const n = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
   const s = n !== null ? getGroupStyle(n, isPatternMode) : null;
   const prefix = n !== null && isPatternMode
     ? (BINGO_COLS_75.find(c => n >= c.from && n <= c.to)?.letter ?? '')
@@ -389,11 +367,16 @@ function CurrentBallDisplay({ drawnNumbers, isPatternMode, status, count, max }:
 
 // ─── Ticket Cards ─────────────────────────────────────────────────────────────
 
-const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
-  ticket: BingoTicket; patternPrizeMap: Map<string, string>;
+const PatternTicketCard = memo(({ ticket, patternPrizeMap, revealedSet }: {
+  ticket: BingoTicket; patternPrizeMap: Map<string, string>; revealedSet?: Set<number>;
 }) => {
   const won = ticket.payoutMinor > 0;
   const grid = ticket.grid as Array<Array<number | null>>;
+  // Mark cells from the paced "revealed" set when provided, so a number lights on
+  // the card at the same instant it is announced in "now calling" and the board.
+  // Falls back to the ticket's own marks (e.g. history views with no live pacing).
+  const isCellMarked = (value: number) =>
+    revealedSet ? revealedSet.has(value) : ticket.markedNumbers.includes(value);
   return (
     <motion.article
       layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
@@ -426,7 +409,7 @@ const PatternTicketCard = memo(({ ticket, patternPrizeMap }: {
         {grid.map((row, ri) =>
           row.map((value, ci) => {
             const isFree = value === null;
-            const isMarked = isFree || ticket.markedNumbers.includes(value!);
+            const isMarked = isFree || isCellMarked(value!);
             const colStyle = isMarked && !isFree ? getGroupStyle(value!, true) : null;
             return (
               <motion.span
@@ -1090,15 +1073,47 @@ export function Bingo({ onBack }: BingoProps) {
   // winMode is the source of truth for which board to show.
   const isPatternMode    = room?.winMode === 'pattern';
   const isPrefilledMode  = room?.winMode === 'prefilled';
-  // Prefilled/derash and pattern both draw from the configured 75-ball pool.
-  const ballCount        = (isPatternMode || isPrefilledMode) ? (room?.numberRange ?? 75) : 90;
+  // Ball pool for the board: derash is ALWAYS 75-ball (standard B/I/N/G/O); a
+  // stale/misconfigured room's numberRange is ignored so the client can never
+  // render a >75 ball (no more 137/187/200 in derash).
+  const ballCount        = isPatternMode ? (room?.numberRange ?? 75) : isPrefilledMode ? 75 : 90;
   // Prefilled cards are 75-ball 5×5, so the board uses the B/I/N/G/O layout.
   const boardBingoStyle  = isPatternMode || isPrefilledMode;
   const gridSize         = room?.gridSize ?? 75;
-  const drawnNumbers     = room?.drawnNumbers ?? [];
+  // Server draws, clamped to the valid pool — drops any out-of-range ball a
+  // legacy room may have produced so it never reaches the UI.
+  const drawnNumbers     = useMemo(
+    () => (room?.drawnNumbers ?? []).filter((n) => n >= 1 && n <= ballCount),
+    [room?.drawnNumbers, ballCount],
+  );
   const takenSet         = useMemo(() => new Set(room?.takenSpots ?? []), [room?.takenSpots]);
   const remainingTickets = room ? Math.max(0, room.maxTickets - room.soldTickets) : 0;
   const salesOpen        = room?.status === 'open';
+
+  // ── Paced reveal ─────────────────────────────────────────────────────────────
+  // One shared cursor drives "now calling", the board and every card so they all
+  // advance TOGETHER, one ball at a time at a readable pace — even when a poll
+  // delivers several numbers at once. Snap to full on room switch (no history
+  // replay) and on completion (show the final state immediately).
+  const [revealedCount, setRevealedCount] = useState(0);
+  useEffect(() => {
+    setRevealedCount(room?.drawnNumbers?.length ?? 0);
+  }, [room?.id]);
+  useEffect(() => {
+    const total = drawnNumbers.length;
+    if (room?.status === 'completed' || room?.status === 'cancelled') { setRevealedCount(total); return; }
+    if (revealedCount > total) { setRevealedCount(total); return; }
+    if (revealedCount >= total) return;
+    const backlog = total - revealedCount;
+    const delay = backlog > 6 ? 250 : backlog > 3 ? 550 : 950;
+    const id = setTimeout(() => {
+      setRevealedCount((c) => Math.min(c + 1, total));
+      soundEngine.pop();
+    }, delay);
+    return () => clearTimeout(id);
+  }, [revealedCount, drawnNumbers.length, room?.status]);
+  const revealedNumbers = useMemo(() => drawnNumbers.slice(0, revealedCount), [drawnNumbers, revealedCount]);
+  const revealedSet     = useMemo(() => new Set(revealedNumbers), [revealedNumbers]);
 
   const myTickets = useMemo(() => {
     const apiTickets = room?.tickets ?? [];
@@ -1268,8 +1283,8 @@ export function Bingo({ onBack }: BingoProps) {
           </div>
 
           {/* ── Recent calls strip ── */}
-          {drawnNumbers.length > 0 && (
-            <RecentCallsStrip drawnNumbers={drawnNumbers} isPatternMode={boardBingoStyle} />
+          {revealedNumbers.length > 0 && (
+            <RecentCallsStrip drawnNumbers={revealedNumbers} isPatternMode={boardBingoStyle} />
           )}
 
           {/* ── Cartela picker (derash buy phase) / Number board ── */}
@@ -1317,7 +1332,7 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
                   </div>
                   <NumberBoard
-                    drawnNumbers={drawnNumbers}
+                    drawnNumbers={revealedNumbers}
                     numberRange={ballCount}
                     isPatternMode={boardBingoStyle}
                   />
@@ -1325,10 +1340,10 @@ export function Bingo({ onBack }: BingoProps) {
                 {/* Now calling + (derash) my mapped cards stacked below */}
                 <div className={`flex-shrink-0 flex flex-col items-center gap-2 ${isPrefilledMode && myTickets.length > 0 ? 'w-32 sm:w-40' : 'w-24'}`}>
                   <CurrentBallDisplay
-                    drawnNumbers={drawnNumbers}
+                    drawnNumbers={revealedNumbers}
                     isPatternMode={boardBingoStyle}
                     status={room.status}
-                    count={drawnNumbers.length}
+                    count={revealedNumbers.length}
                     max={ballCount}
                   />
                   {phase === 'buy' && timeRemainingSecs !== null && (
@@ -1349,7 +1364,7 @@ export function Bingo({ onBack }: BingoProps) {
                       </div>
                       <div className="w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide" style={{ maxHeight: 340 }}>
                         {myTickets.map((ticket) => (
-                          <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} />
+                          <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} revealedSet={revealedSet} />
                         ))}
                       </div>
                     </>

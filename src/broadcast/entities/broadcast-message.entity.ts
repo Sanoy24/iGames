@@ -43,11 +43,16 @@ export class BroadcastMessage {
   id: string;
 
   /** Internal admin label — not shown to recipients. */
-  @Column({ type: 'varchar', length: 200 })
+  @Column({ type: 'varchar', length: 200, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   title: string;
 
-  /** Message body (or photo caption when an image is attached). */
-  @Column({ type: 'text', nullable: true })
+  /**
+   * Message body (or photo caption when an image is attached). Explicitly
+   * utf8mb4 so 4-byte characters (emoji 💸🎉) survive — a plain utf8/utf8mb3
+   * column silently replaces them with "?" at insert time, even though 3-byte
+   * scripts like Amharic store fine.
+   */
+  @Column({ type: 'text', nullable: true, charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci' })
   text: string | null;
 
   /** Relative path under the served /uploads root, e.g. "broadcasts/ab12.jpg". */

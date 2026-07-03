@@ -21,6 +21,15 @@ type BingoProps = { onBack: () => void };
 const RESULT_DISPLAY_MS = 10_000;
 const POLL_INTERVAL_MS = 5_000;
 
+// Paced reveal cadence. One ball is revealed every REVEAL_BASE_MS so each gets a
+// full, unhurried moment on the caller, the board and the cards. We only shorten
+// to REVEAL_MIN_MS when the client has fallen far behind (e.g. it was a
+// background tab and a poll delivered a big batch), and never below the ball
+// animation's own duration — so reveals always stay smooth, never a rushed burst.
+const REVEAL_BASE_MS = 1_500;
+const REVEAL_MIN_MS  = 650;
+const REVEAL_CATCHUP_BACKLOG = 10;
+
 // 10 cycling colors for the prefilled number grid
 const CYCLE_COLORS = [
   { color: '#f87171', glow: 'rgba(248,113,113,0.5)', bg: 'rgba(248,113,113,0.08)' },
@@ -85,6 +94,9 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode }: {
   isPatternMode: boolean;
 }) => {
   const drawnSet = useMemo(() => new Set(drawnNumbers), [drawnNumbers]);
+  // The most-recently revealed ball — highlighted distinctly on the board so it's
+  // obvious where the "now calling" number landed.
+  const current = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
 
   if (isPatternMode) {
     return (
@@ -107,7 +119,7 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode }: {
             {BINGO_COLS_75.map(col => {
               const n = col.from + row;
               const called = drawnSet.has(n);
-              return <NumberCell key={n} n={n} called={called} style={col} />;
+              return <NumberCell key={n} n={n} called={called} isCurrent={n === current} style={col} />;
             })}
           </div>
         ))}
@@ -138,7 +150,7 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode }: {
             const n = g.from + row;
             if (n > Math.min(g.to, numberRange)) return <span key={g.from} />;
             const called = drawnSet.has(n);
-            return <NumberCell key={n} n={n} called={called} style={g} />;
+            return <NumberCell key={n} n={n} called={called} isCurrent={n === current} style={g} />;
           })}
         </div>
       ))}
@@ -147,21 +159,37 @@ const NumberBoard = memo(({ drawnNumbers, numberRange, isPatternMode }: {
 });
 NumberBoard.displayName = 'NumberBoard';
 
-const NumberCell = memo(({ n, called, style }: {
+const NumberCell = memo(({ n, called, isCurrent, style }: {
   n: number;
   called: boolean;
+  isCurrent: boolean;
   style: { color: string; glow: string; bg: string };
 }) => (
   <motion.div
-    animate={called ? { scale: [1, 1.18, 1] } : {}}
-    transition={{ duration: 0.28, ease: 'backOut' }}
+    // The just-called number keeps pulsing so the eye can find where on the board
+    // it landed; older called numbers just did a one-shot pop when they lit up.
+    animate={
+      isCurrent
+        ? { scale: [1, 1.22, 1] }
+        : called
+          ? { scale: [1, 1.18, 1] }
+          : {}
+    }
+    transition={
+      isCurrent
+        ? { duration: 0.9, ease: 'easeInOut', repeat: Infinity }
+        : { duration: 0.28, ease: 'backOut' }
+    }
     className="aspect-square rounded-md flex items-center justify-center text-[9px] font-bold font-mono select-none"
     style={
       called
         ? {
             background: `linear-gradient(135deg, ${style.color}cc, ${style.color}88)`,
             color: '#fff',
-            boxShadow: `0 1px 4px rgba(0,0,0,0.4)`,
+            boxShadow: isCurrent
+              ? `0 0 0 2px #fff, 0 0 12px ${style.glow}`
+              : `0 1px 4px rgba(0,0,0,0.4)`,
+            zIndex: isCurrent ? 1 : undefined,
           }
         : {
             background: 'rgba(255,255,255,0.03)',
@@ -262,34 +290,43 @@ function RecentCallsStrip({ drawnNumbers, isPatternMode }: {
   return (
     <div className="relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2">
       <div className="text-[8px] font-black uppercase tracking-widest text-slate-600 mb-1.5">Recent calls</div>
+      {/* Keyed by number (unique per room) — NOT array index — so the sliding
+          window doesn't remount every pill on each draw. Only the genuinely new
+          pill animates in; the rest stay put and simply glide as the row grows. */}
       <div ref={stripRef} className="flex gap-1.5 overflow-x-auto scrollbar-hide">
-        {last.map((n, i) => {
-          const s = getGroupStyle(n, isPatternMode);
-          const opacity = 0.35 + (i / last.length) * 0.65;
-          const isNewest = i === last.length - 1;
-          return (
-            <div
-              key={`${n}-${i}`}
-              className="flex-shrink-0 rounded-lg flex items-center justify-center font-black font-mono"
-              style={{
-                width: isNewest ? 38 : 30,
-                height: isNewest ? 38 : 30,
-                fontSize: isNewest ? 13 : 10,
-                background: isNewest
-                  ? `linear-gradient(135deg, ${s.color}dd, ${s.color}99)`
-                  : `${s.color}${Math.round(opacity * 40).toString(16).padStart(2, '0')}`,
-                color: isNewest ? '#fff' : s.color,
-                border: isNewest ? `2px solid ${s.color}` : `1px solid ${s.color}44`,
-                opacity,
-                boxShadow: isNewest ? `0 0 14px ${s.glow}` : undefined,
-              }}
-            >
-              {isPatternMode
-                ? (BINGO_COLS_75.find(c => n >= c.from && n <= c.to)?.letter ?? '') + n
-                : n}
-            </div>
-          );
-        })}
+        <AnimatePresence initial={false}>
+          {last.map((n, i) => {
+            const s = getGroupStyle(n, isPatternMode);
+            const opacity = 0.35 + (i / last.length) * 0.65;
+            const isNewest = i === last.length - 1;
+            return (
+              <motion.div
+                key={n}
+                layout
+                initial={{ opacity: 0, scale: 0.4, x: 8 }}
+                animate={{ opacity, scale: 1, x: 0 }}
+                exit={{ opacity: 0, scale: 0.4 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+                className="flex-shrink-0 rounded-lg flex items-center justify-center font-black font-mono"
+                style={{
+                  width: isNewest ? 38 : 30,
+                  height: isNewest ? 38 : 30,
+                  fontSize: isNewest ? 13 : 10,
+                  background: isNewest
+                    ? `linear-gradient(135deg, ${s.color}dd, ${s.color}99)`
+                    : `${s.color}${Math.round(opacity * 40).toString(16).padStart(2, '0')}`,
+                  color: isNewest ? '#fff' : s.color,
+                  border: isNewest ? `2px solid ${s.color}` : `1px solid ${s.color}44`,
+                  boxShadow: isNewest ? `0 0 14px ${s.glow}` : undefined,
+                }}
+              >
+                {isPatternMode
+                  ? (BINGO_COLS_75.find(c => n >= c.from && n <= c.to)?.letter ?? '') + n
+                  : n}
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -339,19 +376,37 @@ function CurrentBallDisplay({ drawnNumbers, isPatternMode, status, count, max }:
   return (
     <div className="flex flex-col items-center gap-2 py-2">
       <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Now calling</span>
-      <AnimatePresence mode="popLayout">
+      {/* `mode="wait"` guarantees the previous ball fully exits before the next
+          enters — one unhurried ball at a time, never two mid-flight overlapping
+          into a jittery blur even if reveals land close together. */}
+      <AnimatePresence mode="wait">
+        {/* iGames' own rounded-tile caller. The smoothness — not the shape — is
+            what we borrowed from the reference: it pops in on a calm spring, the
+            glow breathes gently, and `mode="wait"` keeps exactly one tile in
+            flight so it never smears into the next. */}
         <motion.div
           key={n}
-          initial={{ y: -24, opacity: 0, scale: 0.7 }}
-          animate={{ y: 0, opacity: 1, scale: 1 }}
-          exit={{ y: 16, opacity: 0, scale: 0.8 }}
-          transition={{ type: 'spring', stiffness: 320, damping: 22 }}
-          className="rounded-2xl flex flex-col items-center justify-center font-black text-white"
+          initial={{ y: -18, opacity: 0, scale: 0.7 }}
+          animate={{
+            y: 0,
+            opacity: 1,
+            scale: 1,
+            boxShadow: [
+              `0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+              `0 0 30px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+              `0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+            ],
+          }}
+          exit={{ y: 12, opacity: 0, scale: 0.82 }}
+          transition={{
+            default: { type: 'spring', stiffness: 280, damping: 23, mass: 0.9 },
+            boxShadow: { duration: 1.6, repeat: Infinity, ease: 'easeInOut' },
+          }}
+          className="rounded-2xl flex flex-col items-center justify-center font-black text-white select-none"
           style={{
             width: 80, height: 80,
             background: `linear-gradient(145deg, ${s!.color}22, ${s!.color}08)`,
             border: `2px solid ${s!.color}66`,
-            boxShadow: `0 0 24px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
           }}
         >
           {prefix && (
@@ -513,15 +568,18 @@ const WIN_HEADER = [
   { letter: 'O', color: '#a855f7' },
 ];
 
-function WinnerBingoCard({ grid, drawnNumbers, lastCalled }: {
+function WinnerBingoCard({ grid, drawnNumbers, markedNumbers, lastCalled }: {
   grid: Array<Array<number | null>>;
   drawnNumbers: number[];
+  markedNumbers?: number[];
   lastCalled: number | null;
 }) {
-  const drawn = new Set(drawnNumbers);
+  // Prefer the server's authoritative marked set (the exact cells the win was
+  // settled on); fall back to the room's called numbers when it isn't provided.
+  const hitSet = new Set(markedNumbers && markedNumbers.length > 0 ? markedNumbers : drawnNumbers);
   const rows = grid.length;
   const cols = grid[0]?.length ?? 0;
-  const marked = grid.map((row) => row.map((cell) => cell === null || drawn.has(cell)));
+  const marked = grid.map((row) => row.map((cell) => cell === null || hitSet.has(cell)));
   const win = grid.map((row) => row.map(() => false));
   for (let r = 0; r < rows; r++) if (marked[r].every(Boolean)) for (let c = 0; c < cols; c++) win[r][c] = true;
   for (let c = 0; c < cols; c++) if (marked.every((row) => row[c])) for (let r = 0; r < rows; r++) win[r][c] = true;
@@ -585,9 +643,19 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
   const isPrefilledMode = room.winMode === 'prefilled';
 
   const summary = room.settlementSummary ?? {};
-  const winEntry = isPrefilledMode
-    ? (summary['1st'] as Record<string, unknown> | undefined)
-    : (summary.full_house as Record<string, unknown> | undefined);
+  // A non-winner has no access to the winner's ticket (getRoomState only returns
+  // the caller's own tickets), so the settlement entry is the ONLY source of the
+  // winning 5×5 card for them. Prefer the primary place, but fall back to ANY
+  // settlement entry that carries winner data — so the card still renders if only
+  // 2nd/3rd settled, or the key naming differs — instead of degrading to a
+  // name-only dialog.
+  const summaryEntries = Object.values(summary).filter(
+    (v): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v),
+  );
+  const primaryKey = isPrefilledMode ? '1st' : 'full_house';
+  const winEntry =
+    (summary[primaryKey] as Record<string, unknown> | undefined) ??
+    summaryEntries.find((e) => e.winnerGrid || e.winnerDisplayName);
   const winnerDisplayName = (winEntry?.winnerDisplayName as string | undefined) ?? 'A lucky player';
   const prizeMinor = (winEntry?.prizeMinor as number | undefined) ?? room.prizeMinor;
   const winnerTicket = iWon ? myTickets.find((t) => t.payoutMinor > 0) ?? null : null;
@@ -605,7 +673,18 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
 
   // ── Derash / prefilled: image-style result shown to everyone in the room ──
   if (isPrefilledMode) {
-    const winnerGrid = (winEntry?.winnerGrid as Array<Array<number | null>> | undefined) ?? winnerTicket?.grid ?? null;
+    const winnerGrid =
+      (winEntry?.winnerGrid as Array<Array<number | null>> | undefined) ??
+      winnerTicket?.grid ??
+      (summaryEntries.find((e) => e.winnerGrid)?.winnerGrid as Array<Array<number | null>> | undefined) ??
+      null;
+    // The exact cells the server settled the win on — authoritative, so the
+    // winning line is drawn correctly even if the board's drawn list has since
+    // moved on. Falls back to the room's called numbers when absent.
+    const winnerMarked =
+      (winEntry?.winnerMarkedNumbers as number[] | undefined) ??
+      winnerTicket?.markedNumbers ??
+      undefined;
     const winnerCartela = (winEntry?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
     const winnerPhoneLast4 = (winEntry?.winnerPhoneLast4 as string | undefined) ?? '';
     const lastCalled = room.drawnNumbers.length > 0 ? room.drawnNumbers[room.drawnNumbers.length - 1] : null;
@@ -658,7 +737,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           {hasWinner && (winnerGrid ? (
             <div className="rounded-xl p-1.5" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(167,139,250,0.6)' }}>
               <div className="rounded-lg p-1.5" style={{ border: '2px solid rgba(245,158,11,0.85)' }}>
-                <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} lastCalled={lastCalled} />
+                <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} markedNumbers={winnerMarked} lastCalled={lastCalled} />
                 <div className="flex items-center justify-between px-1 pt-1.5">
                   <span className="text-[13px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
                   {winnerCartela != null && <span className="text-[13px] font-black text-slate-100">Card# {winnerCartela}</span>}
@@ -1101,11 +1180,15 @@ export function Bingo({ onBack }: BingoProps) {
   }, [room?.id]);
   useEffect(() => {
     const total = drawnNumbers.length;
+    // Snap to the final state on completion/cancel (no replay) and clamp any overshoot.
     if (room?.status === 'completed' || room?.status === 'cancelled') { setRevealedCount(total); return; }
     if (revealedCount > total) { setRevealedCount(total); return; }
     if (revealedCount >= total) return;
+    // One steady, calm cadence for every ball. Only shorten (still gently) when
+    // the client is far behind — never a fast 250ms burst that outruns the
+    // animation and reads as "rushed".
     const backlog = total - revealedCount;
-    const delay = backlog > 6 ? 250 : backlog > 3 ? 550 : 950;
+    const delay = backlog > REVEAL_CATCHUP_BACKLOG ? REVEAL_MIN_MS : REVEAL_BASE_MS;
     const id = setTimeout(() => {
       setRevealedCount((c) => Math.min(c + 1, total));
       soundEngine.pop();

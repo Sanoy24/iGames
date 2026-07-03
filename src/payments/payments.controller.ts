@@ -1,5 +1,5 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
@@ -12,6 +12,16 @@ import { PaymentsService } from './payments.service';
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  @Post('telebirr/preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Parsed receipt details — wallet is NOT credited' })
+  previewTelebirrReceipt(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SubmitTelebirrReceiptDto,
+  ) {
+    return this.paymentsService.previewTelebirrReceipt(user.id, dto);
+  }
 
   @Post('telebirr/receipts')
   @ApiCreatedResponse({

@@ -7,6 +7,23 @@ export type Toast = {
   message: string;
 };
 
+export type AppNotification = {
+  id: string;
+  type: 'win' | 'info';
+  title: string;
+  message: string;
+  timestamp: number;
+  read: boolean;
+};
+
+export type LiveCounts = {
+  kenoOnline: number;
+  bingoOnline: number;
+  totalOnline: number;
+  totalPlaying: number;
+  totalConnections: number;
+};
+
 type AppState = {
   // Auth
   user: User | null;
@@ -31,20 +48,59 @@ type AppState = {
   toasts: Toast[];
   addToast: (type: Toast['type'], message: string) => void;
   removeToast: (id: string) => void;
+
+  // Live counts
+  liveCounts: LiveCounts | null;
+  setLiveCounts: (counts: LiveCounts) => void;
+
+  // Audio settings
+  soundVolume: number;
+  soundMuted: boolean;
+  setSoundVolume: (vol: number) => void;
+  setSoundMuted: (muted: boolean) => void;
+
+  // Notifications
+  notifications: AppNotification[];
+  unreadCount: number;
+  addNotification: (n: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => void;
+  markAllNotificationsRead: () => void;
 };
+
+function getStoredUser(): User | null {
+  if (typeof window === 'undefined') return null;
+  if (localStorage.getItem('manualLogout') === '1') return null;
+
+  const storedToken = localStorage.getItem('accessToken');
+  const storedUser = localStorage.getItem('authUser');
+  if (!storedToken || !storedUser) return null;
+
+  try {
+    return JSON.parse(storedUser) as User;
+  } catch {
+    localStorage.removeItem('authUser');
+    return null;
+  }
+}
+
+const initialUser = getStoredUser();
+const initialAccessToken =
+  initialUser && typeof window !== 'undefined'
+    ? localStorage.getItem('accessToken')
+    : null;
 
 export const useStore = create<AppState>((set) => ({
   // Auth
-  user: null,
-  accessToken: null,
-  isAuthenticated: false,
-  authStatus: 'idle',
+  user: initialUser,
+  accessToken: initialAccessToken,
+  isAuthenticated: Boolean(initialUser && initialAccessToken),
+  authStatus: initialUser && initialAccessToken ? 'ready' : 'idle',
   isAuthLoading: false,
   authError: null,
   isSocketConnected: false,
 
   setAuth: (user, token, refreshToken?: string) => {
     localStorage.setItem('accessToken', token);
+    localStorage.setItem('authUser', JSON.stringify(user));
     if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     set({
       user,
@@ -56,7 +112,10 @@ export const useStore = create<AppState>((set) => ({
     });
   },
 
-  setUser: (user) => set({ user }),
+  setUser: (user) => {
+    localStorage.setItem('authUser', JSON.stringify(user));
+    set({ user });
+  },
 
   setAuthLoading: () => set({ authStatus: 'loading', isAuthLoading: true, authError: null }),
 
@@ -76,6 +135,7 @@ export const useStore = create<AppState>((set) => ({
   clearAuth: () => {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
+    localStorage.removeItem('authUser');
     set({
       user: null,
       accessToken: null,
@@ -100,6 +160,43 @@ export const useStore = create<AppState>((set) => ({
     }, 3500);
   },
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  // Live counts
+  liveCounts: null,
+  setLiveCounts: (counts) => set({ liveCounts: counts }),
+
+  // Audio settings
+  soundVolume: typeof window !== 'undefined' ? Number(localStorage.getItem('soundVolume') ?? '0.5') : 0.5,
+  soundMuted: typeof window !== 'undefined' ? localStorage.getItem('soundMuted') === '1' : false,
+  setSoundVolume: (vol) => {
+    localStorage.setItem('soundVolume', String(vol));
+    set({ soundVolume: vol });
+  },
+  setSoundMuted: (muted) => {
+    localStorage.setItem('soundMuted', muted ? '1' : '0');
+    set({ soundMuted: muted });
+  },
+
+  // Notifications
+  notifications: [],
+  unreadCount: 0,
+  addNotification: (n) => {
+    const note: AppNotification = {
+      ...n,
+      id: Math.random().toString(36).slice(2),
+      timestamp: Date.now(),
+      read: false,
+    };
+    set((s) => ({
+      notifications: [note, ...s.notifications].slice(0, 50),
+      unreadCount: s.unreadCount + 1,
+    }));
+  },
+  markAllNotificationsRead: () =>
+    set((s) => ({
+      notifications: s.notifications.map((n) => ({ ...n, read: true })),
+      unreadCount: 0,
+    })),
 }));
 
 // Helper: format minor units to display string

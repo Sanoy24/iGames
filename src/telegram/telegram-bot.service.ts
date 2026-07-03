@@ -1,12 +1,16 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot, InlineKeyboard, Keyboard } from 'grammy';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { Bot, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
+import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramBotService.name);
   private bot: Bot | undefined;
+  private isPolling = false;
 
   // In-memory cache: telegramUserId → phone (avoids repeated DB writes on /start)
   private readonly phoneCache = new Map<number, string>();
@@ -14,6 +18,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -62,9 +67,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      this.bot.start({
-        onStart: () => this.logger.log('Telegram bot started (long polling)'),
-      }).catch((err) => this.logger.error('Telegram bot error', err));
+      const webhookUrl = this.configService.get<string>('TELEGRAM_WEBHOOK_URL');
+      if (webhookUrl) {
+        this.logger.log(`Setting Telegram webhook to: ${webhookUrl}`);
+        await this.bot.api.setWebhook(webhookUrl);
+        this.logger.log('Telegram bot webhook registered successfully');
+      } else {
+        this.logger.log('TELEGRAM_WEBHOOK_URL is not set — starting Telegram bot with long polling');
+        this.isPolling = true;
+        this.bot.start({
+          onStart: () => this.logger.log('Telegram bot started (long polling)'),
+        }).catch((err) => this.logger.error('Telegram bot error', err));
+      }
     } catch (error) {
       this.logger.error(
         'Failed to start Telegram bot',
@@ -74,10 +88,23 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.bot) {
+    if (this.bot && this.isPolling) {
       await this.bot.stop();
-      this.logger.log('Telegram bot stopped');
+      this.logger.log('Telegram bot polling stopped');
     }
+  }
+
+  async notifyUserWin(_userId: string, _amountMinor: number, _gameName: string): Promise<void> {
+    // Win push notifications are disabled.
+  }
+
+  public handleWebhookRequest(req: any, res: any) {
+    if (!this.bot) {
+      res.status(500).send('Bot not initialized');
+      return;
+    }
+    const handler = webhookCallback(this.bot, 'express');
+    return handler(req, res);
   }
 
   private getPlayKeyboard(text: string, miniAppUrl: string): InlineKeyboard {

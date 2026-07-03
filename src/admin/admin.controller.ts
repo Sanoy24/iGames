@@ -10,6 +10,7 @@ import { AdminService } from './admin.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
+import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -47,8 +48,23 @@ export class AdminController {
   getUsers(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '50',
+    @Query('role') role?: string,
+    @Query('search') search?: string,
   ) {
-    return this.usersService.listUsers(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+    return this.usersService.listUsers(
+      parseInt(page, 10) || 1,
+      parseInt(limit, 10) || 50,
+      role,
+      search,
+    );
+  }
+
+  @Get('users/:id/activity')
+  getUserActivity(
+    @Param('id') userId: string,
+    @Query('limit') limit: string = '20',
+  ) {
+    return this.adminService.getUserActivity(userId, parseInt(limit, 10) || 20);
   }
 
   @Put('users/:id/status')
@@ -107,6 +123,11 @@ export class AdminController {
     return this.usersService.updateAgentUser(id, dto);
   }
 
+  @Get('agents/actions')
+  getAgentActions(@Query('limit') limit: string = '100') {
+    return this.adminService.getAgentActions(parseInt(limit, 10) || 100);
+  }
+
   // ── Withdrawals ───────────────────────────────────────────────────
 
   @Get('withdrawals')
@@ -121,6 +142,24 @@ export class AdminController {
     @CurrentUser() admin: AuthenticatedUser,
   ) {
     return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
+  }
+
+  // ── Admin Wallet Operations ───────────────────────────────────────
+
+  @Post('wallet/topup')
+  topupWallet(
+    @Body() dto: AdminTopupDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.walletService.adminTopup(admin.id, dto.amountMinor, dto.idempotencyKey);
+  }
+
+  @Post('wallet/transfer-to-agent')
+  transferToAgent(
+    @Body() dto: AdminTransferToAgentDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.walletService.transferAdminToAgent(admin.id, dto.agentId, dto.amountMinor, dto.idempotencyKey);
   }
 
   // ── Agent Shifts ──────────────────────────────────────────────────

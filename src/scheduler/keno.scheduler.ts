@@ -4,6 +4,7 @@ import { BotsService } from "../bots/bots.service";
 import { KenoService } from "../keno/keno.service";
 import { GameEventsGateway } from "../events/game-events.gateway";
 import { RedisLockService } from "../redis/redis-lock.service";
+import { TelegramBotService } from "../telegram/telegram-bot.service";
 
 const DRAW_LOCK_KEY = "igames:keno:draw-lock";
 const DRAW_LOCK_TTL_MS = 300_000; // 5 minutes — prevents lock expiration during long settlements
@@ -18,6 +19,7 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
         private readonly gameEventsGateway: GameEventsGateway,
         private readonly botsService: BotsService,
         private readonly lockService: RedisLockService,
+        private readonly telegramBotService: TelegramBotService,
     ) {}
 
     async onApplicationBootstrap(): Promise<void> {
@@ -80,6 +82,13 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
 
             this.logger.log(`Keno draw ${result.id} settled`);
             this.gameEventsGateway.emitKenoDrawCompleted(result);
+
+            // Fire-and-forget Telegram win notifications
+            this.kenoService.getDrawWinners(result.id).then((winners) => {
+              for (const w of winners) {
+                this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Keno').catch(() => {});
+              }
+            }).catch(() => {});
         } catch (error) {
             this.logger.error(
                 "Keno scheduler error",

@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { UserCircle, Phone, Mail, Edit3, Check, X } from 'lucide-react';
-import { userApi } from '../lib/api';
+import { motion } from 'framer-motion';
+import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck, Send } from 'lucide-react';
+import { authApi, userApi } from '../lib/api';
 import type { User } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
+
+type TelegramWindow = Window & typeof globalThis & { Telegram?: { WebApp?: { initData?: string } } };
+
+function isTelegramMode(): boolean {
+  return !!((window as TelegramWindow).Telegram?.WebApp?.initData);
+}
 
 function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: string; value?: string; empty?: string }) {
   return (
@@ -22,6 +29,7 @@ function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: 
 export function Profile() {
   const storeUser = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
+  const clearAuth = useStore((s) => s.clearAuth);
   const addToast = useStore((s) => s.addToast);
 
   const [profile, setProfile] = useState<User | null>(null);
@@ -31,6 +39,12 @@ export function Profile() {
 
   const [displayName, setDisplayName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const telegramMode = isTelegramMode();
 
   const loadProfile = useCallback(async () => {
     try {
@@ -45,9 +59,7 @@ export function Profile() {
     }
   }, [addToast]);
 
-  useEffect(() => {
-    void loadProfile();
-  }, [loadProfile]);
+  useEffect(() => { void loadProfile(); }, [loadProfile]);
 
   const startEdit = () => {
     setDisplayName(profile?.displayName ?? '');
@@ -65,7 +77,6 @@ export function Profile() {
         phoneNumber: phoneNumber.trim() || undefined,
       });
       setProfile(updated);
-      // Sync store so WalletBar / Home display name updates immediately
       if (storeUser) setUser({ ...storeUser, displayName: updated.displayName, phoneNumber: updated.phoneNumber });
       setEditing(false);
       addToast('success', 'Profile updated.');
@@ -73,6 +84,43 @@ export function Profile() {
       addToast('error', getErrorMessage(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const changePassword = async () => {
+    if (newPassword.length < 8) {
+      addToast('error', 'New password must be at least 8 characters.');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await authApi.changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      addToast('success', 'Password changed. Sign in again with the new password.');
+      localStorage.setItem('manualLogout', '1');
+      clearAuth();
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const logout = async () => {
+    setLoggingOut(true);
+    try {
+      await authApi.logout();
+    } catch { /* local logout is fine even if server unreachable */ } finally {
+      if (!telegramMode) {
+        // Standalone web: show credential login on next open
+        localStorage.setItem('manualLogout', '1');
+      }
+      // Telegram mode: just clear tokens — next miniapp open re-auths via initData automatically
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      clearAuth();
+      setLoggingOut(false);
     }
   };
 
@@ -88,20 +136,66 @@ export function Profile() {
 
   return (
     <div className="stack-lg">
-      {/* Avatar + name header */}
+      {/* ── Avatar hero ── */}
       <section className="card profile-hero">
-        <div className="profile-avatar">
+        <motion.div
+          className="profile-avatar"
+          initial={{ scale: 0.85, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+        >
           <UserCircle size={64} strokeWidth={1.2} />
-        </div>
+        </motion.div>
         <h1 className="profile-name">{user?.displayName ?? 'Player'}</h1>
         <div className="profile-role-row">
           {(user?.roles ?? ['player']).map((role) => (
             <span key={role} className="badge badge-gold">{role}</span>
           ))}
+          {telegramMode && (
+            <span className="badge" style={{ background: 'rgba(37,99,235,0.15)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
+              <Send size={9} style={{ display: 'inline', marginRight: 3 }} />
+              Telegram
+            </span>
+          )}
         </div>
       </section>
 
-      {/* Info section */}
+      {/* ── Account stats ── */}
+      <div className="profile-stats-grid">
+        <div className="profile-stat-card">
+          <span className="profile-stat-label">Account Status</span>
+          <span
+            className="profile-stat-value"
+            style={{ fontSize: 14, color: user?.status === 'active' ? 'var(--green)' : 'var(--danger)', textTransform: 'capitalize' }}
+          >
+            {user?.status ?? 'active'}
+          </span>
+        </div>
+        <div className="profile-stat-card">
+          <span className="profile-stat-label">Last Login</span>
+          <span className="profile-stat-value" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+            {user?.lastLoginAt
+              ? new Date(user.lastLoginAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+              : 'This session'}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Phone number prompt ── */}
+      {!user?.phoneNumber && !editing && (
+        <div className="info-banner info-banner-gold">
+          <Phone size={18} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <p style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>Add your Telebirr number</p>
+            <p style={{ fontSize: 12, lineHeight: 1.5 }}>Required to process withdrawal payouts via Telebirr.</p>
+            <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={startEdit}>
+              Add Phone Number
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Profile info ── */}
       <section className="card">
         <div className="section-header">
           <div>
@@ -145,7 +239,7 @@ export function Profile() {
               </button>
               <button className="btn btn-primary" onClick={saveProfile} disabled={saving}>
                 <Check size={14} style={{ marginRight: 4 }} />
-                {saving ? 'Saving...' : 'Save Changes'}
+                {saving ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </div>
@@ -173,35 +267,76 @@ export function Profile() {
         )}
       </section>
 
-      {/* Account section */}
-      <section className="card">
-        <div className="section-title" style={{ marginBottom: 12 }}>Account</div>
-        <div className="key-value-list">
-          <div className="key-value-row">
-            <span>Status</span>
-            <strong style={{ textTransform: 'capitalize', color: user?.status === 'active' ? 'var(--green)' : 'var(--danger)' }}>
-              {user?.status ?? 'active'}
-            </strong>
-          </div>
-          {user?.lastLoginAt && (
-            <div className="key-value-row">
-              <span>Last Login</span>
-              <strong>{new Date(user.lastLoginAt).toLocaleString()}</strong>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Phone prompt if missing */}
-      {!user?.phoneNumber && !editing && (
-        <section className="card" style={{ borderColor: 'rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.05)' }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <Phone size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
+      {/* ── Telegram session info ── */}
+      {telegramMode ? (
+        <section className="card">
+          <div className="section-header">
             <div>
-              <p style={{ fontWeight: 700, marginBottom: 4 }}>Add your Telebirr number</p>
-              <p className="section-copy">Your phone number is required to process withdrawal payouts via Telebirr.</p>
-              <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={startEdit}>
-                Add Phone Number
+              <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Send size={14} style={{ color: '#60a5fa' }} />
+                Session
+              </div>
+              <p className="section-copy">Your session is managed by Telegram.</p>
+            </div>
+          </div>
+          <button
+            className="btn btn-danger btn-full"
+            onClick={logout}
+            disabled={loggingOut}
+            style={{ marginTop: 4 }}
+          >
+            <LogOut size={14} style={{ marginRight: 6 }} />
+            {loggingOut ? 'Ending session…' : 'End Session'}
+          </button>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
+            Reopen the app via Telegram to sign in again automatically.
+          </p>
+        </section>
+      ) : (
+        /* ── Security (standalone web only) ── */
+        <section className="card">
+          <div className="section-header">
+            <div>
+              <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ShieldCheck size={15} style={{ color: 'var(--text-muted)' }} />
+                Security
+              </div>
+              <p className="section-copy">Change your password or end this session.</p>
+            </div>
+          </div>
+          <div className="stack-sm">
+            <label className="form-field">
+              <span>Current Password</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+              />
+            </label>
+            <label className="form-field">
+              <span>New Password</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+              />
+            </label>
+            <div className="action-row" style={{ marginTop: 8 }}>
+              <button
+                className="btn btn-primary"
+                onClick={changePassword}
+                disabled={changingPassword || !currentPassword || !newPassword}
+              >
+                <KeyRound size={14} style={{ marginRight: 4 }} />
+                {changingPassword ? 'Changing…' : 'Change Password'}
+              </button>
+              <button className="btn btn-danger" onClick={logout} disabled={loggingOut}>
+                <LogOut size={14} style={{ marginRight: 4 }} />
+                {loggingOut ? 'Logging out…' : 'Logout'}
               </button>
             </div>
           </div>

@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { BingoModule } from '../bingo/bingo.module';
+import { CrashModule } from '../crash/crash.module';
 import { KenoModule } from '../keno/keno.module';
-import { User, UserSchema } from '../users/schemas/user.schema';
+import { User } from '../users/entities/user.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { BotsController } from './bots.controller';
 import { BotsService } from './bots.service';
@@ -12,9 +14,11 @@ import { BotsService } from './bots.service';
 @Module({
   imports: [
     JwtModule.register({}),
-    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    TypeOrmModule.forFeature([User]),
     WalletModule,
-    KenoModule
+    KenoModule,
+    BingoModule,
+    CrashModule,
   ],
   controllers: [BotsController],
   providers: [BotsService, JwtAuthGuard, RolesGuard],

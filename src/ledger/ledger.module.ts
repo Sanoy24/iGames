@@ -1,20 +1,14 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import {
-  IdempotencyRecord,
-  IdempotencyRecordSchema
-} from './schemas/idempotency-record.schema';
-import { LedgerEntry, LedgerEntrySchema } from './schemas/ledger-entry.schema';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { IdempotencyRecord } from './entities/idempotency-record.entity';
+import { LedgerEntry } from './entities/ledger-entry.entity';
 import { LedgerService } from './ledger.service';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: LedgerEntry.name, schema: LedgerEntrySchema },
-      { name: IdempotencyRecord.name, schema: IdempotencyRecordSchema }
-    ])
+    TypeOrmModule.forFeature([LedgerEntry, IdempotencyRecord])
   ],
   providers: [LedgerService],
-  exports: [LedgerService, MongooseModule]
+  exports: [LedgerService, TypeOrmModule]
 })
 export class LedgerModule {}

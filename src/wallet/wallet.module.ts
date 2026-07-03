@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GameEventsModule } from '../events/game-events.module';
 import { LedgerModule } from '../ledger/ledger.module';
-import { Wallet, WalletSchema } from './schemas/wallet.schema';
-import { WagerLimit, WagerLimitSchema } from './schemas/wager-limit.schema';
-import { Withdrawal, WithdrawalSchema } from './schemas/withdrawal.schema';
+import { Wallet } from './entities/wallet.entity';
+import { WagerLimit } from './entities/wager-limit.entity';
+import { Withdrawal } from './entities/withdrawal.entity';
+import { User } from '../users/entities/user.entity';
+import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 
@@ -15,14 +17,10 @@ import { WalletService } from './wallet.service';
     JwtModule.register({}),
     LedgerModule,
     GameEventsModule,
-    MongooseModule.forFeature([
-      { name: Wallet.name, schema: WalletSchema },
-      { name: WagerLimit.name, schema: WagerLimitSchema },
-      { name: Withdrawal.name, schema: WithdrawalSchema }
-    ])
+    TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal, User, AgentActionLog])
   ],
   controllers: [WalletController],
   providers: [WalletService, JwtAuthGuard],
-  exports: [WalletService, MongooseModule]
+  exports: [WalletService, TypeOrmModule]
 })
 export class WalletModule {}

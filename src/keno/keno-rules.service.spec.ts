@@ -1,19 +1,30 @@
 import { BadRequestException } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { KenoRulesService } from './keno-rules.service';
-import { KenoConfigDocument } from './schemas/keno-config.schema';
+import { KenoConfig } from './entities/keno-config.entity';
 import { DEFAULT_KENO_PAYTABLE } from './constants/default-keno-paytable';
 
 describe('KenoRulesService', () => {
   const service = new KenoRulesService();
 
   const config = {
-    _id: new Types.ObjectId(),
+    id: 'test-config-uuid',
+    name: 'Test Config',
+    version: 1,
+    status: 'active',
     allowedSpots: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
     numberMin: 1,
     numberMax: 80,
-    paytable: DEFAULT_KENO_PAYTABLE
-  } as KenoConfigDocument;
+    drawSize: 20,
+    ticketPriceMinor: 100,
+    paytable: DEFAULT_KENO_PAYTABLE,
+    globalBotWinInterval: 0,
+    autoScheduleIntervalMinutes: 3,
+    autoScheduleIntervalSeconds: 40,
+    maxWinnersPerDraw: 0,
+    winChancePct: 100,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  } as KenoConfig;
 
   // ─── validateSelectedNumbers ──────────────────────────────────────────────
   describe('validateSelectedNumbers', () => {
@@ -38,7 +49,7 @@ describe('KenoRulesService', () => {
     });
 
     it('rejects spot count not in allowedSpots', () => {
-      const restrictedConfig = { ...config, allowedSpots: [1, 2, 3] } as KenoConfigDocument;
+      const restrictedConfig = { ...config, allowedSpots: [1, 2, 3] } as KenoConfig;
       expect(() =>
         service.validateSelectedNumbers([1, 2, 3, 4], restrictedConfig)
       ).toThrow(BadRequestException);

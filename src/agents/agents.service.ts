@@ -1,19 +1,29 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model, Types } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
-import { AgentShift, AgentShiftDocument } from './schemas/agent-shift.schema';
+import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
+import { SystemConfig } from '../admin/entities/system-config.entity';
 
 @Injectable()
 export class AgentsService {
   constructor(
-    @InjectConnection() private readonly connection: Connection,
-    @InjectModel(AgentShift.name) private readonly shiftModel: Model<AgentShift>,
+    @InjectRepository(AgentShift)
+    private readonly agentShiftRepository: Repository<AgentShift>,
+    @InjectRepository(SystemConfig)
+    private readonly systemConfigRepository: Repository<SystemConfig>,
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
   ) {}
+
+  // ── Config (agent-accessible) ────────────────────────────────────
+
+  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number }> {
+    const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    return { withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0 };
+  }
 
   // ── Withdrawals ────────────────────────────────────────────────────
 
@@ -23,6 +33,15 @@ export class AgentsService {
 
   getMyWithdrawals(agentId: string) {
     return this.walletService.getAgentWithdrawals(agentId);
+  }
+
+  async getTransactionHistory(agentId: string) {
+    const [ledger, withdrawals] = await Promise.all([
+      this.walletService.getLedgerEntries({ userId: agentId, limit: 100 }),
+      this.walletService.getAgentWithdrawalHistory(agentId),
+    ]);
+
+    return { ledger, withdrawals };
   }
 
   verifyAgentWorkingHoursAndPermission(agent: any, permission: 'deposit' | 'withdraw') {
@@ -67,11 +86,9 @@ export class AgentsService {
   async completeWithdrawal(withdrawalId: string, agentId: string, telebirrReference: string) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
-    // Read service charge from system config directly to avoid circular module deps.
-    const config = await this.connection
-      .collection('systemconfigs')
-      .findOne({ key: 'global' });
-    const serviceChargePct = (config?.withdrawalServiceChargePct as number) ?? 0;
+    // Read service charge from system config directly
+    const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    const serviceChargePct = config?.withdrawalServiceChargePct ?? 0;
 
     return this.walletService.completeWithdrawalByAgent({
       withdrawalId,
@@ -83,52 +100,58 @@ export class AgentsService {
 
   // ── Shifts ─────────────────────────────────────────────────────────
 
-  async createShift(dto: CreateShiftDto): Promise<AgentShiftDocument> {
-    const [shift] = await this.shiftModel.create([
-      {
-        agentId: new Types.ObjectId(dto.agentId),
-        startHour: dto.startHour,
-        startMinute: dto.startMinute,
-        endHour: dto.endHour,
-        endMinute: dto.endMinute,
-        daysOfWeek: dto.daysOfWeek ?? [],
-        label: dto.label,
-        isActive: dto.isActive ?? true,
-      },
-    ]);
-    return shift;
+  async createShift(dto: CreateShiftDto): Promise<any> {
+    const shift = this.agentShiftRepository.create({
+      agentId: dto.agentId,
+      startHour: dto.startHour,
+      startMinute: dto.startMinute,
+      endHour: dto.endHour,
+      endMinute: dto.endMinute,
+      daysOfWeek: dto.daysOfWeek ?? [],
+      label: dto.label,
+      isActive: dto.isActive ?? true,
+    });
+    await this.agentShiftRepository.save(shift);
+
+    const saved = await this.agentShiftRepository.findOne({
+      where: { id: shift.id },
+      relations: ['user']
+    });
+    return this.toShiftResponse(saved!);
   }
 
-  listShifts(): Promise<AgentShiftDocument[]> {
-    return this.shiftModel
-      .find()
-      .populate('agentId', 'displayName email')
-      .sort({ startHour: 1, startMinute: 1 })
-      .exec();
+  async listShifts(): Promise<any[]> {
+    const shifts = await this.agentShiftRepository.find({
+      relations: ['user'],
+      order: { startHour: 'ASC', startMinute: 'ASC' }
+    });
+    return shifts.map((s) => this.toShiftResponse(s));
   }
 
-  async updateShift(shiftId: string, dto: Partial<CreateShiftDto>): Promise<AgentShiftDocument> {
-    const update: Record<string, unknown> = {};
-    if (dto.agentId !== undefined) update.agentId = new Types.ObjectId(dto.agentId);
-    if (dto.startHour !== undefined) update.startHour = dto.startHour;
-    if (dto.startMinute !== undefined) update.startMinute = dto.startMinute;
-    if (dto.endHour !== undefined) update.endHour = dto.endHour;
-    if (dto.endMinute !== undefined) update.endMinute = dto.endMinute;
-    if (dto.daysOfWeek !== undefined) update.daysOfWeek = dto.daysOfWeek;
-    if (dto.label !== undefined) update.label = dto.label;
-    if (dto.isActive !== undefined) update.isActive = dto.isActive;
-
-    const shift = await this.shiftModel
-      .findByIdAndUpdate(shiftId, { $set: update }, { new: true })
-      .populate('agentId', 'displayName email')
-      .exec();
-
+  async updateShift(shiftId: string, dto: Partial<CreateShiftDto>): Promise<any> {
+    const shift = await this.agentShiftRepository.findOneBy({ id: shiftId });
     if (!shift) throw new NotFoundException('Shift not found');
-    return shift;
+
+    if (dto.agentId !== undefined) shift.agentId = dto.agentId;
+    if (dto.startHour !== undefined) shift.startHour = dto.startHour;
+    if (dto.startMinute !== undefined) shift.startMinute = dto.startMinute;
+    if (dto.endHour !== undefined) shift.endHour = dto.endHour;
+    if (dto.endMinute !== undefined) shift.endMinute = dto.endMinute;
+    if (dto.daysOfWeek !== undefined) shift.daysOfWeek = dto.daysOfWeek;
+    if (dto.label !== undefined) shift.label = dto.label;
+    if (dto.isActive !== undefined) shift.isActive = dto.isActive;
+
+    await this.agentShiftRepository.save(shift);
+
+    const saved = await this.agentShiftRepository.findOne({
+      where: { id: shift.id },
+      relations: ['user']
+    });
+    return this.toShiftResponse(saved!);
   }
 
   async deleteShift(shiftId: string): Promise<void> {
-    await this.shiftModel.findByIdAndDelete(shiftId).exec();
+    await this.agentShiftRepository.delete({ id: shiftId });
   }
 
   /**
@@ -141,7 +164,7 @@ export class AgentsService {
     const dayOfWeek = now.getDay();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const shifts = await this.shiftModel.find({ isActive: true }).exec();
+    const shifts = await this.agentShiftRepository.findBy({ isActive: true });
 
     for (const shift of shifts) {
       const dayMatch =
@@ -157,22 +180,22 @@ export class AgentsService {
         : currentMinutes >= startMinutes && currentMinutes < endMinutes;
 
       if (inWindow) {
-        return shift.agentId.toString();
+        return shift.agentId;
       }
     }
 
     return null;
   }
 
-  async getActiveShift(): Promise<AgentShiftDocument | null> {
+  async getActiveShift(): Promise<any | null> {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const shifts = await this.shiftModel
-      .find({ isActive: true })
-      .populate('agentId', 'displayName email')
-      .exec();
+    const shifts = await this.agentShiftRepository.find({
+      where: { isActive: true },
+      relations: ['user']
+    });
 
     for (const shift of shifts) {
       const dayMatch =
@@ -187,9 +210,29 @@ export class AgentsService {
         ? currentMinutes >= startMinutes || currentMinutes < endMinutes
         : currentMinutes >= startMinutes && currentMinutes < endMinutes;
 
-      if (inWindow) return shift;
+      if (inWindow) return this.toShiftResponse(shift);
     }
 
     return null;
+  }
+
+  private toShiftResponse(shift: AgentShift) {
+    return {
+      id: shift.id,
+      agentId: shift.user ? {
+        id: shift.user.id,
+        displayName: shift.user.displayName,
+        email: shift.user.email
+      } : shift.agentId,
+      startHour: shift.startHour,
+      startMinute: shift.startMinute,
+      endHour: shift.endHour,
+      endMinute: shift.endMinute,
+      daysOfWeek: shift.daysOfWeek,
+      label: shift.label,
+      isActive: shift.isActive,
+      createdAt: shift.createdAt,
+      updatedAt: shift.updatedAt
+    };
   }
 }

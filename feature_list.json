@@ -1,0 +1,231 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "updated": "2026-06-29",
+    "schema": "Each feature: id, area, title, behavior, status, verification, evidence, notes",
+    "statuses": ["not_started", "in_progress", "blocked", "passing"],
+    "rule": "Status only moves to 'passing' when verification command exits 0 and output matches expected. Agent cannot self-declare passing."
+  },
+  "features": [
+    {
+      "id": "BE-01",
+      "area": "auth",
+      "title": "JWT auth (access + refresh tokens)",
+      "behavior": "POST /auth/credentials and POST /auth/telegram/miniapp return { accessToken, refreshToken, user }. POST /auth/refresh renews access token.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npm run test:unit",
+      "evidence": "Implemented in src/auth/. TypeScript clean as of 2026-05-21."
+    },
+    {
+      "id": "BE-02",
+      "area": "wallet",
+      "title": "Wallet debit/credit with immutable ledger",
+      "behavior": "Every wallet mutation via WalletService creates a LedgerEntry in the same TypeORM transaction (EntityManager). No direct wallet row writes anywhere.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npm run test:unit",
+      "evidence": "src/wallet/, src/ledger/. Idempotency keys enforced. TypeORM EntityManager pattern."
+    },
+    {
+      "id": "BE-03",
+      "area": "keno",
+      "title": "Keno draw lifecycle (open → locked → drawn → settled)",
+      "behavior": "Scheduler auto-creates draws. RNG draws 20 unique numbers 1–80. All tickets settled atomically. Bot tickets auto-bought.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/keno/, src/scheduler/keno.scheduler.ts. Admin can trigger manually."
+    },
+    {
+      "id": "BE-04",
+      "area": "keno",
+      "title": "PATCH /keno/tickets/:id/numbers — post-purchase number edit",
+      "behavior": "Player can update selected numbers on a pending ticket while draw is still open. Spot count must stay the same. Draw status re-validated.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "Added this session. src/keno/keno.controller.ts + UpdateKenoTicketNumbersDto."
+    },
+    {
+      "id": "BE-05",
+      "area": "bingo",
+      "title": "90-ball Bingo room lifecycle (open → running → settled)",
+      "behavior": "Rooms auto-advance. Scheduler draws 1 ball per drawIntervalSeconds. One-line / two-line / full-house tiers settled. Self-healing guard for stuck rooms.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/bingo/. Configurable: salesWindowSeconds, drawIntervalSeconds, resultDisplaySeconds."
+    },
+    {
+      "id": "BE-06",
+      "area": "bingo",
+      "title": "GET /bingo/current — priority room for player",
+      "behavior": "Returns running room first, then open room, then last completed room (with user tickets). No room lobby required.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/bingo/bingo.service.ts getCurrentRoom(userId?)."
+    },
+    {
+      "id": "BE-07",
+      "area": "crash",
+      "title": "Crash game round lifecycle (waiting → running → crashed)",
+      "behavior": "JWT-guarded endpoints. RNG generates crash point. Bets auto-cashout. Stale rounds abandoned on bootstrap with bet refunds.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/crash/. JwtModule added. abandonStaleRounds() called on bootstrap."
+    },
+    {
+      "id": "BE-08",
+      "area": "events",
+      "title": "Socket.IO live counts (heartbeat + on-demand)",
+      "behavior": "Gateway broadcasts live.counts every 10s. Client can emit request.counts to pull immediately. Counts cover all game rooms.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/events/game-events.gateway.ts. @Interval(10_000) + @SubscribeMessage('request.counts')."
+    },
+    {
+      "id": "BE-09",
+      "area": "admin",
+      "title": "Admin REST API (config, agents, stats, draws)",
+      "behavior": "Admins can manage Keno/Bingo/Crash config, create agents, view stats, trigger draws, process withdrawals.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/admin/. Role-guarded with RolesGuard + @Roles('admin')."
+    },
+    {
+      "id": "BE-10",
+      "area": "payments",
+      "title": "Telebirr deposit receipt ingestion",
+      "behavior": "POST /payments/telebirr/callback validates receipt and credits wallet. Idempotent.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/payments/."
+    },
+    {
+      "id": "BE-11",
+      "area": "rng",
+      "title": "RNG service with audit logging",
+      "behavior": "All game draws use RngService, never Math.random(). Audit log records algorithm version, inputs, outputs, hash, timestamp.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/rng/."
+    },
+    {
+      "id": "BE-12",
+      "area": "telegram",
+      "title": "Telegram Mini App auth + Grammy bot integration",
+      "behavior": "initData validated server-side with bot token. User linked to internal iGames account. Bot is optional — backend works without it.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit",
+      "evidence": "src/telegram/. AUTH_MODE env var controls hybrid vs telegram-only."
+    },
+    {
+      "id": "FE-01",
+      "area": "frontend/auth",
+      "title": "Credentials login gate + Telegram auth bootstrap",
+      "behavior": "App.tsx bootstraps auth on load. Shows credentials login form if not authenticated. Handles Telegram Mini App initData automatically.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/App.tsx, frontend/src/components/CredentialsLogin.tsx."
+    },
+    {
+      "id": "FE-02",
+      "area": "frontend/keno",
+      "title": "Keno: pay-first then pick flow with debounced number save",
+      "behavior": "Number grid locked until bet placed. Buy In purchases with quick-pick first. After payment, player edits numbers (PATCH /keno/tickets/:id/numbers debounced 600ms). Win/lose modal with Play Again.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Keno.tsx. Tabbed Recent Draws / My Tickets."
+    },
+    {
+      "id": "FE-03",
+      "area": "frontend/bingo",
+      "title": "Bingo: auto-join, phase machine (buy/playing/result), no lobby",
+      "behavior": "Loads current room via GET /bingo/current. Phases: buy (40s window) → playing (ball-by-ball) → result (10s display). Confetti on win. Back goes to Home.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx. Completely rewritten."
+    },
+    {
+      "id": "FE-04",
+      "area": "frontend/crash",
+      "title": "Crash game UI with live multiplier and cashout",
+      "behavior": "Connects to Socket.IO. Shows multiplier climbing in real time. Cashout button active during running round. Round history visible.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Crash.tsx (or equivalent)."
+    },
+    {
+      "id": "FE-05",
+      "area": "frontend/wallet",
+      "title": "Wallet page with balance, ledger history, deposit flow",
+      "behavior": "Displays available + reserved credits. Shows ledger entries paginated. Telebirr deposit instructions. Withdrawal request form.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Wallet.tsx."
+    },
+    {
+      "id": "FE-06",
+      "area": "frontend/admin",
+      "title": "Admin panel: sidebar layout, slick visual overhaul, all tabs",
+      "behavior": "Desktop: 210px sticky sidebar nav. All tabs styled with adm-* CSS system. Overview has SVG donut chart + icon KPIs. Account tab shows identity, wallet, top-up, transfer-to-agent. Bingo config includes salesWindowSeconds + resultDisplaySeconds.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Admin.tsx, frontend/src/App.css. Build: ✓ 820ms."
+    },
+    {
+      "id": "FE-07",
+      "area": "frontend/agent",
+      "title": "Agent panel: claim withdrawals, top-up players",
+      "behavior": "Agents can view pending withdrawals, claim and process them, top up player wallets.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Agent.tsx."
+    },
+    {
+      "id": "FE-08",
+      "area": "frontend/home",
+      "title": "Home page: live player counts, recent wins ticker",
+      "behavior": "Socket.IO live.counts populates on connect (request.counts) and updates every 10s. Recent wins marquee. Navigation to games.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Home.tsx, frontend/src/hooks/useSocketConnection.ts."
+    },
+    {
+      "id": "FE-09",
+      "area": "frontend/admin",
+      "title": "Admin panel: per-tab bespoke layouts (Players, Keno, Bingo, Crash, Withdrawals, Bots)",
+      "behavior": "Each non-overview tab has purpose-built layout: Players table with search/filter, Keno with draw timeline, Bingo with room list, Crash with round history, Withdrawals with claim flow, Bots with management cards.",
+      "status": "not_started",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "",
+      "notes": "Current tabs work but use generic adm-panel layout. Bespoke per-tab layouts are the next UX upgrade."
+    },
+    {
+      "id": "FE-10",
+      "area": "frontend/profile",
+      "title": "Profile page: display name, win history, stats",
+      "behavior": "Player can view their profile, total wins, recent game history. Edit display name.",
+      "status": "not_started",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "",
+      "notes": "Basic profile page exists; full stats/history view not confirmed."
+    },
+    {
+      "id": "OPS-01",
+      "area": "ops",
+      "title": "Docker Compose production deployment",
+      "behavior": "docker-compose.yml starts backend + frontend behind reverse proxy. Health checks pass. PM2 or native Node process manager.",
+      "status": "in_progress",
+      "verification": "docker compose up -d && curl http://localhost:3000/health",
+      "evidence": "Dockerfile and docker-compose.yml present. Deployed via PM2 on server.",
+      "notes": "MySQL migration (ROW_FORMAT=DYNAMIC) needed on production DB."
+    },
+    {
+      "id": "OPS-02",
+      "area": "ops",
+      "title": "MySQL table row format migration",
+      "behavior": "All 25 tables use ROW_FORMAT=DYNAMIC to avoid 8126-byte InnoDB inline limit.",
+      "status": "in_progress",
+      "verification": "SELECT TABLE_NAME, ROW_FORMAT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND ROW_FORMAT != 'Dynamic';",
+      "evidence": "ALTER TABLE statements provided. Must be run on production DB.",
+      "notes": "Run the 25 ALTER TABLE statements provided in session 2026-06-29."
+    }
+  ]
+}

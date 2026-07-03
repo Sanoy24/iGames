@@ -15,6 +15,7 @@ import { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedRequest, AuthenticatedUser } from '../auth/types/authenticated-user';
+import { GameEventsGateway } from '../events/game-events.gateway';
 import { PurchaseBingoTicketsDto } from './dto/purchase-bingo-tickets.dto';
 import { BingoService } from './bingo.service';
 
@@ -22,24 +23,21 @@ import { BingoService } from './bingo.service';
 @SkipThrottle({ default: true })
 @Controller('bingo')
 export class BingoController {
-  constructor(private readonly bingoService: BingoService) {}
+  constructor(
+    private readonly bingoService: BingoService,
+    private readonly gameEventsGateway: GameEventsGateway,
+  ) {}
 
   @Get('rooms')
-  @ApiOkResponse({
-    schema: {
-      example: [
-        {
-          id: '665f...',
-          name: 'Daily 90-ball',
-          status: 'open',
-          ticketPriceMinor: 100,
-          soldTickets: 12
-        }
-      ]
-    }
-  })
   listRooms() {
     return this.bingoService.listRooms();
+  }
+
+  @Get('current')
+  @ApiOkResponse({ description: 'The single active room (running → open → last completed) with the callers tickets' })
+  getCurrentRoom(@Req() request: Request) {
+    const maybeUser = (request as Partial<AuthenticatedRequest>).user;
+    return this.bingoService.getCurrentRoom(maybeUser?.id);
   }
 
   @Get('rooms/:id/state')
@@ -60,23 +58,17 @@ export class BingoController {
     });
   }
 
+  @Get('rooms/:id/spectate')
+  spectateRoom(@Param('id') roomId: string) {
+    return this.bingoService.getSpectatorView(roomId);
+  }
+
   @Post('rooms/:id/tickets')
-  @Throttle({ strict: { ttl: 60_000, limit: 10 } })
+  @Throttle({ strict: { ttl: 60_000, limit: 30 } })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiCreatedResponse({
-    schema: {
-      example: [
-        {
-          id: '665f...',
-          roomId: '665f...',
-          grid: [[1, null, 20, null, 44, null, 61, null, 88]],
-          status: 'active'
-        }
-      ]
-    }
-  })
-  purchaseTickets(
+  @ApiCreatedResponse({ description: 'Purchased bingo ticket(s)' })
+  async purchaseTickets(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') roomId: string,
     @Body() dto: PurchaseBingoTicketsDto,
@@ -86,11 +78,19 @@ export class BingoController {
       throw new BadRequestException('Idempotency-Key header is required');
     }
 
-    return this.bingoService.purchaseTickets({
+    const tickets = await this.bingoService.purchaseTickets({
       userId: user.id,
       roomId,
       count: dto.count,
-      idempotencyKey
+      cartelaNumbers: dto.cartelaNumbers,
+      idempotencyKey,
+      selectedNumbers: dto.selectedNumbers,
     });
+
+    // Emit room updated so other players see the new spot claimed in real-time.
+    const roomState = await this.bingoService.getRoomState({ roomId });
+    this.gameEventsGateway.emitBingoRoomUpdated(roomState);
+
+    return tickets;
   }
 }

@@ -1,12 +1,16 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
-import { InjectConnection } from '@nestjs/mongoose';
-import { Connection } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
+import { AdminAuditLog } from './entities/admin-audit-log.entity';
 
 @Injectable()
 export class AdminAuditInterceptor implements NestInterceptor {
-  constructor(@InjectConnection() private readonly connection: Connection) {}
+  constructor(
+    @InjectRepository(AdminAuditLog)
+    private readonly auditRepository: Repository<AdminAuditLog>
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
@@ -14,13 +18,13 @@ export class AdminAuditInterceptor implements NestInterceptor {
 
     // Only audit mutating actions
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      this.connection.collection('adminauditlogs').insertOne({
+      const log = this.auditRepository.create({
         adminUserId: user?.id || 'unknown',
         method,
         url,
         body: this.sanitizeBody(body),
-        timestamp: new Date(),
-      }).catch(err => console.error('Failed to write admin audit log:', err));
+      });
+      this.auditRepository.save(log).catch(err => console.error('Failed to write admin audit log:', err));
     }
 
     return next.handle().pipe(tap(() => {}));

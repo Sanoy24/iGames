@@ -14,6 +14,9 @@ export type User = {
     deposit: boolean;
     withdraw: boolean;
   };
+  wallets?: Wallet[];
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AuthTokenResponse = {
@@ -22,6 +25,13 @@ export type AuthTokenResponse = {
   tokenType: 'Bearer';
   expiresIn: number;
   user: User;
+};
+
+export type RecentWin = {
+  displayName: string;
+  amountMinor: number;
+  game: string;
+  timestamp: string;
 };
 
 export type Wallet = {
@@ -96,6 +106,27 @@ export type KenoTicket = {
   walletCredit?: Record<string, unknown>;
 };
 
+export type PatternType = 'fixed' | 'any_row' | 'any_col' | 'any_diagonal' | 'any_line' | 'coverall';
+
+export type BingoPattern = {
+  id: string;
+  name: string;
+  description?: string;
+  patternType: PatternType;
+  mask?: boolean[][];
+  isBuiltIn: boolean;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type BingoPatternPrize = {
+  patternId: string;
+  name: string;
+  prizeMinor: number;
+};
+
 export type BingoRoom = {
   id: string;
   name: string;
@@ -104,21 +135,31 @@ export type BingoRoom = {
   maxTickets: number;
   soldTickets: number;
   prizes: Record<string, number>;
+  winMode: 'line' | 'pattern' | 'prefilled';
+  numberRange: number;
+  gridSize: number;
+  patternPrizes: BingoPatternPrize[];
   scheduledStartAt: string;
   drawnNumbers: number[];
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
   settlementSummary: Record<string, unknown>;
+  houseEdgePct: number;
+  prizeMinor: number;
+  takenSpots?: number[];
+  resultDisplaySeconds?: number;
 };
 
 export type BingoTicket = {
   id: string;
   userId: string;
   roomId: string;
+  cartelaNumber?: number | null;
   grid: Array<Array<number | null>>;
   markedNumbers: number[];
   completedLines: number[];
   wonTiers: string[];
+  completedPatterns: string[];
   stakeMinor: number;
   payoutMinor: number;
   status: string;
@@ -127,6 +168,84 @@ export type BingoTicket = {
 
 export type BingoRoomState = BingoRoom & {
   tickets?: BingoTicket[];
+};
+
+export type BingoConfig = {
+  key: string;
+  enabled: boolean;
+  autoRepeatIntervalMinutes: number;
+  defaultTicketPriceMinor: number;
+  defaultMaxTickets: number;
+  defaultOneLineMinor: number;
+  defaultTwoLinesMinor: number;
+  defaultFullHouseMinor: number;
+  drawIntervalSeconds: number;
+  salesWindowSeconds?: number;
+  resultDisplaySeconds?: number;
+  defaultWinMode?: string;
+  defaultNumberRange?: number;
+  defaultGridSize?: number;
+  minDrawsBeforeWin?: number;
+  minTicketsToStart?: number;
+  houseEdgePct?: number;
+  globalBingoBotWinInterval?: number;
+  prefilledFirstPlacePct?: number;
+  prefilledSecondPlaceEnabled?: boolean;
+  prefilledSecondPlacePct?: number;
+  prefilledThirdPlaceEnabled?: boolean;
+  prefilledThirdPlacePct?: number;
+  prefilledWinPatternId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type LeaderboardEntry = {
+  rank: number;
+  displayName: string;
+  totalWinMinor: number;
+  winCount: number;
+};
+
+export type SpectatorCard = {
+  grid: Array<Array<number | null>>;
+  markedNumbers: number[];
+  status: string;
+};
+
+export type CrashConfig = {
+  key: string;
+  enabled: boolean;
+  houseEdgePct: number;
+  minBetMinor: number;
+  maxBetMinor: number;
+  waitingDurationSeconds: number;
+  tickIntervalMs: number;
+  maxMultiplierX100: number;
+  botBetMinor: number;
+  globalBotWinInterval: number;
+};
+
+export type CrashRound = {
+  id: string;
+  status: 'waiting' | 'running' | 'crashed';
+  seedHash: string;
+  seed?: string | null;
+  crashPointX100?: number | null;
+  startedAt?: string | null;
+  crashedAt?: string | null;
+  elapsedMs?: number | null;
+  settlementSummary?: Record<string, unknown> | null;
+};
+
+export type CrashBet = {
+  id: string;
+  userId: string;
+  roundId: string;
+  stakeMinor: number;
+  autoCashoutX100?: number | null;
+  cashedOutAtX100?: number | null;
+  payoutMinor: number;
+  status: 'active' | 'won' | 'lost';
 };
 
 export type Withdrawal = {

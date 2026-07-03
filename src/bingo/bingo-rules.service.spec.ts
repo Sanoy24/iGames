@@ -70,6 +70,70 @@ describe('BingoRulesService', () => {
     });
   });
 
+  // ─── 75-ball card pool (prefilled/derash) ─────────────────────────────────
+  describe('generatePatternCard (75-ball)', () => {
+    it('produces a 5×5 grid with a FREE center', () => {
+      const card = service.generatePatternCard(75);
+      expect(card.length).toBe(5);
+      card.forEach((row) => expect(row.length).toBe(5));
+      expect(card[2][2]).toBeNull();
+    });
+
+    it('uses standard B/I/N/G/O column ranges', () => {
+      const card = service.generatePatternCard(75);
+      const ranges = [
+        [1, 15],
+        [16, 30],
+        [31, 45],
+        [46, 60],
+        [61, 75],
+      ];
+      for (let col = 0; col < 5; col++) {
+        const nums = card.map((row) => row[col]).filter((v): v is number => v !== null);
+        const expectedCount = col === 2 ? 4 : 5; // N column has the FREE center
+        expect(nums.length).toBe(expectedCount);
+        nums.forEach((n) => {
+          expect(n).toBeGreaterThanOrEqual(ranges[col][0]);
+          expect(n).toBeLessThanOrEqual(ranges[col][1]);
+        });
+        expect(new Set(nums).size).toBe(nums.length); // unique within column
+      }
+    });
+  });
+
+  describe('generateUniqueCardPool', () => {
+    it('generates exactly N cards, all unique', () => {
+      const N = 200;
+      const pool = service.generateUniqueCardPool(N, 75);
+      expect(pool.length).toBe(N);
+      const hashes = new Set(pool.map((c) => c.hash));
+      expect(hashes.size).toBe(N);
+    });
+
+    it('every card in the pool is a valid 75-ball card', () => {
+      const pool = service.generateUniqueCardPool(30, 75);
+      pool.forEach(({ grid }) => {
+        expect(grid.length).toBe(5);
+        expect(grid[2][2]).toBeNull();
+        const nums = grid.flat().filter((v): v is number => v !== null);
+        expect(nums.length).toBe(24); // 25 cells minus the FREE center
+        nums.forEach((n) => {
+          expect(n).toBeGreaterThanOrEqual(1);
+          expect(n).toBeLessThanOrEqual(75);
+        });
+      });
+    });
+
+    it('gives identical cards the same canonical hash and different cards different hashes', () => {
+      const a = service.generatePatternCard(75);
+      expect(service.canonicalCardHash(a)).toBe(service.canonicalCardHash(a));
+      const b = service.generatePatternCard(75);
+      if (service.canonicalCardHash(a) !== service.canonicalCardHash(b)) {
+        expect(service.canonicalCardHash(a)).not.toBe(service.canonicalCardHash(b));
+      }
+    });
+  });
+
   // ─── assertValidTicket ────────────────────────────────────────────────────
   describe('assertValidTicket', () => {
     it('accepts a generated valid ticket', () => {

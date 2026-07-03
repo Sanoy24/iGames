@@ -4,15 +4,16 @@ import {
   ServiceUnavailableException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { createRequire } from 'module';
 import {
   ParsedTelebirrReceipt,
   TelebirrReceiptPackage
 } from './types/telebirr-receipt';
-import { User } from '../users/schemas/user.schema';
-import { TelebirrDeposit } from './schemas/telebirr-deposit.schema';
+import { User } from '../users/entities/user.entity';
+import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
+import { AdminService } from '../admin/admin.service';
 
 const loadCommonJsModule = createRequire(__filename);
 const telebirrReceipt = loadCommonJsModule('telebirr-receipt') as TelebirrReceiptPackage;
@@ -28,25 +29,25 @@ export type VerifiedTelebirrReceipt = {
     expectedReceiverName?: string;
     expectedReceiverAccount?: string;
   };
-  agentId?: Types.ObjectId;
+  agentId?: string;
 };
-
-import { AdminService } from '../admin/admin.service';
 
 @Injectable()
 export class TelebirrReceiptVerifierService {
   constructor(
     private readonly configService: ConfigService,
     private readonly adminService: AdminService,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(TelebirrDeposit.name) private readonly telebirrDepositModel: Model<TelebirrDeposit>
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(TelebirrDeposit)
+    private readonly telebirrDepositRepository: Repository<TelebirrDeposit>
   ) {}
 
   async verifyReceipt(receiptNoOrUrl: string, userId: string): Promise<VerifiedTelebirrReceipt> {
     const receiptNo = this.extractReceiptNo(receiptNoOrUrl);
 
     // Check database first
-    const existing = await this.telebirrDepositModel.findOne({ receiptNo }).exec();
+    const existing = await this.telebirrDepositRepository.findOneBy({ receiptNo });
     if (existing) {
       if (existing.status === 'credited') {
         throw new BadRequestException('Telebirr receipt was already used');
@@ -72,21 +73,24 @@ export class TelebirrReceiptVerifierService {
         } catch {}
 
         // Find agent for logging
-        let matchedAgentId: Types.ObjectId | undefined;
+        let matchedAgentId: string | undefined;
         try {
           const creditedName = parsedReceipt?.credited_party_name ?? parsedReceipt?.to;
           if (creditedName) {
             const normalizedCreditedName = this.normalize(creditedName);
-            const agents = await this.userModel.find({ roles: 'agent', status: 'active' }).exec();
+            const agents = await this.userRepository.createQueryBuilder('user')
+              .where('user.status = :status', { status: 'active' })
+              .andWhere('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+              .getMany();
             const matchingAgent = agents.find(agent => this.normalize(agent.displayName) === normalizedCreditedName);
             if (matchingAgent) {
-              matchedAgentId = matchingAgent._id;
+              matchedAgentId = matchingAgent.id;
             }
           }
         } catch {}
 
-        await this.telebirrDepositModel.create({
-          userId: new Types.ObjectId(userId),
+        const deposit = this.telebirrDepositRepository.create({
+          userId,
           agentId: matchedAgentId,
           receiptNo,
           amountMinor,
@@ -97,12 +101,13 @@ export class TelebirrReceiptVerifierService {
           creditedPartyName: parsedReceipt?.credited_party_name,
           creditedPartyAccount: parsedReceipt?.credited_party_acc_no,
           transactionStatus: parsedReceipt?.transaction_status,
-          parsedReceipt: parsedReceipt || {} as any,
+          parsedReceipt: parsedReceipt || {},
           verification: {
             error: error instanceof Error ? error.message : String(error),
             timestamp: new Date().toISOString()
           }
-        }).catch(() => {});
+        });
+        await this.telebirrDepositRepository.save(deposit).catch(() => {});
       }
       throw error;
     }
@@ -154,7 +159,10 @@ export class TelebirrReceiptVerifierService {
     }
     const normalizedCreditedName = this.normalize(creditedName);
 
-    const agents = await this.userModel.find({ roles: 'agent', status: 'active' }).exec();
+    const agents = await this.userRepository.createQueryBuilder('user')
+      .where('user.status = :status', { status: 'active' })
+      .andWhere('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .getMany();
     const matchingAgent = agents.find(agent => this.normalize(agent.displayName) === normalizedCreditedName);
 
     if (!matchingAgent) {
@@ -194,7 +202,7 @@ export class TelebirrReceiptVerifierService {
         transactionStatusAccepted,
         expectedReceiverName: matchingAgent.displayName
       },
-      agentId: matchingAgent._id
+      agentId: matchingAgent.id
     };
   }
 
@@ -252,19 +260,6 @@ export class TelebirrReceiptVerifierService {
     return ['completed', 'success', 'successful', 'paid'].some((accepted) =>
       status.toLowerCase().includes(accepted)
     );
-  }
-
-  private matchOptionalField(
-    parsedValue: string | undefined,
-    expectedValue: string | undefined
-  ): boolean | null {
-    if (!expectedValue) {
-      return null;
-    }
-    if (!parsedValue) {
-      return false;
-    }
-    return this.normalize(parsedValue) === this.normalize(expectedValue);
   }
 
   private normalize(value: string): string {

@@ -8,6 +8,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { AgentsService } from './agents.service';
 import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
+import { RejectWithdrawalDto } from './dto/reject-withdrawal.dto';
+import { TransferToUserDto } from './dto/transfer-to-user.dto';
+import { WalletService } from '../wallet/wallet.service';
 
 @ApiTags('agent')
 @ApiBearerAuth()
@@ -16,7 +19,19 @@ import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('agent')
 export class AgentsController {
-  constructor(private readonly agentsService: AgentsService) {}
+  constructor(
+    private readonly agentsService: AgentsService,
+    private readonly walletService: WalletService,
+  ) {}
+
+  /**
+   * Agent-accessible config — returns only the data agents need
+   * (service charge %) without requiring admin role.
+   */
+  @Get('config')
+  getConfig() {
+    return this.agentsService.getAgentConfig();
+  }
 
   /**
    * The shift currently active (who should be handling withdrawals right now).
@@ -42,6 +57,11 @@ export class AgentsController {
     return this.agentsService.getMyWithdrawals(agent.id);
   }
 
+  @Get('transactions')
+  getTransactions(@CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.getTransactionHistory(agent.id);
+  }
+
   /**
    * Claim a pending withdrawal. The agent is then responsible for
    * doing the Telebirr transfer and confirming it.
@@ -62,6 +82,19 @@ export class AgentsController {
   }
 
   /**
+   * Reject a claimed withdrawal with mandatory remarks.
+   */
+  @Post('withdrawals/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  rejectWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: RejectWithdrawalDto,
+    @CurrentUser() agent: AuthenticatedUser,
+  ) {
+    return this.walletService.rejectWithdrawalByAgent(id, agent.id, dto.remarks);
+  }
+
+  /**
    * Confirm that the Telebirr transfer has been completed.
    * Credits the agent's wallet with the net amount (after service charge)
    * and finalises the user's withdrawal.
@@ -74,5 +107,14 @@ export class AgentsController {
     @CurrentUser() agent: AuthenticatedUser,
   ) {
     return this.agentsService.completeWithdrawal(id, agent.id, dto.telebirrReference);
+  }
+
+  @Post('wallet/transfer-to-user')
+  @HttpCode(HttpStatus.OK)
+  transferToUser(
+    @Body() dto: TransferToUserDto,
+    @CurrentUser() agent: AuthenticatedUser,
+  ) {
+    return this.walletService.transferAgentToUser(agent.id, dto.phoneNumber, dto.amountMinor, dto.idempotencyKey);
   }
 }

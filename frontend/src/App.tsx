@@ -10,6 +10,8 @@ import { Admin } from './pages/Admin';
 import { Wallet } from './pages/Wallet';
 import { Profile } from './pages/Profile';
 import { Agent } from './pages/Agent';
+import { Crash } from './pages/Crash';
+import { Leaderboard } from './pages/Leaderboard';
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
@@ -26,7 +28,7 @@ type TelegramWindow = Window &
   };
 
 export function App() {
-  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet } = useStore();
+  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet, clearAuth, user, wallet } = useStore();
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [showCredLogin, setShowCredLogin] = useState(false);
   const loginStarted = useRef(false);
@@ -34,41 +36,83 @@ export function App() {
   useSocketConnection();
 
   useEffect(() => {
+    if (!isAuthenticated || !user) return;
+    setActiveTab((current) => {
+      if (current !== 'home') return current;
+      if (user.roles.includes('admin')) return 'admin';
+      if (user.roles.includes('agent')) return 'agent';
+      return 'home';
+    });
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || wallet) return;
+    walletApi.getWallet().then(setWallet).catch(() => {});
+  }, [isAuthenticated, wallet, setWallet]);
+
+  useEffect(() => {
     if (authStatus !== 'idle' || loginStarted.current) return;
 
     loginStarted.current = true;
 
-    const tg = (window as TelegramWindow).Telegram?.WebApp;
-
-    if (!tg?.initData && !import.meta.env.DEV) {
-      // No Telegram context — show credentials login for agents/admins
-      setShowCredLogin(true);
-      return;
-    }
-
     setAuthLoading();
 
-    const loginPromise = tg?.initData
-      ? authApi.loginWithTelegram(tg.initData)
-      : authApi.devSeedAdmin('Dev Admin');
+    const bootstrap = async () => {
+      try {
+        const tg = (window as TelegramWindow).Telegram?.WebApp;
+        const hasTelegramData = !!tg?.initData;
 
-    loginPromise
-      .then(async ({ user, accessToken, refreshToken }) => {
-        setAuth(user, accessToken, refreshToken);
-        const walletData = await walletApi.getWallet();
-        setWallet(walletData);
-      })
-      .catch(() => {
+        // Telegram miniapp: always re-auth via initData, never show cred login
+        if (hasTelegramData) {
+          localStorage.removeItem('manualLogout');
+          const { user, accessToken, refreshToken } = await authApi.loginWithTelegram(tg!.initData!);
+          setAuth(user, accessToken, refreshToken);
+          setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+          setWallet(await walletApi.getWallet());
+          return;
+        }
+
+        // Standalone web: respect manual logout flag
+        if (localStorage.getItem('manualLogout') === '1') {
+          setShowCredLogin(true);
+          return;
+        }
+
+        const storedRefreshToken = localStorage.getItem('refreshToken');
+        if (storedRefreshToken) {
+          const { user, accessToken, refreshToken } = await authApi.refresh(storedRefreshToken);
+          setAuth(user, accessToken, refreshToken);
+          setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+          setWallet(await walletApi.getWallet());
+          return;
+        }
+
+        if (import.meta.env.DEV) {
+          const { user, accessToken, refreshToken } = await authApi.devSeedAdmin('Dev Admin');
+          setAuth(user, accessToken, refreshToken);
+          setActiveTab(user.roles.includes('admin') ? 'admin' : user.roles.includes('agent') ? 'agent' : 'home');
+          setWallet(await walletApi.getWallet());
+          return;
+        }
+
+        setShowCredLogin(true);
+      } catch (err) {
+        console.error('Auth bootstrap failed:', err);
+        clearAuth();
         loginStarted.current = false;
         setShowCredLogin(true);
-      });
-  }, [authStatus, setAuth, setAuthLoading, setWallet]);
+      }
+    };
+
+    void bootstrap();
+  }, [authStatus, clearAuth, setAuth, setAuthLoading, setWallet]);
 
   if (showCredLogin && !isAuthenticated) {
     return (
       <div className="app-container">
         <CredentialsLogin
           onSuccess={async ({ user, accessToken, refreshToken }) => {
+            localStorage.removeItem('manualLogout');
             setAuth(user, accessToken, refreshToken);
             const walletData = await walletApi.getWallet();
             setWallet(walletData);
@@ -99,7 +143,9 @@ export function App() {
         {activeTab === 'games' && <Games onNavigate={setActiveTab} />}
         {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
         {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
+        {activeTab === 'crash' && <Crash onBack={() => setActiveTab('games')} />}
         {activeTab === 'wallet' && <Wallet />}
+        {activeTab === 'leaderboard' && <Leaderboard />}
         {activeTab === 'admin' && <Admin />}
         {activeTab === 'profile' && <Profile />}
         {activeTab === 'agent' && <Agent />}

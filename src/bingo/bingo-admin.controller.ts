@@ -1,11 +1,13 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { BingoService } from './bingo.service';
 import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
+import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
+import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo-pattern.dto';
 
 @ApiTags('admin-bingo')
 @ApiBearerAuth()
@@ -18,10 +20,23 @@ export class BingoAdminController {
     private readonly gameEventsGateway: GameEventsGateway
   ) {}
 
+  // ── Config ──────────────────────────────────────────────────────
+
+  @Get('config')
+  @ApiOkResponse({ description: 'Returns the global Bingo auto-play configuration.' })
+  getConfig() {
+    return this.bingoService.getBingoConfig();
+  }
+
+  @Post('config')
+  @ApiOkResponse({ description: 'Updates and returns the global Bingo configuration.' })
+  updateConfig(@Body() dto: UpdateBingoConfigDto) {
+    return this.bingoService.updateBingoConfig(dto);
+  }
+
+  // ── Rooms ───────────────────────────────────────────────────────
+
   @Post('rooms')
-  @ApiCreatedResponse({
-    schema: { example: { id: '665f...', name: 'Daily 90-ball', status: 'open' } }
-  })
   async createRoom(@Body() dto: CreateBingoRoomDto) {
     const room = await this.bingoService.createRoom(dto);
     this.gameEventsGateway.emitBingoRoomUpdated(room);
@@ -43,5 +58,37 @@ export class BingoAdminController {
     const room = await this.bingoService.cancelRoom(roomId);
     this.gameEventsGateway.emitBingoRoomUpdated(room);
     return room;
+  }
+
+  // ── Patterns ────────────────────────────────────────────────────
+
+  @Get('patterns')
+  @ApiOkResponse({ description: 'Returns all bingo patterns.' })
+  listPatterns() {
+    return this.bingoService.listPatterns();
+  }
+
+  @Post('patterns')
+  @ApiOkResponse({ description: 'Creates a custom bingo pattern.' })
+  createPattern(@Body() dto: CreateBingoPatternDto) {
+    return this.bingoService.createPattern(dto);
+  }
+
+  @Patch('patterns/:id')
+  @ApiOkResponse({ description: 'Updates a bingo pattern.' })
+  updatePattern(@Param('id') id: string, @Body() dto: UpdateBingoPatternDto) {
+    return this.bingoService.updatePattern(id, dto);
+  }
+
+  @Delete('patterns/:id')
+  @ApiOkResponse({ description: 'Deletes a custom bingo pattern.' })
+  deletePattern(@Param('id') id: string) {
+    return this.bingoService.deletePattern(id);
+  }
+
+  @Post('patterns/seed')
+  @ApiOkResponse({ description: 'Seeds built-in bingo patterns.' })
+  seedPatterns() {
+    return this.bingoService.seedBuiltInPatterns();
   }
 }

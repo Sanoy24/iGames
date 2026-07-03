@@ -1,14 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
-import { ClientSession, Model, Types } from 'mongoose';
-import {
-  AuthIdentity,
-  AuthIdentityDocument,
-  AuthProvider
-} from './schemas/auth-identity.schema';
-import { User, UserDocument } from './schemas/user.schema';
-import { RefreshSession } from '../auth/schemas/refresh-session.schema';
+import { Repository, EntityManager, DataSource, IsNull } from 'typeorm';
+import { User } from './entities/user.entity';
+import { AuthIdentity } from './entities/auth-identity.entity';
+import { RefreshSession } from '../auth/entities/refresh-session.entity';
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -21,23 +17,25 @@ export type TelegramIdentityInput = {
 };
 
 export type FindOrCreateUserResult = {
-  user: UserDocument;
-  identity: AuthIdentityDocument;
+  user: User;
+  identity: AuthIdentity;
   created: boolean;
 };
 
 @Injectable()
 export class UsersService {
   constructor(
-    @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(AuthIdentity.name)
-    private readonly authIdentityModel: Model<AuthIdentity>,
-    @InjectModel(RefreshSession.name)
-    private readonly refreshSessionModel: Model<RefreshSession>,
+    private readonly dataSource: DataSource,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(AuthIdentity)
+    private readonly authIdentityRepository: Repository<AuthIdentity>,
+    @InjectRepository(RefreshSession)
+    private readonly refreshSessionRepository: Repository<RefreshSession>,
   ) {}
 
-  async findById(userId: Types.ObjectId | string): Promise<UserDocument> {
-    const user = await this.userModel.findById(userId).exec();
+  async findById(userId: string): Promise<User> {
+    const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -46,26 +44,29 @@ export class UsersService {
 
   async findOrCreateTelegramUser(
     input: TelegramIdentityInput,
-    session: ClientSession
+    manager?: EntityManager
   ): Promise<FindOrCreateUserResult> {
     const now = new Date();
-    const provider: AuthProvider = 'telegram';
+    const provider = 'telegram';
     const providerUserId = input.telegramUserId;
 
-    const existingIdentity = await this.authIdentityModel
-      .findOne({ provider, providerUserId })
-      .session(session)
-      .exec();
+    const authRepo = manager ? manager.getRepository(AuthIdentity) : this.authIdentityRepository;
+    const userRepo = manager ? manager.getRepository(User) : this.userRepository;
+
+    const existingIdentity = await authRepo.findOneBy({ provider, providerUserId });
 
     if (existingIdentity) {
       existingIdentity.providerUsername = input.username?.toLowerCase();
       existingIdentity.profileSnapshot = this.toTelegramSnapshot(input);
       existingIdentity.lastAuthAt = now;
-      await existingIdentity.save({ session });
+      await authRepo.save(existingIdentity);
 
-      const existingUser = await this.findByIdInSession(existingIdentity.userId, session);
+      const existingUser = await userRepo.findOneBy({ id: existingIdentity.userId });
+      if (!existingUser) {
+        throw new NotFoundException('User not found');
+      }
       existingUser.lastLoginAt = now;
-      await existingUser.save({ session });
+      await userRepo.save(existingUser);
 
       return {
         user: existingUser,
@@ -74,50 +75,57 @@ export class UsersService {
       };
     }
 
-    const [user] = await this.userModel.create(
-      [
-        {
-          displayName: this.getTelegramDisplayName(input),
-          username: input.username?.toLowerCase(),
-          roles: ['player'],
-          status: 'active',
-          lastLoginAt: now,
-          productMetadata: {
-            firstProvider: provider
-          }
-        }
-      ],
-      { session }
-    );
+    const newUser = userRepo.create({
+      displayName: this.getTelegramDisplayName(input),
+      username: input.username?.toLowerCase(),
+      roles: ['player'],
+      status: 'active',
+      lastLoginAt: now,
+      productMetadata: {
+        firstProvider: provider
+      }
+    });
+    await userRepo.save(newUser);
 
-    const [identity] = await this.authIdentityModel.create(
-      [
-        {
-          userId: user._id,
-          provider,
-          providerUserId,
-          providerUsername: input.username?.toLowerCase(),
-          profileSnapshot: this.toTelegramSnapshot(input),
-          linkedAt: now,
-          lastAuthAt: now
-        }
-      ],
-      { session }
-    );
+    const newIdentity = authRepo.create({
+      userId: newUser.id,
+      provider,
+      providerUserId,
+      providerUsername: input.username?.toLowerCase(),
+      profileSnapshot: this.toTelegramSnapshot(input),
+      linkedAt: now,
+      lastAuthAt: now
+    });
+    await authRepo.save(newIdentity);
 
     return {
-      user,
-      identity,
+      user: newUser,
+      identity: newIdentity,
       created: true
     };
   }
 
-  async listUsers(page: number, limit: number) {
+  async listUsers(page: number, limit: number, role?: string, search?: string) {
     const skip = (page - 1) * limit;
-    const [data, total] = await Promise.all([
-      this.userModel.find().sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
-      this.userModel.countDocuments().exec()
-    ]);
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .orderBy('user.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit);
+
+    if (role) {
+      queryBuilder.andWhere('JSON_CONTAINS(user.roles, :role)', { role: `"${role}"` });
+    }
+
+    if (search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+
     return {
       data,
       total,
@@ -136,21 +144,22 @@ export class UsersService {
     workEndHour?: number;
     workEndMinute?: number;
     agentPermissions?: { deposit: boolean; withdraw: boolean };
-  }): Promise<UserDocument> {
+  }): Promise<User> {
     const normalizedPhone = input.phoneNumber.trim();
     if (!normalizedPhone) throw new BadRequestException('Phone number is required');
 
-    const existing = await this.authIdentityModel
-      .findOne({ provider: 'password', providerUserId: normalizedPhone })
-      .exec();
-    if (existing) {
-      throw new ConflictException('An agent with that phone number already exists');
-    }
+    return this.dataSource.transaction(async (manager) => {
+      const authRepo = manager.getRepository(AuthIdentity);
+      const userRepo = manager.getRepository(User);
 
-    const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+      const existing = await authRepo.findOneBy({ provider: 'password', providerUserId: normalizedPhone });
+      if (existing) {
+        throw new ConflictException('An agent with that phone number already exists');
+      }
 
-    const [user] = await this.userModel.create([
-      {
+      const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+
+      const user = userRepo.create({
         displayName: input.displayName.trim(),
         phoneNumber: normalizedPhone,
         roles: ['agent'],
@@ -160,22 +169,22 @@ export class UsersService {
         workEndHour: input.workEndHour,
         workEndMinute: input.workEndMinute,
         agentPermissions: input.agentPermissions ?? { deposit: true, withdraw: true },
-      },
-    ]);
+      });
+      await userRepo.save(user);
 
-    await this.authIdentityModel.create([
-      {
-        userId: user._id,
+      const identity = authRepo.create({
+        userId: user.id,
         provider: 'password',
         providerUserId: normalizedPhone,
         passwordHash,
         profileSnapshot: { phoneNumber: normalizedPhone },
         linkedAt: new Date(),
         lastAuthAt: new Date(),
-      },
-    ]);
+      });
+      await authRepo.save(identity);
 
-    return user;
+      return user;
+    });
   }
 
   async updateAgentUser(
@@ -191,58 +200,48 @@ export class UsersService {
       agentPermissions?: { deposit: boolean; withdraw: boolean };
       status?: 'active' | 'suspended' | 'closed';
     }
-  ): Promise<UserDocument> {
-    const user = await this.userModel.findById(agentId).exec();
+  ): Promise<User> {
+    const user = await this.userRepository.findOneBy({ id: agentId });
     if (!user || !user.roles.includes('agent')) {
       throw new NotFoundException('Agent not found');
     }
 
-    const setObj: Record<string, any> = {};
-    if (update.displayName !== undefined) setObj.displayName = update.displayName.trim();
-    if (update.status !== undefined) setObj.status = update.status;
+    if (update.displayName !== undefined) user.displayName = update.displayName.trim();
+    if (update.status !== undefined) user.status = update.status as any;
     if (update.phoneNumber !== undefined) {
       const normalizedPhone = update.phoneNumber.trim();
-      setObj.phoneNumber = normalizedPhone;
-      await this.authIdentityModel.updateOne(
-        { userId: user._id, provider: 'password' },
-        { $set: { providerUserId: normalizedPhone, 'profileSnapshot.phoneNumber': normalizedPhone } }
-      ).exec();
+      user.phoneNumber = normalizedPhone;
+      await this.authIdentityRepository.update(
+        { userId: user.id, provider: 'password' },
+        { providerUserId: normalizedPhone, profileSnapshot: { phoneNumber: normalizedPhone } }
+      );
     }
     if (update.password !== undefined && update.password.trim() !== '') {
       const passwordHash = await argon2.hash(update.password, { type: argon2.argon2id });
-      await this.authIdentityModel.updateOne(
-        { userId: user._id, provider: 'password' },
-        { $set: { passwordHash } }
-      ).exec();
+      await this.authIdentityRepository.update(
+        { userId: user.id, provider: 'password' },
+        { passwordHash }
+      );
     }
-    setObj.workStartHour = update.workStartHour;
-    setObj.workStartMinute = update.workStartMinute;
-    setObj.workEndHour = update.workEndHour;
-    setObj.workEndMinute = update.workEndMinute;
-    if (update.agentPermissions !== undefined) setObj.agentPermissions = update.agentPermissions;
+    user.workStartHour = update.workStartHour;
+    user.workStartMinute = update.workStartMinute;
+    user.workEndHour = update.workEndHour;
+    user.workEndMinute = update.workEndMinute;
+    if (update.agentPermissions !== undefined) user.agentPermissions = update.agentPermissions;
 
-    const updatedUser = await this.userModel.findByIdAndUpdate(
-      agentId,
-      { $set: setObj },
-      { new: true }
-    ).exec();
-
-    if (!updatedUser) {
-      throw new NotFoundException('Agent not found after update');
-    }
-
-    return updatedUser;
+    await this.userRepository.save(user);
+    return user;
   }
 
-  async findAgentByCredentials(
+  async findBackofficeUserByCredentials(
     phoneNumber: string,
     password: string,
-  ): Promise<UserDocument> {
+  ): Promise<User> {
     const normalizedPhone = phoneNumber.trim();
-    const identity = await this.authIdentityModel
-      .findOne({ provider: 'password', providerUserId: normalizedPhone })
-      .select('+passwordHash')
-      .exec();
+    const identity = await this.authIdentityRepository.findOne({
+      where: { provider: 'password', providerUserId: normalizedPhone },
+      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId']
+    });
 
     if (!identity || !identity.passwordHash) {
       throw new BadRequestException('Invalid phone number or password');
@@ -253,71 +252,98 @@ export class UsersService {
       throw new BadRequestException('Invalid phone number or password');
     }
 
-    const user = await this.userModel.findById(identity.userId).exec();
+    const user = await this.userRepository.findOneBy({ id: identity.userId });
     if (!user || user.status !== 'active') {
       throw new BadRequestException('Account is inactive');
     }
 
+    const hasBackofficeRole =
+      Array.isArray(user.roles) &&
+      (user.roles.includes('agent' as any) || user.roles.includes('admin' as any));
+    if (!hasBackofficeRole) {
+      throw new BadRequestException('Account does not have backoffice access');
+    }
+
     identity.lastAuthAt = new Date();
-    await identity.save();
+    await this.authIdentityRepository.save(identity);
 
     return user;
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+    if (!currentPassword || !newPassword || newPassword.length < 8) {
+      throw new BadRequestException('Current password and a new password of at least 8 characters are required');
+    }
+
+    const identity = await this.authIdentityRepository.findOne({
+      where: { userId, provider: 'password' },
+      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId']
+    });
+
+    if (!identity || !identity.passwordHash) {
+      throw new BadRequestException('This account does not have a password login');
+    }
+
+    const valid = await argon2.verify(identity.passwordHash, currentPassword);
+    if (!valid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    identity.passwordHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+    await this.authIdentityRepository.save(identity);
+
+    await this.refreshSessionRepository.update(
+      { userId, revokedAt: IsNull() },
+      { revokedAt: new Date() }
+    );
   }
 
   async listAgents(page: number, limit: number) {
     const skip = (page - 1) * limit;
-    const filter = { roles: 'agent' };
-    const [data, total] = await Promise.all([
-      this.userModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
-      this.userModel.countDocuments(filter).exec(),
-    ]);
+    const [data, total] = await this.userRepository
+      .createQueryBuilder('user')
+      .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .orderBy('user.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit)
+      .getManyAndCount();
+
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async getProfile(userId: string): Promise<UserDocument> {
+  async getProfile(userId: string): Promise<User> {
     return this.findById(userId);
   }
 
-  async updateProfile(userId: string, update: { displayName?: string; phoneNumber?: string }): Promise<UserDocument> {
-    const sanitized: Record<string, string> = {};
-    if (update.displayName?.trim()) sanitized.displayName = update.displayName.trim();
-    if (update.phoneNumber?.trim()) sanitized.phoneNumber = update.phoneNumber.trim();
-
-    const user = await this.userModel.findByIdAndUpdate(userId, { $set: sanitized }, { new: true }).exec();
+  async updateProfile(userId: string, update: { displayName?: string; phoneNumber?: string }): Promise<User> {
+    const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('User not found');
+    if (update.displayName?.trim()) user.displayName = update.displayName.trim();
+    if (update.phoneNumber?.trim()) user.phoneNumber = update.phoneNumber.trim();
+    await this.userRepository.save(user);
     return user;
   }
 
   async updatePhoneByTelegramId(telegramUserId: string, phoneNumber: string): Promise<void> {
-    const identity = await this.authIdentityModel
-      .findOne({ provider: 'telegram', providerUserId: telegramUserId })
-      .exec();
+    const identity = await this.authIdentityRepository.findOneBy({ provider: 'telegram', providerUserId: telegramUserId });
     if (!identity) return;
-    await this.userModel.findByIdAndUpdate(identity.userId, { $set: { phoneNumber } }).exec();
+    await this.userRepository.update(identity.userId, { phoneNumber });
   }
 
-  async updateStatus(userId: string, status: 'active' | 'suspended' | 'banned') {
-    const user = await this.userModel.findByIdAndUpdate(userId, { status }, { new: true }).exec();
+  async updateStatus(userId: string, status: 'active' | 'suspended' | 'closed') {
+    const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('User not found');
 
-    if (status === 'suspended' || status === 'banned') {
-      await this.refreshSessionModel.updateMany(
-        { userId: new Types.ObjectId(userId), revokedAt: { $exists: false } },
-        { $set: { revokedAt: new Date() } }
-      ).exec();
+    user.status = status;
+    await this.userRepository.save(user);
+
+    if (status === 'suspended' || status === 'closed') {
+      await this.refreshSessionRepository.update(
+        { userId, revokedAt: IsNull() },
+        { revokedAt: new Date() }
+      );
     }
 
-    return user;
-  }
-
-  private async findByIdInSession(
-    userId: Types.ObjectId,
-    session: ClientSession
-  ): Promise<UserDocument> {
-    const user = await this.userModel.findById(userId).session(session).exec();
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
     return user;
   }
 

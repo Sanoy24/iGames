@@ -7,6 +7,7 @@ import {
   Headers,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards
@@ -17,6 +18,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { PurchaseKenoTicketDto } from './dto/purchase-keno-ticket.dto';
+import { UpdateKenoTicketNumbersDto } from './dto/update-keno-ticket-numbers.dto';
 import { KenoService } from './keno.service';
 
 @ApiTags('keno')
@@ -71,6 +73,23 @@ export class KenoController {
       userId: user.id,
       selectedNumbers: dto.selectedNumbers,
       idempotencyKey
+    });
+  }
+
+  @Patch('tickets/:id/numbers')
+  @Throttle({ strict: { ttl: 60_000, limit: 30 } })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Updates the chosen numbers on a paid ticket while its draw is still open' })
+  updateTicketNumbers(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') ticketId: string,
+    @Body() dto: UpdateKenoTicketNumbersDto
+  ) {
+    return this.kenoService.updateTicketNumbers({
+      userId: user.id,
+      ticketId,
+      selectedNumbers: dto.selectedNumbers
     });
   }
 

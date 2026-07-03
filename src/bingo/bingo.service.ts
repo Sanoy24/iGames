@@ -189,10 +189,22 @@ export class BingoService implements OnModuleInit {
    * This is the single guard that stops the "two games at once / count jumps
    * 75 → 45 / draws to /200" symptoms, regardless of legacy rows in the DB.
    */
+  /**
+   * Ball pool size per mode. Standard 75-ball derash is FIXED at 75 (the
+   * B/I/N/G/O columns only line up at 75), 90-ball line is fixed at 90, and only
+   * pattern mode honours the admin "Ball Pool" setting. This is what prevents a
+   * derash room from ever drawing numbers above 75 (e.g. the bad 1-200 rooms).
+   */
+  private ballPoolFor(winMode: BingoWinMode, cfg: BingoConfig): number {
+    if (winMode === 'line') return 90;
+    if (winMode === 'prefilled') return 75;
+    return cfg.defaultNumberRange ?? 75;
+  }
+
   async reconcileActiveRooms(cfg?: BingoConfig): Promise<BingoRoom | null> {
     const config = cfg ?? (await this.getBingoConfig());
     const winMode = (config.defaultWinMode as BingoWinMode) ?? 'prefilled';
-    const expectedRange = winMode === 'line' ? 90 : (config.defaultNumberRange ?? 75);
+    const expectedRange = this.ballPoolFor(winMode, config);
 
     const active = await this.bingoRoomRepository.find({
       where: { status: In(['open', 'running']) },
@@ -263,8 +275,8 @@ export class BingoService implements OnModuleInit {
         fullHouseMinor: cfg.defaultFullHouseMinor,
       },
       winMode,
-      // Ball pool: prefilled/pattern use the configured range (75-ball); line is 90.
-      numberRange: winMode === 'line' ? 90 : (cfg.defaultNumberRange ?? 75),
+      // Ball pool: derash fixed 75-ball, line 90, pattern configurable.
+      numberRange: this.ballPoolFor(winMode, cfg),
       gridSize,
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
@@ -358,19 +370,42 @@ export class BingoService implements OnModuleInit {
     // scheduler (single instance, Redis-locked). Creating rooms from this
     // client-polled endpoint caused a race where many concurrent polls each
     // spawned a room, producing several games running at once.
-    const room =
-      (await this.bingoRoomRepository.findOne({
-        where: { status: 'running' },
-        order: { scheduledStartAt: 'ASC' },
-      })) ??
-      (await this.bingoRoomRepository.findOne({
-        where: { status: 'open' },
-        order: { scheduledStartAt: 'ASC' },
-      })) ??
-      (await this.bingoRoomRepository.findOne({
-        where: { status: 'completed' },
-        order: { updatedAt: 'DESC' },
-      }));
+    const cfg = await this.getBingoConfig();
+    const resultWindowSec = Math.max(1, cfg.resultDisplaySeconds ?? 10);
+
+    // A running game always takes priority.
+    let room = await this.bingoRoomRepository.findOne({
+      where: { status: 'running' },
+      order: { scheduledStartAt: 'ASC' },
+    });
+
+    // A JUST-completed room stays "current" for its result-display window so the
+    // client can show the win / no-win overlay before we advance. Without this,
+    // the next room (opened the instant the game ends) would immediately replace
+    // the result and the dialog would never appear. Compare updatedAt to the DB's
+    // own NOW() so the session timezone offset cancels out.
+    if (!room) {
+      const recent: Array<{ id: string }> = await this.bingoRoomRepository.query(
+        `SELECT id FROM bingo_rooms WHERE status = 'completed' AND updatedAt >= (NOW() - INTERVAL ? SECOND) ORDER BY updatedAt DESC LIMIT 1`,
+        [resultWindowSec],
+      );
+      if (recent.length > 0) {
+        room = await this.bingoRoomRepository.findOneBy({ id: recent[0].id });
+      }
+    }
+
+    // Otherwise the next open room, then finally the most recent completed one.
+    if (!room) {
+      room =
+        (await this.bingoRoomRepository.findOne({
+          where: { status: 'open' },
+          order: { scheduledStartAt: 'ASC' },
+        })) ??
+        (await this.bingoRoomRepository.findOne({
+          where: { status: 'completed' },
+          order: { updatedAt: 'DESC' },
+        }));
+    }
 
     if (!room) return null;
     return this.getRoomState({ roomId: room.id, userId });
@@ -422,7 +457,8 @@ export class BingoService implements OnModuleInit {
       maxTickets: winMode === 'prefilled' ? gridSize : dto.maxTickets,
       prizes: dto.prizes,
       winMode,
-      numberRange: winMode === 'line' ? 90 : (dto.numberRange ?? cfg.defaultNumberRange ?? 75),
+      // Derash is fixed 75-ball; only pattern mode honours an explicit numberRange.
+      numberRange: winMode === 'pattern' ? (dto.numberRange ?? cfg.defaultNumberRange ?? 75) : this.ballPoolFor(winMode, cfg),
       gridSize,
       patternPrizes: dto.patternPrizes ?? [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
@@ -726,9 +762,11 @@ export class BingoService implements OnModuleInit {
         return this.toRoomResponse(room, soldTickets, takenSpots);
       }
 
-      // Ball pool drawn from: line is fixed 90-ball; prefilled/pattern use the
-      // configured range (75-ball). gridSize is the cartela count, not the pool.
-      const maxNumber = room.winMode === 'line' ? 90 : (room.numberRange ?? 75);
+      // Ball pool drawn from: line is fixed 90-ball, derash is fixed 75-ball
+      // (standard B/I/N/G/O), pattern uses the room's configured range. Forcing
+      // 75 for derash here means even a legacy/misconfigured room can NEVER call a
+      // number above 75 (no more 137/200 balls). gridSize is the cartela count.
+      const maxNumber = room.winMode === 'line' ? 90 : room.winMode === 'prefilled' ? 75 : (room.numberRange ?? 75);
 
       // All numbers drawn but room still running — complete it.
       if (room.drawnNumbers.length >= maxNumber) {

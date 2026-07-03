@@ -306,7 +306,32 @@ function CurrentBallDisplay({ drawnNumbers, isPatternMode, status, count, max }:
   count: number;
   max: number;
 }) {
-  const n = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+  // Play the balls through a queue so each drawn number is announced for a
+  // minimum time. Balls can arrive faster than a person can read them (a burst
+  // from a catch-up poll, or a fast draw interval), which made the "Now calling"
+  // display skip (1, then 3, then 5) even though every number is in the history.
+  // `playedCount` catches up to the real draw count one ball at a time, ~1/sec,
+  // and the ball's reveal sound is played in sync with the visual.
+  const [playedCount, setPlayedCount] = useState(drawnNumbers.length);
+  useEffect(() => {
+    if (playedCount > drawnNumbers.length) {
+      setPlayedCount(drawnNumbers.length); // new room — array shrank; resync
+      return;
+    }
+    if (playedCount >= drawnNumbers.length) return;
+    // Comfortable ~1/sec when keeping up; speed up if a backlog builds so the
+    // display never lags far behind the real draw (fast intervals / catch-up).
+    const backlog = drawnNumbers.length - playedCount;
+    const delay = backlog > 6 ? 250 : backlog > 3 ? 550 : 950;
+    const id = setTimeout(() => {
+      setPlayedCount((c) => Math.min(c + 1, drawnNumbers.length));
+      soundEngine.pop();
+    }, delay);
+    return () => clearTimeout(id);
+  }, [playedCount, drawnNumbers.length]);
+
+  const idx = Math.min(playedCount, drawnNumbers.length);
+  const n = idx > 0 ? drawnNumbers[idx - 1] : null;
   const s = n !== null ? getGroupStyle(n, isPatternMode) : null;
   const prefix = n !== null && isPatternMode
     ? (BINGO_COLS_75.find(c => n >= c.from && n <= c.to)?.letter ?? '')
@@ -901,7 +926,8 @@ export function Bingo({ onBack }: BingoProps) {
 
     const onNumberDrawn = (p: { roomId?: string; number?: number }) => {
       if (p.roomId !== roomIdRef.current || p.number === undefined) return;
-      soundEngine.pop();
+      // The reveal sound is played by CurrentBallDisplay in sync with the queued
+      // ball animation, so we don't pop here (that fired in a fast burst).
       const drawn = p.number;
       setRoom((prev) => {
         if (!prev) return prev;

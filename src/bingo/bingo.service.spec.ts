@@ -55,6 +55,8 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     find: jest.fn().mockResolvedValue([]),
     create: jest.fn().mockImplementation((dto) => dto),
     save: jest.fn().mockImplementation((r) => Promise.resolve(r)),
+    // Raw query used by getCurrentRoom for the "recently completed" window.
+    query: jest.fn().mockResolvedValue([]),
     // findOneBy is used by findRoom(id) inside getRoomState
     findOneBy: jest.fn().mockImplementation((where: any) => {
       const found = rooms.find((r) => r.id === where.id) ?? null;

@@ -22,6 +22,7 @@ import { UsersModule } from "./users/users.module";
 import { WalletModule } from "./wallet/wallet.module";
 import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
+import { BroadcastModule } from "./broadcast/broadcast.module";
 import { CrashModule } from "./crash/crash.module";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -79,6 +80,7 @@ const isDev = process.env.NODE_ENV !== "production";
         BotsModule,
         AdminModule,
         AgentsModule,
+        BroadcastModule,
         CrashModule,
         ...(isDev ? [DevModule] : []),
     ],

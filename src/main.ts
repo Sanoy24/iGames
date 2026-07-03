@@ -1,8 +1,10 @@
 import * as Sentry from '@sentry/nestjs';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
+import { join } from 'path';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -65,9 +67,19 @@ async function bootstrap() {
     ]
   });
 
-  const app = await NestFactory.create(AppModule, { logger });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger });
   app.enableShutdownHooks();
   const configService = app.get(ConfigService);
+
+  // ── Static uploads (admin broadcast images) ──────────────────────
+  // Served at /uploads/** so the admin UI can preview them and Telegram can be
+  // handed a local file to upload. Persisted on disk (cPanel provides one).
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads/',
+    // The admin panel is a separate origin, so relax Helmet's default
+    // same-origin CORP for these images (they're public promo assets).
+    setHeaders: (res) => res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin'),
+  });
 
   // ── Security: Helmet HTTP headers ────────────────────────────────
   app.use(helmet({

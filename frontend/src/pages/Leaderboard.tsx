@@ -135,7 +135,7 @@ export function Leaderboard() {
                   <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent)' }}>
                     {formatMinor(entry.totalWinMinor)}
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Credits</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>ETB</div>
                 </div>
               </motion.div>
             ))}

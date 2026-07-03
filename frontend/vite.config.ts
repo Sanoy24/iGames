@@ -20,6 +20,11 @@ export default defineConfig({
                 changeOrigin: true,
                 rewrite: (path) => path.replace(/^\/api/, ''),
             },
+            // Uploaded broadcast images served from the backend root
+            '/uploads': {
+                target: 'http://localhost:3000',
+                changeOrigin: true,
+            },
             // Socket.IO — forward both HTTP polling and WebSocket upgrades
             '/socket.io': {
                 target: 'http://localhost:3000',

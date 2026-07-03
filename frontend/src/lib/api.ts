@@ -255,6 +255,71 @@ export const adminApi = {
     api.post<{ adminWallet: Wallet; agentWallet: Wallet }>('/admin/wallet/transfer-to-agent', { agentId, amountMinor, idempotencyKey }).then((r) => r.data),
 };
 
+// ── Admin: Broadcast (Telegram) ───────────────────────────────────
+export type BroadcastButton = { text: string; url: string };
+export type BroadcastRecurrence = { frequency: 'daily' | 'weekly'; time: string; dayOfWeek?: number };
+export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+
+export type BroadcastMessage = {
+  id: string;
+  title: string;
+  text: string | null;
+  imagePath: string | null;
+  buttons: BroadcastButton[] | null;
+  parseMode: 'none' | 'HTML' | 'MarkdownV2';
+  audience: string;
+  scheduleType: 'now' | 'once' | 'recurring';
+  recurrence: BroadcastRecurrence | null;
+  timezoneOffsetMinutes: number;
+  nextRunAt: string | null;
+  status: BroadcastStatus;
+  totalRecipients: number;
+  sentCount: number;
+  failedCount: number;
+  runCount: number;
+  lastRunAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateBroadcastInput = {
+  title: string;
+  text?: string;
+  imageFilename?: string;
+  buttons?: BroadcastButton[];
+  parseMode?: 'none' | 'HTML' | 'MarkdownV2';
+  scheduleType: 'now' | 'once' | 'recurring';
+  scheduledAtLocal?: string;
+  recurrence?: BroadcastRecurrence;
+  timezoneOffsetMinutes?: number;
+  asDraft?: boolean;
+};
+
+// Uploaded broadcast images are served at the backend root (/uploads), not under
+// the /api prefix. In prod VITE_API_URL is the backend origin; in dev it's unset
+// and Vite proxies /uploads to localhost:3000 (see vite.config).
+export const ASSET_BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '');
+export const broadcastImageUrl = (imagePath: string | null | undefined): string | null =>
+  imagePath ? `${ASSET_BASE}/uploads/${imagePath}` : null;
+
+export const broadcastApi = {
+  list: () => api.get<BroadcastMessage[]>('/admin/broadcasts').then((r) => r.data),
+  get: (id: string) => api.get<BroadcastMessage>(`/admin/broadcasts/${id}`).then((r) => r.data),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+    return api
+      .post<{ imageFilename: string; imagePath: string }>('/admin/broadcasts/upload', form)
+      .then((r) => r.data);
+  },
+  create: (dto: CreateBroadcastInput) =>
+    api.post<BroadcastMessage>('/admin/broadcasts', dto).then((r) => r.data),
+  sendNow: (id: string) => api.post<BroadcastMessage>(`/admin/broadcasts/${id}/send`).then((r) => r.data),
+  cancel: (id: string) => api.post<BroadcastMessage>(`/admin/broadcasts/${id}/cancel`).then((r) => r.data),
+  remove: (id: string) => api.delete(`/admin/broadcasts/${id}`).then((r) => r.data),
+};
+
 // ── Admin: Keno ───────────────────────────────────────────────────
 export const adminKenoApi = {
   getConfig: () => api.get<KenoConfig>('/keno/config').then((r) => r.data),

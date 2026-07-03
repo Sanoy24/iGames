@@ -268,7 +268,10 @@ export class TelebirrReceiptVerifierService {
 
   private async toCreditMinor(amountBirr: number): Promise<number> {
     const systemConfig = await this.adminService.getSystemConfig();
-    const multiplier = systemConfig.telebirrCreditMinorPerBirr || 100;
+    // Flat 1:1 wallet model — 1 Birr deposited credits 1 ETB. The multiplier
+    // stays configurable, but defaults to 1 (not 100) so a 10 Birr top-up
+    // credits exactly 10, matching how balances are displayed everywhere.
+    const multiplier = systemConfig.telebirrCreditMinorPerBirr || 1;
 
     const amountMinor = Math.round(amountBirr * multiplier);
     if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {

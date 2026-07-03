@@ -985,20 +985,15 @@ export class BingoService implements OnModuleInit {
     if (completers.length === 0) return;
 
     const totalPotMinor = room.soldTickets * room.ticketPriceMinor;
-    const prizePoolMinor = Math.floor(totalPotMinor * (1 - (room.houseEdgePct ?? 20) / 100));
+    const houseEdgePct = room.houseEdgePct ?? 20;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
 
     // Award one winner per still-open place, in completion order.
     for (const ticket of completers) {
       const place = this.nextOpenPrefilledPlace(room, cfg);
       if (!place) break;
 
-      const pct =
-        place === '1st'
-          ? (cfg.prefilledFirstPlacePct ?? 80)
-          : place === '2nd'
-          ? (cfg.prefilledSecondPlacePct ?? 0)
-          : (cfg.prefilledThirdPlacePct ?? 0);
-      const prizeMinor = Math.floor(prizePoolMinor * pct / 100);
+      const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
 
       ticket.wonTiers = [...(ticket.wonTiers ?? []), place];
       ticket.payoutMinor += prizeMinor;
@@ -1075,6 +1070,46 @@ export class BingoService implements OnModuleInit {
     if (cfg.prefilledSecondPlaceEnabled && !room.settledTiers.includes('2nd')) return '2nd';
     if (cfg.prefilledThirdPlaceEnabled && !room.settledTiers.includes('3rd')) return '3rd';
     return null;
+  }
+
+  /**
+   * Prize a derash/prefilled place pays out, in minor units.
+   *
+   * The whole house-adjusted pool is distributed across the ENABLED places by
+   * weight (their configured percentages), normalised by the sum of enabled
+   * weights. So with only 1st place enabled (the default) the winner takes the
+   * FULL pool and `houseEdgePct` is the only deduction. Dividing by a hardcoded
+   * 100 would cut a SECOND time whenever the enabled weights sum to < 100 (e.g.
+   * the default 1st=80) — the "service fee taken twice" bug where a pot of 40
+   * yielded a pool of 32 but paid the winner only 32*0.8 = 25.
+   */
+  computePrefilledPrizeMinor(
+    totalPotMinor: number,
+    place: '1st' | '2nd' | '3rd',
+    houseEdgePct: number,
+    cfg: BingoConfig,
+  ): number {
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const placeWeight = this.prefilledPlaceWeight(place, cfg);
+    const enabledWeightTotal = this.enabledPrefilledWeightTotal(cfg);
+    return enabledWeightTotal > 0
+      ? Math.floor((prizePoolMinor * placeWeight) / enabledWeightTotal)
+      : 0;
+  }
+
+  /** Configured payout weight for a prefilled place (raw %, used as a weight). */
+  private prefilledPlaceWeight(place: '1st' | '2nd' | '3rd', cfg: BingoConfig): number {
+    if (place === '1st') return cfg.prefilledFirstPlacePct ?? 80;
+    if (place === '2nd') return cfg.prefilledSecondPlacePct ?? 0;
+    return cfg.prefilledThirdPlacePct ?? 0;
+  }
+
+  /** Sum of payout weights across the places that are actually enabled. */
+  private enabledPrefilledWeightTotal(cfg: BingoConfig): number {
+    let total = cfg.prefilledFirstPlacePct ?? 80; // 1st place is always active
+    if (cfg.prefilledSecondPlaceEnabled) total += cfg.prefilledSecondPlacePct ?? 0;
+    if (cfg.prefilledThirdPlaceEnabled) total += cfg.prefilledThirdPlacePct ?? 0;
+    return total;
   }
 
   private async evaluateAndSettleTiers(room: BingoRoom, manager: EntityManager): Promise<void> {

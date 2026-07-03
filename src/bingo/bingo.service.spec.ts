@@ -196,6 +196,47 @@ describe('BingoService.getCurrentRoom — unit (mocked repos)', () => {
   });
 });
 
+// ─── computePrefilledPrizeMinor (derash payout math) ─────────────────────────
+
+describe('BingoService.computePrefilledPrizeMinor — derash payout', () => {
+  const cfg = (overrides: any = {}) => ({
+    prefilledFirstPlacePct: 80,
+    prefilledSecondPlaceEnabled: false,
+    prefilledSecondPlacePct: 0,
+    prefilledThirdPlaceEnabled: false,
+    prefilledThirdPlacePct: 0,
+    ...overrides,
+  });
+
+  it('pays the FULL house-adjusted pool to a single 1st-place winner (no double fee)', () => {
+    const { service } = makeService({ rooms: [] });
+    // pot 40, 20% house edge → pool 32. Regression: must be 32, NOT 32*0.8 = 25.
+    expect(service.computePrefilledPrizeMinor(40, '1st', 20, cfg() as any)).toBe(32);
+    // pot 100 → pool 80. Regression: must be 80, NOT 64.
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg() as any)).toBe(80);
+  });
+
+  it('is independent of the configured 1st-place percentage when it is the only place', () => {
+    const { service } = makeService({ rooms: [] });
+    // Whether the weight is 80 or 100, a single enabled place gets the whole pool.
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 100 }) as any)).toBe(80);
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 50 }) as any)).toBe(80);
+  });
+
+  it('splits the pool by weight across enabled places', () => {
+    const { service } = makeService({ rooms: [] });
+    const c = cfg({ prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20 });
+    // pool 80, weights 80/20 (total 100) → 1st 64, 2nd 16.
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, c as any)).toBe(64);
+    expect(service.computePrefilledPrizeMinor(100, '2nd', 20, c as any)).toBe(16);
+  });
+
+  it('returns 0 when no enabled place has any weight', () => {
+    const { service } = makeService({ rooms: [] });
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 0 }) as any)).toBe(0);
+  });
+});
+
 // ─── findRunningRoomIdsDue ────────────────────────────────────────────────────
 
 describe('BingoService.findRunningRoomIdsDue — unit', () => {

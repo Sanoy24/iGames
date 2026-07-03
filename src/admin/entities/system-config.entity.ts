@@ -8,7 +8,8 @@ export class SystemConfig {
   @Column({ type: 'varchar', length: 50, unique: true, default: 'global' })
   key: string;
 
-  @Column({ type: 'int', default: 100 })
+  // Flat 1:1 wallet model — 1 Birr deposited credits 1 ETB.
+  @Column({ type: 'int', default: 1 })
   telebirrCreditMinorPerBirr: number;
 
   @Column({ type: 'int', default: 0 })

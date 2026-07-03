@@ -12,7 +12,7 @@ const ENTRY_LABELS: Record<string, string> = {
   ticket_refund: 'Ticket Refund',
   deposit: 'Deposit',
   withdrawal: 'Withdrawal',
-  bonus: 'Bonus ETBedit',
+  bonus: 'Bonus ETB',
   admin_adjustment: 'Balance Adjustment',
   agent_receipt: 'Agent Transfer',
   reserve: 'Hold',
@@ -68,7 +68,7 @@ function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
       const w = await walletApi.getWallet();
       setWallet(w);
       await onSuccess();
-      addToast('success', `Added ${amountMinor / 100} credits to your wallet.`);
+      addToast('success', `Added ${amountMinor} ETB to your wallet.`);
     } catch (e) {
       addToast('error', getErrorMessage(e));
     } finally {
@@ -78,11 +78,11 @@ function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
 
   return (
     <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(250,204,21,0.08)', border: '1px dashed rgba(250,204,21,0.3)', borderRadius: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>DEV — add test credits:</span>
-      {[1000, 10000, 100000].map((amt) => (
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>DEV — add test ETB:</span>
+      {[10, 100, 1000].map((amt) => (
         <button key={amt} className="btn btn-ghost" disabled={loading} onClick={() => topup(amt)}
           style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid rgba(250,204,21,0.4)' }}>
-          +{amt / 100}
+          +{amt}
         </button>
       ))}
     </div>
@@ -396,7 +396,7 @@ export function Wallet() {
               <div className="admin-form" style={{ marginTop: 16 }}>
                 <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Telebirr Cashout Request</h3>
                 <p style={{ fontSize: 12, color: 'var(--green)', margin: '0 0 12px' }}>
-                  Available: <strong>{new Intl.NumberFormat().format(available)} e&#x2011;Birr</strong>
+                  Available: <strong>{new Intl.NumberFormat().format(available)} ETB</strong>
                 </p>
 
                 <div className="preset-amounts" style={{ marginBottom: 12 }}>

@@ -249,10 +249,10 @@ export class CrashService {
     const cfg = await this.getConfig();
 
     if (dto.stakeMinor < cfg.minBetMinor) {
-      throw new BadRequestException(`Minimum bet is ${cfg.minBetMinor} credits`);
+      throw new BadRequestException(`Minimum bet is ${cfg.minBetMinor} ETB`);
     }
     if (dto.stakeMinor > cfg.maxBetMinor) {
-      throw new BadRequestException(`Maximum bet is ${cfg.maxBetMinor} credits`);
+      throw new BadRequestException(`Maximum bet is ${cfg.maxBetMinor} ETB`);
     }
 
     return this.dataSource.transaction(async (manager) => {

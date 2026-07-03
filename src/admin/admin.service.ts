@@ -42,7 +42,7 @@ export class AdminService {
     if (!config) {
       config = this.systemConfigRepository.create({
         key: 'global',
-        telebirrCreditMinorPerBirr: 100,
+        telebirrCreditMinorPerBirr: 1, // flat 1:1 — 1 Birr deposited = 1 ETB credited
         welcomeBonusMinor: 0
       });
       await this.systemConfigRepository.save(config);

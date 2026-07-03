@@ -11,10 +11,11 @@ export class CrashConfig {
   @Column({ type: 'int', default: 3 })
   houseEdgePct: number;
 
-  @Column({ type: 'int', default: 100 })
+  // Flat 1:1 model — bet amounts are whole ETB (1 unit = 1 Birr), not cents.
+  @Column({ type: 'int', default: 1 })
   minBetMinor: number;
 
-  @Column({ type: 'int', default: 500_000 })
+  @Column({ type: 'int', default: 5_000 })
   maxBetMinor: number;
 
   @Column({ type: 'int', default: 12 })
@@ -26,7 +27,7 @@ export class CrashConfig {
   @Column({ type: 'int', default: 10000 })
   maxMultiplierX100: number;
 
-  @Column({ type: 'int', default: 500 })
+  @Column({ type: 'int', default: 5 })
   botBetMinor: number;
 
   @Column({ type: 'int', default: 0 })

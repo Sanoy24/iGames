@@ -210,7 +210,7 @@ export function Agent() {
         padding: 16,
         marginBottom: 12,
       }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Transfer ETBedits to Player</div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Transfer ETB to Player</div>
         <form onSubmit={handleTransferToUser} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <input
             className="input"
@@ -223,7 +223,7 @@ export function Agent() {
             className="input"
             type="number"
             min="1"
-            placeholder="Amount in ETBedits"
+            placeholder="Amount in ETB"
             value={transferAmount}
             onChange={(e) => setTransferAmount(e.target.value)}
             required

@@ -53,7 +53,7 @@ function buildArea(points: GraphPoint[], W: number, H: number): string {
   return `${line} L ${lastSx.toFixed(1)} ${H - pad} L ${pad} ${H - pad} Z`;
 }
 
-const QUICK_STAKES = [100, 500, 1000, 5000]; // minor units
+const QUICK_STAKES = [10, 50, 100, 500]; // whole ETB (flat 1:1)
 
 export function Crash({ onBack }: { onBack: () => void }) {
   const [phase, setPhase] = useState<Phase>('loading');
@@ -243,14 +243,14 @@ export function Crash({ onBack }: { onBack: () => void }) {
       setBetError('Enter a valid stake');
       return;
     }
-    const stakeMinor = Math.round(stakeVal * 100);
+    const stakeMinor = Math.round(stakeVal);
     const cfg = configRef.current;
     if (cfg && stakeMinor < cfg.minBetMinor) {
-      setBetError(`Min bet: ${cfg.minBetMinor / 100} ETB`);
+      setBetError(`Min bet: ${cfg.minBetMinor} ETB`);
       return;
     }
     if (cfg && stakeMinor > cfg.maxBetMinor) {
-      setBetError(`Max bet: ${cfg.maxBetMinor / 100} ETB`);
+      setBetError(`Max bet: ${cfg.maxBetMinor} ETB`);
       return;
     }
     const acVal = autoCashout ? parseFloat(autoCashout) : undefined;
@@ -439,7 +439,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 color: '#10b981', fontSize: 13, fontWeight: 700,
               }}>
                 <Zap size={14} />
-                Cashed out @ {fmtMult(cashoutResult.mx100)} — won {(cashoutResult.payoutMinor / 100).toFixed(0)} Cr
+                Cashed out @ {fmtMult(cashoutResult.mx100)} — won {cashoutResult.payoutMinor} ETB
               </div>
             </motion.div>
           )}
@@ -469,7 +469,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                       type="number"
                       min="0"
                       step="1"
-                      placeholder={config ? `Min ${config.minBetMinor / 100}` : '1'}
+                      placeholder={config ? `Min ${config.minBetMinor}` : '1'}
                       value={stake}
                       onChange={e => { setStake(e.target.value); setBetError(''); }}
                     />
@@ -497,10 +497,10 @@ export function Crash({ onBack }: { onBack: () => void }) {
                       key={v}
                       type="button"
                       className="btn btn-secondary btn-sm"
-                      onClick={() => setStake((v / 100).toString())}
+                      onClick={() => setStake(v.toString())}
                       style={{ flex: 1, fontSize: 11, padding: '6px 4px' }}
                     >
-                      {v / 100}
+                      {v}
                     </button>
                   ))}
                 </div>
@@ -536,7 +536,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 }}
               >
                 <div style={{ fontSize: 14, color: '#10b981', fontWeight: 700, marginBottom: 6 }}>
-                  Bet locked — {(myBet.stakeMinor / 100).toFixed(0)} Cr
+                  Bet locked — {myBet.stakeMinor} ETB
                 </div>
                 {myBet.autoCashoutX100 && (
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -588,7 +588,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 </motion.button>
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
                   Potential win: <strong style={{ color: liveColor }}>
-                    {((myBet!.stakeMinor * multiplierX100) / 10000).toFixed(0)} Cr
+                    {((myBet!.stakeMinor * multiplierX100) / 100).toFixed(0)} ETB
                   </strong>
                 </p>
               </motion.div>
@@ -618,7 +618,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
               >
                 {myBet?.status === 'lost' && !cashoutResult && (
                   <p style={{ fontSize: 14, color: '#ef4444', fontWeight: 700, marginBottom: 6 }}>
-                    Lost {(myBet.stakeMinor / 100).toFixed(0)} Cr
+                    Lost {myBet.stakeMinor} ETB
                   </p>
                 )}
                 {round?.seed && (
@@ -724,7 +724,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 >
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>
-                      {(b.stakeMinor / 100).toFixed(0)} Cr
+                      {b.stakeMinor} ETB
                     </span>
                     {b.cashedOutAtX100 && (
                       <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 7 }}>
@@ -737,9 +737,9 @@ export function Crash({ onBack }: { onBack: () => void }) {
                     color: won ? '#10b981' : lost ? '#ef4444' : 'var(--text-muted)',
                   }}>
                     {won
-                      ? `+${(b.payoutMinor / 100).toFixed(0)} ETB`
+                      ? `+${b.payoutMinor} ETB`
                       : lost
-                      ? `-${(b.stakeMinor / 100).toFixed(0)} ETB`
+                      ? `-${b.stakeMinor} ETB`
                       : 'Active'}
                   </span>
                 </div>

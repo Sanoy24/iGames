@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0",
-    "updated": "2026-06-29",
+    "updated": "2026-07-03",
     "schema": "Each feature: id, area, title, behavior, status, verification, evidence, notes",
     "statuses": ["not_started", "in_progress", "blocked", "passing"],
     "rule": "Status only moves to 'passing' when verification command exits 0 and output matches expected. Agent cannot self-declare passing."
@@ -46,11 +46,29 @@
     {
       "id": "BE-05",
       "area": "bingo",
-      "title": "90-ball Bingo room lifecycle (open → running → settled)",
-      "behavior": "Rooms auto-advance. Scheduler draws 1 ball per drawIntervalSeconds. One-line / two-line / full-house tiers settled. Self-healing guard for stuck rooms.",
+      "title": "Bingo room lifecycle (open → running → completed) with multiple win modes",
+      "behavior": "Rooms auto-advance. Scheduler draws 1 ball per drawIntervalSeconds from a numberRange pool. winMode ∈ {line (90-ball, one/two/full tiers), pattern (5×5 patternPrizes), prefilled/derash (cartela grid)}. Self-healing guard settles remaining tiers and completes stuck rooms.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npm run test:unit",
+      "evidence": "src/bingo/. Configurable: salesWindowSeconds, drawIntervalSeconds, resultDisplaySeconds, houseEdgePct. See .harness/topics/bingo-reveal.md."
+    },
+    {
+      "id": "BE-13",
+      "area": "bingo",
+      "title": "Prefilled / derash mode with cartela cards and DB-backed patterns",
+      "behavior": "winMode='prefilled' (default). gridSize (default 75) cartela cards pre-generated into the BingoCard pool. Purchase DTO accepts cartelaNumbers[]; BingoTicket.cartelaNumber records the pick. Winning patterns are DB config (seed:bingo-patterns). Derash settlement splits pot by houseEdgePct and records winner's last-4 phone digits.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npm run test:unit",
+      "evidence": "src/bingo/entities/bingo-card.entity.ts, bingo.service.ts, scripts/seed-bingo-patterns.ts. Added 2026-07-02."
+    },
+    {
+      "id": "BE-14",
+      "area": "bingo",
+      "title": "One-active-game guard (DB UNIQUE index)",
+      "behavior": "BingoRoom.activeGuard is a nullable tinyint under UNIQUE index UQ_bingo_active_game — set to 1 while open/running, NULL on completion. Prevents two concurrent creators (even across instances or with Redis lock down) from opening two active rooms; second INSERT fails with duplicate-key error.",
       "status": "passing",
       "verification": "npx tsc --noEmit",
-      "evidence": "src/bingo/. Configurable: salesWindowSeconds, drawIntervalSeconds, resultDisplaySeconds."
+      "evidence": "src/bingo/entities/bingo-room.entity.ts, bingo.service.ts active-game guard. Added 2026-07-02."
     },
     {
       "id": "BE-06",
@@ -136,11 +154,20 @@
     {
       "id": "FE-03",
       "area": "frontend/bingo",
-      "title": "Bingo: auto-join, phase machine (buy/playing/result), no lobby",
-      "behavior": "Loads current room via GET /bingo/current. Phases: buy (40s window) → playing (ball-by-ball) → result (10s display). Confetti on win. Back goes to Home.",
+      "title": "Bingo: auto-join, phase machine (buy/playing/result), cartela grid, no lobby",
+      "behavior": "Loads current room via GET /bingo/current. Phases: buy (40s window) → playing (ball-by-ball) → result (10s display). Renders per winMode: line card, 5×5 pattern card, or prefilled cartela grid. Confetti on win. Back goes to Home.",
       "status": "passing",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
-      "evidence": "frontend/src/pages/Bingo.tsx. Completely rewritten."
+      "evidence": "frontend/src/pages/Bingo.tsx. Rewritten for prefilled/derash mode 2026-07-02."
+    },
+    {
+      "id": "FE-11",
+      "area": "frontend/bingo",
+      "title": "Bingo paced ball reveal (shared cursor)",
+      "behavior": "A single revealedCount cursor paces balls one at a time (~1.5s each, min 0.65s when far behind) so caller, board and all cards advance together even when a 5s poll delivers a batch. Snaps to full on room switch and completion; clamps overshoot; reveal sound synced to cursor tick; cards mark from revealedSet not raw drawnNumbers.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (revealedCount). Commits f79a386, 6ea4123. Documented in .harness/topics/bingo-reveal.md."
     },
     {
       "id": "FE-04",
@@ -224,8 +251,8 @@
       "behavior": "All 25 tables use ROW_FORMAT=DYNAMIC to avoid 8126-byte InnoDB inline limit.",
       "status": "in_progress",
       "verification": "SELECT TABLE_NAME, ROW_FORMAT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND ROW_FORMAT != 'Dynamic';",
-      "evidence": "ALTER TABLE statements provided. Must be run on production DB.",
-      "notes": "Run the 25 ALTER TABLE statements provided in session 2026-06-29."
+      "evidence": "Entities now declare engine 'InnoDB ROW_FORMAT=DYNAMIC' (commit e608f21), so fresh schemas are correct. Existing production tables still need the ALTER.",
+      "notes": "Run the 25 ALTER TABLE statements from session 2026-06-29 on any pre-existing production DB."
     }
   ]
 }

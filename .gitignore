@@ -8,3 +8,5 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 .vitepress/
+# Admin broadcast image uploads (persisted on disk, not source)
+uploads/

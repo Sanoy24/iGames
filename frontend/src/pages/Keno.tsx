@@ -307,12 +307,12 @@ export function Keno({ onBack }: KenoProps) {
     }
     if (autoPlayStartBalance !== null) {
       const net = wallet.availableMinor - autoPlayStartBalance;
-      if (autoPlayStopProfit && net >= parseFloat(autoPlayStopProfit) * 100) {
+      if (autoPlayStopProfit && net >= parseFloat(autoPlayStopProfit)) {
         addToast('success', 'Auto Play stopped: Profit limit reached!');
         setAutoPlayEnabled(false);
         return;
       }
-      if (autoPlayStopLoss && net <= -parseFloat(autoPlayStopLoss) * 100) {
+      if (autoPlayStopLoss && net <= -parseFloat(autoPlayStopLoss)) {
         addToast('info', 'Auto Play stopped: Loss limit reached!');
         setAutoPlayEnabled(false);
         return;

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
-  Play, Plus, RefreshCw, Settings, Shield, Users, Wallet, X,
+  Image as ImageIcon, Megaphone, Play, Plus, RefreshCw, Send, Settings,
+  Shield, Trash2, Users, Wallet, X,
 } from 'lucide-react';
 import {
   adminAgentsApi,
@@ -11,10 +12,15 @@ import {
   adminApi,
   adminWithdrawalsApi,
   adminUsersApi,
+  broadcastApi,
+  broadcastImageUrl,
   walletApi,
   type AgentLedgerAction,
   type AgentWithdrawalAction,
   type BotUser,
+  type BroadcastButton,
+  type BroadcastMessage,
+  type CreateBroadcastInput,
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
@@ -22,7 +28,7 @@ import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPa
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'broadcast' | 'withdrawals' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -32,9 +38,10 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
   { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
+  { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
-  { id: 'emoney',      label: 'E-Money',     icon: <Coins size={15} /> },
+  { id: 'emoney',      label: 'ETB',         icon: <Coins size={15} /> },
   { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
 ];
 
@@ -323,17 +330,17 @@ function PlayersAdmin() {
                   value={adjustDirection}
                   onChange={(e) => setAdjustDirection(e.target.value as 'credit' | 'debit')}
                 >
-                  <option value="credit">Credit (+) Add Credits</option>
-                  <option value="debit">Debit (-) Deduct Credits</option>
+                  <option value="credit">Credit (+) Add ETB</option>
+                  <option value="debit">Debit (-) Deduct ETB</option>
                 </select>
               </div>
               <div className="adm-field">
-                <label>Amount (Credits / Minor Units — 100 Credits = 1 Birr)</label>
+                <label>Amount (ETB)</label>
                 <input
                   className="input"
                   type="number"
                   min="1"
-                  placeholder="e.g. 50000 for 500 Credits"
+                  placeholder="e.g. 500"
                   value={adjustAmount}
                   onChange={(e) => setAdjustAmount(e.target.value)}
                 />
@@ -838,7 +845,7 @@ function ConfigAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
-    telebirrCreditMinorPerBirr: 100, welcomeBonusMinor: 0,
+    telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
     withdrawalServiceChargePct: 0, withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
   });
@@ -886,10 +893,10 @@ function ConfigAdmin() {
       <SectionHead title="System Configuration" sub="Platform-wide game and payment settings." />
 
       <div className="adm-panel">
-        <div className="adm-panel-head">Payments & Credits</div>
+        <div className="adm-panel-head">Payments & Wallet</div>
         <div className="adm-field-grid">
-          {field('telebirrCreditMinorPerBirr', 'Credits per Birr', '100 = 1 Birr → 100 credits')}
-          {field('welcomeBonusMinor', 'Welcome Bonus (credits)', '0 = disabled')}
+          {field('telebirrCreditMinorPerBirr', 'ETB per Birr deposited', '1 = flat (10 Birr → 10 ETB)')}
+          {field('welcomeBonusMinor', 'Welcome Bonus (ETB)', '0 = disabled')}
         </div>
       </div>
 
@@ -897,8 +904,8 @@ function ConfigAdmin() {
         <div className="adm-panel-head">Withdrawal Rules</div>
         <div className="adm-field-grid">
           {field('withdrawalServiceChargePct', 'Service Charge %', 'deducted from gross withdrawal')}
-          {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (credits)', '0 = no minimum')}
-          {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (credits)', '0 = no limit')}
+          {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (ETB)', '0 = no minimum')}
+          {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (ETB)', '0 = no limit')}
           {field('maxPendingWithdrawalsPerUser', 'Max Pending per User')}
         </div>
       </div>
@@ -908,7 +915,7 @@ function ConfigAdmin() {
       </button>
       {config && (
         <p className="adm-save-note">
-          Current: {config.withdrawalServiceChargePct}% charge · min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} credits
+          Current: {config.withdrawalServiceChargePct}% charge · min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} ETB
         </p>
       )}
     </div>
@@ -981,7 +988,7 @@ function WithdrawalsAdmin() {
                   <div key={w.id} className="adm-w-row">
                     <div className="adm-w-main" onClick={() => setExpanded(expanded === w.id ? null : w.id)}>
                       <div className="adm-w-info">
-                        <strong>{formatCredits(w.amountMinor)} credits</strong>
+                        <strong>{formatCredits(w.amountMinor)} ETB</strong>
                         <span className="adm-td-muted">{w.destinationAccount}</span>
                         <span className="adm-td-muted">{formatDateTime(w.createdAt)}</span>
                       </div>
@@ -1207,7 +1214,7 @@ function KenoAdmin() {
       {config && (
         <div className="adm-info-strip">
           <span>v{config.version}</span>
-          <span>{formatCredits(config.ticketPriceMinor)} credits/ticket</span>
+          <span>{formatCredits(config.ticketPriceMinor)} ETB/ticket</span>
           <span>{config.numberMin}–{config.numberMax}, draw {config.drawSize}</span>
           <span>Draw interval: {formatKenoInterval(config)}</span>
           <span>Bot interval: {config.globalBotWinInterval || 'off'}</span>
@@ -1220,7 +1227,7 @@ function KenoAdmin() {
           <div className="adm-panel-head">{config ? 'New Config Version' : 'Create Initial Config'}</div>
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>Ticket Price (credits)</span>
+              <span>Ticket Price (ETB)</span>
               <input className="input" type="number" value={cfgForm.ticketPriceMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, ticketPriceMinor: Number(e.target.value) }))} />
             </label>
@@ -1618,7 +1625,7 @@ function BingoAdmin() {
                 onChange={(e) => setCfgForm((f) => ({ ...f, resultDisplaySeconds: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default Ticket Price (credits)</span>
+              <span>Default Ticket Price (ETB)</span>
               <input className="input" type="number" min={1} value={cfgForm.defaultTicketPriceMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultTicketPriceMinor: Number(e.target.value) }))} />
             </label>
@@ -1628,17 +1635,17 @@ function BingoAdmin() {
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultMaxTickets: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default One-Line Prize (credits)</span>
+              <span>Default One-Line Prize (ETB)</span>
               <input className="input" type="number" min={0} value={cfgForm.defaultOneLineMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultOneLineMinor: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default Two-Lines Prize (credits)</span>
+              <span>Default Two-Lines Prize (ETB)</span>
               <input className="input" type="number" min={0} value={cfgForm.defaultTwoLinesMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultTwoLinesMinor: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default Full-House Prize (credits)</span>
+              <span>Default Full-House Prize (ETB)</span>
               <input className="input" type="number" min={0} value={cfgForm.defaultFullHouseMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultFullHouseMinor: Number(e.target.value) }))} />
             </label>
@@ -1743,7 +1750,7 @@ function BingoAdmin() {
           <div className="adm-panel-head">Create Bingo Room</div>
           <div className="adm-field-grid">
             <label className="adm-field"><span>Room Name</span><input className="input" {...f('name')} /></label>
-            <label className="adm-field"><span>Ticket Price (credits)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
+            <label className="adm-field"><span>Ticket Price (ETB)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
             <label className="adm-field"><span>Max Tickets</span><input className="input" type="number" min={1} {...f('maxTickets')} /></label>
             <label className="adm-field"><span>Starts In (minutes)</span><input className="input" type="number" min={1} {...f('minutesFromNow')} /></label>
             <label className="adm-field" style={{ gridColumn: '1 / -1' }}>
@@ -1920,7 +1927,7 @@ function BotsAdmin() {
   };
 
   const handleTopup = async (bot: BotUser) => {
-    const minor = Math.round(parseFloat(topupAmount) * 100);
+    const minor = Math.round(parseFloat(topupAmount));
     if (!minor || minor <= 0) { addToast('error', 'Enter a valid amount'); return; }
     setBusy(bot.id + '-topup');
     try {
@@ -2026,7 +2033,7 @@ function BotsAdmin() {
 
                       <div style={{ textAlign: 'right', minWidth: 90 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold)' }}>
-                          {formatCreditsFull(bot.walletBalanceMinor ?? 0)} Cr
+                          {formatCreditsFull(bot.walletBalanceMinor ?? 0)} ETB
                         </div>
                         <span className={`badge ${bot.botPolicy?.active ? 'badge-green' : 'badge-red'}`}
                           style={{ fontSize: 9, marginTop: 2 }}>
@@ -2101,7 +2108,7 @@ function BotsAdmin() {
                     {isTopping && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                         <label className="adm-field" style={{ flex: 1, minWidth: 160 }}>
-                          <span>Add credits (ETB)</span>
+                          <span>Add funds (ETB)</span>
                           <input className="input" type="number" min={1}
                             placeholder="e.g. 500"
                             value={topupAmount}
@@ -2119,7 +2126,7 @@ function BotsAdmin() {
                           disabled={busy === bot.id + '-topup'}
                           onClick={() => handleTopup(bot)}
                           style={{ alignSelf: 'flex-end', marginBottom: 2 }}>
-                          {busy === bot.id + '-topup' ? 'Adding…' : 'Add Credits'}
+                          {busy === bot.id + '-topup' ? 'Adding…' : 'Add ETB'}
                         </button>
                       </div>
                     )}
@@ -2416,26 +2423,26 @@ function EMoneyAdmin() {
 
   return (
     <div className="stack-lg">
-      <SectionHead title="E-Money Management" sub="Top-up your system balance and distribute e-money to agents.">
+      <SectionHead title="ETB Management" sub="Top-up your system balance and distribute ETB to agents.">
         <button className="adm-icon-btn" onClick={refreshWallet} title="Refresh Balance"><RefreshCw size={14} /></button>
       </SectionHead>
 
       <div className="adm-kpi-grid" style={{ gridTemplateColumns: '1fr' }}>
-        <Kpi label="Admin E-Money Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
+        <Kpi label="Admin ETB Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
         {/* Top-up Panel */}
         <div className="adm-panel">
-          <div className="adm-panel-head">Top-up E-Money</div>
+          <div className="adm-panel-head">Top-up ETB</div>
           <form onSubmit={handleTopup} className="stack-md p-lg">
             <div className="adm-field">
-              <label>Amount (Credits / Minor Units)</label>
+              <label>Amount (ETB)</label>
               <input
                 className="input"
                 type="number"
                 min="1"
-                placeholder="e.g. 100000 for 1000 ETB"
+                placeholder="e.g. 1000"
                 value={topupAmount}
                 onChange={(e) => setTopupAmount(e.target.value)}
                 required
@@ -2476,12 +2483,12 @@ function EMoneyAdmin() {
               )}
             </div>
             <div className="adm-field">
-              <label>Amount (Credits / Minor Units)</label>
+              <label>Amount (ETB)</label>
               <input
                 className="input"
                 type="number"
                 min="1"
-                placeholder="e.g. 50000 for 500 ETB"
+                placeholder="e.g. 500"
                 value={transferAmount}
                 onChange={(e) => setTransferAmount(e.target.value)}
                 required
@@ -2491,7 +2498,7 @@ function EMoneyAdmin() {
               </span>
             </div>
             <button className="adm-btn adm-btn-primary" type="submit" disabled={submittingTransfer || !selectedAgentId}>
-              {submittingTransfer ? 'Transferring...' : 'Transfer E-Money'}
+              {submittingTransfer ? 'Transferring...' : 'Transfer ETB'}
             </button>
           </form>
         </div>
@@ -2539,7 +2546,7 @@ function AccountAdmin() {
     if (!cr || cr <= 0) { addToast('info', 'Enter a valid amount.'); return; }
     setBusy('topup');
     try {
-      const w = await adminApi.topupWallet(Math.round(cr * 100), createIdempotencyKey('admin-topup'));
+      const w = await adminApi.topupWallet(Math.round(cr), createIdempotencyKey('admin-topup'));
       setLocalWallet(w);
       setWallet(w);
       setTopupCr('');
@@ -2554,7 +2561,7 @@ function AccountAdmin() {
     if (!cr || cr <= 0) { addToast('info', 'Enter a valid amount.'); return; }
     setBusy('transfer');
     try {
-      const { adminWallet } = await adminApi.transferToAgent(transferAgentId, Math.round(cr * 100), createIdempotencyKey('admin-transfer'));
+      const { adminWallet } = await adminApi.transferToAgent(transferAgentId, Math.round(cr), createIdempotencyKey('admin-transfer'));
       setLocalWallet(adminWallet);
       setWallet(adminWallet);
       setTransferCr('');
@@ -2596,7 +2603,7 @@ function AccountAdmin() {
 
       {/* Transfer to agent */}
       <div className="adm-panel">
-        <div className="adm-panel-head">Transfer Credits to Agent</div>
+        <div className="adm-panel-head">Transfer ETB to Agent</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', padding: 16 }}>
           <label className="adm-field" style={{ flex: 1, minWidth: 180 }}>
             <span>Agent</span>
@@ -2624,6 +2631,375 @@ function AccountAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Root Admin
 // ══════════════════════════════════════════════════════════════════
+// ── Broadcast (Telegram) ──────────────────────────────────────────
+// Ethiopia has no DST — a fixed +03:00 offset is safe. All wall-clock times the
+// admin enters (once + recurring) are interpreted in this zone by the backend.
+const BROADCAST_TZ_OFFSET = 180;
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function broadcastStatusStyle(status: BroadcastMessage['status']): { label: string; color: string; bg: string } {
+  switch (status) {
+    case 'sending':   return { label: 'Sending',   color: '#38bdf8', bg: 'rgba(56,189,248,0.12)' };
+    case 'scheduled': return { label: 'Scheduled', color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' };
+    case 'sent':      return { label: 'Sent',      color: '#34d399', bg: 'rgba(52,211,153,0.12)' };
+    case 'failed':    return { label: 'Failed',    color: '#f87171', bg: 'rgba(248,113,113,0.12)' };
+    case 'cancelled': return { label: 'Cancelled', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' };
+    default:          return { label: 'Draft',     color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' };
+  }
+}
+
+function describeBroadcastSchedule(b: BroadcastMessage): string {
+  if (b.scheduleType === 'now') return 'Immediate';
+  if (b.scheduleType === 'once') return b.nextRunAt ? `Once · ${formatDateTime(b.nextRunAt)}` : 'Once';
+  if (b.recurrence) {
+    const when = b.recurrence.frequency === 'weekly'
+      ? `Weekly · ${WEEKDAYS[b.recurrence.dayOfWeek ?? 0]}`
+      : 'Daily';
+    return `${when} at ${b.recurrence.time}`;
+  }
+  return 'Recurring';
+}
+
+function TelegramPreview({ imagePath, text, buttons }: {
+  imagePath: string | null;
+  text: string;
+  buttons: BroadcastButton[];
+}) {
+  const url = broadcastImageUrl(imagePath);
+  const validButtons = buttons.filter((b) => b.text.trim() && b.url.trim());
+  return (
+    <div style={{
+      maxWidth: 320, borderRadius: 14, overflow: 'hidden',
+      background: '#17212b', border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 8px 30px rgba(0,0,0,0.35)',
+    }}>
+      {url && <img src={url} alt="" style={{ display: 'block', width: '100%', maxHeight: 300, objectFit: 'cover' }} />}
+      {(text.trim() || validButtons.length === 0) && (
+        <div style={{ padding: '10px 12px', color: '#e9edf0', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.45 }}>
+          {text.trim() ? text : <span style={{ color: '#5b6b78' }}>Your message preview…</span>}
+        </div>
+      )}
+      {validButtons.length > 0 && (
+        <div style={{ padding: '0 8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {validButtons.map((b, i) => (
+            <div key={i} style={{
+              textAlign: 'center', padding: '8px', borderRadius: 8,
+              background: 'rgba(43,130,201,0.22)', color: '#5eb5f7', fontSize: 12, fontWeight: 700,
+            }}>
+              {b.text}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BroadcastAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [list, setList] = useState<BroadcastMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Compose state
+  const [title, setTitle] = useState('');
+  const [text, setText] = useState('');
+  const [image, setImage] = useState<{ imageFilename: string; imagePath: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [buttons, setButtons] = useState<BroadcastButton[]>([]);
+  const [parseMode, setParseMode] = useState<'none' | 'HTML'>('none');
+  const [scheduleType, setScheduleType] = useState<'now' | 'once' | 'recurring'>('now');
+  const [scheduledAtLocal, setScheduledAtLocal] = useState('');
+  const [freq, setFreq] = useState<'daily' | 'weekly'>('daily');
+  const [recTime, setRecTime] = useState('20:00');
+  const [dow, setDow] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setList(await broadcastApi.list());
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Poll for live delivery progress while anything is sending.
+  useEffect(() => {
+    if (!list.some((b) => b.status === 'sending')) return;
+    const id = setInterval(() => { void load(); }, 3000);
+    return () => clearInterval(id);
+  }, [list, load]);
+
+  const captionLimit = image ? 1024 : 4096;
+  const overLimit = text.length > captionLimit;
+  const canSubmit =
+    !!title.trim() &&
+    (!!text.trim() || !!image) &&
+    !overLimit &&
+    (scheduleType !== 'once' || !!scheduledAtLocal) &&
+    !submitting;
+
+  const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      setImage(await broadcastApi.uploadImage(file));
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const resetForm = () => {
+    setTitle(''); setText(''); setImage(null); setButtons([]); setParseMode('none');
+    setScheduleType('now'); setScheduledAtLocal(''); setFreq('daily'); setRecTime('20:00'); setDow(1);
+  };
+
+  const submit = async (asDraft = false) => {
+    if (!title.trim() || (!text.trim() && !image)) return;
+    if (!asDraft && scheduleType === 'now' &&
+        !window.confirm('Send this broadcast to ALL Telegram users now?')) return;
+    setSubmitting(true);
+    try {
+      const dto: CreateBroadcastInput = {
+        title: title.trim(),
+        text: text.trim() || undefined,
+        imageFilename: image?.imageFilename,
+        buttons: buttons.filter((b) => b.text.trim() && b.url.trim()),
+        parseMode,
+        scheduleType,
+        timezoneOffsetMinutes: BROADCAST_TZ_OFFSET,
+        asDraft: asDraft || undefined,
+      };
+      if (scheduleType === 'once') dto.scheduledAtLocal = scheduledAtLocal;
+      if (scheduleType === 'recurring') {
+        dto.recurrence = { frequency: freq, time: recTime, dayOfWeek: freq === 'weekly' ? dow : undefined };
+      }
+      await broadcastApi.create(dto);
+      addToast('success', asDraft ? 'Saved as draft' : scheduleType === 'now' ? 'Broadcast started' : 'Broadcast scheduled');
+      resetForm();
+      await load();
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const doSend = async (id: string) => {
+    if (!window.confirm('Send this broadcast to ALL Telegram users now?')) return;
+    try { await broadcastApi.sendNow(id); addToast('success', 'Sending…'); await load(); }
+    catch (err) { addToast('error', getErrorMessage(err)); }
+  };
+  const doCancel = async (id: string) => {
+    try { await broadcastApi.cancel(id); addToast('success', 'Cancelled'); await load(); }
+    catch (err) { addToast('error', getErrorMessage(err)); }
+  };
+  const doDelete = async (id: string) => {
+    if (!window.confirm('Delete this broadcast permanently?')) return;
+    try { await broadcastApi.remove(id); addToast('success', 'Deleted'); await load(); }
+    catch (err) { addToast('error', getErrorMessage(err)); }
+  };
+
+  const inputCls = 'w-full rounded-lg bg-white/[0.04] border border-white/10 px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500/50';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-black text-slate-100 flex items-center gap-2"><Megaphone size={16} /> Telegram Broadcast</h2>
+          <p className="text-[11px] text-slate-500">Send a message — with an optional image and link buttons — to every Telegram user. Times are Ethiopia (UTC+3).</p>
+        </div>
+        <button className="adm-icon-btn" onClick={() => void load()} title="Refresh"><RefreshCw size={14} /></button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        {/* ── Compose ── */}
+        <div className="card space-y-3">
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Title (internal only)</label>
+            <input className={inputCls} value={title} maxLength={200} placeholder="e.g. Bingo promo — July"
+              onChange={(e) => setTitle(e.target.value)} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Message {image ? '/ caption' : ''}</label>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-md overflow-hidden border border-white/10">
+                  {(['none', 'HTML'] as const).map((m) => (
+                    <button key={m} onClick={() => setParseMode(m)}
+                      className={`px-2 py-0.5 text-[10px] font-bold ${parseMode === m ? 'bg-blue-500/20 text-blue-300' : 'bg-white/[0.03] text-slate-500'}`}>
+                      {m === 'none' ? 'Plain' : 'HTML'}
+                    </button>
+                  ))}
+                </div>
+                <span className={`text-[10px] font-mono ${overLimit ? 'text-red-400' : 'text-slate-600'}`}>{text.length}/{captionLimit}</span>
+              </div>
+            </div>
+            <textarea className={`${inputCls} min-h-[120px] resize-y`} value={text}
+              placeholder={parseMode === 'HTML'
+                ? 'Write your announcement… <b>bold</b>, <i>italic</i>, <a href="url">links</a> supported'
+                : 'Write your announcement… links become clickable automatically'}
+              onChange={(e) => setText(e.target.value)} />
+            {parseMode === 'HTML' && (
+              <p className="text-[10px] text-amber-400/70 mt-1">HTML mode: unescaped &lt; or &amp; will fail the send. Use plain unless you need formatting.</p>
+            )}
+          </div>
+
+          {/* Image */}
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Image (optional)</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onPickImage} className="hidden" />
+              <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                {uploading ? <><RefreshCw size={12} className="animate-spin" /> Uploading…</> : <><ImageIcon size={12} /> {image ? 'Replace image' : 'Upload image'}</>}
+              </button>
+              {image && (
+                <button className="adm-btn adm-btn-danger adm-btn-xs" onClick={() => setImage(null)}><X size={12} /> Remove</button>
+              )}
+            </div>
+          </div>
+
+          {/* Buttons */}
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Link buttons (optional)</label>
+              {buttons.length < 6 && (
+                <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => setButtons((b) => [...b, { text: '', url: '' }])}>
+                  <Plus size={12} /> Add button
+                </button>
+              )}
+            </div>
+            <div className="space-y-2 mt-1">
+              {buttons.map((b, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input className={inputCls} style={{ flex: '0 0 34%' }} placeholder="Label" value={b.text}
+                    onChange={(e) => setButtons((prev) => prev.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} />
+                  <input className={inputCls} placeholder="https://…" value={b.url}
+                    onChange={(e) => setButtons((prev) => prev.map((x, j) => j === i ? { ...x, url: e.target.value } : x))} />
+                  <button className="adm-btn adm-btn-danger adm-btn-xs" onClick={() => setButtons((prev) => prev.filter((_, j) => j !== i))}><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Schedule */}
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">When to send</label>
+            <div className="flex gap-2 mt-1">
+              {(['now', 'once', 'recurring'] as const).map((t) => (
+                <button key={t} onClick={() => setScheduleType(t)}
+                  className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold capitalize border transition-colors ${
+                    scheduleType === t ? 'bg-blue-500/15 border-blue-500/50 text-blue-300' : 'bg-white/[0.03] border-white/10 text-slate-400'
+                  }`}>
+                  {t === 'now' ? 'Send now' : t}
+                </button>
+              ))}
+            </div>
+
+            {scheduleType === 'once' && (
+              <input type="datetime-local" className={`${inputCls} mt-2`} value={scheduledAtLocal}
+                onChange={(e) => setScheduledAtLocal(e.target.value)} />
+            )}
+            {scheduleType === 'recurring' && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                <select className={inputCls} style={{ flex: '0 0 30%' }} value={freq} onChange={(e) => setFreq(e.target.value as 'daily' | 'weekly')}>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+                {freq === 'weekly' && (
+                  <select className={inputCls} style={{ flex: '0 0 30%' }} value={dow} onChange={(e) => setDow(Number(e.target.value))}>
+                    {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                )}
+                <input type="time" className={inputCls} style={{ flex: 1 }} value={recTime} onChange={(e) => setRecTime(e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button className="adm-btn adm-btn-primary" disabled={!canSubmit} onClick={() => void submit(false)}>
+              {submitting ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />}
+              {scheduleType === 'now' ? 'Send now' : 'Schedule'}
+            </button>
+            <button className="adm-btn adm-btn-secondary" disabled={!title.trim() || submitting} onClick={() => void submit(true)}>
+              Save draft
+            </button>
+            <span className="text-[10px] text-amber-400/80 ml-auto">Sends to all Telegram users</span>
+          </div>
+        </div>
+
+        {/* ── Preview ── */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Preview</label>
+          <TelegramPreview imagePath={image?.imagePath ?? null} text={text} buttons={buttons} />
+        </div>
+      </div>
+
+      {/* ── History ── */}
+      <div className="space-y-2">
+        <h3 className="text-[11px] font-black uppercase tracking-wider text-slate-500">History</h3>
+        {loading ? (
+          <div className="centered-loader py-8"><div className="spinner" /></div>
+        ) : list.length === 0 ? (
+          <div className="card text-center py-8 text-slate-500 text-sm">No broadcasts yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {list.map((b) => {
+              const st = broadcastStatusStyle(b.status);
+              const pct = b.totalRecipients > 0 ? Math.round(((b.sentCount + b.failedCount) / b.totalRecipients) * 100) : 0;
+              return (
+                <div key={b.id} className="card flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="badge" style={{ color: st.color, background: st.bg }}>{st.label}</span>
+                      <span className="text-sm font-bold text-slate-200 truncate">{b.title}</span>
+                      {b.imagePath && <ImageIcon size={12} className="text-slate-500 flex-shrink-0" />}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {describeBroadcastSchedule(b)}
+                      {b.runCount > 0 && ` · ${b.sentCount.toLocaleString()} sent`}
+                      {b.failedCount > 0 && `, ${b.failedCount.toLocaleString()} failed`}
+                      {b.totalRecipients > 0 && ` of ${b.totalRecipients.toLocaleString()}`}
+                    </div>
+                    {b.status === 'sending' && (
+                      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mt-1.5 max-w-xs">
+                        <div className="h-full rounded-full bg-sky-400 transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                    {b.status === 'failed' && b.lastError && (
+                      <div className="text-[10px] text-red-400/80 mt-0.5 truncate">{b.lastError}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {(b.status === 'draft' || b.status === 'scheduled' || b.status === 'failed' || b.status === 'cancelled') && (
+                      <button className="adm-btn adm-btn-primary adm-btn-xs" onClick={() => void doSend(b.id)}><Send size={11} /> Send now</button>
+                    )}
+                    {(b.status === 'scheduled' || b.status === 'draft' || b.status === 'sending') && (
+                      <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => void doCancel(b.id)}>Cancel</button>
+                    )}
+                    {b.status !== 'sending' && (
+                      <button className="adm-btn adm-btn-danger adm-btn-xs" onClick={() => void doDelete(b.id)}><Trash2 size={11} /></button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Admin() {
   const user = useStore((s) => s.user);
   const setAuth = useStore((s) => s.setAuth);
@@ -2682,6 +3058,7 @@ export function Admin() {
           {tab === 'keno'          && <KenoAdmin />}
           {tab === 'bingo'         && <BingoAdmin />}
           {tab === 'bots'          && <BotsAdmin />}
+          {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
           {tab === 'config'        && <ConfigAdmin />}
           {tab === 'emoney'        && <EMoneyAdmin />}

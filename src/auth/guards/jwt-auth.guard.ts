@@ -57,25 +57,31 @@ export class JwtAuthGuard implements CanActivate {
 
       const user = await this.dataSource.getRepository(User).findOne({
         where: { id: payload.sub },
-        select: ['status']
+        select: ['status', 'operatorId']
       });
 
       if (!user || user.status !== 'active') {
         throw new UnauthorizedException('Account is not active');
       }
 
+      // Resolve the tenant fail-closed: prefer the token claim, fall back to the
+      // account's operator (covers tokens issued before operatorId was added).
+      // operatorId is NOT NULL on users, so this always resolves for a real account.
+      const operatorId = payload.operatorId ?? user.operatorId ?? null;
+      if (!operatorId) {
+        throw new UnauthorizedException('No operator is associated with this account');
+      }
+
       request.user = {
         id: payload.sub,
         roles: payload.roles,
-        operatorId: payload.operatorId,
+        operatorId,
         sessionId: payload.sessionId
       };
 
       // Record the tenant for the rest of the request so scoped reads/writes
       // resolve to this operator.
-      if (payload.operatorId) {
-        this.tenantContext.set(payload.operatorId, 'jwt');
-      }
+      this.tenantContext.set(operatorId, 'jwt');
 
       return true;
     } catch (error) {

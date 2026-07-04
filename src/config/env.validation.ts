@@ -16,6 +16,7 @@ type EnvConfig = {
   JWT_ACCESS_TTL: string;
   JWT_REFRESH_TTL: string;
   TELEGRAM_BOT_TOKEN: string;
+  TELEGRAM_BOT_ENABLED: boolean;
   TELEGRAM_AUTH_MAX_AGE_SECONDS: number;
   TELEGRAM_MINIAPP_URL: string;
   TELEGRAM_WEBHOOK_URL?: string;
@@ -51,6 +52,9 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     JWT_ACCESS_TTL: readString(raw, 'JWT_ACCESS_TTL', '15m'),
     JWT_REFRESH_TTL: readString(raw, 'JWT_REFRESH_TTL', '30d'),
     TELEGRAM_BOT_TOKEN: readString(raw, 'TELEGRAM_BOT_TOKEN'),
+    // Set false in local dev to keep the shared bot token from being polled by a
+    // second instance (the HTTP API and Mini App auth still work).
+    TELEGRAM_BOT_ENABLED: readBoolean(raw, 'TELEGRAM_BOT_ENABLED', true),
     TELEGRAM_AUTH_MAX_AGE_SECONDS: readNumber(raw, 'TELEGRAM_AUTH_MAX_AGE_SECONDS', 86400),
     TELEGRAM_MINIAPP_URL: readString(raw, 'TELEGRAM_MINIAPP_URL', ''),
     TELEGRAM_WEBHOOK_URL: readString(raw, 'TELEGRAM_WEBHOOK_URL', ''),

@@ -22,6 +22,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    const botEnabled = this.configService.get<boolean>('TELEGRAM_BOT_ENABLED', true);
+    if (!botEnabled) {
+      this.logger.warn(
+        'TELEGRAM_BOT_ENABLED=false — skipping Telegram bot startup (HTTP API still runs). ' +
+        'Use this in local dev so the shared bot token is not polled from two places.',
+      );
+      return;
+    }
+
     const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
     if (!token) {
       this.logger.warn('TELEGRAM_BOT_TOKEN is not set — Telegram bot will not start');

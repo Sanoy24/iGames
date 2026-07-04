@@ -2,12 +2,17 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { AuthIdentity } from './auth-identity.entity';
 import { Wallet } from '../../wallet/entities/wallet.entity';
 import { AgentShift } from '../../agents/entities/agent-shift.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type UserRole = 'player' | 'admin' | 'agent' | 'system';
 export type UserStatus = 'active' | 'suspended' | 'closed';
 
 @Entity({ name: 'users', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-export class User {
+// Identifiers are unique per operator, not globally — the same email/username
+// may exist under two different operators. NULLs remain non-colliding.
+@Index(['operatorId', 'email'], { unique: true })
+@Index(['operatorId', 'username'], { unique: true })
+export class User extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -15,11 +20,9 @@ export class User {
   displayName: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  @Index({ unique: true })
   email?: string;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
-  @Index({ unique: true })
   username?: string;
 
   @Column({ type: 'json' })

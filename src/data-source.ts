@@ -22,5 +22,3 @@ export const AppDataSource = new DataSource({
   synchronize: false,
   migrationsTableName: 'typeorm_migrations',
 });
-
-export default AppDataSource;

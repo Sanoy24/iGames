@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Wallet } from '../../wallet/entities/wallet.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type LedgerDirection = 'debit' | 'credit';
 export type LedgerEntryType =
@@ -22,8 +23,9 @@ const bigintTransformer = {
 @Entity({ name: 'ledger_entries', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['userId', 'createdAt'])
 @Index(['sourceType', 'sourceId'])
+// userId already implies the operator, so this is inherently per-operator.
 @Index(['userId', 'sourceType', 'idempotencyKey'], { unique: true })
-export class LedgerEntry {
+export class LedgerEntry extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

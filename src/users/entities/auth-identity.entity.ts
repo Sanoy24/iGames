@@ -1,11 +1,14 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from './user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type AuthProvider = 'telegram' | 'password';
 
 @Entity({ name: 'auth_identities', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-@Index(['provider', 'providerUserId'], { unique: true })
-export class AuthIdentity {
+// A provider identity (e.g. a Telegram user id) is unique within an operator,
+// so the same Telegram account can be a player under multiple operators.
+@Index(['operatorId', 'provider', 'providerUserId'], { unique: true })
+export class AuthIdentity extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

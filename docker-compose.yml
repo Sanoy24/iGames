@@ -1,65 +1,106 @@
+# iGames development stack.
+#
+# Default `docker compose up -d` starts just the infrastructure the app needs
+# (MySQL + Redis) plus Adminer, a lightweight DB browser. Run the NestJS app on
+# the host with `npm run start:dev` for hot reload — it connects to these over
+# the published ports.
+#
+# To run the whole stack in containers instead:  docker compose --profile full up -d --build
 services:
-  mongodb:
-    image: mongo:6
-    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+  # MariaDB (not MySQL) for parity with cPanel production, which is MariaDB.
+  # It matters: MariaDB allows literal DEFAULTs on JSON columns; MySQL 8 rejects
+  # them, and several entities rely on JSON defaults.
+  mysql:
+    image: mariadb:11
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: igames
+      MARIADB_USER: igames
+      MARIADB_PASSWORD: igames
     ports:
-      - "27017:27017"
+      - "3306:3306"
     volumes:
-      - mongodb_data:/data/db
+      - mysql_data:/var/lib/mysql
     restart: unless-stopped
     healthcheck:
-      test: >
-        mongosh --port 27017 --quiet --eval "
-        try {
-          rs.status();
-        } catch (err) {
-          rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]});
-        }"
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
-      timeout: 30s
-      start_period: 0s
-      start_interval: 1s
-      retries: 30
+      timeout: 5s
+      retries: 20
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
+    # Host port 6380 to avoid colliding with other local Redis instances;
+    # inside the compose network it is still reached as redis:6379.
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
+  # Web DB browser at http://localhost:8080 (server: mysql, user: igames, pass: igames)
+  adminer:
+    image: adminer:4
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Optional: full stack in containers (docker compose --profile full up) ──
   backend:
+    profiles: ["full"]
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - MONGODB_URI=mongodb://mongodb:27017/igames?replicaSet=rs0
-      - REDIS_URL=redis://redis:6379
-      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
-      - JWT_ACCESS_TTL=15m
-      - JWT_REFRESH_TTL=30d
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
-      - AUTH_MODE=${AUTH_MODE:-telegram_only}
-      - TELEGRAM_MINIAPP_URL=${TELEGRAM_MINIAPP_URL:-}
-      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-*}
-      - SENTRY_DSN=${SENTRY_DSN:-}
-      - THROTTLE_TTL_SECONDS=${THROTTLE_TTL_SECONDS:-60}
-      - THROTTLE_MAX_REQUESTS=${THROTTLE_MAX_REQUESTS:-120}
-      - TELEBIRR_EXPECTED_RECEIVER_NAME=${TELEBIRR_EXPECTED_RECEIVER_NAME:-}
-      - TELEBIRR_EXPECTED_RECEIVER_ACCOUNT=${TELEBIRR_EXPECTED_RECEIVER_ACCOUNT:-}
-      - TELEBIRR_CREDIT_MINOR_PER_BIRR=${TELEBIRR_CREDIT_MINOR_PER_BIRR:-100}
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: igames
+      DB_PASSWORD: igames
+      DB_DATABASE: igames
+      DB_SYNCHRONIZE: "false"
+      DB_RUN_MIGRATIONS: "true"
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_TTL: 30d
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      AUTH_MODE: ${AUTH_MODE:-hybrid}
+      TELEGRAM_MINIAPP_URL: ${TELEGRAM_MINIAPP_URL:-}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-*}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      THROTTLE_TTL_SECONDS: ${THROTTLE_TTL_SECONDS:-60}
+      THROTTLE_MAX_REQUESTS: ${THROTTLE_MAX_REQUESTS:-120}
+      TELEBIRR_EXPECTED_RECEIVER_NAME: ${TELEBIRR_EXPECTED_RECEIVER_NAME:-}
+      TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: ${TELEBIRR_EXPECTED_RECEIVER_ACCOUNT:-}
+      TELEBIRR_CREDIT_MINOR_PER_BIRR: ${TELEBIRR_CREDIT_MINOR_PER_BIRR:-100}
     depends_on:
-      - mongodb
-      - redis
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
+    profiles: ["full"]
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -70,5 +111,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongodb_data:
+  mysql_data:
   redis_data:

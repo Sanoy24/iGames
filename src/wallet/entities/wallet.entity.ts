@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type WalletStatus = 'active' | 'locked' | 'closed';
 
@@ -9,8 +10,11 @@ const bigintTransformer = {
 };
 
 @Entity({ name: 'wallets', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
+// userId already implies the operator (a user belongs to exactly one operator),
+// so this unique constraint is inherently per-operator. operatorId is carried as
+// a denormalized column (from TenantOwnedEntity) for efficient tenant-scoped reads.
 @Index(['userId', 'currencyCode'], { unique: true })
-export class Wallet {
+export class Wallet extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

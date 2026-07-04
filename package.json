@@ -17,7 +17,13 @@
     "test:unit": "jest src/keno/keno-rules.service.spec.ts src/bingo/bingo-rules.service.spec.ts src/rng/rng.service.spec.ts src/wallet/wallet.service.spec.ts src/crash/crash.service.spec.ts src/keno/keno.service.spec.ts src/bingo/bingo.service.spec.ts --forceExit --no-coverage",
     "test:unit:watch": "jest src/keno/keno-rules.service.spec.ts src/bingo/bingo-rules.service.spec.ts src/rng/rng.service.spec.ts src/wallet/wallet.service.spec.ts src/crash/crash.service.spec.ts src/keno/keno.service.spec.ts src/bingo/bingo.service.spec.ts --watch",
     "seed:dev": "node scripts/seed-dev.mjs",
-    "seed:bingo-patterns": "ts-node scripts/seed-bingo-patterns.ts"
+    "seed:bingo-patterns": "ts-node scripts/seed-bingo-patterns.ts",
+    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/data-source.ts",
+    "migration:generate": "npm run typeorm -- migration:generate",
+    "migration:create": "ts-node ./node_modules/typeorm/cli.js migration:create",
+    "migration:run": "npm run typeorm -- migration:run",
+    "migration:revert": "npm run typeorm -- migration:revert",
+    "migration:show": "npm run typeorm -- migration:show"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

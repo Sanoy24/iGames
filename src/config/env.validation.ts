@@ -8,6 +8,8 @@ type EnvConfig = {
   DB_USERNAME: string;
   DB_PASSWORD?: string;
   DB_DATABASE: string;
+  DB_SYNCHRONIZE: boolean;
+  DB_RUN_MIGRATIONS: boolean;
   REDIS_URL: string;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
@@ -38,6 +40,11 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     DB_USERNAME: readString(raw, 'DB_USERNAME'),
     DB_PASSWORD: readString(raw, 'DB_PASSWORD', ''),
     DB_DATABASE: readString(raw, 'DB_DATABASE'),
+    // Migrations replace schema auto-sync (SaaS blueprint, Phase 0). Both default
+    // OFF: run `npm run migration:run` to build/evolve the schema. Set
+    // DB_SYNCHRONIZE=true only for throwaway local dev with no data to keep.
+    DB_SYNCHRONIZE: readBoolean(raw, 'DB_SYNCHRONIZE', false),
+    DB_RUN_MIGRATIONS: readBoolean(raw, 'DB_RUN_MIGRATIONS', false),
     REDIS_URL: readString(raw, 'REDIS_URL', 'redis://localhost:6379'),
     JWT_ACCESS_SECRET: readString(raw, 'JWT_ACCESS_SECRET'),
     JWT_REFRESH_SECRET: readString(raw, 'JWT_REFRESH_SECRET'),
@@ -69,6 +76,23 @@ function readString(raw: Record<string, unknown>, key: string, defaultValue?: st
     return defaultValue;
   }
   throw new Error(`Missing required environment variable: ${key}`);
+}
+
+function readBoolean(raw: Record<string, unknown>, key: string, defaultValue: boolean): boolean {
+  const value = raw[key];
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'off', ''].includes(normalized)) {
+      return false;
+    }
+  }
+  return defaultValue;
 }
 
 function readNumber(raw: Record<string, unknown>, key: string, defaultValue: number): number {

@@ -1,9 +1,13 @@
 import { APP_GUARD } from "@nestjs/core";
+import { join } from "path";
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
+import { TenantModule } from "./common/tenant/tenant.module";
+import { TenantContextMiddleware } from "./common/tenant/tenant-context.middleware";
+import { OperatorModule } from "./operator/operator.module";
 import { AuthModule } from "./auth/auth.module";
 import { BingoModule } from "./bingo/bingo.module";
 import { BotsModule } from "./bots/bots.module";
@@ -43,7 +47,12 @@ const isDev = process.env.NODE_ENV !== "production";
                 password: configService.get<string>('DB_PASSWORD', ''),
                 database: configService.getOrThrow<string>('DB_DATABASE'),
                 autoLoadEntities: true,
-                synchronize: true,
+                // Schema is managed by TypeORM migrations (SaaS blueprint, Phase 0).
+                // synchronize defaults OFF; enable only for throwaway local dev.
+                synchronize: configService.get<boolean>('DB_SYNCHRONIZE', false),
+                migrations: [join(__dirname, 'migrations', '*.{js,ts}')],
+                migrationsRun: configService.get<boolean>('DB_RUN_MIGRATIONS', false),
+                migrationsTableName: 'typeorm_migrations',
                 timezone: 'Z',
                 charset: 'utf8mb4_unicode_ci',
             }),
@@ -66,6 +75,8 @@ const isDev = process.env.NODE_ENV !== "production";
         }),
         ScheduleModule.forRoot(),
         RedisModule,
+        TenantModule,
+        OperatorModule,
         AuthModule,
         UsersModule,
         WalletModule,
@@ -93,6 +104,8 @@ const isDev = process.env.NODE_ENV !== "production";
 })
 export class AppModule implements NestModule {
     configure(consumer: MiddlewareConsumer) {
-        consumer.apply(RequestIdMiddleware).forRoutes("*");
+        // TenantContextMiddleware opens the AsyncLocalStorage tenant store; it must
+        // run before the auth guards so resolvers can record the operator into it.
+        consumer.apply(RequestIdMiddleware, TenantContextMiddleware).forRoutes("*");
     }
 }

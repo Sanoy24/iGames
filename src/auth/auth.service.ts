@@ -271,6 +271,7 @@ export class AuthService {
     const sessionRecord = refreshSessionRepo.create({
       id: refreshSessionId,
       userId: input.userId,
+      operatorId: input.operatorId,
       provider: input.provider,
       refreshTokenHash: this.hashToken(refreshToken),
       expiresAt: refreshExpiresAt

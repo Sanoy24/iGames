@@ -225,6 +225,7 @@ export class AuthService {
       return await this.issueTokens({
         userId: user.id,
         roles: user.roles,
+        operatorId,
         displayName: user.displayName,
         provider: 'telegram',
         manager
@@ -235,6 +236,7 @@ export class AuthService {
   private async issueTokens(input: {
     userId: string;
     roles: string[];
+    operatorId: string;
     displayName: string;
     provider: 'telegram' | 'password';
     manager: any; // EntityManager
@@ -246,11 +248,13 @@ export class AuthService {
     const accessPayload: JwtSubjectPayload = {
       sub: input.userId,
       roles: input.roles,
+      operatorId: input.operatorId,
       sessionId: refreshSessionId
     };
     const refreshPayload: JwtSubjectPayload = {
       sub: input.userId,
       roles: input.roles,
+      operatorId: input.operatorId,
       sessionId: refreshSessionId
     };
 

@@ -11,10 +11,11 @@ import { Column, Index } from 'typeorm';
  * so identifiers are unique *per operator*, not globally.
  */
 export abstract class TenantOwnedEntity {
-  // Nullable during the Phase 1 rollout (add column → backfill to operator-zero →
-  // wire resolution → tighten to NOT NULL). Phase 2's scoping/guard layer plus a
-  // follow-up migration make this non-null and enforced.
+  // NOT NULL as of Phase 2: TenantSubscriber stamps operatorId from TenantContext
+  // on every insert (fallback operator-zero), so a tenant-owned row can never be
+  // written without an owner. Set by the subscriber before insert, hence the
+  // definite-assignment assertion.
   @Index()
-  @Column({ type: 'varchar', length: 36, nullable: true })
-  operatorId?: string | null;
+  @Column({ type: 'varchar', length: 36 })
+  operatorId!: string;
 }

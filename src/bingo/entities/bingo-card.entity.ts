@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { BingoRoom } from './bingo-room.entity';
 import { BingoGrid } from './bingo-ticket.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 /**
  * A single pre-generated 75-ball Bingo card in a room's fixed card pool.
@@ -24,7 +25,7 @@ import { BingoGrid } from './bingo-ticket.entity';
 @Index('UQ_bingo_card_room_cartela', ['roomId', 'cartelaNumber'], { unique: true })
 @Index('UQ_bingo_card_room_hash', ['roomId', 'cardHash'], { unique: true })
 @Index('IX_bingo_card_room_assigned', ['roomId', 'assignedTicketId'])
-export class BingoCard {
+export class BingoCard extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

@@ -1,9 +1,12 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type PatternType = 'fixed' | 'any_row' | 'any_col' | 'any_diagonal' | 'any_line' | 'coverall';
 
 @Entity({ name: 'bingo_patterns', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-export class BingoPattern {
+// Built-in patterns are shared across operators (operatorId NULL); operator-defined
+// custom patterns carry their operatorId.
+export class BingoPattern extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

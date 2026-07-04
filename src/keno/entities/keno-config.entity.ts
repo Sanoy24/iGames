@@ -1,4 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type KenoConfigStatus = 'active' | 'inactive';
 
@@ -9,14 +10,16 @@ export class KenoPaytableEntry {
 }
 
 @Entity({ name: 'keno_configs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-export class KenoConfig {
+// Config versions are numbered per operator, not globally.
+@Index(['operatorId', 'version'], { unique: true })
+export class KenoConfig extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column({ type: 'varchar', length: 255 })
   name: string;
 
-  @Column({ type: 'int', unique: true })
+  @Column({ type: 'int' })
   version: number;
 
   @Column({ type: 'enum', enum: ['active', 'inactive'], default: 'inactive' })

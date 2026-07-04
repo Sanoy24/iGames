@@ -1,8 +1,9 @@
 import { Entity, PrimaryColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 @Entity({ name: 'refresh_sessions', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-export class RefreshSession {
+export class RefreshSession extends TenantOwnedEntity {
   @PrimaryColumn({ type: 'varchar', length: 255 })
   id: string;
 

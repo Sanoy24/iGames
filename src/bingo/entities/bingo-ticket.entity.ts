@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { BingoRoom, BingoPrizeTier } from './bingo-room.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type BingoTicketStatus = 'active' | 'won' | 'lost' | 'cancelled';
 export type BingoSettlementStatus = 'pending' | 'settled';
@@ -15,7 +16,7 @@ const bigintTransformer = {
 @Index(['userId', 'createdAt'])
 @Index(['roomId', 'userId', 'purchaseIdempotencyKey'])
 @Index(['roomId', 'settlementStatus'])
-export class BingoTicket {
+export class BingoTicket extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

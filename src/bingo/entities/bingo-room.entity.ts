@@ -1,4 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type BingoRoomStatus = 'open' | 'running' | 'completed' | 'cancelled';
 export type BingoPrizeTier = 'one_line' | 'two_lines' | 'full_house' | '1st' | '2nd' | '3rd';
@@ -18,7 +19,10 @@ export class BingoPatternPrize {
 
 @Entity({ name: 'bingo_rooms', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'scheduledStartAt'])
-export class BingoRoom {
+// One active game *per operator*: the unique guard now spans (operatorId, activeGuard)
+// so each operator may hold at most one open/running room concurrently.
+@Index('UQ_bingo_active_game', ['operatorId', 'activeGuard'], { unique: true })
+export class BingoRoom extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
@@ -93,7 +97,6 @@ export class BingoRoom {
    * INSERT fails with a duplicate-key error.
    */
   @Column({ type: 'tinyint', nullable: true })
-  @Index('UQ_bingo_active_game', { unique: true })
   activeGuard?: number | null;
 
   @CreateDateColumn({ type: 'timestamp' })

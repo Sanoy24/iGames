@@ -1,5 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 const bigintTransformer = {
   to: (value: number | null) => value,
@@ -17,7 +18,7 @@ export type AgentActionType =
 
 @Entity({ name: 'agent_action_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['agentId', 'createdAt'])
-export class AgentActionLog {
+export class AgentActionLog extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

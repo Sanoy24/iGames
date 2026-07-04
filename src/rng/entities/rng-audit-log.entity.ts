@@ -1,11 +1,12 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type RngGameType = 'keno' | 'bingo' | 'crash';
 
 @Entity({ name: 'rng_audit_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['gameType', 'gameReference'])
 @Index(['createdAt'])
-export class RngAuditLog {
+export class RngAuditLog extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

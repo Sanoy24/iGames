@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToOne, JoinColumn } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 const bigintTransformer = {
   to: (value: number | null) => value,
@@ -7,7 +8,7 @@ const bigintTransformer = {
 };
 
 @Entity({ name: 'wager_limits', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-export class WagerLimit {
+export class WagerLimit extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { CrashRound } from './crash-round.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type CrashBetStatus = 'active' | 'won' | 'lost';
 
@@ -13,7 +14,7 @@ const bigintTransformer = {
 @Index(['userId', 'createdAt'])
 @Index(['roundId', 'status'])
 @Index(['userId', 'roundId'], { unique: true })
-export class CrashBet {
+export class CrashBet extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

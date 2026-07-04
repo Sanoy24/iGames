@@ -1,11 +1,12 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { KenoConfig } from './keno-config.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type KenoDrawStatus = 'open' | 'locked' | 'drawn' | 'settled' | 'cancelled';
 
 @Entity({ name: 'keno_draws', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'scheduledAt'])
-export class KenoDraw {
+export class KenoDraw extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

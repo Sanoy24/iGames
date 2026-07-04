@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type BroadcastStatus =
   | 'draft'
@@ -38,7 +39,7 @@ export type BroadcastRecurrence = {
  */
 @Entity({ name: 'broadcast_messages' })
 @Index(['status', 'nextRunAt'])
-export class BroadcastMessage {
+export class BroadcastMessage extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

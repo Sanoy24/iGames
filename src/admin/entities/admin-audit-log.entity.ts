@@ -1,7 +1,8 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 @Entity({ name: 'admin_audit_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
-export class AdminAuditLog {
+export class AdminAuditLog extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

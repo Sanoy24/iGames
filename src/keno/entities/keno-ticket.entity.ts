@@ -2,6 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { User } from '../../users/entities/user.entity';
 import { KenoDraw } from './keno-draw.entity';
 import { KenoConfig } from './keno-config.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type KenoTicketStatus = 'pending' | 'lost' | 'won' | 'cancelled';
 export type KenoSettlementStatus = 'pending' | 'settled';
@@ -15,7 +16,7 @@ const bigintTransformer = {
 @Index(['userId', 'createdAt'])
 @Index(['drawId', 'settlementStatus'])
 @Index(['userId', 'idempotencyKey'], { unique: true })
-export class KenoTicket {
+export class KenoTicket extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

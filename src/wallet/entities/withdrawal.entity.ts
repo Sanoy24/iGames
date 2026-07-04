@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type WithdrawalStatus = 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
 
@@ -10,7 +11,7 @@ const bigintTransformer = {
 
 @Entity({ name: 'withdrawals', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['agentId', 'status'])
-export class Withdrawal {
+export class Withdrawal extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

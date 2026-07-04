@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type TelebirrDepositStatus = 'credited' | 'rejected';
 
@@ -10,7 +11,7 @@ const bigintTransformer = {
 
 @Entity({ name: 'telebirr_deposits', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['userId', 'createdAt'])
-export class TelebirrDeposit {
+export class TelebirrDeposit extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

@@ -1,10 +1,11 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
+import { TenantOwnedEntity } from '../../common/tenant/tenant-owned.entity';
 
 export type CrashRoundStatus = 'waiting' | 'running' | 'crashed';
 
 @Entity({ name: 'crash_rounds', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'createdAt'])
-export class CrashRound {
+export class CrashRound extends TenantOwnedEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 

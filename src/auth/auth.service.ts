@@ -13,6 +13,8 @@ import { WalletService } from '../wallet/wallet.service';
 import { AdminService } from '../admin/admin.service';
 import { RefreshSession } from './entities/refresh-session.entity';
 import { User } from '../users/entities/user.entity';
+import { TenantContextService } from '../common/tenant/tenant-context.service';
+import { OPERATOR_ZERO_ID } from '../operator/operator.constants';
 
 export type AuthTokenResponse = {
   accessToken: string;
@@ -29,6 +31,7 @@ export type AuthTokenResponse = {
 type JwtSubjectPayload = {
   sub: string;
   roles: string[];
+  operatorId?: string;
   sessionId?: string;
 };
 
@@ -43,11 +46,18 @@ export class AuthService {
     private readonly telegramMiniAppAuthService: TelegramMiniAppAuthService,
     private readonly usersService: UsersService,
     private readonly walletService: WalletService,
-    private readonly adminService: AdminService
+    private readonly adminService: AdminService,
+    private readonly tenantContext: TenantContextService
   ) {}
 
   async loginWithTelegramMiniApp(initData: string): Promise<AuthTokenResponse> {
     const validatedTelegramData = this.telegramMiniAppAuthService.validateInitData(initData);
+
+    // TODO(saas): resolve the operator from the bot token that validated this
+    // initData once multi-bot routing exists. Until then all Telegram logins
+    // map to operator-zero. Set before any writes so inserts get stamped.
+    const operatorId = OPERATOR_ZERO_ID;
+    this.tenantContext.set(operatorId, 'telegram');
 
     return this.dataSource.transaction(async (manager) => {
       const { user, created } = await this.usersService.findOrCreateTelegramUser(
@@ -83,6 +93,7 @@ export class AuthService {
       return await this.issueTokens({
         userId: user.id,
         roles: user.roles,
+        operatorId,
         displayName: user.displayName,
         provider: 'telegram',
         manager
@@ -92,12 +103,15 @@ export class AuthService {
 
   async loginWithCredentials(phoneNumber: string, password: string): Promise<AuthTokenResponse> {
     const user = await this.usersService.findBackofficeUserByCredentials(phoneNumber, password);
-    
+    const operatorId = user.operatorId ?? OPERATOR_ZERO_ID;
+    this.tenantContext.set(operatorId, 'jwt');
+
     return this.dataSource.transaction(async (manager) => {
       await this.walletService.ensureDefaultWallet(user.id, manager);
       return await this.issueTokens({
         userId: user.id,
         roles: user.roles,
+        operatorId,
         displayName: user.displayName,
         provider: 'password',
         manager,
@@ -144,10 +158,13 @@ export class AuthService {
       await refreshSessionRepo.save(refreshSession);
 
       const user = await this.usersService.findById(payload.sub);
+      const operatorId = payload.operatorId ?? user.operatorId ?? OPERATOR_ZERO_ID;
+      this.tenantContext.set(operatorId, 'jwt');
 
       return await this.issueTokens({
         userId: user.id,
         roles: user.roles,
+        operatorId,
         displayName: user.displayName,
         provider: refreshSession.provider,
         manager
@@ -170,6 +187,8 @@ export class AuthService {
     initialBalanceMinor = 0
   ): Promise<AuthTokenResponse> {
     const providerUserId = `dev-seed:${displayName.toLowerCase().replace(/\s+/g, '-')}`;
+    const operatorId = OPERATOR_ZERO_ID;
+    this.tenantContext.set(operatorId, 'system');
 
     return this.dataSource.transaction(async (manager) => {
       const { user } = await this.usersService.findOrCreateTelegramUser(

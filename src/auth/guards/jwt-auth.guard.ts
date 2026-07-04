@@ -13,10 +13,12 @@ import { Request } from 'express';
 import { AuthenticatedRequest } from '../types/authenticated-user';
 import { User } from '../../users/entities/user.entity';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { TenantContextService } from '../../common/tenant/tenant-context.service';
 
 type AccessTokenPayload = {
   sub?: string;
   roles?: string[];
+  operatorId?: string;
   sessionId?: string;
 };
 
@@ -27,6 +29,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly reflector: Reflector,
+    private readonly tenantContext: TenantContextService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -64,8 +67,15 @@ export class JwtAuthGuard implements CanActivate {
       request.user = {
         id: payload.sub,
         roles: payload.roles,
+        operatorId: payload.operatorId,
         sessionId: payload.sessionId
       };
+
+      // Record the tenant for the rest of the request so scoped reads/writes
+      // resolve to this operator.
+      if (payload.operatorId) {
+        this.tenantContext.set(payload.operatorId, 'jwt');
+      }
 
       return true;
     } catch (error) {

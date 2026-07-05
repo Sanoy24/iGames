@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { LedgerService } from '../ledger/ledger.service';
 import { LedgerEntry, LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { TenantContextService } from '../common/tenant/tenant-context.service';
 import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action-log.entity';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
@@ -68,7 +69,8 @@ export class WalletService {
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepository: Repository<Withdrawal>,
     private readonly ledgerService: LedgerService,
-    private readonly gameEventsGateway: GameEventsGateway
+    private readonly gameEventsGateway: GameEventsGateway,
+    private readonly tenantContext: TenantContextService
   ) {}
 
   async ensureDefaultWallet(
@@ -133,7 +135,7 @@ export class WalletService {
     timestamp: string;
   }>> {
     const safeLimit = Math.min(Math.max(limit || 20, 1), 50);
-    const rows = await this.dataSource
+    const rowsQb = this.dataSource
       .getRepository(LedgerEntry)
       .createQueryBuilder('le')
       .innerJoin('le.user', 'u')
@@ -147,7 +149,13 @@ export class WalletService {
       .andWhere('le.direction = :dir', { dir: 'credit' })
       .andWhere('le.amountMinor > 0')
       .orderBy('le.createdAt', 'DESC')
-      .limit(safeLimit)
+      .limit(safeLimit);
+
+    // Scope recent wins to the current operator when one is resolved.
+    const winsOperatorId = this.tenantContext.operatorId;
+    if (winsOperatorId) rowsQb.andWhere('le.operatorId = :__operatorId', { __operatorId: winsOperatorId });
+
+    const rows = await rowsQb
       .getRawMany<{ displayName: string; amountMinor: string; sourceType: string; createdAt: Date | string }>();
 
     return rows.map((row) => ({
@@ -181,6 +189,11 @@ export class WalletService {
       .where('le.entryType = :type', { type: 'win' })
       .andWhere('le.direction = :dir', { dir: 'credit' })
       .andWhere('le.amountMinor > 0');
+
+    // Per-operator leaderboard: scope to the current operator when one is resolved
+    // (authed request). Public/host-resolved scoping is a later step.
+    const operatorId = this.tenantContext.operatorId;
+    if (operatorId) qb.andWhere('le.operatorId = :__operatorId', { __operatorId: operatorId });
 
     if (since) qb.andWhere('le.createdAt >= :since', { since });
 

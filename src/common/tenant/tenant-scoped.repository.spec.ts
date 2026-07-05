@@ -62,10 +62,10 @@ describe('TenantScopedRepository', () => {
 
   it('fails closed when no tenant is resolved', async () => {
     await tenantContext.run(async () => {
-      // no tenantContext.set(...)
-      await expect(scoped.find({ where: { status: 'open' } })).rejects.toThrow(
-        /no operator/i,
-      );
+      // no tenantContext.set(...) — the tenant check throws before any query runs
+      await expect(
+        Promise.resolve().then(() => scoped.find({ where: { status: 'open' } })),
+      ).rejects.toThrow(/no operator/i);
     });
     expect(repo.find).not.toHaveBeenCalled();
   });

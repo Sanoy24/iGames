@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { TenantContextService } from '../common/tenant/tenant-context.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
 import { Repository, EntityManager, DataSource, IsNull } from 'typeorm';
@@ -32,6 +33,7 @@ export class UsersService {
     private readonly authIdentityRepository: Repository<AuthIdentity>,
     @InjectRepository(RefreshSession)
     private readonly refreshSessionRepository: Repository<RefreshSession>,
+    private readonly tenantContext: TenantContextService,
   ) {}
 
   async findById(userId: string): Promise<User> {
@@ -109,6 +111,8 @@ export class UsersService {
     const skip = (page - 1) * limit;
     const queryBuilder = this.userRepository.createQueryBuilder('user')
       .leftJoinAndSelect('user.wallets', 'wallet')
+      // Operator isolation: an operator-admin only ever lists their own users.
+      .where('user.operatorId = :__operatorId', { __operatorId: this.tenantContext.getOperatorIdOrThrow() })
       .orderBy('user.createdAt', 'DESC')
       .skip(skip)
       .take(limit);
@@ -303,6 +307,7 @@ export class UsersService {
     const [data, total] = await this.userRepository
       .createQueryBuilder('user')
       .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .andWhere('user.operatorId = :__operatorId', { __operatorId: this.tenantContext.getOperatorIdOrThrow() })
       .orderBy('user.createdAt', 'DESC')
       .skip(skip)
       .take(limit)

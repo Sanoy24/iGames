@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nest
 import { Request } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { AuthenticatedRequest, AuthenticatedUser } from '../auth/types/authenticated-user';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { PurchaseBingoTicketsDto } from './dto/purchase-bingo-tickets.dto';
@@ -34,6 +35,8 @@ export class BingoController {
   }
 
   @Get('current')
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOkResponse({ description: 'The single active room (running → open → last completed) with the callers tickets' })
   getCurrentRoom(@Req() request: Request) {
     const maybeUser = (request as Partial<AuthenticatedRequest>).user;
@@ -41,6 +44,8 @@ export class BingoController {
   }
 
   @Get('rooms/:id/state')
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
   getRoomState(@Param('id') roomId: string, @Req() request: Request) {
     const maybeUser = (request as Partial<AuthenticatedRequest>).user;
     return this.bingoService.getRoomState({
@@ -50,6 +55,8 @@ export class BingoController {
   }
 
   @Get('rooms/:id/sync')
+  @ApiBearerAuth()
+  @UseGuards(OptionalJwtAuthGuard)
   syncRoomState(@Param('id') roomId: string, @Req() request: Request) {
     const maybeUser = (request as Partial<AuthenticatedRequest>).user;
     return this.bingoService.getRoomState({

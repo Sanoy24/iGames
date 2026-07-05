@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { GameEventsModule } from '../events/game-events.module';
 import { RngModule } from '../rng/rng.module';
@@ -25,7 +26,7 @@ import { BingoTicket } from './entities/bingo-ticket.entity';
     TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoPattern])
   ],
   controllers: [BingoController, BingoAdminController],
-  providers: [BingoService, BingoRulesService, JwtAuthGuard, RolesGuard],
+  providers: [BingoService, BingoRulesService, JwtAuthGuard, OptionalJwtAuthGuard, RolesGuard],
   exports: [BingoService]
 })
 export class BingoModule {}

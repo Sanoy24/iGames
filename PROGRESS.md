@@ -6,13 +6,13 @@
 
 ## Current Verified State
 
-**Date**: 2026-07-03  
+**Date**: 2026-07-05  
 **Branch**: `migration/mysql`  
-**DB**: MySQL 8 + TypeORM (entities now declare `InnoDB ROW_FORMAT=DYNAMIC`; ALTER still needed on pre-existing production tables)  
-**Backend build**: `npx tsc --noEmit` — clean  
+**DB**: MySQL 8 + TypeORM (entities now declare `InnoDB ROW_FORMAT=DYNAMIC`; ALTER still needed on pre-existing production tables). New tables: `broadcast_messages`, `notifications` (auto-created via `synchronize`).  
+**Backend build**: `npx nest build` — clean  
 **Frontend build**: `npm run build` in `frontend/` — ✓ clean  
-**Tests**: Unit tests pass (`npm run test:unit`) — expanded coverage for Bingo/Crash/Keno/Wallet  
-**Deployment**: Backend on PM2, frontend static build on server
+**Tests**: `npx jest` — **158/158 pass**  
+**Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
 
@@ -23,11 +23,15 @@
 | Bingo — win modes line / pattern / prefilled(derash), cartela cards, DB-backed patterns, 75-card grid | Passing |
 | Bingo — phase machine (buy/playing/result), auto-join, no lobby, self-healing stuck rooms | Passing |
 | Bingo — one-active-game DB guard (`UQ_bingo_active_game`) prevents concurrent rooms | Passing |
-| Bingo — paced ball reveal (shared cursor, caller+board+cards in lockstep) | Passing |
+| Bingo — paced ball reveal (calm ~1.5s cadence, breathing caller, current-ball ring on board) | Passing |
+| Bingo — derash win dialog renders the winner's 5×5 for all players (settlementSummary.winnerGrid + fallbacks) | Passing |
+| Bingo — logged-in player's own cartelas restore after tab switch/reload (OptionalJwtAuthGuard on read endpoints) | Passing |
 | Crash — JWT guards, stale round abandonment on bootstrap, RNG fix (min:1), bet/cashout hardening | Passing |
 | Admin panel — sidebar layout, KPI icons + donut, Account tab, Bingo config, bot top-up/delete | Passing |
+| Admin — Telegram Broadcast tab (text/image/buttons, send-now/once/recurring, live TG preview, delivery progress) | Passing |
+| Notifications — durable per-user bell (withdrawal/deposit/adjustment + bingo/keno wins), server-backed, socket push | Passing |
 | Payments — Telebirr receipt preview | Passing |
-| Socket.IO — live counts heartbeat every 10s + on-demand request.counts | Passing |
+| Socket.IO — live counts heartbeat every 10s + on-demand request.counts; `user_{id}` room for wallet + notifications | Passing |
 
 ### Known Issues / Pending
 
@@ -40,6 +44,30 @@
 ---
 
 ## Session Record
+
+### Session: 2026-07-04 → 2026-07-05 (broadcast, notifications, bingo polish + fixes)
+
+**Goal**: Ship an admin Telegram broadcast tool, a durable notification system, and fix the reported Bingo/Wallet UX bugs.
+
+**Completed**:
+
+- **Admin Telegram Broadcast** (`src/broadcast/`, commits 19baa9b, 2848de1): new `broadcast_messages` entity + service + controller + `BroadcastScheduler`. Admin composes text + optional uploaded image + inline URL buttons and sends to **all Telegram-linked users** — now / once (scheduled) / recurring (daily|weekly, Ethiopia +3). Multer upload to `uploads/broadcasts/` served at `/uploads/**`; `TelegramBotService.sendBroadcastMessage` throttles ~25 msg/s, honours 429, **reuses the photo `file_id`** after the first send. Scheduler claims due rows with an atomic `scheduled→sending` status guard (exactly-once, multi-instance safe) + 45-min stale recovery. Frontend: new **Broadcast** admin tab with a live Telegram-style preview + delivery progress. See D-16.
+- **Durable notifications / bell** (`src/notifications/`, commits 405d50f, 3c49b64): `notifications` table + service + controller; `GameEventsGateway.emitUserNotification` → `notification.new` on `user_{id}`. Wired post-commit, best-effort to withdrawal settle (all 3 paths), deposit credit (new credits only), admin adjustment, and **server-side bingo/keno win** emit at settlement (`notifyRoomWinners`/`notifyDrawWinners`, aggregated per user, bots skipped). Frontend bell is now **server-backed**: loads on login, socket-live, persists read state, per-type icons; the client-side win `addNotification` was removed to avoid a duplicate. See D-15.
+- **OptionalJwtAuthGuard** (commit 2272c8b): fixes a logged-in player's purchased cartelas disappearing on tab switch/reload — `GET /bingo/current` (+ `/state`, `/sync`) had no guard so the server never returned the caller's tickets. New reusable guard populates `request.user` when a token is present, allows anonymous otherwise. Guard spec added (4 cases). See D-14.
+- **Bingo live-draw polish** (commits f79a386, 6ea4123): calm constant ~1.5s reveal cadence (no more 250ms bursts), "now calling" uses `mode="wait"` + breathing glow, recent-calls strip keyed by number (stable) with enter animation, current ball ringed on the board. Kept iGames' own visual identity (not the reference app's look).
+- **Bingo derash win dialog**: renders the winner's 5×5 card for **all** players via `settlementSummary.winnerGrid` with robust fallbacks + authoritative `winnerMarkedNumbers`.
+- **CartelaGrid font** (commits a0cc833, 9d3fa4d): 7px → 11px, `font-black`, tight leading/tracking — bigger/bolder without changing the fixed 10-col grid layout.
+- **Wallet transaction filter fix**: filters (Wins/Purchases/Deposits) and labels used non-existent `entryType` values (`ticket_win`/`ticket_purchase`); corrected to the real enum (`win`/`stake`/`deposit`/…). Home Bingo card copy → "Next Bingo starts soon! Buy your card".
+
+**Verified**: `npx nest build` clean; `npx jest` 158/158 (updated wallet/bingo/keno specs for new constructor args); `frontend` `tsc` + `vite build` clean. Live end-to-end (real socket round / withdrawal approval) not exercised — needs DB+Redis.
+
+**Next best actions**:
+
+1. **Crash win notifications** — the one game not yet wired; `crash.bet.cashedout` already emits to `user_{id}`, so add a `win` notification there (~2 lines).
+2. Deploy: ensure `uploads/` is writable on the server and run `npm install` (new `@types/multer`).
+3. Still pending from before: ROW_FORMAT=DYNAMIC ALTER on pre-existing prod tables; FE-09 admin per-tab layouts; FE-10 profile stats.
+
+---
 
 ### Session: 2026-07-03 (bingo payout + flat currency)
 

@@ -79,6 +79,37 @@ Rules the cursor enforces (do not regress these):
   visual reveal. Cards mark cells from `revealedSet`, not from the raw
   `ticket.markedNumbers`, so a number lights up exactly when it's called.
 
+### Now-calling presentation (2026-07-05)
+
+The "now calling" tile and recent-calls strip were tuned for a calm, unhurried feel —
+this is iGames' **own** visual identity (translucent rounded tiles + accent colour), not
+a clone of any reference app. Do not regress:
+
+- The caller uses `<AnimatePresence mode="wait">` so exactly one ball is in flight — the
+  previous tile fully exits before the next enters (no overlapping smear at speed).
+- The caller's glow **breathes** (looping `boxShadow` keyframes) — liveliness, not a
+  restyle.
+- The recent-calls strip keys pills by **number** (stable), not array index, so the
+  sliding window doesn't remount every pill each draw; only the new pill animates in.
+- The **current** (most-recent) ball is highlighted on the board with a pulsing white
+  ring (`NumberCell isCurrent`), distinct from older called cells.
+
+### Result dialog + "my tickets" visibility
+
+- `getRoomState` (and `getCurrentRoom`) return **only the caller's own tickets**. So a
+  **non-winner** has no access to the winner's card — the derash result dialog renders the
+  winning 5×5 from `settlementSummary['1st'].winnerGrid` (+ `winnerMarkedNumbers`), with
+  fallbacks. **Do not stop populating `winnerGrid`/`winnerMarkedNumbers` in
+  `evaluateAndSettleDerash`** or the win dialog degrades to name-only for everyone else.
+- The Bingo read endpoints use `OptionalJwtAuthGuard` (see D-14) so a logged-in player's
+  `room.tickets` come back from the server — the client prefers `room.tickets` over the
+  in-memory `localTickets`, which is why cartelas now **restore after a tab switch/reload**
+  instead of vanishing.
+- A player's **win raises a server-side notification** at settlement
+  (`notifyRoomWinners`, see D-15) — there is intentionally **no client-side
+  `addNotification`** for wins (it would duplicate the bell entry). Keep the confetti/sound
+  client-side.
+
 ---
 
 ## Gotchas

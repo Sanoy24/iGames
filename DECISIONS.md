@@ -91,3 +91,37 @@
 **Decided**: 2026-06-29  
 **Decision**: All admin UI uses shared `adm-*` CSS classes defined in `App.css`. No inline styles or component-level CSS modules for admin.  
 **Why**: One restyle of `App.css` propagates to all 10 admin tabs. Consistent visual language without duplicating styles.
+
+---
+
+## Auth (continued)
+
+### D-14: OptionalJwtAuthGuard for read endpoints that serve both players and spectators
+**Decided**: 2026-07-05
+**Decision**: `src/auth/guards/optional-jwt-auth.guard.ts` — a guard that **extends** `JwtAuthGuard` and wraps `super.canActivate()` in try/catch, returning `true` on any auth failure. It populates `request.user` when a valid Bearer token is present, else lets the request continue anonymously. Applied to `GET /bingo/current`, `/bingo/rooms/:id/state`, `/bingo/rooms/:id/sync`.
+**Why**: Those endpoints read `request.user?.id` to return the caller's own tickets, but had **no guard**, so `request.user` was always undefined and a logged-in player's cartelas never came back from the server — they only survived in client memory and vanished on tab switch/reload. This makes the server authoritative for "my tickets" without blocking anonymous spectators.
+**Constraint**: A guard that `extends` another **must declare an explicit constructor** that calls `super(...)` with the same `@Inject`-decorated params — otherwise NestJS loses the DI param metadata and injects `undefined`. When adding a similar mixed-auth endpoint, reuse `OptionalJwtAuthGuard`, don't hand-roll token parsing.
+
+---
+
+## Notifications & Messaging
+
+### D-15: Durable notifications table + socket push (bell); toasts stay transient
+**Decided**: 2026-07-05
+**Decision**: The bell is backed by a `notifications` table (`src/notifications/`). `NotificationsService.create()` **persists then** pushes live via `GameEventsGateway.emitUserNotification(userId, payload)` → `notification.new` on the `user_{id}` socket room. The frontend store loads the list on login (`GET /notifications`), listens for `notification.new`, and persists read state (`POST /notifications/read`). Transient in-context feedback stays as **toasts** (`addToast`), not notifications.
+**Why**: Money events (withdrawal approved/rejected, deposit credited) are asynchronous — the user is usually not watching — so they need delivery-on-next-open, reload-surviving unread counts, and read state. An in-memory-only bell fails exactly there.
+**Constraints**:
+- Notifications are created **post-commit, best-effort** via `NotificationsService.safeCreate()` (never throws) — a notification failure must never roll back the money operation that triggered it. Hook points: `WalletService.processWithdrawal`/agent settle paths, `PaymentsService.submitTelebirrReceipt` (only on a genuinely new credit, not duplicate submits), `AdminService.adjustUserWallet`.
+- **Wins are server-emitted** at settlement (`BingoService.notifyRoomWinners` / `KenoService.notifyDrawWinners`), called once at the completion point (scheduler + admin controller), aggregated per user, **skipping bot accounts** (`user.productMetadata?.botPolicy != null`). The old client-side win `addNotification` was removed to avoid a duplicate; confetti/sound stay for instant feedback.
+- Any module that raises notifications imports `NotificationsModule`; direction is one-way (Wallet/Payments/Admin/Bingo/Keno → Notifications → Events) so there is **no DI cycle** — do not make `NotificationsModule` import a game/wallet module.
+
+### D-16: Admin Telegram broadcast — disk images, file_id reuse, DB-guarded scheduler
+**Decided**: 2026-07-04
+**Decision**: `src/broadcast/` lets an admin send one message (text + optional image + inline URL buttons) to **all Telegram-linked users**, immediately / once at a scheduled time / recurring (daily|weekly). Images upload via multer to `uploads/broadcasts/` (served at `/uploads/**` by `useStaticAssets`), stored by relative path. `TelegramBotService.sendBroadcastMessage` sends serially (~25 msg/s, honours 429 `retry_after`, skips blocked users) and **uploads the photo once then reuses the returned `file_id`** for all remaining recipients. `BroadcastScheduler` (`@Cron` every 30s, Redis-locked) claims due rows with an **atomic status-guarded UPDATE** (`scheduled → sending`) so delivery is exactly-once; a long fan-out runs in the background (lock released immediately) and stale `sending` rows are recovered after 45 min.
+**Why**: cPanel gives a persistent disk (no S3 needed); `file_id` reuse makes an 18k-user image broadcast upload the image a single time; the DB status guard + Redis lock make it multi-instance and restart safe.
+**Constraints**: Recurring/once wall-clock times are interpreted in a **fixed +180 min (Ethiopia UTC+3) offset** — no DST. Deploy needs `npm install` for the added `@types/multer` (dev) and a writable, gitignored `uploads/` dir.
+
+### D-17: `utf8mb4` on user-facing free-text columns (emoji-safe)
+**Decided**: 2026-07-04
+**Decision**: Columns storing admin/user free text that may contain 4-byte characters (emoji 💸🎉) declare `charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci'` explicitly (e.g. `broadcast_messages.title/text`, `notifications.title/body`).
+**Why**: A plain `utf8`/`utf8mb3` column silently replaces 4-byte characters with `?` at insert time (3-byte scripts like Amharic store fine, which hides the bug). Add this to any new column that holds arbitrary user/admin text.

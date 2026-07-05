@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0",
-    "updated": "2026-07-03",
+    "updated": "2026-07-05",
     "schema": "Each feature: id, area, title, behavior, status, verification, evidence, notes",
     "statuses": ["not_started", "in_progress", "blocked", "passing"],
     "rule": "Status only moves to 'passing' when verification command exits 0 and output matches expected. Agent cannot self-declare passing."
@@ -233,6 +233,72 @@
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
       "evidence": "",
       "notes": "Basic profile page exists; full stats/history view not confirmed."
+    },
+    {
+      "id": "BE-15",
+      "area": "broadcast",
+      "title": "Admin Telegram broadcast (send-now / scheduled / recurring)",
+      "behavior": "Admin composes text + optional uploaded image + inline URL buttons and sends to all Telegram-linked users. scheduleType ∈ {now, once (scheduledAtLocal), recurring (daily|weekly, HH:mm, Ethiopia +180min)}. Multer upload to uploads/broadcasts (served /uploads/**). TelegramBotService.sendBroadcastMessage throttles ~25 msg/s, honours 429 retry_after, skips blocked users, reuses the photo file_id after the first send. BroadcastScheduler (@Cron 30s, Redis-locked) claims due rows with an atomic scheduled->sending status guard; background dispatch; 45-min stale recovery.",
+      "status": "passing",
+      "verification": "npx nest build && npx jest",
+      "evidence": "src/broadcast/, src/telegram/telegram-bot.service.ts, src/scheduler/broadcast.scheduler.ts. Commits 19baa9b, 2848de1. See DECISIONS D-16.",
+      "notes": "Deploy needs writable uploads/ dir + npm install (@types/multer). Live blast not exercised."
+    },
+    {
+      "id": "BE-16",
+      "area": "notifications",
+      "title": "Durable per-user notifications (bell) + socket push",
+      "behavior": "notifications table + NotificationsService.create() persists then emits notification.new on the user_{id} socket room. GET /notifications returns {items, unreadCount}; POST /notifications/read marks read. safeCreate() is called post-commit best-effort from: withdrawal settle (admin + both agent paths), deposit credit (new credits only), admin adjustment, and bingo/keno win at settlement (notifyRoomWinners/notifyDrawWinners, aggregated per user, bot accounts skipped).",
+      "status": "passing",
+      "verification": "npx nest build && npx jest",
+      "evidence": "src/notifications/, gateway.emitUserNotification, wallet/payments/admin/bingo/keno hooks. Commits 405d50f, 3c49b64. See DECISIONS D-15.",
+      "notes": "Crash wins not yet wired (crash.bet.cashedout already targets user_{id})."
+    },
+    {
+      "id": "BE-17",
+      "area": "auth",
+      "title": "OptionalJwtAuthGuard on Bingo read endpoints",
+      "behavior": "Reusable guard extends JwtAuthGuard; populates request.user when a valid Bearer token is present, allows anonymous otherwise (never rejects). Applied to GET /bingo/current, /bingo/rooms/:id/state, /bingo/rooms/:id/sync so a logged-in player's own tickets are returned by the server (fixes cartelas vanishing on tab switch/reload) without blocking spectators.",
+      "status": "passing",
+      "verification": "npx nest build && npx jest",
+      "evidence": "src/auth/guards/optional-jwt-auth.guard.ts (+ .spec, 4 cases), src/bingo/bingo.controller.ts. Commit 2272c8b. See DECISIONS D-14.",
+      "notes": "Guard that extends another must declare an explicit constructor (DI metadata)."
+    },
+    {
+      "id": "FE-12",
+      "area": "frontend/notifications",
+      "title": "Server-backed notification bell",
+      "behavior": "NotificationBell loads GET /notifications on login (survives reload, shows what was missed), listens for notification.new over the socket, persists read state via POST /notifications/read on open, and renders per-type icons (win/deposit/withdrawal/adjustment/bonus). Store gained setNotifications + addServerNotification (dedupe by id). Dead *.ticket.won listeners removed.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/components/NotificationBell.tsx, frontend/src/store/useStore.ts, frontend/src/lib/api.ts (notificationsApi)."
+    },
+    {
+      "id": "FE-13",
+      "area": "frontend/admin",
+      "title": "Admin Broadcast tab with live Telegram preview",
+      "behavior": "Compose title + message (Plain/HTML) + uploaded image + up to 6 link buttons; choose send-now / once (datetime) / recurring (daily|weekly). Live Telegram-style preview mirrors the sent message. History list shows status, delivery progress bar (polls while sending), and send-now/cancel/delete actions.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Admin.tsx (BroadcastAdmin), broadcastApi in api.ts, /uploads dev proxy in vite.config.ts."
+    },
+    {
+      "id": "FE-14",
+      "area": "frontend/bingo",
+      "title": "Bingo live-draw polish + derash win dialog 5x5 + cartela font",
+      "behavior": "Calm constant ~1.5s reveal cadence (no 250ms bursts); now-calling uses mode=wait + breathing glow; recent-calls strip keyed by number with enter animation; current ball ringed on the board. Derash win dialog renders the winner's 5x5 for every player via settlementSummary.winnerGrid (+ fallbacks) and authoritative winnerMarkedNumbers. CartelaGrid numbers 7px->11px, font-black, tight leading/tracking (layout unchanged).",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx. Commits f79a386, 6ea4123, a0cc833, 9d3fa4d. Keeps iGames' own visual identity."
+    },
+    {
+      "id": "FE-15",
+      "area": "frontend/wallet",
+      "title": "Transaction history filter + labels fix",
+      "behavior": "Wins/Purchases/Deposits filters and row labels matched non-existent entryType values (ticket_win/ticket_purchase) and always showed empty. Corrected to the real ledger enum: wins=win|bonus, purchases=stake, deposits=deposit|agent_receipt; labels map stake/win/refund/deposit/withdrawal/bonus/adjustment/agent_receipt.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Wallet.tsx (ENTRY_LABELS, matchesTxFilter). Commit 405d50f."
     },
     {
       "id": "OPS-01",

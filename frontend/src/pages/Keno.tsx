@@ -210,6 +210,7 @@ function CollapsibleSection({
 
 export function Keno({ onBack }: KenoProps) {
   const addToast    = useStore((s) => s.addToast);
+  const addNotification = useStore((s) => s.addNotification);
   const wallet      = useStore((s) => s.wallet);
   const setWallet   = useStore((s) => s.setWallet);
   const liveCounts  = useStore((s) => s.liveCounts);
@@ -416,6 +417,7 @@ export function Keno({ onBack }: KenoProps) {
       if (totalPayout > 0) {
         soundEngine.win();
         confetti({ particleCount: 180, spread: 80, origin: { y: 0.65 }, colors: ['#FFE600', '#10B981', '#F59E0B', '#8B5CF6'] });
+        addNotification({ type: 'win', title: 'Keno Win!', message: `You won ${formatCredits(totalPayout)} ETB` });
       }
       setDrawResult({ drawId: animatingDrawId, drawnNumbers: resultDraw.drawnNumbers, userTickets: relevant, totalPayout });
       if (autoPlayEnabled) {

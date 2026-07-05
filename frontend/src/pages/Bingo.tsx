@@ -899,6 +899,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
 
 export function Bingo({ onBack }: BingoProps) {
   const addToast          = useStore((s) => s.addToast);
+  const addNotification   = useStore((s) => s.addNotification);
   const setWallet         = useStore((s) => s.setWallet);
   const liveCounts        = useStore((s) => s.liveCounts);
   const soundVolume       = useStore((s) => s.soundVolume);
@@ -1129,11 +1130,13 @@ export function Bingo({ onBack }: BingoProps) {
     const winners = allTickets.filter((t) => t.payoutMinor > 0);
     if (!winners.length) return;
     victoryRoomRef.current = room.id;
+    const totalWin = winners.reduce((sum, t) => sum + t.payoutMinor, 0);
     soundEngine.win();
     confetti({ particleCount: 200, spread: 90, origin: { y: 0.55 }, colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'] });
+    addNotification({ type: 'win', title: 'Bingo Win!', message: `You won ${formatCredits(totalWin)} ETB` });
     // The win credit landed server-side — pull the fresh balance into the header.
     walletApi.getWallet().then(setWallet).catch(() => undefined);
-  }, [room?.status, room?.tickets, room?.id, localTickets, setWallet]);
+  }, [room?.status, room?.tickets, room?.id, localTickets, setWallet, addNotification]);
 
   // ── Chat scroll ──────────────────────────────────────────────────────────────
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);

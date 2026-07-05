@@ -6,17 +6,19 @@ import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
 import { authApi, walletApi, paymentsApi, type TelebirrPreview } from '../lib/api';
 
+// Keys are the backend ledger `entryType` values
+// (see LedgerEntryType: stake | win | refund | adjustment | bonus | deposit |
+//  reversal | withdrawal | agent_receipt).
 const ENTRY_LABELS: Record<string, string> = {
-  ticket_purchase: 'Ticket Purchase',
-  ticket_win: 'Winnings',
-  ticket_refund: 'Ticket Refund',
+  stake: 'Ticket Purchase',
+  win: 'Winnings',
+  refund: 'Refund',
   deposit: 'Deposit',
   withdrawal: 'Withdrawal',
   bonus: 'Bonus ETB',
-  admin_adjustment: 'Balance Adjustment',
+  adjustment: 'Balance Adjustment',
   agent_receipt: 'Agent Transfer',
-  reserve: 'Hold',
-  release: 'Hold Released',
+  reversal: 'Reversal',
 };
 
 type TxFilter = 'all' | 'wins' | 'purchases' | 'deposits';
@@ -35,8 +37,8 @@ function formatLedgerTitle(entry: LedgerEntry): string {
 function matchesTxFilter(entry: LedgerEntry, filter: TxFilter): boolean {
   if (filter === 'all') return true;
   const type = entry.entryType ?? entry.sourceType ?? '';
-  if (filter === 'wins')      return type === 'ticket_win' || type === 'bonus';
-  if (filter === 'purchases') return type === 'ticket_purchase';
+  if (filter === 'wins')      return type === 'win' || type === 'bonus';
+  if (filter === 'purchases') return type === 'stake';
   if (filter === 'deposits')  return type === 'deposit' || type === 'agent_receipt';
   return true;
 }

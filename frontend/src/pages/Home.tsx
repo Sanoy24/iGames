@@ -335,7 +335,7 @@ export function Home({ onNavigate }: Props) {
             glowColor="rgba(239,68,68,0.2)"
             icon={<Target style={{ color: '#f87171' }} />}
             tag="Live Rooms" name="Bingo"
-            sub="90-ball & pattern cards"
+            sub="Next Bingo starts soon! Buy your card"
             badge="HOT" badgeColor="rgba(239,68,68,0.2)"
           />
         </div>

@@ -256,7 +256,7 @@ const CartelaGrid = memo(({
             whileTap={canToggle ? { scale: 0.86 } : {}}
             disabled={!canToggle}
             onClick={() => canToggle && onToggle(n)}
-            className="aspect-square rounded-[2px] flex items-center justify-center text-[7px] font-bold font-mono select-none transition-all duration-75"
+            className="aspect-square rounded-[2px] flex items-center justify-center text-[10px] leading-none tracking-tight font-bold font-mono select-none transition-all duration-75"
             style={{
               ...cellStyle,
               ...textStyle,

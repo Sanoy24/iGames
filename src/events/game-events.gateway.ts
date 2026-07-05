@@ -230,6 +230,11 @@ export class GameEventsGateway
     this.server.to(`user_${userId}`).emit('wallet.updated', wallet);
   }
 
+  /** Push a durable notification live to a single user's socket room (bell). */
+  emitUserNotification(userId: string, payload: Record<string, unknown>): void {
+    this.server.to(`user_${userId}`).emit('notification.new', payload);
+  }
+
   /** Notify all connected agents that a new withdrawal is waiting. */
   emitWithdrawalPending(payload: WithdrawalPendingPayload): void {
     this.server.to('agents').emit('withdrawal.pending', payload);

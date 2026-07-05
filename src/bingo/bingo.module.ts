@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { GameEventsModule } from '../events/game-events.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RngModule } from '../rng/rng.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { BingoAdminController } from './bingo-admin.controller';
@@ -23,6 +24,7 @@ import { BingoTicket } from './entities/bingo-ticket.entity';
     RngModule,
     WalletModule,
     GameEventsModule,
+    NotificationsModule,
     TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoPattern])
   ],
   controllers: [BingoController, BingoAdminController],

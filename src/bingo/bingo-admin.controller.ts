@@ -49,6 +49,7 @@ export class BingoAdminController {
     this.gameEventsGateway.emitBingoNumberDrawn(room);
     if (room.status === 'completed') {
       this.gameEventsGateway.emitBingoRoomCompleted(room);
+      void this.bingoService.notifyRoomWinners(room.id).catch(() => undefined);
     }
     return room;
   }

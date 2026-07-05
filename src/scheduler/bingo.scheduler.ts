@@ -98,6 +98,8 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
                 this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
               }
             }).catch(() => {});
+            // Persist in-app win notifications (survive leaving the game screen)
+            void this.bingoService.notifyRoomWinners(updated.id).catch(() => {});
           }
         } catch (error) {
           this.logger.error(

@@ -18,6 +18,7 @@ import { User } from '../users/entities/user.entity';
 import { KenoDraw } from '../keno/entities/keno-draw.entity';
 import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { LedgerEntry } from '../ledger/entities/ledger-entry.entity';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
@@ -35,6 +36,7 @@ export class AdminService {
     private readonly usersService: UsersService,
     private readonly agentsService: AgentsService,
     private readonly gameEventsGateway: GameEventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getSystemConfig(): Promise<SystemConfig> {
@@ -197,6 +199,26 @@ export class AdminService {
       } else {
         return await this.walletService.debitInSession(payload, manager);
       }
+    }).then(async (result) => {
+      const amount = amountMinor.toLocaleString();
+      await this.notificationsService.safeCreate(
+        direction === 'credit'
+          ? {
+              userId,
+              type: 'bonus',
+              title: 'Credit added',
+              body: reason ? `You received ${amount} ETB: ${reason}` : `You received ${amount} ETB.`,
+              data: { amountMinor, direction, reason },
+            }
+          : {
+              userId,
+              type: 'adjustment',
+              title: 'Balance adjusted',
+              body: reason ? `${amount} ETB was deducted: ${reason}` : `${amount} ETB was deducted from your balance.`,
+              data: { amountMinor, direction, reason },
+            },
+      );
+      return result;
     });
   }
 

@@ -255,6 +255,24 @@ export const adminApi = {
     api.post<{ adminWallet: Wallet; agentWallet: Wallet }>('/admin/wallet/transfer-to-agent', { agentId, amountMinor, idempotencyKey }).then((r) => r.data),
 };
 
+// ── Notifications (per-user bell) ─────────────────────────────────
+export type ServerNotification = {
+  id: string;
+  type: 'win' | 'deposit' | 'withdrawal' | 'adjustment' | 'bonus' | 'system';
+  title: string;
+  body: string;
+  data: Record<string, unknown> | null;
+  read: boolean;
+  createdAt: string;
+};
+
+export const notificationsApi = {
+  list: () =>
+    api.get<{ items: ServerNotification[]; unreadCount: number }>('/notifications').then((r) => r.data),
+  markRead: (ids?: string[]) =>
+    api.post<{ unreadCount: number }>('/notifications/read', ids && ids.length ? { ids } : {}).then((r) => r.data),
+};
+
 // ── Admin: Broadcast (Telegram) ───────────────────────────────────
 export type BroadcastButton = { text: string; url: string };
 export type BroadcastRecurrence = { frequency: 'daily' | 'weekly'; time: string; dayOfWeek?: number };

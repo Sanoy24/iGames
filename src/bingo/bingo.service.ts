@@ -20,6 +20,7 @@ import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { BingoCard } from './entities/bingo-card.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { User } from '../users/entities/user.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export type BingoRoomResponse = {
   id: string;
@@ -80,7 +81,8 @@ export class BingoService implements OnModuleInit {
     private readonly bingoPatternRepository: Repository<BingoPattern>,
     private readonly bingoRulesService: BingoRulesService,
     private readonly rngService: RngService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -1295,6 +1297,38 @@ export class BingoService implements OnModuleInit {
       where: { roomId, status: 'won', settlementStatus: 'settled' },
       select: ['userId', 'payoutMinor'],
     });
+  }
+
+  /**
+   * Persist an in-app "win" notification per (human) winner of a completed room,
+   * aggregating multiple winning cartelas into one total. Bot accounts are
+   * skipped. Called once, at completion — so the win reaches a player even if
+   * they had left the game screen.
+   */
+  async notifyRoomWinners(roomId: string): Promise<void> {
+    const winners = await this.getRoomWinners(roomId);
+    const totalByUser = new Map<string, number>();
+    for (const w of winners) {
+      if (w.payoutMinor > 0) totalByUser.set(w.userId, (totalByUser.get(w.userId) ?? 0) + w.payoutMinor);
+    }
+    if (totalByUser.size === 0) return;
+
+    const users = await this.dataSource.getRepository(User).find({
+      where: { id: In([...totalByUser.keys()]) },
+      select: ['id', 'productMetadata'],
+    });
+    const isBot = new Map(users.map((u) => [u.id, u.productMetadata?.botPolicy != null]));
+
+    for (const [userId, payoutMinor] of totalByUser) {
+      if (isBot.get(userId)) continue; // don't notify bot accounts
+      await this.notificationsService.safeCreate({
+        userId,
+        type: 'win',
+        title: 'Bingo win! 🎉',
+        body: `You won ${payoutMinor.toLocaleString()} ETB in Bingo.`,
+        data: { game: 'bingo', roomId, amountMinor: payoutMinor },
+      });
+    }
   }
 
   async getSpectatorView(roomId: string): Promise<Array<{

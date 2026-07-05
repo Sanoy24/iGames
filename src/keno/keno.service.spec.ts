@@ -103,6 +103,7 @@ function makeService({
     new KenoRulesService(),
     { drawUniqueNumbers: jest.fn() } as any,
     { debitInSession: jest.fn().mockResolvedValue({}) } as any,
+    { safeCreate: jest.fn(), create: jest.fn() } as any,
   );
 
   return { service };

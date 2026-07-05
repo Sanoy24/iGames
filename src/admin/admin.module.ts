@@ -10,6 +10,7 @@ import { AgentsModule } from '../agents/agents.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { GameEventsModule } from '../events/game-events.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { GameEventsModule } from '../events/game-events.module';
     WalletModule,
     AgentsModule,
     GameEventsModule,
+    NotificationsModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

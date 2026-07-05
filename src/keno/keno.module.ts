@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { GameEventsModule } from '../events/game-events.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { RngModule } from '../rng/rng.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { KenoAdminController } from './keno-admin.controller';
@@ -20,6 +21,7 @@ import { KenoTicket } from './entities/keno-ticket.entity';
     RngModule,
     WalletModule,
     GameEventsModule,
+    NotificationsModule,
     TypeOrmModule.forFeature([KenoConfig, KenoDraw, KenoTicket])
   ],
   controllers: [KenoController, KenoAdminController],

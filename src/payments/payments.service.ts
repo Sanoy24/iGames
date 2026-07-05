@@ -2,6 +2,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
@@ -36,7 +37,8 @@ export class PaymentsService {
     @InjectRepository(TelebirrDeposit)
     private readonly telebirrDepositRepository: Repository<TelebirrDeposit>,
     private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async previewTelebirrReceipt(
@@ -74,7 +76,8 @@ export class PaymentsService {
       userId
     );
 
-    return await this.dataSource.transaction(async (manager) => {
+    let credited = false;
+    const result = await this.dataSource.transaction(async (manager) => {
       const depositRepo = manager.getRepository(TelebirrDeposit);
       const existingDeposit = await depositRepo.findOneBy({ receiptNo: verified.receiptNo });
 
@@ -125,6 +128,7 @@ export class PaymentsService {
 
       deposit.walletCredit = walletCredit;
       await depositRepo.save(deposit);
+      credited = true;
 
       if (deposit.agentId) {
         const agentActionRepo = manager.getRepository(AgentActionLog);
@@ -146,6 +150,18 @@ export class PaymentsService {
 
       return this.toResponse(deposit);
     });
+
+    // Post-commit, best-effort — only on a genuinely new credit (not a duplicate submit).
+    if (credited) {
+      await this.notificationsService.safeCreate({
+        userId,
+        type: 'deposit',
+        title: 'Deposit received',
+        body: `Your wallet was credited with ${result.amountMinor.toLocaleString()} ETB.`,
+        data: { amountMinor: result.amountMinor, receiptNo: result.receiptNo },
+      });
+    }
+    return result;
   }
 
   private toResponse(deposit: TelebirrDeposit): TelebirrDepositResponse {

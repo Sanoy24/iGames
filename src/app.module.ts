@@ -24,6 +24,7 @@ import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
 import { BroadcastModule } from "./broadcast/broadcast.module";
 import { CrashModule } from "./crash/crash.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -82,6 +83,7 @@ const isDev = process.env.NODE_ENV !== "production";
         AgentsModule,
         BroadcastModule,
         CrashModule,
+        NotificationsModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

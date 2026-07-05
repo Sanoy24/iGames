@@ -7,9 +7,11 @@ export type Toast = {
   message: string;
 };
 
+export type NotificationKind = 'win' | 'deposit' | 'withdrawal' | 'adjustment' | 'bonus' | 'system' | 'info';
+
 export type AppNotification = {
   id: string;
-  type: 'win' | 'info';
+  type: NotificationKind;
   title: string;
   message: string;
   timestamp: number;
@@ -63,6 +65,8 @@ type AppState = {
   notifications: AppNotification[];
   unreadCount: number;
   addNotification: (n: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => void;
+  setNotifications: (items: AppNotification[], unreadCount: number) => void;
+  addServerNotification: (n: AppNotification) => void;
   markAllNotificationsRead: () => void;
 };
 
@@ -192,6 +196,18 @@ export const useStore = create<AppState>((set) => ({
       unreadCount: s.unreadCount + 1,
     }));
   },
+  // Replace the list from the server (initial load).
+  setNotifications: (items, unreadCount) =>
+    set({ notifications: items.slice(0, 50), unreadCount }),
+  // A live notification pushed over the socket — prepend, de-duplicate by id.
+  addServerNotification: (n) =>
+    set((s) => {
+      if (s.notifications.some((x) => x.id === n.id)) return s;
+      return {
+        notifications: [n, ...s.notifications].slice(0, 50),
+        unreadCount: s.unreadCount + (n.read ? 0 : 1),
+      };
+    }),
   markAllNotificationsRead: () =>
     set((s) => ({
       notifications: s.notifications.map((n) => ({ ...n, read: true })),

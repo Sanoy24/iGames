@@ -89,6 +89,8 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
                 this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Keno').catch(() => {});
               }
             }).catch(() => {});
+            // Persist in-app win notifications (survive leaving the game screen)
+            void this.kenoService.notifyDrawWinners(result.id).catch(() => {});
         } catch (error) {
             this.logger.error(
                 "Keno scheduler error",

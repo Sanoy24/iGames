@@ -1,48 +1,63 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useStore } from '../store/useStore';
+import { useStore, type AppNotification, type NotificationKind } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
+import { notificationsApi, type ServerNotification } from '../lib/api';
+
+const TYPE_ICON: Record<NotificationKind, string> = {
+  win: '🏆',
+  deposit: '💰',
+  withdrawal: '🏧',
+  adjustment: '⚙️',
+  bonus: '🎁',
+  system: '🔔',
+  info: 'ℹ️',
+};
+
+function mapServerNotification(n: ServerNotification): AppNotification {
+  return {
+    id: n.id,
+    type: n.type,
+    title: n.title,
+    message: n.body,
+    timestamp: new Date(n.createdAt).getTime(),
+    read: n.read,
+  };
+}
 
 export function NotificationBell() {
   const notifications = useStore((s) => s.notifications);
   const unreadCount = useStore((s) => s.unreadCount);
-  const addNotification = useStore((s) => s.addNotification);
+  const setNotifications = useStore((s) => s.setNotifications);
+  const addServerNotification = useStore((s) => s.addServerNotification);
   const markAllNotificationsRead = useStore((s) => s.markAllNotificationsRead);
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const isSocketConnected = useStore((s) => s.isSocketConnected);
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const isSocketConnected = useStore((s) => s.isSocketConnected);
+  // Load the persisted list on login (survives reload, delivers what you missed).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    notificationsApi
+      .list()
+      .then((res) => {
+        if (!cancelled) setNotifications(res.items.map(mapServerNotification), res.unreadCount);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [isAuthenticated, setNotifications]);
 
+  // Live notifications pushed to this user's socket room.
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
-
-    const handleKenoWin = (data: { payoutMinor?: number }) => {
-      if (!data.payoutMinor) return;
-      addNotification({
-        type: 'win',
-        title: 'Keno Win!',
-        message: `You won ${data.payoutMinor} ETB in Keno`,
-      });
-    };
-
-    const handleBingoWin = (data: { payoutMinor?: number; tier?: string }) => {
-      if (!data.payoutMinor) return;
-      addNotification({
-        type: 'win',
-        title: 'Bingo Win!',
-        message: `You won ${data.payoutMinor} ETB — ${data.tier ?? 'Prize'}`,
-      });
-    };
-
-    socket.on('keno.ticket.won', handleKenoWin);
-    socket.on('bingo.ticket.won', handleBingoWin);
-    return () => {
-      socket.off('keno.ticket.won', handleKenoWin);
-      socket.off('bingo.ticket.won', handleBingoWin);
-    };
-  }, [isSocketConnected, addNotification]);
+    const onNew = (payload: ServerNotification) => addServerNotification(mapServerNotification(payload));
+    socket.on('notification.new', onNew);
+    return () => { socket.off('notification.new', onNew); };
+  }, [isSocketConnected, addServerNotification]);
 
   // Close panel on outside click
   useEffect(() => {
@@ -56,10 +71,13 @@ export function NotificationBell() {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const handleToggle = () => {
-    if (!open && unreadCount > 0) markAllNotificationsRead();
+  const handleToggle = useCallback(() => {
+    if (!open && unreadCount > 0) {
+      markAllNotificationsRead();
+      notificationsApi.markRead().catch(() => undefined); // persist read state
+    }
     setOpen((o) => !o);
-  };
+  }, [open, unreadCount, markAllNotificationsRead]);
 
   return (
     <div style={{ position: 'relative' }} ref={panelRef}>
@@ -140,12 +158,12 @@ export function NotificationBell() {
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      {n.type === 'win' && <span style={{ fontSize: 14 }}>🏆</span>}
+                      <span style={{ fontSize: 14 }}>{TYPE_ICON[n.type] ?? '🔔'}</span>
                       <span style={{ fontWeight: 600, fontSize: 12 }}>{n.title}</span>
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{n.message}</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {new Date(n.timestamp).toLocaleTimeString()}
+                      {new Date(n.timestamp).toLocaleString()}
                     </div>
                   </div>
                 ))}

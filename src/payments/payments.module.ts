@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WalletModule } from '../wallet/wallet.module';
 import { AdminModule } from '../admin/admin.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { PaymentsController } from './payments.controller';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
@@ -16,6 +17,7 @@ import { PaymentsService } from './payments.service';
     WalletModule,
     TypeOrmModule.forFeature([TelebirrDeposit]),
     AdminModule,
+    NotificationsModule,
     UsersModule
   ],
   controllers: [PaymentsController],

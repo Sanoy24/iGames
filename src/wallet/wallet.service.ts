@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { LedgerService } from '../ledger/ledger.service';
 import { LedgerEntry, LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action-log.entity';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
@@ -68,7 +69,8 @@ export class WalletService {
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepository: Repository<Withdrawal>,
     private readonly ledgerService: LedgerService,
-    private readonly gameEventsGateway: GameEventsGateway
+    private readonly gameEventsGateway: GameEventsGateway,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async ensureDefaultWallet(
@@ -583,7 +585,7 @@ export class WalletService {
       throw new BadRequestException('Rejection remark must be at least 15 characters');
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const settled = await this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
       const walletRepo = manager.getRepository(Wallet);
 
@@ -667,6 +669,37 @@ export class WalletService {
 
       return withdrawal;
     });
+
+    await this.notifyWithdrawalSettled(settled, adminNotes);
+    return settled;
+  }
+
+  /**
+   * Post-commit, best-effort notification for a settled withdrawal. Called after
+   * the DB transaction so a notification failure can never roll back the payout.
+   */
+  private async notifyWithdrawalSettled(withdrawal: Withdrawal, remark?: string): Promise<void> {
+    const amount = withdrawal.amountMinor.toLocaleString();
+    if (withdrawal.status === 'completed') {
+      await this.notificationsService.safeCreate({
+        userId: withdrawal.userId,
+        type: 'withdrawal',
+        title: 'Withdrawal approved',
+        body: `Your ${amount} ETB payout has been approved and sent.`,
+        data: { withdrawalId: withdrawal.id, amountMinor: withdrawal.amountMinor, status: 'completed' },
+      });
+    } else if (withdrawal.status === 'rejected') {
+      const reason = remark?.trim() ?? withdrawal.adminNotes?.trim();
+      await this.notificationsService.safeCreate({
+        userId: withdrawal.userId,
+        type: 'withdrawal',
+        title: 'Withdrawal rejected',
+        body: reason
+          ? `Your ${amount} ETB payout request was rejected. Reason: ${reason}`
+          : `Your ${amount} ETB payout request was rejected.`,
+        data: { withdrawalId: withdrawal.id, amountMinor: withdrawal.amountMinor, status: 'rejected', reason: reason ?? null },
+      });
+    }
   }
 
   async getPlayerWithdrawals(userId: string): Promise<Withdrawal[]> {
@@ -764,7 +797,7 @@ export class WalletService {
     telebirrReference: string;
     serviceChargePct: number;
   }): Promise<Withdrawal> {
-    return this.dataSource.transaction(async (manager) => {
+    const settled = await this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
       const walletRepo = manager.getRepository(Wallet);
 
@@ -855,6 +888,9 @@ export class WalletService {
       this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));
       return withdrawal;
     });
+
+    await this.notifyWithdrawalSettled(settled);
+    return settled;
   }
 
   async rejectWithdrawalByAgent(withdrawalId: string, agentId: string, remarks: string): Promise<Withdrawal> {
@@ -888,6 +924,7 @@ export class WalletService {
         remarks: withdrawal.adminNotes,
       },
     });
+    await this.notifyWithdrawalSettled(saved, remarks);
     return saved;
   }
 

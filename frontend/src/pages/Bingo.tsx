@@ -242,7 +242,7 @@ const CartelaGrid = memo(({
         } else if (taken) {
           // Taken by someone else → red (locked).
           cellStyle = { background: 'rgba(248,113,113,0.16)', border: '1px solid rgba(248,113,113,0.5)' };
-          textStyle = { color: '#f87171', fontWeight: 800 };
+          textStyle = { color: '#f87171', fontWeight: 900 };
         } else {
           cellStyle = { background: s.bg, border: `1px solid ${s.color}22` };
           textStyle = { color: s.color };
@@ -256,7 +256,7 @@ const CartelaGrid = memo(({
             whileTap={canToggle ? { scale: 0.86 } : {}}
             disabled={!canToggle}
             onClick={() => canToggle && onToggle(n)}
-            className="aspect-square rounded-[2px] flex items-center justify-center text-[10px] leading-none tracking-tight font-bold font-mono select-none transition-all duration-75"
+            className="aspect-square rounded-[2px] flex items-center justify-center text-[11px] leading-none tracking-tight font-black font-mono select-none transition-all duration-75"
             style={{
               ...cellStyle,
               ...textStyle,

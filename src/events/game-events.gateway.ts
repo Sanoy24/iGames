@@ -38,6 +38,10 @@ export type BingoNumberDrawnPayload = {
   number: number;
   drawIndex: number;
   totalDrawn: number;
+  // Carried on every draw so clients can announce a place the instant it is won
+  // (derash), rather than only learning the winners at room completion.
+  winnersByTier: Record<string, string[]>;
+  settlementSummary: Record<string, unknown>;
 };
 
 export type BingoRoomCompletedPayload = {
@@ -272,7 +276,9 @@ export class GameEventsGateway
       roomId: room.id,
       number: latestNumber,
       drawIndex: drawnNumbers.length - 1,
-      totalDrawn: drawnNumbers.length
+      totalDrawn: drawnNumbers.length,
+      winnersByTier: room.winnersByTier,
+      settlementSummary: room.settlementSummary
     };
     this.server.emit('bingo.number.drawn', payload);
   }

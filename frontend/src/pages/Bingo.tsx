@@ -636,6 +636,83 @@ const PREFILLED_PLACE_ORDER: PrefilledPlaceKey[] = ['1st', '2nd', '3rd', '4th', 
 const PLACE_MEDAL: Record<PrefilledPlaceKey, string> = { '1st': '🥇', '2nd': '🥈', '3rd': '🥉', '4th': '🏅', '5th': '🎖️' };
 const PLACE_LABEL: Record<PrefilledPlaceKey, string> = { '1st': '1st', '2nd': '2nd', '3rd': '3rd', '4th': '4th', '5th': '5th' };
 
+// How long each live per-place win window stays on screen before the next in the
+// queue (or the underlying game) is shown again.
+const LIVE_PLACE_WIN_MS = 3_400;
+
+export type LivePlaceWin = { place: PrefilledPlaceKey; entry: Record<string, unknown> };
+
+// ─── Live per-place win window ────────────────────────────────────────────────
+// Pops the MOMENT a place is won during the draw (not at the end): the winner's
+// 5×5 card + name + last-4 phone + place + prize. Auto-dismisses so the draw
+// keeps flowing underneath; the end-of-game overlay then shows the summary only.
+function LivePlaceWinPopup({ win, drawnNumbers, onDone }: {
+  win: LivePlaceWin;
+  drawnNumbers: number[];
+  onDone: () => void;
+}) {
+  useEffect(() => {
+    const id = setTimeout(onDone, LIVE_PLACE_WIN_MS);
+    return () => clearTimeout(id);
+  }, [win, onDone]);
+
+  const { place, entry } = win;
+  const grid = (entry.winnerGrid as Array<Array<number | null>> | undefined) ?? null;
+  const marked = (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
+  const name = (entry.winnerDisplayName as string | undefined) ?? 'Player';
+  const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
+  const prize = (entry.prizeMinor as number | undefined) ?? 0;
+  const cartela = entry.winnerCartelaNumber as number | undefined;
+  const lastCalled = drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-none"
+    >
+      <motion.div
+        initial={{ scale: 0.82, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 21 }}
+        className="relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5"
+        style={{
+          background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
+          border: '2px solid rgba(167,139,250,0.7)',
+          boxShadow: '0 0 34px rgba(167,139,250,0.45)',
+        }}
+      >
+        <div className="rounded-xl py-2.5 px-4 text-center" style={{ background: 'rgba(20,60,60,0.55)' }}>
+          <div className="text-2xl font-black tracking-[0.12em] mb-1" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
+            BINGO!
+          </div>
+          <div className="text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1">
+            {PLACE_MEDAL[place]} {PLACE_LABEL[place]} place
+          </div>
+          <p className="text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap">
+            <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
+              {name}{last4 ? ` ( *${last4} )` : ''}
+            </span>
+            <span>wins this place</span>
+          </p>
+        </div>
+
+        {grid && (
+          <div className="rounded-xl p-1.5" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(167,139,250,0.6)' }}>
+            <div className="rounded-lg p-1.5" style={{ border: '2px solid rgba(245,158,11,0.85)' }}>
+              <WinnerBingoCard grid={grid} drawnNumbers={drawnNumbers} markedNumbers={marked} lastCalled={lastCalled} />
+              <div className="flex items-center justify-between px-1 pt-1.5">
+                <span className="text-[13px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(prize)} ETB</span>
+                {cartela != null && <span className="text-[13px] font-black text-slate-100">Card# {cartela}</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onClose }: {
   room: BingoRoomState;
   myTickets: BingoTicket[];
@@ -667,20 +744,6 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
       !!x.entry && (!!x.entry.winnerDisplayName || !!x.entry.winnerGrid),
     );
 
-  const [revealIdx, setRevealIdx] = useState(0);
-  useEffect(() => {
-    if (placeEntries.length <= 1) { setRevealIdx(0); return; }
-    setRevealIdx(0);
-    // Pace the reveal across the result window, leaving a beat at the end for the
-    // full standings. Clamped so it never feels rushed or stalls.
-    const stepMs = Math.max(1600, Math.min(3000, (totalDisplaySecs * 1000) / (placeEntries.length + 1)));
-    const id = setInterval(() => {
-      setRevealIdx((i) => (i + 1 < placeEntries.length ? i + 1 : i));
-    }, stepMs);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placeEntries.length, totalDisplaySecs]);
-
   const primaryKey = isPrefilledMode ? '1st' : 'full_house';
   const winEntry =
     (summary[primaryKey] as Record<string, unknown> | undefined) ??
@@ -700,34 +763,13 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
 
   const progressPct = Math.max(0, Math.min(100, (resultSecs / totalDisplaySecs) * 100));
 
-  // ── Derash / prefilled: image-style result shown to everyone in the room ──
+  // ── Derash / prefilled: END-OF-GAME SUMMARY ONLY ──
+  // Each winner's 5×5 card is shown LIVE (LivePlaceWinPopup) the MOMENT their
+  // place is won during the draw. Here, once the draw has finished, we show only
+  // the standings: who placed 1st/2nd/3rd… with name + last-4 phone + card# +
+  // amount won (matches the requested summary card).
   if (isPrefilledMode) {
-    const multiPlace = placeEntries.length > 1;
-    const activeIdx = Math.min(revealIdx, Math.max(0, placeEntries.length - 1));
-    const active = placeEntries[activeIdx]?.entry;
-    const activePlace = placeEntries[activeIdx]?.place ?? null;
-
-    // Prefer the currently-revealed place; fall back to the primary win entry / my
-    // ticket so single-place and legacy rounds render exactly as before.
-    const src = active ?? winEntry;
-    const winnerGrid =
-      (src?.winnerGrid as Array<Array<number | null>> | undefined) ??
-      winnerTicket?.grid ??
-      (summaryEntries.find((e) => e.winnerGrid)?.winnerGrid as Array<Array<number | null>> | undefined) ??
-      null;
-    // The exact cells the server settled the win on — authoritative, so the
-    // winning line is drawn correctly even if the board's drawn list has since
-    // moved on. Falls back to the room's called numbers when absent.
-    const winnerMarked =
-      (src?.winnerMarkedNumbers as number[] | undefined) ??
-      winnerTicket?.markedNumbers ??
-      undefined;
-    const activeName = (src?.winnerDisplayName as string | undefined) ?? winnerDisplayName;
-    const activePrize = (src?.prizeMinor as number | undefined) ?? prizeMinor;
-    const winnerCartela = (src?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
-    const winnerPhoneLast4 = (src?.winnerPhoneLast4 as string | undefined) ?? '';
-    const lastCalled = room.drawnNumbers.length > 0 ? room.drawnNumbers[room.drawnNumbers.length - 1] : null;
-
+    const topName = (winEntry?.winnerDisplayName as string | undefined) ?? 'A lucky player';
     return (
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -747,23 +789,21 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
             boxShadow: '0 0 34px rgba(167,139,250,0.45)',
           }}
         >
-          {/* Header panel */}
+          {/* Header */}
           <div className="rounded-xl py-2.5 px-4 text-center" style={{ background: 'rgba(20,60,60,0.55)' }}>
             {hasWinner ? (
               <>
                 <div className="text-2xl font-black tracking-[0.12em] mb-1" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
                   BINGO!
                 </div>
-                {multiPlace && activePlace && (
-                  <div className="text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1">
-                    {PLACE_MEDAL[activePlace]} {PLACE_LABEL[activePlace]} place
-                  </div>
-                )}
-                <p className="text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap">
-                  <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
-                    {activeName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
-                  </span>
-                  <span>{multiPlace ? 'wins this place' : (iWon ? 'you won the game' : 'has won the game')}</span>
+                <p className="text-slate-100 text-sm font-bold">
+                  {iWon ? (
+                    <>You won <span style={{ color: '#34d399' }}>{formatCreditsFull(totalWin)} ETB</span></>
+                  ) : placeEntries.length > 1 ? (
+                    'Final standings'
+                  ) : (
+                    <><span className="font-black text-white">{topName}</span> won the game</>
+                  )}
                 </p>
               </>
             ) : (
@@ -776,36 +816,16 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
             )}
           </div>
 
-          {/* Winner card — purple outer frame + amber inner frame. Only when a
-              cartela actually won; a no-win round shows no prize/card. */}
-          {hasWinner && (winnerGrid ? (
-            <div className="rounded-xl p-1.5" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(167,139,250,0.6)' }}>
-              <div className="rounded-lg p-1.5" style={{ border: '2px solid rgba(245,158,11,0.85)' }}>
-                <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} markedNumbers={winnerMarked} lastCalled={lastCalled} />
-                <div className="flex items-center justify-between px-1 pt-1.5">
-                  <span className="text-[13px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(activePrize)} ETB</span>
-                  {winnerCartela != null && <span className="text-[13px] font-black text-slate-100">Card# {winnerCartela}</span>}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-xl py-3 px-4 text-center" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(245,158,11,0.55)' }}>
-              <span className="block text-[10px] font-black uppercase tracking-widest text-emerald-300/70 mb-1">Prize won</span>
-              <span className="text-2xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(activePrize)} ETB</span>
-              {winnerCartela != null && <span className="block text-[13px] font-black text-slate-200 mt-1">Card# {winnerCartela}</span>}
-            </div>
-          ))}
-
-          {/* Final standings — every place with name + last-4 phone + prize. Shown
-              only when more than one place was awarded; the active place is lit. */}
-          {hasWinner && multiPlace && (
+          {/* Final standings — every place that was won: medal + name + last-4
+              phone + card# + amount won. No 5×5 replay (that showed live). */}
+          {hasWinner && placeEntries.length > 0 && (
             <div className="rounded-xl p-2" style={{ background: 'rgba(20,60,60,0.4)', border: '1px solid rgba(167,139,250,0.4)' }}>
               <div className="text-[9px] font-black uppercase tracking-widest text-slate-300/70 mb-1.5 text-center">Final standings</div>
               <div className="space-y-1">
-                {placeEntries.map(({ place, entry }, i) => (
+                {placeEntries.map(({ place, entry }) => (
                   <div
                     key={place}
-                    className={`flex items-center justify-between rounded-lg px-2 py-1 transition-colors ${i === activeIdx ? 'bg-amber-500/20' : 'bg-black/20'}`}
+                    className="flex items-center justify-between rounded-lg px-2 py-1 bg-black/20"
                   >
                     <span className="flex items-center gap-1.5 min-w-0">
                       <span className="text-sm leading-none">{PLACE_MEDAL[place]}</span>
@@ -997,6 +1017,13 @@ export function Bingo({ onBack }: BingoProps) {
   const [timeRemainingSecs, setTimeRemainingSecs] = useState<number | null>(null);
   const [resultSecs, setResultSecs]       = useState<number>(0);
 
+  // Live per-place win windows (derash): each place's 5×5 pops the instant it is
+  // won during the draw. `announcedPlacesRef` tracks which places we've already
+  // shown for the current room so we never replay one (or pop a place that was
+  // already settled when the player joined mid-game).
+  const [livePlaceQueue, setLivePlaceQueue] = useState<LivePlaceWin[]>([]);
+  const announcedPlacesRef = useRef<{ roomId: string | null; set: Set<string> }>({ roomId: null, set: new Set() });
+
   const roomIdRef         = useRef<string | null>(null);
   const holdingResultRef  = useRef(false);
   const victoryRoomRef    = useRef<string | null>(null);
@@ -1011,6 +1038,37 @@ export function Bingo({ onBack }: BingoProps) {
   const chatEndRef   = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Live per-place win detection ──────────────────────────────────────────────
+
+  const advanceLiveQueue = useCallback(() => setLivePlaceQueue((q) => q.slice(1)), []);
+
+  // Reconcile the settlement summary against the places we've already announced.
+  // `pop` enqueues a live win window for each newly-won place. The FIRST sync for
+  // a room only seeds (never pops) so a player joining mid-game doesn't replay a
+  // place that was already decided, and a fresh room starts with a clean slate.
+  const syncAnnounced = useCallback(
+    (roomId: string | null | undefined, summary: Record<string, unknown> | undefined, pop: boolean) => {
+      if (!roomId) return;
+      const isNewRoom = announcedPlacesRef.current.roomId !== roomId;
+      if (isNewRoom) {
+        announcedPlacesRef.current = { roomId, set: new Set() };
+        setLivePlaceQueue([]);
+      }
+      const set = announcedPlacesRef.current.set;
+      const newly: LivePlaceWin[] = [];
+      for (const place of PREFILLED_PLACE_ORDER) {
+        const entry = summary?.[place] as Record<string, unknown> | undefined;
+        if (entry && (entry.winnerDisplayName || entry.winnerGrid) && !set.has(place)) {
+          set.add(place);
+          newly.push({ place, entry });
+        }
+      }
+      // Never pop on the seeding pass (isNewRoom) or when explicitly suppressed.
+      if (pop && !isNewRoom && newly.length > 0) setLivePlaceQueue((q) => [...q, ...newly]);
+    },
+    [],
+  );
+
   // ── Load ────────────────────────────────────────────────────────────────────
 
   const loadCurrent = useCallback(async () => {
@@ -1022,6 +1080,9 @@ export function Bingo({ onBack }: BingoProps) {
         if (holdingResultRef.current && next?.id !== prev?.id) return prev;
         return next;
       });
+      // Seed/suppress: don't live-pop places discovered by polling (the socket
+      // draw event is the live path); this also seeds a room joined mid-game.
+      if (!holdingResultRef.current) syncAnnounced(next?.id, next?.settlementSummary, false);
       if (!holdingResultRef.current) {
         roomIdRef.current = next?.id ?? null;
         if (next?.id !== localRoomIdRef.current) {
@@ -1034,7 +1095,7 @@ export function Bingo({ onBack }: BingoProps) {
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, [addToast, syncAnnounced]);
 
   useEffect(() => {
     void loadCurrent();
@@ -1064,7 +1125,12 @@ export function Bingo({ onBack }: BingoProps) {
       }, 1200);
     };
 
-    const onNumberDrawn = (p: { roomId?: string; number?: number }) => {
+    const onNumberDrawn = (p: {
+      roomId?: string;
+      number?: number;
+      winnersByTier?: Record<string, string[]>;
+      settlementSummary?: Record<string, unknown>;
+    }) => {
       if (p.roomId !== roomIdRef.current || p.number === undefined) return;
       // The reveal sound is played by CurrentBallDisplay in sync with the queued
       // ball animation, so we don't pop here (that fired in a fast burst).
@@ -1075,6 +1141,10 @@ export function Bingo({ onBack }: BingoProps) {
           ...prev,
           status: prev.status === 'open' ? 'running' : prev.status,
           drawnNumbers: prev.drawnNumbers.includes(drawn) ? prev.drawnNumbers : [...prev.drawnNumbers, drawn],
+          // Keep the settlement summary fresh so the end-of-game overlay has every
+          // place even before the room.completed event / getRoomState resolves.
+          winnersByTier: p.winnersByTier ?? prev.winnersByTier,
+          settlementSummary: p.settlementSummary ?? prev.settlementSummary,
           tickets: prev.tickets?.map((t) => {
             if (t.markedNumbers.includes(drawn)) return t;
             const isOnCard = t.grid.some((row) => row.some((cell) => cell === drawn));
@@ -1091,6 +1161,8 @@ export function Bingo({ onBack }: BingoProps) {
           return { ...t, markedNumbers: [...t.markedNumbers, drawn] };
         }),
       );
+      // Live path: a place newly present in this draw's summary pops its win window.
+      syncAnnounced(p.roomId, p.settlementSummary, true);
       scheduleReconcile();
     };
 
@@ -1122,6 +1194,9 @@ export function Bingo({ onBack }: BingoProps) {
           settlementSummary: p.settlementSummary ?? prev.settlementSummary,
         };
       });
+      // Ensure the game-ending place gets its live 5×5 window even if its draw
+      // event was missed — pop=true is a no-op if it was already queued live.
+      syncAnnounced(completedId, p.settlementSummary, true);
       // Fetch the completed room BY ID (not getCurrentRoom, which now returns the
       // next room) to pick up settled ticket payouts for the winner-card display.
       void bingoApi.getRoomState(completedId)
@@ -1149,7 +1224,7 @@ export function Bingo({ onBack }: BingoProps) {
       socket.off('bingo.chat.message', onChatMessage);
       if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
     };
-  }, [isSocketConnected, loadCurrent]);
+  }, [isSocketConnected, loadCurrent, syncAnnounced]);
 
   // ── Result hold ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1165,6 +1240,9 @@ export function Bingo({ onBack }: BingoProps) {
     holdingResultRef.current = true;
     setHoldingResult(true);
     setResultSecs(Math.ceil(displayMs / 1000));
+    // NB: we intentionally do NOT clear the live queue here. The place that ENDS
+    // the game (or the sole 1st place) settles on the final draw, so we let its
+    // live 5×5 window play out; the summary overlay is gated on the queue draining.
 
     if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
     resultTimerRef.current = setTimeout(() => {
@@ -1421,7 +1499,7 @@ export function Bingo({ onBack }: BingoProps) {
           room loads, so gating on phase left the dialog stuck open after the
           countdown hit 0. holdingResult flips false exactly when the timer ends. */}
       <AnimatePresence>
-        {holdingResult && room && room.status === 'completed' && (
+        {holdingResult && room && room.status === 'completed' && livePlaceQueue.length === 0 && (
           <RoomResultOverlay
             room={room}
             myTickets={myTickets}
@@ -1434,6 +1512,21 @@ export function Bingo({ onBack }: BingoProps) {
               roomIdRef.current = null;
               void loadCurrent();
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Live per-place win window — pops the instant a place is won DURING the
+          draw (derash), one place at a time (oldest first). It also plays out the
+          game-ending place after completion; the summary overlay above waits for
+          this queue to drain, so every winner gets its live 5×5 moment. */}
+      <AnimatePresence>
+        {livePlaceQueue.length > 0 && room && (
+          <LivePlaceWinPopup
+            key={livePlaceQueue[0].place}
+            win={livePlaceQueue[0]}
+            drawnNumbers={room.drawnNumbers}
+            onDone={advanceLiveQueue}
           />
         )}
       </AnimatePresence>

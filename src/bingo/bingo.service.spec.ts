@@ -236,6 +236,37 @@ describe('BingoService.computePrefilledPrizeMinor — derash payout', () => {
     const { service } = makeService({ rooms: [] });
     expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 0 }) as any)).toBe(0);
   });
+
+  it('splits the pool across all five enabled places by weight', () => {
+    const { service } = makeService({ rooms: [] });
+    // No house edge → pool == pot. Weights 50/25/15/6/4 (total 100).
+    const c = cfg({
+      prefilledFirstPlacePct: 50,
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 25,
+      prefilledThirdPlaceEnabled: true,  prefilledThirdPlacePct: 15,
+      prefilledFourthPlaceEnabled: true, prefilledFourthPlacePct: 6,
+      prefilledFifthPlaceEnabled: true,  prefilledFifthPlacePct: 4,
+    });
+    expect(service.computePrefilledPrizeMinor(100, '1st', 0, c as any)).toBe(50);
+    expect(service.computePrefilledPrizeMinor(100, '2nd', 0, c as any)).toBe(25);
+    expect(service.computePrefilledPrizeMinor(100, '3rd', 0, c as any)).toBe(15);
+    expect(service.computePrefilledPrizeMinor(100, '4th', 0, c as any)).toBe(6);
+    expect(service.computePrefilledPrizeMinor(100, '5th', 0, c as any)).toBe(4);
+  });
+
+  it('does not let a DISABLED place dilute the enabled places', () => {
+    const { service } = makeService({ rooms: [] });
+    // 4th carries a weight but is NOT enabled, so its 50 must be excluded from the
+    // denominator — the enabled 1st/2nd keep their full 80/20 share of the pool.
+    // (computePrefilledPrizeMinor is only ever called for ENABLED places in the
+    // settlement loop via nextOpenPrefilledPlace, so 4th is never requested here.)
+    const c = cfg({
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20,
+      prefilledFourthPlaceEnabled: false, prefilledFourthPlacePct: 50,
+    });
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, c as any)).toBe(64); // 80/100 of pool 80
+    expect(service.computePrefilledPrizeMinor(100, '2nd', 20, c as any)).toBe(16); // 20/100 of pool 80
+  });
 });
 
 // ─── findRunningRoomIdsDue ────────────────────────────────────────────────────

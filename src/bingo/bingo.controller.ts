@@ -19,6 +19,7 @@ import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { AuthenticatedRequest, AuthenticatedUser } from '../auth/types/authenticated-user';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { PurchaseBingoTicketsDto } from './dto/purchase-bingo-tickets.dto';
+import { SetBingoAutoDto } from './dto/set-bingo-auto.dto';
 import { BingoService } from './bingo.service';
 
 @ApiTags('bingo')
@@ -100,6 +101,41 @@ export class BingoController {
     this.gameEventsGateway.emitBingoRoomUpdated(roomState);
 
     return tickets;
+  }
+
+  @Post('rooms/:id/auto')
+  @Throttle({ strict: { ttl: 60_000, limit: 30 } })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Set the caller Auto preference for their cards in this room' })
+  setAuto(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') roomId: string,
+    @Body() dto: SetBingoAutoDto,
+  ) {
+    return this.bingoService.setAutoClaim({ userId: user.id, roomId, auto: dto.auto });
+  }
+
+  @Post('rooms/:id/tickets/:ticketId/claim')
+  @Throttle({ strict: { ttl: 60_000, limit: 60 } })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Manually call Bingo on a cartela (derash manual mode)' })
+  async claimBingo(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') roomId: string,
+    @Param('ticketId') ticketId: string,
+  ) {
+    const result = await this.bingoService.claimBingo({ userId: user.id, roomId, ticketId });
+
+    // A successful claim changes the room result — push it to every client so the
+    // board, winner card, and result overlay update in real-time.
+    if (result.result === 'won') {
+      const roomState = await this.bingoService.getRoomState({ roomId });
+      this.gameEventsGateway.emitBingoRoomUpdated(roomState);
+    }
+
+    return result;
   }
 
   @Delete('rooms/:id/cartelas/:cartelaNumber')

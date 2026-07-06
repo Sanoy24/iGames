@@ -37,7 +37,7 @@ export function Agent() {
 
   const [available, setAvailable] = useState<Withdrawal[]>([]);
   const [mine, setMine] = useState<Withdrawal[]>([]);
-  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number } | null>(null);
+  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
   const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [_withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
@@ -157,8 +157,11 @@ export function Agent() {
     }
   };
 
-  const serviceChargePct = config?.withdrawalServiceChargePct ?? 0;
-  const netAmount = (gross: number) => gross - Math.floor((gross * serviceChargePct) / 100);
+  const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
+  const commissionPct = config?.withdrawalCommissionPct ?? 0;
+  const feeOf = (gross: number) => Math.floor((gross * serviceFeePct) / 100);
+  const commissionOf = (gross: number) => Math.floor((gross * commissionPct) / 100);
+  const netAmount = (gross: number) => gross - feeOf(gross) - commissionOf(gross);
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -174,7 +177,7 @@ export function Agent() {
       }}>
         {[
           { label: 'Balance', value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
-          { label: 'Fee', value: `${serviceChargePct}%` },
+          { label: 'Fee/Comm', value: `${serviceFeePct}/${commissionPct}%` },
           { label: 'Pool', value: String(available.length) },
           { label: 'Active', value: String(mine.length) },
         ].map(({ label, value, accent }) => (
@@ -262,7 +265,8 @@ export function Agent() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {mine.map((w) => {
               const net = netAmount(w.amountMinor);
-              const serviceCharge = w.amountMinor - net;
+              const serviceFee = feeOf(w.amountMinor);
+              const commission = commissionOf(w.amountMinor);
               const isBusy = busy[w.id] ?? false;
               return (
                 <motion.article
@@ -318,9 +322,15 @@ export function Agent() {
                         <span>{formatCredits(w.amountMinor)} ETB</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Fee ({serviceChargePct}%)</span>
-                        <span>−{formatCredits(serviceCharge)} ETB</span>
+                        <span style={{ color: 'var(--text-muted)' }}>Service fee ({serviceFeePct}%)</span>
+                        <span>−{formatCredits(serviceFee)} ETB</span>
                       </div>
+                      {commissionPct > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Your commission ({commissionPct}%)</span>
+                          <span style={{ color: 'var(--accent)' }}>+{formatCredits(commission)} ETB</span>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
                         <strong>You transfer</strong>
                         <strong style={{ color: 'var(--accent)', fontSize: 15 }}>{formatCreditsFull(net)}</strong>

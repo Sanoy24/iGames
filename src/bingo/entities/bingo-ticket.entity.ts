@@ -2,7 +2,7 @@ import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateCol
 import { User } from '../../users/entities/user.entity';
 import { BingoRoom, BingoPrizeTier } from './bingo-room.entity';
 
-export type BingoTicketStatus = 'active' | 'won' | 'lost' | 'cancelled';
+export type BingoTicketStatus = 'active' | 'won' | 'lost' | 'cancelled' | 'disqualified';
 export type BingoSettlementStatus = 'pending' | 'settled';
 export type BingoGrid = Array<Array<number | null>>;
 
@@ -72,11 +72,21 @@ export class BingoTicket {
 
   @Column({
     type: 'enum',
-    enum: ['active', 'won', 'lost', 'cancelled'],
+    enum: ['active', 'won', 'lost', 'cancelled', 'disqualified'],
     default: 'active',
   })
   @Index()
   status: BingoTicketStatus;
+
+  /**
+   * Derash/prefilled manual-claim support. When true (default) the settlement
+   * tick auto-awards this card the moment it completes a place's pattern — the
+   * historical behaviour. When the owner turns "Auto" OFF in the calling page we
+   * set this false on all their active cards in the room, so the tick SKIPS them
+   * and they can only win by tapping "Bingo" (racing the tick and other players).
+   */
+  @Column({ type: 'boolean', default: true })
+  autoClaim: boolean;
 
   @Column({
     type: 'enum',

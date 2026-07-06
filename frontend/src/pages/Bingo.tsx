@@ -631,6 +631,11 @@ function WinnerBingoCard({ grid, drawnNumbers, markedNumbers, lastCalled }: {
 
 // ─── Room Result Overlay ──────────────────────────────────────────────────────
 
+type PrefilledPlaceKey = '1st' | '2nd' | '3rd' | '4th' | '5th';
+const PREFILLED_PLACE_ORDER: PrefilledPlaceKey[] = ['1st', '2nd', '3rd', '4th', '5th'];
+const PLACE_MEDAL: Record<PrefilledPlaceKey, string> = { '1st': '🥇', '2nd': '🥈', '3rd': '🥉', '4th': '🏅', '5th': '🎖️' };
+const PLACE_LABEL: Record<PrefilledPlaceKey, string> = { '1st': '1st', '2nd': '2nd', '3rd': '3rd', '4th': '4th', '5th': '5th' };
+
 function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onClose }: {
   room: BingoRoomState;
   myTickets: BingoTicket[];
@@ -652,6 +657,30 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
   const summaryEntries = Object.values(summary).filter(
     (v): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v),
   );
+
+  // Ordered per-place winners (derash). When more than one place is enabled the
+  // dialog reveals them one at a time (1st → 2nd → …) and shows a final standings
+  // list; `placeEntries` drives both. Each entry carries name + last-4 phone.
+  const placeEntries = PREFILLED_PLACE_ORDER
+    .map((place) => ({ place, entry: summary[place] as Record<string, unknown> | undefined }))
+    .filter((x): x is { place: PrefilledPlaceKey; entry: Record<string, unknown> } =>
+      !!x.entry && (!!x.entry.winnerDisplayName || !!x.entry.winnerGrid),
+    );
+
+  const [revealIdx, setRevealIdx] = useState(0);
+  useEffect(() => {
+    if (placeEntries.length <= 1) { setRevealIdx(0); return; }
+    setRevealIdx(0);
+    // Pace the reveal across the result window, leaving a beat at the end for the
+    // full standings. Clamped so it never feels rushed or stalls.
+    const stepMs = Math.max(1600, Math.min(3000, (totalDisplaySecs * 1000) / (placeEntries.length + 1)));
+    const id = setInterval(() => {
+      setRevealIdx((i) => (i + 1 < placeEntries.length ? i + 1 : i));
+    }, stepMs);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeEntries.length, totalDisplaySecs]);
+
   const primaryKey = isPrefilledMode ? '1st' : 'full_house';
   const winEntry =
     (summary[primaryKey] as Record<string, unknown> | undefined) ??
@@ -673,8 +702,16 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
 
   // ── Derash / prefilled: image-style result shown to everyone in the room ──
   if (isPrefilledMode) {
+    const multiPlace = placeEntries.length > 1;
+    const activeIdx = Math.min(revealIdx, Math.max(0, placeEntries.length - 1));
+    const active = placeEntries[activeIdx]?.entry;
+    const activePlace = placeEntries[activeIdx]?.place ?? null;
+
+    // Prefer the currently-revealed place; fall back to the primary win entry / my
+    // ticket so single-place and legacy rounds render exactly as before.
+    const src = active ?? winEntry;
     const winnerGrid =
-      (winEntry?.winnerGrid as Array<Array<number | null>> | undefined) ??
+      (src?.winnerGrid as Array<Array<number | null>> | undefined) ??
       winnerTicket?.grid ??
       (summaryEntries.find((e) => e.winnerGrid)?.winnerGrid as Array<Array<number | null>> | undefined) ??
       null;
@@ -682,11 +719,13 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
     // winning line is drawn correctly even if the board's drawn list has since
     // moved on. Falls back to the room's called numbers when absent.
     const winnerMarked =
-      (winEntry?.winnerMarkedNumbers as number[] | undefined) ??
+      (src?.winnerMarkedNumbers as number[] | undefined) ??
       winnerTicket?.markedNumbers ??
       undefined;
-    const winnerCartela = (winEntry?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
-    const winnerPhoneLast4 = (winEntry?.winnerPhoneLast4 as string | undefined) ?? '';
+    const activeName = (src?.winnerDisplayName as string | undefined) ?? winnerDisplayName;
+    const activePrize = (src?.prizeMinor as number | undefined) ?? prizeMinor;
+    const winnerCartela = (src?.winnerCartelaNumber as number | undefined) ?? winnerTicket?.cartelaNumber ?? null;
+    const winnerPhoneLast4 = (src?.winnerPhoneLast4 as string | undefined) ?? '';
     const lastCalled = room.drawnNumbers.length > 0 ? room.drawnNumbers[room.drawnNumbers.length - 1] : null;
 
     return (
@@ -715,11 +754,16 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
                 <div className="text-2xl font-black tracking-[0.12em] mb-1" style={{ color: '#fff', textShadow: '0 0 22px rgba(52,211,153,0.7)' }}>
                   BINGO!
                 </div>
+                {multiPlace && activePlace && (
+                  <div className="text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1">
+                    {PLACE_MEDAL[activePlace]} {PLACE_LABEL[activePlace]} place
+                  </div>
+                )}
                 <p className="text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap">
                   <span className="rounded-lg px-3 py-1 font-black text-white" style={{ background: '#2f8f4f' }}>
-                    {winnerDisplayName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
+                    {activeName}{winnerPhoneLast4 ? ` ( *${winnerPhoneLast4} )` : ''}
                   </span>
-                  <span>{iWon ? 'you won the game' : 'has won the game'}</span>
+                  <span>{multiPlace ? 'wins this place' : (iWon ? 'you won the game' : 'has won the game')}</span>
                 </p>
               </>
             ) : (
@@ -739,7 +783,7 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
               <div className="rounded-lg p-1.5" style={{ border: '2px solid rgba(245,158,11,0.85)' }}>
                 <WinnerBingoCard grid={winnerGrid} drawnNumbers={room.drawnNumbers} markedNumbers={winnerMarked} lastCalled={lastCalled} />
                 <div className="flex items-center justify-between px-1 pt-1.5">
-                  <span className="text-[13px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(prizeMinor)} ETB</span>
+                  <span className="text-[13px] font-black" style={{ color: '#34d399' }}>Prize: {formatCreditsFull(activePrize)} ETB</span>
                   {winnerCartela != null && <span className="text-[13px] font-black text-slate-100">Card# {winnerCartela}</span>}
                 </div>
               </div>
@@ -747,10 +791,42 @@ function RoomResultOverlay({ room, myTickets, resultSecs, totalDisplaySecs, onCl
           ) : (
             <div className="rounded-xl py-3 px-4 text-center" style={{ background: 'rgba(20,60,60,0.4)', border: '2px solid rgba(245,158,11,0.55)' }}>
               <span className="block text-[10px] font-black uppercase tracking-widest text-emerald-300/70 mb-1">Prize won</span>
-              <span className="text-2xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(prizeMinor)} ETB</span>
+              <span className="text-2xl font-black" style={{ color: '#34d399' }}>{formatCreditsFull(activePrize)} ETB</span>
               {winnerCartela != null && <span className="block text-[13px] font-black text-slate-200 mt-1">Card# {winnerCartela}</span>}
             </div>
           ))}
+
+          {/* Final standings — every place with name + last-4 phone + prize. Shown
+              only when more than one place was awarded; the active place is lit. */}
+          {hasWinner && multiPlace && (
+            <div className="rounded-xl p-2" style={{ background: 'rgba(20,60,60,0.4)', border: '1px solid rgba(167,139,250,0.4)' }}>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-300/70 mb-1.5 text-center">Final standings</div>
+              <div className="space-y-1">
+                {placeEntries.map(({ place, entry }, i) => (
+                  <div
+                    key={place}
+                    className={`flex items-center justify-between rounded-lg px-2 py-1 transition-colors ${i === activeIdx ? 'bg-amber-500/20' : 'bg-black/20'}`}
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-sm leading-none">{PLACE_MEDAL[place]}</span>
+                      <span className="text-[11px] font-black text-white truncate">
+                        {(entry.winnerDisplayName as string | undefined) ?? 'Player'}
+                        {entry.winnerPhoneLast4 ? <span className="text-slate-400"> *{entry.winnerPhoneLast4 as string}</span> : null}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-2 flex-shrink-0">
+                      {entry.winnerCartelaNumber != null && (
+                        <span className="text-[10px] font-black text-slate-400">#{entry.winnerCartelaNumber as number}</span>
+                      )}
+                      <span className="text-[11px] font-black" style={{ color: '#34d399' }}>
+                        {formatCreditsFull((entry.prizeMinor as number | undefined) ?? 0)}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Countdown bar */}
           <div className="rounded-xl py-2 px-4" style={{ background: 'rgba(20,60,60,0.55)' }}>
@@ -914,6 +990,8 @@ export function Bingo({ onBack }: BingoProps) {
   const [buying, setBuying]               = useState(false);
   const [pendingCartelas, setPendingCartelas] = useState<Set<number>>(new Set());
   const [localTickets, setLocalTickets]   = useState<BingoTicket[]>([]);
+  const [autoMode, setAutoMode]           = useState(true);
+  const [claimingId, setClaimingId]       = useState<string | null>(null);
   const localRoomIdRef                    = useRef<string | null>(null);
   const [showChat, setShowChat]           = useState(false);
   const [timeRemainingSecs, setTimeRemainingSecs] = useState<number | null>(null);
@@ -1210,6 +1288,50 @@ export function Bingo({ onBack }: BingoProps) {
 
   const alreadyBought = myTickets.length > 0;
 
+  // Keep the Auto switch in sync with the server (source of truth). A card in
+  // manual mode reports autoClaim === false, so if any of my cards is manual the
+  // switch shows OFF. Re-derives on every poll so a refresh never desyncs it.
+  useEffect(() => {
+    const tix = room?.tickets ?? [];
+    if (tix.length > 0) setAutoMode(tix.every((t) => t.autoClaim !== false));
+  }, [room?.tickets]);
+
+  const toggleAuto = async () => {
+    if (!room) return;
+    const next = !autoMode;
+    setAutoMode(next); // optimistic
+    try {
+      await bingoApi.setAuto(room.id, next);
+      await loadCurrent();
+    } catch (e) {
+      setAutoMode(!next); // revert on failure
+      addToast('error', getErrorMessage(e));
+    }
+  };
+
+  const callBingo = async (ticketId: string) => {
+    if (!room || claimingId) return;
+    setClaimingId(ticketId);
+    try {
+      const res = await bingoApi.claimBingo(room.id, ticketId);
+      if (res.result === 'won') {
+        soundEngine.cashout();
+        addToast('success', '🎉 BINGO! You won!');
+      } else if (res.result === 'disqualified') {
+        soundEngine.pop();
+        addToast('error', 'Too slow — another player called Bingo first. This card is disqualified.');
+      } else {
+        addToast('info', 'No Bingo on this card yet.');
+      }
+      const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
+      setWallet(nextWallet);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setClaimingId(null);
+    }
+  };
+
   // Cartela numbers the player already owns in this room.
   const myCartelaSet = useMemo(() => {
     const nums = new Set<number>();
@@ -1447,12 +1569,53 @@ export function Bingo({ onBack }: BingoProps) {
                      never blow out the layout. */}
                   {isPrefilledMode && myTickets.length > 0 && (
                     <>
-                      <div className="w-full text-center text-[9px] font-black uppercase tracking-wider text-slate-500">
-                        {myTickets.length} {myTickets.length === 1 ? 'card' : 'cards'}
+                      <div className="w-full flex items-center justify-between gap-2">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+                          {myTickets.length} {myTickets.length === 1 ? 'card' : 'cards'}
+                        </span>
+                        {phase === 'playing' && (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={autoMode}
+                            onClick={() => void toggleAuto()}
+                            title={autoMode ? 'Auto: cards win automatically' : 'Manual: tap BINGO to claim'}
+                            className="flex items-center gap-1.5"
+                          >
+                            <span className={`text-[9px] font-black uppercase tracking-wider ${autoMode ? 'text-emerald-400' : 'text-amber-400'}`}>
+                              {autoMode ? 'Auto' : 'Manual'}
+                            </span>
+                            <span className={`relative w-8 h-[18px] rounded-full transition-colors duration-200 ${autoMode ? 'bg-emerald-500/80' : 'bg-slate-600'}`}>
+                              <span className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform duration-200 ${autoMode ? 'translate-x-[16px]' : 'translate-x-[2px]'}`} />
+                            </span>
+                          </button>
+                        )}
                       </div>
+                      {phase === 'playing' && !autoMode && (
+                        <p className="w-full text-[8px] leading-tight text-amber-400/80 text-center">
+                          Manual mode — tap <b>BINGO</b> the moment your card wins. Beat the system and other players!
+                        </p>
+                      )}
                       <div className="w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide" style={{ maxHeight: 340 }}>
                         {myTickets.map((ticket) => (
-                          <PatternTicketCard key={ticket.id} ticket={ticket} patternPrizeMap={patternPrizeMap} revealedSet={revealedSet} />
+                          <div key={ticket.id} className="w-full flex flex-col gap-1">
+                            <PatternTicketCard ticket={ticket} patternPrizeMap={patternPrizeMap} revealedSet={revealedSet} />
+                            {phase === 'playing' && !autoMode && ticket.status === 'active' && (
+                              <button
+                                type="button"
+                                onClick={() => void callBingo(ticket.id)}
+                                disabled={claimingId === ticket.id}
+                                className="w-full py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-red-500 text-black text-[11px] font-black uppercase tracking-wide disabled:opacity-50 active:scale-95 transition-transform"
+                              >
+                                {claimingId === ticket.id ? '…' : 'BINGO!'}
+                              </button>
+                            )}
+                            {ticket.status === 'disqualified' && (
+                              <span className="w-full text-center text-[9px] font-black text-red-400 uppercase tracking-wide">
+                                Disqualified
+                              </span>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </>

@@ -63,6 +63,7 @@ export type BingoTicketResponse = {
   payoutMinor: number;
   status: string;
   settlementStatus: string;
+  autoClaim: boolean;
 };
 
 const MIN_BINGO_SALES_WINDOW_MS = 15_000;
@@ -937,29 +938,7 @@ export class BingoService implements OnModuleInit {
         if (room.drawnNumbers.length >= minDrawsBeforeWin) {
           await this.evaluateAndSettleDerash(room, cfg, manager);
         }
-
-        const totalPlaces = 1
-          + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
-          + (cfg.prefilledThirdPlaceEnabled ? 1 : 0)
-          + (cfg.prefilledFourthPlaceEnabled ? 1 : 0)
-          + (cfg.prefilledFifthPlaceEnabled ? 1 : 0);
-        // End the game as soon as there is nothing left to draw for: all enabled
-        // places filled, the pool is exhausted, OR no still-eligible cartelas
-        // remain. The last case is what stops a game from "continuing to count"
-        // after the winner has been decided — e.g. a single player wins 1st while
-        // 2nd/3rd are enabled but no other cards exist to fill those places.
-        const remainingActive = await manager.countBy(BingoTicket, {
-          roomId: room.id,
-          status: 'active',
-        });
-        if (
-          room.settledTiers.length >= totalPlaces ||
-          remainingActive === 0 ||
-          room.drawnNumbers.length >= maxNumber
-        ) {
-          room.status = 'completed';
-          await this.markRemainingTicketsLost(room, manager);
-        }
+        await this.finalizeDerashIfDone(room, cfg, maxNumber, manager);
       } else if (room.winMode === 'pattern') {
         const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
         const patterns =
@@ -1121,6 +1100,9 @@ export class BingoService implements OnModuleInit {
       const winner = activeTickets.find(
         (t) =>
           !awardedThisPass.has(t.id) &&
+          // Manual-mode cards (owner turned Auto OFF) are never auto-awarded —
+          // they can only win via an explicit "Bingo" claim (claimBingo).
+          t.autoClaim !== false &&
           this.bingoRulesService
             .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern as BingoPattern])
             .completedPatternIds.includes((pattern as BingoPattern).id),
@@ -1128,65 +1110,281 @@ export class BingoService implements OnModuleInit {
       // No card completes this place's pattern yet — stop; a later draw may.
       if (!winner) break;
 
-      const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+      await this.awardDerashPlace({ room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      awardedThisPass.add(winner.id);
+    }
+  }
 
-      winner.wonTiers = [...(winner.wonTiers ?? []), place];
-      winner.payoutMinor += prizeMinor;
-      winner.status = 'won';
-      winner.settlementStatus = 'settled';
+  /**
+   * Award a single derash place to a winning card: pays the place's prize into
+   * the winner's wallet (with an idempotent ledger credit), flips the ticket to
+   * `won`/`settled`, and records the winner on the room so every client can
+   * render the result. Shared by the settlement tick (auto) and the manual
+   * "Bingo" claim (claimBingo) so both paths pay identically.
+   */
+  private async awardDerashPlace(input: {
+    room: BingoRoom;
+    winner: BingoTicket;
+    place: PrefilledPlace;
+    pattern: BingoPattern;
+    totalPotMinor: number;
+    houseEdgePct: number;
+    cfg: BingoConfig;
+    manager: EntityManager;
+  }): Promise<void> {
+    const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager } = input;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
 
-      if (prizeMinor > 0) {
-        const winCredit = await this.walletService.creditInSession(
-          {
-            userId: winner.userId,
-            amountMinor: prizeMinor,
-            entryType: 'win',
-            sourceType: 'bingo_ticket',
-            sourceId: winner.id,
-            idempotencyKey: `bingo-settlement:${place}:${winner.id}`,
-            metadata: {
-              roomId: room.id,
-              place,
-              cartelaNumber: winner.cartelaNumber,
-              patternId: pattern.id,
-              totalPotMinor,
-              prizePoolMinor,
-            },
+    winner.wonTiers = [...(winner.wonTiers ?? []), place];
+    winner.payoutMinor += prizeMinor;
+    winner.status = 'won';
+    winner.settlementStatus = 'settled';
+
+    if (prizeMinor > 0) {
+      const winCredit = await this.walletService.creditInSession(
+        {
+          userId: winner.userId,
+          amountMinor: prizeMinor,
+          entryType: 'win',
+          sourceType: 'bingo_ticket',
+          sourceId: winner.id,
+          idempotencyKey: `bingo-settlement:${place}:${winner.id}`,
+          metadata: {
+            roomId: room.id,
+            place,
+            cartelaNumber: winner.cartelaNumber,
+            patternId: pattern.id,
+            totalPotMinor,
+            prizePoolMinor,
           },
-          manager,
-        );
-        winner.walletCredits = [...(winner.walletCredits ?? []), winCredit];
+        },
+        manager,
+      );
+      winner.walletCredits = [...(winner.walletCredits ?? []), winCredit];
+    }
+
+    await manager.save(winner);
+
+    const winnerUser = await manager.findOne(User, {
+      where: { id: winner.userId },
+      select: ['displayName', 'phoneNumber'],
+    });
+    const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+
+    room.settledTiers = [...room.settledTiers, place];
+    room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
+    room.settlementSummary = {
+      ...room.settlementSummary,
+      [place]: {
+        winnerCount: 1,
+        winnerId: winner.id,
+        winnerDisplayName: winnerUser?.displayName ?? 'Player',
+        winnerPhoneLast4: phoneLast4,
+        winnerCartelaNumber: winner.cartelaNumber,
+        // Winner card so every client in the room can render the result.
+        winnerGrid: winner.grid,
+        winnerMarkedNumbers: winner.markedNumbers,
+        patternName: pattern.name,
+        prizeMinor,
+        totalPotMinor,
+        prizePoolMinor,
+      },
+    };
+  }
+
+  /**
+   * Ends a derash room once there is nothing left to play for: every enabled
+   * place is filled, no cards remain active (all won/lost/disqualified), or the
+   * ball pool is exhausted. Shared by the draw tick and the manual claim so a
+   * claim that fills the last place closes the game immediately. Returns whether
+   * the room was completed.
+   */
+  private async finalizeDerashIfDone(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    maxNumber: number,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const totalPlaces = 1
+      + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledThirdPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledFourthPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledFifthPlaceEnabled ? 1 : 0);
+    // End the game as soon as there is nothing left to draw for: all enabled
+    // places filled, the pool is exhausted, OR no still-eligible cartelas remain.
+    const remainingActive = await manager.countBy(BingoTicket, {
+      roomId: room.id,
+      status: 'active',
+    });
+    if (
+      room.settledTiers.length >= totalPlaces ||
+      remainingActive === 0 ||
+      room.drawnNumbers.length >= maxNumber
+    ) {
+      room.status = 'completed';
+      room.activeGuard = null;
+      await this.markRemainingTicketsLost(room, manager);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Manual "Bingo" claim (derash only). When a player has turned Auto OFF their
+   * cards are skipped by the settlement tick, so they must tap "Bingo" on a card
+   * to win — racing the tick and every other player for the next open place.
+   *
+   * Outcomes (see the auto-toggle feature): the room row is locked FOR UPDATE so
+   * this races the draw tick and other claims deterministically —
+   *  - `won`         — the card completes the next open place's pattern and gets it.
+   *  - `disqualified` — the card DID complete a winning pattern but the place was
+   *                     already awarded to someone else (they were too slow).
+   *  - `ignored`      — the card has no bingo yet (a harmless early tap).
+   */
+  async claimBingo(input: {
+    userId: string;
+    roomId: string;
+    ticketId: string;
+  }): Promise<{ result: 'won' | 'disqualified' | 'ignored'; ticket: BingoTicketResponse; room: BingoRoomResponse }> {
+    const userId = this.validateUuid(input.userId, 'userId');
+    const roomId = this.validateUuid(input.roomId, 'roomId');
+    const ticketId = this.validateUuid(input.ticketId, 'ticketId');
+    const cfg = await this.getBingoConfig();
+
+    return await this.dataSource.transaction(async (manager) => {
+      const room = await manager.findOne(BingoRoom, {
+        where: { id: roomId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!room) throw new NotFoundException('Bingo room not found');
+      if (room.winMode !== 'prefilled') {
+        throw new BadRequestException('Manual Bingo claims are only available in derash rooms');
+      }
+      if (room.status !== 'running') {
+        throw new ConflictException('Bingo can only be called while the game is drawing');
       }
 
-      await manager.save(winner);
-      awardedThisPass.add(winner.id);
-
-      const winnerUser = await manager.findOne(User, {
-        where: { id: winner.userId },
-        select: ['displayName', 'phoneNumber'],
+      const ticket = await manager.findOne(BingoTicket, {
+        where: { id: ticketId, roomId, userId },
+        lock: { mode: 'pessimistic_write' },
       });
-      const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+      if (!ticket) throw new NotFoundException('Cartela not found for this player in this room');
 
-      room.settledTiers = [...room.settledTiers, place];
-      room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
-      room.settlementSummary = {
-        ...room.settlementSummary,
-        [place]: {
-          winnerCount: 1,
-          winnerId: winner.id,
-          winnerDisplayName: winnerUser?.displayName ?? 'Player',
-          winnerPhoneLast4: phoneLast4,
-          winnerCartelaNumber: winner.cartelaNumber,
-          // Winner card so every client in the room can render the result.
-          winnerGrid: winner.grid,
-          winnerMarkedNumbers: winner.markedNumbers,
-          patternName: pattern.name,
-          prizeMinor,
-          totalPotMinor,
-          prizePoolMinor,
-        },
+      const finish = async (result: 'won' | 'disqualified' | 'ignored') => {
+        const soldTickets = await this.countSoldTickets(roomId, manager);
+        const takenSpots = await this.getTakenSpots(roomId);
+        return {
+          result,
+          ticket: this.toTicketResponse(ticket),
+          room: this.toRoomResponse(room, soldTickets, takenSpots),
+        };
       };
+
+      // Already settled (won/lost/disqualified) — nothing to claim.
+      if (ticket.status !== 'active') return finish('ignored');
+
+      // Refresh this card's marks against the current draw before evaluating.
+      const drawn = new Set(room.drawnNumbers);
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawn.has(v))
+        .sort((a, b) => a - b);
+
+      const completesPattern = (pattern: BingoPattern | null): boolean =>
+        !!pattern &&
+        this.bingoRulesService
+          .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
+          .completedPatternIds.includes(pattern.id);
+
+      const openPlace = this.nextOpenPrefilledPlace(room, cfg);
+
+      if (openPlace) {
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, openPlace, manager);
+        if (completesPattern(pattern)) {
+          const soldTickets = await this.countSoldTickets(roomId, manager);
+          const totalPotMinor = soldTickets * room.ticketPriceMinor;
+          const houseEdgePct = room.houseEdgePct ?? 20;
+          await this.awardDerashPlace({
+            room,
+            winner: ticket,
+            place: openPlace,
+            pattern: pattern as BingoPattern,
+            totalPotMinor,
+            houseEdgePct,
+            cfg,
+            manager,
+          });
+          const maxNumber = 75;
+          await this.finalizeDerashIfDone(room, cfg, maxNumber, manager);
+          await manager.save(room);
+          return finish('won');
+        }
+      }
+
+      // Not eligible for an open place. If the card DID complete a winning
+      // pattern that has already been awarded, the player was beaten to it →
+      // disqualified. Otherwise the tap was premature → ignored (no penalty).
+      const beaten = await this.completesAnySettledDerashPlace(room, cfg, ticket, manager);
+      if (beaten) {
+        ticket.status = 'disqualified';
+        ticket.settlementStatus = 'settled';
+        await manager.save(ticket);
+        // A disqualification can remove the last active card, ending the game.
+        await this.finalizeDerashIfDone(room, cfg, 75, manager);
+        await manager.save(room);
+        return finish('disqualified');
+      }
+
+      await manager.save(ticket);
+      return finish('ignored');
+    });
+  }
+
+  /**
+   * True if the card completes the pattern of any place that has ALREADY been
+   * settled in this room — i.e. it "had bingo" but lost the race for that place.
+   */
+  private async completesAnySettledDerashPlace(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    ticket: BingoTicket,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const settledPlaces = room.settledTiers.filter((t): t is PrefilledPlace =>
+      ['1st', '2nd', '3rd', '4th', '5th'].includes(t),
+    );
+    for (const place of settledPlaces) {
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      if (
+        pattern &&
+        this.bingoRulesService
+          .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
+          .completedPatternIds.includes(pattern.id)
+      ) {
+        return true;
+      }
     }
+    return false;
+  }
+
+  /**
+   * Set the caller's Auto preference for a room. OFF flips every one of their
+   * still-active cards to manual (settlement tick skips them; they must claim);
+   * ON restores auto-award. Returns the applied value and how many cards changed.
+   */
+  async setAutoClaim(input: {
+    userId: string;
+    roomId: string;
+    auto: boolean;
+  }): Promise<{ autoClaim: boolean; updated: number }> {
+    const userId = this.validateUuid(input.userId, 'userId');
+    const roomId = this.validateUuid(input.roomId, 'roomId');
+    const result = await this.bingoTicketRepository.update(
+      { userId, roomId, status: 'active' },
+      { autoClaim: input.auto },
+    );
+    return { autoClaim: input.auto, updated: result.affected ?? 0 };
   }
 
   /**
@@ -1587,6 +1785,7 @@ export class BingoService implements OnModuleInit {
       payoutMinor: ticket.payoutMinor,
       status: ticket.status,
       settlementStatus: ticket.settlementStatus,
+      autoClaim: ticket.autoClaim ?? true,
     };
   }
 

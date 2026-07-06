@@ -164,6 +164,7 @@ export type BingoTicket = {
   payoutMinor: number;
   status: string;
   settlementStatus: string;
+  autoClaim?: boolean;
 };
 
 export type BingoRoomState = BingoRoom & {
@@ -195,7 +196,16 @@ export type BingoConfig = {
   prefilledSecondPlacePct?: number;
   prefilledThirdPlaceEnabled?: boolean;
   prefilledThirdPlacePct?: number;
+  prefilledFourthPlaceEnabled?: boolean;
+  prefilledFourthPlacePct?: number;
+  prefilledFifthPlaceEnabled?: boolean;
+  prefilledFifthPlacePct?: number;
   prefilledWinPatternId?: string | null;
+  prefilledFirstPatternId?: string | null;
+  prefilledSecondPatternId?: string | null;
+  prefilledThirdPatternId?: string | null;
+  prefilledFourthPatternId?: string | null;
+  prefilledFifthPatternId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -258,6 +268,8 @@ export type Withdrawal = {
   agentId?: string;
   claimedAt?: string;
   serviceChargeMinor?: number;
+  serviceFeeMinor?: number;
+  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
   adminNotes?: string;

@@ -846,16 +846,20 @@ function ConfigAdmin() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
     telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
-    withdrawalServiceChargePct: 0, withdrawalMinAmountMinor: 0,
+    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, superAdminUserId: null,
+    withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
   });
+  const [admins, setAdmins] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const toFormValues = (c: SystemConfig) => ({
+  const toFormValues = (c: SystemConfig): SystemConfig => ({
     telebirrCreditMinorPerBirr: c.telebirrCreditMinorPerBirr,
     welcomeBonusMinor: c.welcomeBonusMinor,
     withdrawalServiceChargePct: c.withdrawalServiceChargePct,
+    withdrawalCommissionPct: c.withdrawalCommissionPct ?? 0,
+    superAdminUserId: c.superAdminUserId ?? null,
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
     withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
@@ -866,6 +870,10 @@ function ConfigAdmin() {
       .then((c) => { setConfig(c); setForm(toFormValues(c)); })
       .catch((e) => addToast('error', getErrorMessage(e)))
       .finally(() => setLoading(false));
+    // Load admins for the super-admin (service-fee recipient) picker.
+    adminUsersApi.listUsers(1, 100, 'admin')
+      .then((r) => setAdmins(r.data))
+      .catch(() => undefined);
   }, [addToast]);
 
   const save = async () => {
@@ -881,7 +889,7 @@ function ConfigAdmin() {
   const field = (key: keyof SystemConfig, label: string, hint?: string) => (
     <label className="adm-field" key={key}>
       <span>{label}{hint && <em className="adm-field-hint"> — {hint}</em>}</span>
-      <input className="input" type="number" min={0} value={form[key]}
+      <input className="input" type="number" min={0} value={Number(form[key] ?? 0)}
         onChange={(e) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }))} />
     </label>
   );
@@ -903,11 +911,30 @@ function ConfigAdmin() {
       <div className="adm-panel">
         <div className="adm-panel-head">Withdrawal Rules</div>
         <div className="adm-field-grid">
-          {field('withdrawalServiceChargePct', 'Service Charge %', 'deducted from gross withdrawal')}
+          {field('withdrawalServiceChargePct', 'Service Fee % → Super-Admin', 'platform cut, credited to the super-admin wallet')}
+          {field('withdrawalCommissionPct', 'Commission % → Agent', 'earned by the agent who processes the withdrawal')}
+          <label className="adm-field">
+            <span>Super-Admin (service-fee recipient)<em className="adm-field-hint"> — wallet that receives service fees</em></span>
+            <select
+              className="input"
+              value={form.superAdminUserId ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, superAdminUserId: e.target.value || null }))}
+            >
+              <option value="">None (track in stats only)</option>
+              {admins.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.displayName ?? 'Admin'}{a.phoneNumber ? ` · ${a.phoneNumber}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
           {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (ETB)', '0 = no minimum')}
           {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (ETB)', '0 = no limit')}
           {field('maxPendingWithdrawalsPerUser', 'Max Pending per User')}
         </div>
+        <p className="adm-field-hint" style={{ marginTop: 8 }}>
+          Both cuts come out of the gross withdrawal — the user receives gross minus service fee minus commission.
+        </p>
       </div>
 
       <button className="adm-btn adm-btn-primary adm-btn-full" disabled={saving} onClick={save}>
@@ -1380,7 +1407,16 @@ function BingoAdmin() {
     prefilledSecondPlacePct: 0,
     prefilledThirdPlaceEnabled: false,
     prefilledThirdPlacePct: 0,
+    prefilledFourthPlaceEnabled: false,
+    prefilledFourthPlacePct: 0,
+    prefilledFifthPlaceEnabled: false,
+    prefilledFifthPlacePct: 0,
     prefilledWinPatternId: null as string | null,
+    prefilledFirstPatternId: null as string | null,
+    prefilledSecondPatternId: null as string | null,
+    prefilledThirdPatternId: null as string | null,
+    prefilledFourthPatternId: null as string | null,
+    prefilledFifthPatternId: null as string | null,
   });
 
   const load = useCallback(async () => {
@@ -1418,7 +1454,16 @@ function BingoAdmin() {
         prefilledSecondPlacePct: c.prefilledSecondPlacePct ?? 0,
         prefilledThirdPlaceEnabled: c.prefilledThirdPlaceEnabled ?? false,
         prefilledThirdPlacePct: c.prefilledThirdPlacePct ?? 0,
+        prefilledFourthPlaceEnabled: c.prefilledFourthPlaceEnabled ?? false,
+        prefilledFourthPlacePct: c.prefilledFourthPlacePct ?? 0,
+        prefilledFifthPlaceEnabled: c.prefilledFifthPlaceEnabled ?? false,
+        prefilledFifthPlacePct: c.prefilledFifthPlacePct ?? 0,
         prefilledWinPatternId: c.prefilledWinPatternId ?? null,
+        prefilledFirstPatternId: c.prefilledFirstPatternId ?? null,
+        prefilledSecondPatternId: c.prefilledSecondPatternId ?? null,
+        prefilledThirdPatternId: c.prefilledThirdPatternId ?? null,
+        prefilledFourthPatternId: c.prefilledFourthPatternId ?? null,
+        prefilledFifthPatternId: c.prefilledFifthPatternId ?? null,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -1689,32 +1734,42 @@ function BingoAdmin() {
           <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>Winning Pattern</span>
+              <span>Default Winning Pattern</span>
               <select
                 className="input"
                 value={cfgForm.prefilledWinPatternId ?? ''}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledWinPatternId: e.target.value || null }))}
               >
-                <option value="">Any Line (default)</option>
+                <option value="">Any Line (built-in default)</option>
                 {patterns.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
-              <span className="adm-field-hint">The pattern a cartela card must complete to win a place. Seed patterns below if empty.</span>
+              <span className="adm-field-hint">Fallback pattern for any place that doesn&apos;t set its own below. Seed patterns below if empty.</span>
             </label>
+          </div>
+
+          {/* Per-place: enable, prize %, and the specific pattern that wins it. */}
+          <div className="adm-field-grid">
             <label className="adm-field">
               <span>1st Place Prize (% of pot after house edge)</span>
               <input className="input" type="number" min={1} max={100} value={cfgForm.prefilledFirstPlacePct ?? 80}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPlacePct: Math.min(100, Number(e.target.value)) }))} />
-              <span className="adm-field-hint">The first cartela to complete the winning pattern takes this % of the prize pool.</span>
+              <span className="adm-field-hint">The first cartela to complete 1st place&apos;s pattern takes this share of the pool.</span>
             </label>
             <label className="adm-field">
+              <span>1st Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledFirstPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPatternId: e.target.value || null }))}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
               <span>2nd Place Enabled</span>
-              <select
-                className="input"
-                value={cfgForm.prefilledSecondPlaceEnabled ? 'true' : 'false'}
-                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlaceEnabled: e.target.value === 'true' }))}
-              >
+              <select className="input" value={cfgForm.prefilledSecondPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlaceEnabled: e.target.value === 'true' }))}>
                 <option value="false">Disabled</option>
                 <option value="true">Enabled</option>
               </select>
@@ -1726,12 +1781,19 @@ function BingoAdmin() {
                 disabled={!cfgForm.prefilledSecondPlaceEnabled} />
             </label>
             <label className="adm-field">
+              <span>2nd Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledSecondPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledSecondPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
               <span>3rd Place Enabled</span>
-              <select
-                className="input"
-                value={cfgForm.prefilledThirdPlaceEnabled ? 'true' : 'false'}
-                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlaceEnabled: e.target.value === 'true' }))}
-              >
+              <select className="input" value={cfgForm.prefilledThirdPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlaceEnabled: e.target.value === 'true' }))}>
                 <option value="false">Disabled</option>
                 <option value="true">Enabled</option>
               </select>
@@ -1741,6 +1803,63 @@ function BingoAdmin() {
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledThirdPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledThirdPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>3rd Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledThirdPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledThirdPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
+              <span>4th Place Enabled</span>
+              <select className="input" value={cfgForm.prefilledFourthPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPlaceEnabled: e.target.value === 'true' }))}>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>4th Place Prize (% of pot)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledFourthPlacePct ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPlacePct: Math.min(100, Number(e.target.value)) }))}
+                disabled={!cfgForm.prefilledFourthPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>4th Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledFourthPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledFourthPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
+              <span>5th Place Enabled</span>
+              <select className="input" value={cfgForm.prefilledFifthPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPlaceEnabled: e.target.value === 'true' }))}>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>5th Place Prize (% of pot)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledFifthPlacePct ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPlacePct: Math.min(100, Number(e.target.value)) }))}
+                disabled={!cfgForm.prefilledFifthPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>5th Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledFifthPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledFifthPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
             </label>
           </div>
 
@@ -2319,7 +2438,9 @@ function AgentActionsAdmin() {
                         <div><strong>Agent:</strong> {w.agentName || w.agentId?.slice(-8) || '—'}</div>
                         <div><strong>Amount:</strong> {formatCreditsFull(w.amountMinor)}</div>
                         <div><strong>Service Charge:</strong> {w.serviceChargeMinor ? formatCreditsFull(w.serviceChargeMinor) : '—'}</div>
-                        <div><strong>Net Amount:</strong> {w.netAmountMinor ? formatCreditsFull(w.netAmountMinor) : '—'}</div>
+                        <div><strong>Service Fee → Super-Admin:</strong> {w.serviceFeeMinor ? formatCreditsFull(w.serviceFeeMinor) : '—'}</div>
+                        <div><strong>Commission → Agent:</strong> {w.commissionMinor ? formatCreditsFull(w.commissionMinor) : '—'}</div>
+                        <div><strong>Net Amount (user):</strong> {w.netAmountMinor ? formatCreditsFull(w.netAmountMinor) : '—'}</div>
                         <div><strong>Destination:</strong> {w.destinationAccount}</div>
                         <div><strong>Telebirr Ref:</strong> {w.telebirrReference || '—'}</div>
                         <div><strong>Status:</strong> {w.status}</div>

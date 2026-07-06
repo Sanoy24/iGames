@@ -212,6 +212,14 @@ export const bingoApi = {
     api
       .delete(`/bingo/rooms/${roomId}/cartelas/${cartelaNumber}`)
       .then((r) => r.data as { cartelaNumber: number; refundedMinor: number }),
+  setAuto: (roomId: string, auto: boolean) =>
+    api
+      .post(`/bingo/rooms/${roomId}/auto`, { auto })
+      .then((r) => r.data as { autoClaim: boolean; updated: number }),
+  claimBingo: (roomId: string, ticketId: string) =>
+    api
+      .post(`/bingo/rooms/${roomId}/tickets/${ticketId}/claim`)
+      .then((r) => r.data as { result: 'won' | 'disqualified' | 'ignored'; ticket: BingoTicket; room: BingoRoomState }),
 };
 
 // ── Crash ─────────────────────────────────────────────────────────
@@ -252,6 +260,8 @@ export type SystemConfig = {
   telebirrCreditMinorPerBirr: number;
   welcomeBonusMinor: number;
   withdrawalServiceChargePct: number;
+  withdrawalCommissionPct: number;
+  superAdminUserId?: string | null;
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
   maxPendingWithdrawalsPerUser: number;
@@ -445,6 +455,8 @@ export type AgentWithdrawalAction = {
   status: string;
   destinationAccount: string;
   serviceChargeMinor?: number;
+  serviceFeeMinor?: number;
+  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
   adminNotes?: string;
@@ -548,7 +560,7 @@ export const adminWithdrawalsApi = {
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
-  getConfig: () => api.get<{ withdrawalServiceChargePct: number }>('/agent/config').then((r) => r.data),
+  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
   getTransactions: () => api.get<{ ledger: LedgerEntry[]; withdrawals: Withdrawal[] }>('/agent/transactions').then((r) => r.data),

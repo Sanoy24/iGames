@@ -1080,24 +1080,20 @@ export class BingoService implements OnModuleInit {
     const houseEdgePct = room.houseEdgePct ?? 20;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
 
-    // Cache resolved patterns per place across the loop to avoid repeat lookups.
-    const patternCache = new Map<PrefilledPlace, BingoPattern | null>();
     const awardedThisPass = new Set<string>();
 
-    // Award each still-open place, in order, to the earliest active card that
-    // completes that place's pattern. `nextOpenPrefilledPlace` re-reads
-    // settledTiers, so it advances as places are filled below.
-    for (
-      let place = this.nextOpenPrefilledPlace(room, cfg);
-      place !== null;
-      place = this.nextOpenPrefilledPlace(room, cfg)
-    ) {
-      let pattern = patternCache.get(place);
-      if (pattern === undefined) {
-        pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
-        patternCache.set(place, pattern);
-      }
-      if (!pattern) break;
+    // Award each ENABLED, still-open place INDEPENDENTLY: a place is filled the
+    // instant its OWN pattern is completed by an eligible card — it is NOT blocked
+    // by an earlier, still-unfilled place. This matters whenever the places are
+    // not in easy→hard order. With e.g. 1st=Any Three Lines, 2nd=Any Two Lines,
+    // 3rd=Any Line, the old "stop at the first unmet place" logic starved 3rd/2nd
+    // until some card reached THREE lines, so every place settled in one burst at
+    // the very end. Evaluating places independently lets 3rd settle on the first
+    // single line, 2nd on the first two lines, and 1st on the first three lines —
+    // so they settle (and reveal) progressively as the game builds to 1st.
+    for (const place of this.openPrefilledPlaces(room, cfg)) {
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      if (!pattern) continue;
 
       const winner = activeTickets.find(
         (t) =>
@@ -1106,15 +1102,30 @@ export class BingoService implements OnModuleInit {
           // they can only win via an explicit "Bingo" claim (claimBingo).
           t.autoClaim !== false &&
           this.bingoRulesService
-            .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern as BingoPattern])
-            .completedPatternIds.includes((pattern as BingoPattern).id),
+            .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
+            .completedPatternIds.includes(pattern.id),
       );
-      // No card completes this place's pattern yet — stop; a later draw may.
-      if (!winner) break;
+      // No eligible card completes THIS place's pattern yet — try the next place;
+      // a later draw may fill this one.
+      if (!winner) continue;
 
       await this.awardDerashPlace({ room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
       awardedThisPass.add(winner.id);
     }
+  }
+
+  /** Enabled derash places (1st always) that are not yet settled, in place order. */
+  private openPrefilledPlaces(room: BingoRoom, cfg: BingoConfig): PrefilledPlace[] {
+    const enabled: Record<PrefilledPlace, boolean> = {
+      '1st': true,
+      '2nd': !!cfg.prefilledSecondPlaceEnabled,
+      '3rd': !!cfg.prefilledThirdPlaceEnabled,
+      '4th': !!cfg.prefilledFourthPlaceEnabled,
+      '5th': !!cfg.prefilledFifthPlaceEnabled,
+    };
+    return (['1st', '2nd', '3rd', '4th', '5th'] as PrefilledPlace[]).filter(
+      (place) => enabled[place] && !room.settledTiers.includes(place),
+    );
   }
 
   /**
@@ -1299,29 +1310,29 @@ export class BingoService implements OnModuleInit {
           .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
           .completedPatternIds.includes(pattern.id);
 
-      const openPlace = this.nextOpenPrefilledPlace(room, cfg);
-
-      if (openPlace) {
-        const pattern = await this.resolvePrefilledPlacePattern(cfg, openPlace, manager);
-        if (completesPattern(pattern)) {
-          const soldTickets = await this.countSoldTickets(roomId, manager);
-          const totalPotMinor = soldTickets * room.ticketPriceMinor;
-          const houseEdgePct = room.houseEdgePct ?? 20;
-          await this.awardDerashPlace({
-            room,
-            winner: ticket,
-            place: openPlace,
-            pattern: pattern as BingoPattern,
-            totalPotMinor,
-            houseEdgePct,
-            cfg,
-            manager,
-          });
-          const maxNumber = 75;
-          await this.finalizeDerashIfDone(room, cfg, maxNumber, manager);
-          await manager.save(room);
-          return finish('won');
-        }
+      // Award the BEST open place this card qualifies for — check every open
+      // place, not just the first. Otherwise a card that completes a lower place's
+      // pattern (e.g. a single line for 3rd) but not the hardest still-open place
+      // (three lines for 1st) would be wrongly disqualified.
+      for (const place of this.openPrefilledPlaces(room, cfg)) {
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+        if (!completesPattern(pattern)) continue;
+        const soldTickets = await this.countSoldTickets(roomId, manager);
+        const totalPotMinor = soldTickets * room.ticketPriceMinor;
+        const houseEdgePct = room.houseEdgePct ?? 20;
+        await this.awardDerashPlace({
+          room,
+          winner: ticket,
+          place,
+          pattern: pattern as BingoPattern,
+          totalPotMinor,
+          houseEdgePct,
+          cfg,
+          manager,
+        });
+        await this.finalizeDerashIfDone(room, cfg, 75, manager);
+        await manager.save(room);
+        return finish('won');
       }
 
       // Any BINGO tap that is not an actual win disqualifies the card — calling
@@ -1378,15 +1389,6 @@ export class BingoService implements OnModuleInit {
       if (chosen) return chosen;
     }
     return manager.findOne(BingoPattern, { where: { name: 'Any Line' } });
-  }
-
-  private nextOpenPrefilledPlace(room: BingoRoom, cfg: BingoConfig): PrefilledPlace | null {
-    if (!room.settledTiers.includes('1st')) return '1st';
-    if (cfg.prefilledSecondPlaceEnabled && !room.settledTiers.includes('2nd')) return '2nd';
-    if (cfg.prefilledThirdPlaceEnabled && !room.settledTiers.includes('3rd')) return '3rd';
-    if (cfg.prefilledFourthPlaceEnabled && !room.settledTiers.includes('4th')) return '4th';
-    if (cfg.prefilledFifthPlaceEnabled && !room.settledTiers.includes('5th')) return '5th';
-    return null;
   }
 
   /**

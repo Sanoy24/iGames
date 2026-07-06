@@ -1080,9 +1080,12 @@ export function Bingo({ onBack }: BingoProps) {
         if (holdingResultRef.current && next?.id !== prev?.id) return prev;
         return next;
       });
-      // Seed/suppress: don't live-pop places discovered by polling (the socket
-      // draw event is the live path); this also seeds a room joined mid-game.
-      if (!holdingResultRef.current) syncAnnounced(next?.id, next?.settlementSummary, false);
+      // Detect newly-won places from the polled room too. This is the RELIABLE
+      // path — the full room always carries settlementSummary, so live windows
+      // work even if the socket draw event is late/missed or the backend hasn't
+      // shipped the settlement-on-draw payload yet. The first sync for a room
+      // only seeds (suppresses) so joining mid-game never replays a decided place.
+      if (!holdingResultRef.current) syncAnnounced(next?.id, next?.settlementSummary, true);
       if (!holdingResultRef.current) {
         roomIdRef.current = next?.id ?? null;
         if (next?.id !== localRoomIdRef.current) {
@@ -1356,6 +1359,14 @@ export function Bingo({ onBack }: BingoProps) {
   }, [revealedCount, drawnNumbers.length, room?.status]);
   const revealedNumbers = useMemo(() => drawnNumbers.slice(0, revealedCount), [drawnNumbers, revealedCount]);
   const revealedSet     = useMemo(() => new Set(revealedNumbers), [revealedNumbers]);
+
+  // When a place is won, a card completed its pattern on numbers the server has
+  // already drawn. Snap the paced reveal up to the full drawn set so the winner
+  // card's marked cells all read as genuinely CALLED — otherwise the board's slow
+  // reveal lags behind and the win card looks like it marked uncalled numbers.
+  useEffect(() => {
+    if (livePlaceQueue.length > 0) setRevealedCount(room?.drawnNumbers?.length ?? 0);
+  }, [livePlaceQueue.length, room?.drawnNumbers?.length]);
 
   const myTickets = useMemo(() => {
     const apiTickets = room?.tickets ?? [];

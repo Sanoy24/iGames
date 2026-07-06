@@ -1752,10 +1752,12 @@ function BingoAdmin() {
           {/* Per-place: enable, prize %, and the specific pattern that wins it. */}
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>1st Place Prize (% of pot after house edge)</span>
+              <span>1st Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={1} max={100} value={cfgForm.prefilledFirstPlacePct ?? 80}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPlacePct: Math.min(100, Number(e.target.value)) }))} />
-              <span className="adm-field-hint">The first cartela to complete 1st place&apos;s pattern takes this share of the pool.</span>
+              <span className="adm-field-hint">
+                These are <strong>relative weights</strong>, not literal percentages. Each place gets weight ÷ (sum of the weights of the places actually won) of the after-house-edge pool. So with 1st=80 alone the winner takes the whole pool; with 1st=80/2nd=20 they split 80%/20%; an enabled place that no one wins has its share redistributed to the actual winners (never kept by the house). A card can win more than one place.
+              </span>
             </label>
             <label className="adm-field">
               <span>1st Place Pattern</span>
@@ -1775,7 +1777,7 @@ function BingoAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>2nd Place Prize (% of pot)</span>
+              <span>2nd Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledSecondPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledSecondPlaceEnabled} />
@@ -1799,7 +1801,7 @@ function BingoAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>3rd Place Prize (% of pot)</span>
+              <span>3rd Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledThirdPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledThirdPlaceEnabled} />
@@ -1823,7 +1825,7 @@ function BingoAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>4th Place Prize (% of pot)</span>
+              <span>4th Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledFourthPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledFourthPlaceEnabled} />
@@ -1847,7 +1849,7 @@ function BingoAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>5th Place Prize (% of pot)</span>
+              <span>5th Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledFifthPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledFifthPlaceEnabled} />

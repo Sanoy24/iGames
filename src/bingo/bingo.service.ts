@@ -889,7 +889,11 @@ export class BingoService implements OnModuleInit {
         const soldTickets = await this.countSoldTickets(validRoomId, manager);
         if (soldTickets > 0) {
           if (room.winMode === 'prefilled') {
-            // No more draws possible — mark all remaining active tickets as lost.
+            // All balls drawn → every card completes every pattern now; run a final
+            // settle pass to fill any still-open places, then reconcile the pool
+            // (which also marks non-winning cards lost). No generic lost-sweep here.
+            await this.evaluateAndSettleDerash(room, cfg, manager);
+            await this.reconcileDerashPool(room, cfg, manager);
           } else if (room.winMode === 'pattern') {
             const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
             const patterns =
@@ -897,10 +901,11 @@ export class BingoService implements OnModuleInit {
                 ? await manager.find(BingoPattern, { where: { id: In(patternIds) } })
                 : [];
             await this.evaluateAndSettlePatterns(room, patterns, manager);
+            await this.markRemainingTicketsLost(room, manager);
           } else {
             await this.evaluateAndSettleTiers(room, manager);
+            await this.markRemainingTicketsLost(room, manager);
           }
-          await this.markRemainingTicketsLost(room, manager);
         }
         room.status = 'completed';
         // Release the active-game slot so the next room can be created.
@@ -1056,16 +1061,21 @@ export class BingoService implements OnModuleInit {
     cfg: BingoConfig,
     manager: EntityManager,
   ): Promise<void> {
-    const activeTickets = await manager.find(BingoTicket, {
-      where: { roomId: room.id, status: 'active' },
+    // In-play cards = still eligible to win. NON-EXCLUSIVE model: a card that has
+    // already won a (lower) place stays in the running for higher places, so we
+    // include `won` cards, not just `active` ones. This is why the strongest card
+    // is never locked out of the jackpot — winning the one-line tier does not
+    // remove it from the three-line tier.
+    const inPlayTickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
       order: { createdAt: 'ASC' },
     });
-    if (activeTickets.length === 0) return;
+    if (inPlayTickets.length === 0) return;
 
-    // Re-mark every active card against the current draw (marking is independent
+    // Re-mark every in-play card against the current draw (marking is independent
     // of any win pattern, so cards light up as numbers are called).
     const drawn = new Set(room.drawnNumbers);
-    for (const ticket of activeTickets) {
+    for (const ticket of inPlayTickets) {
       ticket.markedNumbers = ticket.grid
         .flat()
         .filter((v): v is number => v !== null && drawn.has(v))
@@ -1078,26 +1088,21 @@ export class BingoService implements OnModuleInit {
     const soldTickets = await this.countSoldTickets(room.id, manager);
     const totalPotMinor = soldTickets * room.ticketPriceMinor;
     const houseEdgePct = room.houseEdgePct ?? 20;
-    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
 
-    const awardedThisPass = new Set<string>();
-
-    // Award each ENABLED, still-open place INDEPENDENTLY: a place is filled the
-    // instant its OWN pattern is completed by an eligible card — it is NOT blocked
-    // by an earlier, still-unfilled place. This matters whenever the places are
-    // not in easy→hard order. With e.g. 1st=Any Three Lines, 2nd=Any Two Lines,
-    // 3rd=Any Line, the old "stop at the first unmet place" logic starved 3rd/2nd
-    // until some card reached THREE lines, so every place settled in one burst at
-    // the very end. Evaluating places independently lets 3rd settle on the first
-    // single line, 2nd on the first two lines, and 1st on the first three lines —
-    // so they settle (and reveal) progressively as the game builds to 1st.
+    // Each ENABLED, still-open place is an INDEPENDENT "first card to complete this
+    // place's pattern" race, evaluated every draw. Independent → not blocked by an
+    // earlier unfilled place (so with 1st=Any Three Lines / 3rd=Any Line, 3rd fills
+    // on the first single line, 1st on the first three lines — progressive reveal).
+    // Non-exclusive → the same card may win several places over the game (it just
+    // can't win the same place twice). Prizes here are the progressive lower bound
+    // (weight / enabled-total); the pool is topped up to weight / FILLED-total at
+    // completion by reconcileDerashPool, so unfilled places never leak to the house.
     for (const place of this.openPrefilledPlaces(room, cfg)) {
       const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
       if (!pattern) continue;
 
-      const winner = activeTickets.find(
+      const winner = inPlayTickets.find(
         (t) =>
-          !awardedThisPass.has(t.id) &&
           // Manual-mode cards (owner turned Auto OFF) are never auto-awarded —
           // they can only win via an explicit "Bingo" claim (claimBingo).
           t.autoClaim !== false &&
@@ -1110,7 +1115,6 @@ export class BingoService implements OnModuleInit {
       if (!winner) continue;
 
       await this.awardDerashPlace({ room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
-      awardedThisPass.add(winner.id);
     }
   }
 
@@ -1207,11 +1211,11 @@ export class BingoService implements OnModuleInit {
   }
 
   /**
-   * Ends a derash room once there is nothing left to play for: every enabled
-   * place is filled, no cards remain active (all won/lost/disqualified), or the
-   * ball pool is exhausted. Shared by the draw tick and the manual claim so a
-   * claim that fills the last place closes the game immediately. Returns whether
-   * the room was completed.
+   * Ends a derash room once there is nothing left to play for: every enabled place
+   * is filled, the ball pool is exhausted, or literally no cards remain in play.
+   * Shared by the draw tick and the manual claim so a claim that fills the last
+   * place closes the game immediately. On completion it reconciles the prize pool.
+   * Returns whether the room was completed.
    */
   private async finalizeDerashIfDone(
     room: BingoRoom,
@@ -1224,23 +1228,136 @@ export class BingoService implements OnModuleInit {
       + (cfg.prefilledThirdPlaceEnabled ? 1 : 0)
       + (cfg.prefilledFourthPlaceEnabled ? 1 : 0)
       + (cfg.prefilledFifthPlaceEnabled ? 1 : 0);
-    // End the game as soon as there is nothing left to draw for: all enabled
-    // places filled, the pool is exhausted, OR no still-eligible cartelas remain.
-    const remainingActive = await manager.countBy(BingoTicket, {
+    // A card that has already won a lower tier is STILL in play for higher tiers
+    // (non-exclusive), so "in play" counts active AND won cards. We therefore only
+    // end when every enabled place is filled, the pool is exhausted, or no cards
+    // remain at all (e.g. everyone was refunded) — never merely because the
+    // not-yet-winning cards are gone.
+    const inPlay = await manager.countBy(BingoTicket, {
       roomId: room.id,
-      status: 'active',
+      status: In(['active', 'won']),
     });
     if (
       room.settledTiers.length >= totalPlaces ||
-      remainingActive === 0 ||
+      inPlay === 0 ||
       room.drawnNumbers.length >= maxNumber
     ) {
       room.status = 'completed';
       room.activeGuard = null;
-      await this.markRemainingTicketsLost(room, manager);
+      await this.reconcileDerashPool(room, cfg, manager);
       return true;
     }
     return false;
+  }
+
+  /** The derash place keys, hardest→easiest by convention (1st is the top prize). */
+  private static readonly PREFILLED_PLACE_KEYS: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
+
+  /**
+   * Final money settlement for a completed derash room. Distributes the WHOLE
+   * house-adjusted pool across the places that were ACTUALLY filled, in proportion
+   * to their configured weights (normalise by FILLED weights, not enabled). During
+   * play each winner was credited the progressive lower bound
+   * (weight / enabled-total); here we credit the top-up so the filled places share
+   * the entire pool and the house keeps exactly its edge — no enabled-but-unfilled
+   * share is silently retained. If NO place filled (nobody completed even the
+   * easiest pattern — only possible in a degenerate/empty room), every in-play
+   * stake is refunded. Finally, cards that won nothing are marked lost.
+   */
+  private async reconcileDerashPool(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    manager: EntityManager,
+  ): Promise<void> {
+    const filledPlaces = BingoService.PREFILLED_PLACE_KEYS.filter((p) => room.settledTiers.includes(p));
+
+    if (filledPlaces.length === 0) {
+      // No winner at all — refund every in-play stake (house takes nothing when
+      // there was no outcome), then there is nothing left to mark lost.
+      await this.refundInPlayDerashTickets(room, manager);
+      return;
+    }
+
+    const soldTickets = await this.countSoldTickets(room.id, manager);
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const houseEdgePct = room.houseEdgePct ?? 20;
+
+    for (const place of filledPlaces) {
+      // Final = the place's share of the whole pool among the FILLED places.
+      // Progressive = what awardDerashPlace already credited (weight / enabled).
+      const finalPrize = this.computePrefilledFinalPrizeMinor(totalPotMinor, place, houseEdgePct, filledPlaces, cfg);
+      const progressivePrize = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+      const topUpMinor = finalPrize - progressivePrize;
+
+      // Reflect the FINAL amount in the summary the clients read at completion.
+      this.setDerashSummaryPrize(room, place, finalPrize);
+
+      const winnerId = room.winnersByTier[place]?.[0];
+      if (!winnerId || topUpMinor <= 0) continue;
+
+      const ticket = await manager.findOne(BingoTicket, { where: { id: winnerId } });
+      if (!ticket) continue;
+
+      const topUpCredit = await this.walletService.creditInSession(
+        {
+          userId: ticket.userId,
+          amountMinor: topUpMinor,
+          entryType: 'win',
+          sourceType: 'bingo_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `bingo-reconcile:${place}:${ticket.id}`,
+          metadata: {
+            roomId: room.id,
+            place,
+            kind: 'pool_redistribution',
+            progressivePrizeMinor: progressivePrize,
+            finalPrizeMinor: finalPrize,
+          },
+        },
+        manager,
+      );
+      ticket.payoutMinor += topUpMinor;
+      ticket.walletCredits = [...(ticket.walletCredits ?? []), topUpCredit];
+      await manager.save(ticket);
+    }
+
+    // Cards that never won any place → lost (won cards keep their 'won' status).
+    await this.markRemainingTicketsLost(room, manager);
+  }
+
+  /** Overwrite a place's prizeMinor in the settlement summary (final reconciled value). */
+  private setDerashSummaryPrize(room: BingoRoom, place: PrefilledPlace, prizeMinor: number): void {
+    const entry = (room.settlementSummary ?? {})[place] as Record<string, unknown> | undefined;
+    if (!entry) return;
+    room.settlementSummary = {
+      ...room.settlementSummary,
+      [place]: { ...entry, prizeMinor },
+    };
+  }
+
+  /** Refund every still-in-play cartela's stake — used when a room ends with no winner. */
+  private async refundInPlayDerashTickets(room: BingoRoom, manager: EntityManager): Promise<void> {
+    const tickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
+    });
+    for (const ticket of tickets) {
+      const refundCredit = await this.walletService.creditInSession(
+        {
+          userId: ticket.userId,
+          amountMinor: ticket.stakeMinor,
+          entryType: 'refund',
+          sourceType: 'bingo_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `bingo-noresult-refund:${ticket.id}`,
+          metadata: { roomId: room.id, reason: 'derash_no_winner' },
+        },
+        manager,
+      );
+      ticket.status = 'cancelled';
+      ticket.settlementStatus = 'settled';
+      ticket.walletCredits = [...(ticket.walletCredits ?? []), refundCredit];
+      await manager.save(ticket);
+    }
   }
 
   /**
@@ -1294,8 +1411,9 @@ export class BingoService implements OnModuleInit {
         };
       };
 
-      // Already settled (won/lost/disqualified) — nothing to claim.
-      if (ticket.status !== 'active') return finish('ignored');
+      // In-play = can still claim. A card that already won a lower tier stays
+      // eligible for higher tiers (non-exclusive), so 'won' is claimable too.
+      if (ticket.status !== 'active' && ticket.status !== 'won') return finish('ignored');
 
       // Refresh this card's marks against the current draw before evaluating.
       const drawn = new Set(room.drawnNumbers);
@@ -1310,10 +1428,11 @@ export class BingoService implements OnModuleInit {
           .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
           .completedPatternIds.includes(pattern.id);
 
-      // Award the BEST open place this card qualifies for — check every open
-      // place, not just the first. Otherwise a card that completes a lower place's
-      // pattern (e.g. a single line for 3rd) but not the hardest still-open place
-      // (three lines for 1st) would be wrongly disqualified.
+      // Claim EVERY still-open place this card qualifies for (best/hardest first).
+      // Non-exclusive: one tap grabs all the tiers the card currently completes and
+      // that no one has taken yet — e.g. a card with three lines claims 1st (and
+      // 2nd/3rd too if they are somehow still open).
+      let awardedAny = false;
       for (const place of this.openPrefilledPlaces(room, cfg)) {
         const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
         if (!completesPattern(pattern)) continue;
@@ -1330,18 +1449,24 @@ export class BingoService implements OnModuleInit {
           cfg,
           manager,
         });
+        awardedAny = true;
+      }
+
+      if (awardedAny) {
+        // Filling the last place can end the game (and reconcile the pool).
         await this.finalizeDerashIfDone(room, cfg, 75, manager);
         await manager.save(room);
         return finish('won');
       }
 
-      // Any BINGO tap that is not an actual win disqualifies the card — calling
-      // Bingo without a winning pattern (or after being beaten to every place)
-      // is penalised the way a false call is in hall bingo.
+      // Nothing to claim. A card that already won something isn't punished for a
+      // redundant tap; a card that has never won and calls a false Bingo is
+      // disqualified, the way a false call is penalised in hall bingo.
+      if ((ticket.wonTiers ?? []).length > 0) return finish('ignored');
       ticket.status = 'disqualified';
       ticket.settlementStatus = 'settled';
       await manager.save(ticket);
-      // Removing this card from play can end the game (last active card gone).
+      // Removing this card from play can end the game (last in-play card gone).
       await this.finalizeDerashIfDone(room, cfg, 75, manager);
       await manager.save(room);
       return finish('disqualified');
@@ -1413,6 +1538,30 @@ export class BingoService implements OnModuleInit {
     const enabledWeightTotal = this.enabledPrefilledWeightTotal(cfg);
     return enabledWeightTotal > 0
       ? Math.floor((prizePoolMinor * placeWeight) / enabledWeightTotal)
+      : 0;
+  }
+
+  /**
+   * FINAL derash prize for a place after the game ends, distributing the whole
+   * house-adjusted pool across the places that were ACTUALLY FILLED (normalise by
+   * filled weights, not enabled). This is what a winner ends up with once
+   * `reconcileDerashPool` tops up the progressive credit — so an enabled place that
+   * nobody filled has its share redistributed to the real winners instead of being
+   * silently kept by the house. With every enabled place filled it equals
+   * `computePrefilledPrizeMinor`; with a single filled place it is the full pool.
+   */
+  computePrefilledFinalPrizeMinor(
+    totalPotMinor: number,
+    place: PrefilledPlace,
+    houseEdgePct: number,
+    filledPlaces: PrefilledPlace[],
+    cfg: BingoConfig,
+  ): number {
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const placeWeight = this.prefilledPlaceWeight(place, cfg);
+    const filledWeightTotal = filledPlaces.reduce((sum, p) => sum + this.prefilledPlaceWeight(p, cfg), 0);
+    return filledWeightTotal > 0
+      ? Math.floor((prizePoolMinor * placeWeight) / filledWeightTotal)
       : 0;
   }
 

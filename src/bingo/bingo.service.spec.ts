@@ -271,6 +271,58 @@ describe('BingoService.computePrefilledPrizeMinor — derash payout', () => {
 
 // ─── findRunningRoomIdsDue ────────────────────────────────────────────────────
 
+// ─── computePrefilledFinalPrizeMinor (end-of-game pool reconciliation) ────────
+
+describe('BingoService.computePrefilledFinalPrizeMinor — filled-place reconciliation', () => {
+  const cfg = (overrides: any = {}) => ({
+    prefilledFirstPlacePct: 80,
+    prefilledSecondPlaceEnabled: false,
+    prefilledSecondPlacePct: 0,
+    prefilledThirdPlaceEnabled: false,
+    prefilledThirdPlacePct: 0,
+    ...overrides,
+  });
+
+  it('a single filled place always takes the whole house-adjusted pool', () => {
+    const { service } = makeService({ rooms: [] });
+    // pot 100, 20% edge → pool 80. Only 1st filled → 1st gets the full 80.
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, ['1st'], cfg() as any)).toBe(80);
+  });
+
+  it('equals the progressive prize when every enabled place is filled', () => {
+    const { service } = makeService({ rooms: [] });
+    const c = cfg({
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20,
+      prefilledThirdPlaceEnabled: true, prefilledThirdPlacePct: 0, // 3rd enabled, weight 0
+    });
+    // Enabled weights 80/20/0 = 100. All three filled → 1st 64, 2nd 16, 3rd 0.
+    const filled = ['1st', '2nd', '3rd'] as any;
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, filled, c as any)).toBe(64);
+    expect(service.computePrefilledFinalPrizeMinor(100, '2nd', 20, filled, c as any)).toBe(16);
+  });
+
+  it('redistributes an UNFILLED place’s share to the filled places (no house leak)', () => {
+    const { service } = makeService({ rooms: [] });
+    // Enabled 1st/2nd/3rd = 50/30/20. But only 1st and 2nd actually filled.
+    const c = cfg({
+      prefilledFirstPlacePct: 50,
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 30,
+      prefilledThirdPlaceEnabled: true, prefilledThirdPlacePct: 20,
+    });
+    const filled = ['1st', '2nd'] as any; // 3rd never filled
+    // Pool 80 split by FILLED weights 50/30 (total 80): 1st = 80*50/80 = 50, 2nd = 30.
+    // The unfilled 3rd's 20 share is NOT kept by the house — it lifts 1st+2nd.
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, filled, c as any)).toBe(50);
+    expect(service.computePrefilledFinalPrizeMinor(100, '2nd', 20, filled, c as any)).toBe(30);
+    // Filled prizes sum to the whole pool (50 + 30 = 80).
+  });
+
+  it('returns 0 when there are no filled places', () => {
+    const { service } = makeService({ rooms: [] });
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, [], cfg() as any)).toBe(0);
+  });
+});
+
 describe('BingoService.findRunningRoomIdsDue — unit', () => {
   it('returns room IDs whose updatedAt is older than the interval', async () => {
     const oldRoom = makeRoom({

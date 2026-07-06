@@ -1018,11 +1018,11 @@ export function Bingo({ onBack }: BingoProps) {
   const [resultSecs, setResultSecs]       = useState<number>(0);
 
   // Live per-place win windows (derash): each place's 5×5 pops the instant it is
-  // won during the draw. `announcedPlacesRef` tracks which places we've already
-  // shown for the current room so we never replay one (or pop a place that was
-  // already settled when the player joined mid-game).
+  // won during the draw. `shownPlacesRef` tracks which places we've already shown
+  // for the current room so we never replay one (or pop a place that was already
+  // settled when the player joined mid-game). Driven by the effect below.
   const [livePlaceQueue, setLivePlaceQueue] = useState<LivePlaceWin[]>([]);
-  const announcedPlacesRef = useRef<{ roomId: string | null; set: Set<string> }>({ roomId: null, set: new Set() });
+  const shownPlacesRef = useRef<{ roomId: string | null; shown: Set<string>; seeded: boolean }>({ roomId: null, shown: new Set(), seeded: false });
 
   const roomIdRef         = useRef<string | null>(null);
   const holdingResultRef  = useRef(false);
@@ -1042,32 +1042,40 @@ export function Bingo({ onBack }: BingoProps) {
 
   const advanceLiveQueue = useCallback(() => setLivePlaceQueue((q) => q.slice(1)), []);
 
-  // Reconcile the settlement summary against the places we've already announced.
-  // `pop` enqueues a live win window for each newly-won place. The FIRST sync for
-  // a room only seeds (never pops) so a player joining mid-game doesn't replay a
-  // place that was already decided, and a fresh room starts with a clean slate.
-  const syncAnnounced = useCallback(
-    (roomId: string | null | undefined, summary: Record<string, unknown> | undefined, pop: boolean) => {
-      if (!roomId) return;
-      const isNewRoom = announcedPlacesRef.current.roomId !== roomId;
-      if (isNewRoom) {
-        announcedPlacesRef.current = { roomId, set: new Set() };
-        setLivePlaceQueue([]);
+  // Single source of truth for live win windows: watch the room's settlement
+  // summary and queue a 5×5 window for each newly-won place. Whatever path
+  // updated the room (socket draw event, room-completed event, or a poll) drives
+  // this, so a window can never be missed. Windows are ordered HIGHEST rank number
+  // first (e.g. 3rd → 2nd → 1st) to mirror the easy→hard pattern ladder and build
+  // up to the 1st-place win. The FIRST pass for a room only seeds (suppresses)
+  // whatever was already settled, so joining mid-game never replays a decided
+  // place; a fresh room (or the buying phase) starts clean and shows every rank.
+  useEffect(() => {
+    const roomId = room?.id ?? null;
+    const ref = shownPlacesRef.current;
+    if (ref.roomId !== roomId) {
+      ref.roomId = roomId;
+      ref.shown = new Set();
+      ref.seeded = false;
+      setLivePlaceQueue([]);
+    }
+    const summary = room?.settlementSummary;
+    if (!roomId || !summary) return;
+    const newly: LivePlaceWin[] = [];
+    for (const place of PREFILLED_PLACE_ORDER) {
+      const entry = summary[place] as Record<string, unknown> | undefined;
+      if (entry && (entry.winnerDisplayName || entry.winnerGrid) && !ref.shown.has(place)) {
+        ref.shown.add(place);
+        if (ref.seeded) newly.push({ place, entry });
       }
-      const set = announcedPlacesRef.current.set;
-      const newly: LivePlaceWin[] = [];
-      for (const place of PREFILLED_PLACE_ORDER) {
-        const entry = summary?.[place] as Record<string, unknown> | undefined;
-        if (entry && (entry.winnerDisplayName || entry.winnerGrid) && !set.has(place)) {
-          set.add(place);
-          newly.push({ place, entry });
-        }
-      }
-      // Never pop on the seeding pass (isNewRoom) or when explicitly suppressed.
-      if (pop && !isNewRoom && newly.length > 0) setLivePlaceQueue((q) => [...q, ...newly]);
-    },
-    [],
-  );
+    }
+    ref.seeded = true;
+    if (newly.length > 0) {
+      // Highest rank number first (…→ 3rd → 2nd → 1st) so the reveal climbs to 1st.
+      newly.sort((a, b) => PREFILLED_PLACE_ORDER.indexOf(b.place) - PREFILLED_PLACE_ORDER.indexOf(a.place));
+      setLivePlaceQueue((q) => [...q, ...newly]);
+    }
+  }, [room]);
 
   // ── Load ────────────────────────────────────────────────────────────────────
 
@@ -1080,12 +1088,6 @@ export function Bingo({ onBack }: BingoProps) {
         if (holdingResultRef.current && next?.id !== prev?.id) return prev;
         return next;
       });
-      // Detect newly-won places from the polled room too. This is the RELIABLE
-      // path — the full room always carries settlementSummary, so live windows
-      // work even if the socket draw event is late/missed or the backend hasn't
-      // shipped the settlement-on-draw payload yet. The first sync for a room
-      // only seeds (suppresses) so joining mid-game never replays a decided place.
-      if (!holdingResultRef.current) syncAnnounced(next?.id, next?.settlementSummary, true);
       if (!holdingResultRef.current) {
         roomIdRef.current = next?.id ?? null;
         if (next?.id !== localRoomIdRef.current) {
@@ -1098,7 +1100,7 @@ export function Bingo({ onBack }: BingoProps) {
     } finally {
       setLoading(false);
     }
-  }, [addToast, syncAnnounced]);
+  }, [addToast]);
 
   useEffect(() => {
     void loadCurrent();
@@ -1164,8 +1166,6 @@ export function Bingo({ onBack }: BingoProps) {
           return { ...t, markedNumbers: [...t.markedNumbers, drawn] };
         }),
       );
-      // Live path: a place newly present in this draw's summary pops its win window.
-      syncAnnounced(p.roomId, p.settlementSummary, true);
       scheduleReconcile();
     };
 
@@ -1197,9 +1197,6 @@ export function Bingo({ onBack }: BingoProps) {
           settlementSummary: p.settlementSummary ?? prev.settlementSummary,
         };
       });
-      // Ensure the game-ending place gets its live 5×5 window even if its draw
-      // event was missed — pop=true is a no-op if it was already queued live.
-      syncAnnounced(completedId, p.settlementSummary, true);
       // Fetch the completed room BY ID (not getCurrentRoom, which now returns the
       // next room) to pick up settled ticket payouts for the winner-card display.
       void bingoApi.getRoomState(completedId)
@@ -1227,7 +1224,7 @@ export function Bingo({ onBack }: BingoProps) {
       socket.off('bingo.chat.message', onChatMessage);
       if (reconcileTimerRef.current) clearTimeout(reconcileTimerRef.current);
     };
-  }, [isSocketConnected, loadCurrent, syncAnnounced]);
+  }, [isSocketConnected, loadCurrent]);
 
   // ── Result hold ──────────────────────────────────────────────────────────────
   useEffect(() => {

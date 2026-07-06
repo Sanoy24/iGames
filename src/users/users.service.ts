@@ -1,10 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
-import { Repository, EntityManager, DataSource, IsNull } from 'typeorm';
+import { Repository, EntityManager, DataSource, IsNull, In } from 'typeorm';
 import { User } from './entities/user.entity';
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
+import { normalizeEthiopianPhone } from '../common/phone.util';
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -105,6 +106,22 @@ export class UsersService {
     };
   }
 
+  /**
+   * Persist a Telegram user's shared phone number. Ensures the internal user +
+   * identity exist first (the contact is usually shared on /start, BEFORE the
+   * Mini App has ever opened, so the user row may not exist yet), then stores
+   * the normalized `+2519XXXXXXXX` phone. Returns the normalized phone, or null
+   * when the shared number is not a valid Ethiopian mobile number.
+   */
+  async setTelegramPhone(input: TelegramIdentityInput & { phoneNumber: string }): Promise<string | null> {
+    const normalized = normalizeEthiopianPhone(input.phoneNumber);
+    if (!normalized) return null;
+
+    const { user } = await this.findOrCreateTelegramUser(input);
+    await this.userRepository.update(user.id, { phoneNumber: normalized });
+    return normalized;
+  }
+
   async listUsers(page: number, limit: number, role?: string, search?: string) {
     const skip = (page - 1) * limit;
     const queryBuilder = this.userRepository.createQueryBuilder('user')
@@ -145,8 +162,8 @@ export class UsersService {
     workEndMinute?: number;
     agentPermissions?: { deposit: boolean; withdraw: boolean };
   }): Promise<User> {
-    const normalizedPhone = input.phoneNumber.trim();
-    if (!normalizedPhone) throw new BadRequestException('Phone number is required');
+    const normalizedPhone = normalizeEthiopianPhone(input.phoneNumber);
+    if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
 
     return this.dataSource.transaction(async (manager) => {
       const authRepo = manager.getRepository(AuthIdentity);
@@ -209,7 +226,8 @@ export class UsersService {
     if (update.displayName !== undefined) user.displayName = update.displayName.trim();
     if (update.status !== undefined) user.status = update.status as any;
     if (update.phoneNumber !== undefined) {
-      const normalizedPhone = update.phoneNumber.trim();
+      const normalizedPhone = normalizeEthiopianPhone(update.phoneNumber);
+      if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
       user.phoneNumber = normalizedPhone;
       await this.authIdentityRepository.update(
         { userId: user.id, provider: 'password' },
@@ -237,9 +255,13 @@ export class UsersService {
     phoneNumber: string,
     password: string,
   ): Promise<User> {
-    const normalizedPhone = phoneNumber.trim();
+    // Match on the canonical +251 form, but also accept the exact string the
+    // agent was stored under (older rows may hold "09…" or "2519…").
+    const rawTrimmed = phoneNumber.trim();
+    const normalizedPhone = normalizeEthiopianPhone(rawTrimmed) ?? rawTrimmed;
+    const candidates = [...new Set([normalizedPhone, rawTrimmed])];
     const identity = await this.authIdentityRepository.findOne({
-      where: { provider: 'password', providerUserId: normalizedPhone },
+      where: { provider: 'password', providerUserId: In(candidates) },
       select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId']
     });
 
@@ -319,15 +341,21 @@ export class UsersService {
     const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('User not found');
     if (update.displayName?.trim()) user.displayName = update.displayName.trim();
-    if (update.phoneNumber?.trim()) user.phoneNumber = update.phoneNumber.trim();
+    if (update.phoneNumber?.trim()) {
+      const normalizedPhone = normalizeEthiopianPhone(update.phoneNumber);
+      if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
+      user.phoneNumber = normalizedPhone;
+    }
     await this.userRepository.save(user);
     return user;
   }
 
   async updatePhoneByTelegramId(telegramUserId: string, phoneNumber: string): Promise<void> {
+    const normalized = normalizeEthiopianPhone(phoneNumber);
+    if (!normalized) return;
     const identity = await this.authIdentityRepository.findOneBy({ provider: 'telegram', providerUserId: telegramUserId });
     if (!identity) return;
-    await this.userRepository.update(identity.userId, { phoneNumber });
+    await this.userRepository.update(identity.userId, { phoneNumber: normalized });
   }
 
   async updateStatus(userId: string, status: 'active' | 'suspended' | 'closed') {

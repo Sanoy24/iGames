@@ -247,17 +247,44 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
       // Telegram only allows users to share their own contact via the request button
       if (!contact.phone_number || (contact.user_id && contact.user_id !== userId)) {
-        await ctx.reply('Please share your own phone number using the button provided.');
+        await ctx.reply('Please share your own phone number using the button provided.', {
+          reply_markup: this.contactRequestKeyboard(),
+        });
+        return;
+      }
+
+      // Persist the phone (normalized to +2519XXXXXXXX). setTelegramPhone creates
+      // the internal user first if needed — the contact is shared on /start,
+      // before the Mini App has ever opened, so the account may not exist yet.
+      // We AWAIT this so the Play button only appears once the phone is durably
+      // saved (the Mini App login refuses to start without it).
+      let savedPhone: string | null = null;
+      if (userId) {
+        try {
+          savedPhone = await this.usersService.setTelegramPhone({
+            telegramUserId: String(userId),
+            username: ctx.from?.username,
+            firstName: ctx.from?.first_name,
+            lastName: ctx.from?.last_name,
+            languageCode: ctx.from?.language_code,
+            phoneNumber: contact.phone_number,
+          });
+        } catch (err) {
+          this.logger.error(`Failed to persist phone for Telegram user ${userId}`, err as Error);
+        }
+      }
+
+      if (!savedPhone) {
+        await ctx.reply(
+          `That doesn't look like a valid Ethiopian phone number. Please share your phone using the button below.`,
+          { reply_markup: this.contactRequestKeyboard() },
+        );
         return;
       }
 
       if (userId) {
-        this.phoneCache.set(userId, contact.phone_number);
-        // Persist to DB — best-effort, do not block the reply
-        this.usersService
-          .updatePhoneByTelegramId(String(userId), contact.phone_number)
-          .catch((err) => this.logger.error(`Failed to persist phone for Telegram user ${userId}`, err));
-        this.logger.log(`Stored phone ${contact.phone_number} for Telegram user ${userId}`);
+        this.phoneCache.set(userId, savedPhone);
+        this.logger.log(`Stored phone ${savedPhone} for Telegram user ${userId}`);
       }
 
       const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);

@@ -12,6 +12,7 @@ import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { runSchemaSync } from './scripts/ensure-schema';
 
 async function bootstrap() {
   const isDev = process.env.NODE_ENV !== 'production';
@@ -66,6 +67,23 @@ async function bootstrap() {
           ])
     ]
   });
+
+  // ── Schema sync ───────────────────────────────────────────────────
+  // Bring the DB schema up to date BEFORE Nest connects and any module bootstraps
+  // (schedulers query the DB during startup). This replaces TypeORM's unstable
+  // `synchronize` — it adds missing columns / new tables without touching existing
+  // indexes, so it can't churn or abort. Skipped when TypeORM synchronize is on,
+  // or when explicitly disabled. Best-effort: never blocks startup.
+  if (process.env.DB_SYNCHRONIZE !== 'true' && process.env.DB_SKIP_SCHEMA_SYNC !== 'true') {
+    try {
+      const { failures } = await runSchemaSync((m) => logger.log(m, 'SchemaSync'));
+      if (failures.length > 0) {
+        logger.error(`Schema sync finished with ${failures.length} failed item(s) — see above`, undefined, 'SchemaSync');
+      }
+    } catch (err) {
+      logger.error(`Schema sync failed (continuing startup): ${err instanceof Error ? err.message : err}`, undefined, 'SchemaSync');
+    }
+  }
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger });
   app.enableShutdownHooks();

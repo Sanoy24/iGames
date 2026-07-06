@@ -155,12 +155,20 @@ function extractTelebirrReceiptBody(rawText: string): { receiptUrl: string } | {
   return { receiptNo: trimmed };
 }
 
+export type ActiveAgent = {
+  displayName: string;
+  phoneNumber: string | null;
+};
+
 export const paymentsApi = {
   previewTelebirrReceipt: (rawText: string) =>
     api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
 
   submitTelebirrReceipt: (rawText: string) =>
     api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
+
+  getActiveAgent: () =>
+    api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
 };
 
 // ── Keno ──────────────────────────────────────────────────────────
@@ -200,6 +208,10 @@ export const bingoApi = {
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
       .then((r) => r.data as BingoTicket[]),
+  releaseCartela: (roomId: string, cartelaNumber: number) =>
+    api
+      .delete(`/bingo/rooms/${roomId}/cartelas/${cartelaNumber}`)
+      .then((r) => r.data as { cartelaNumber: number; refundedMinor: number }),
 };
 
 // ── Crash ─────────────────────────────────────────────────────────

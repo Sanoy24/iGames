@@ -79,8 +79,8 @@ const FAQ = [
   { q: 'How does Keno work?', a: 'Pick 1–12 numbers from 1–80. When the draw runs, 20 numbers are randomly selected. Your payout depends on how many of your picks match.' },
   { q: 'How does Bingo work?', a: 'Join a room and buy tickets. Numbers are drawn one at a time. Match one row, two rows, or a full card to win prize tiers.' },
   { q: 'What currency does iGames use?', a: 'All balances, stakes, and payouts are shown in ETB (Ethiopian Birr).' },
-  { q: 'How do I top up?', a: 'Wallet → Top Up (Telebirr). Transfer the amount, then paste the SMS confirmation to instantly credit your account.' },
-  { q: 'How do I withdraw?', a: 'Wallet → Request Payout. Enter the amount and your Telebirr phone number. An agent processes the transfer.' },
+  { q: 'How do I deposit?', a: 'Wallet → Deposit (Telebirr). Send the amount to the agent on duty, then paste the SMS confirmation to instantly credit your account.' },
+  { q: 'How do I withdraw?', a: 'Wallet → Withdraw. Enter the amount and your Telebirr phone number. An agent processes the transfer.' },
   { q: 'Are winnings instant?', a: 'Yes — credited to your wallet immediately after each draw or room settlement.' },
 ];
 
@@ -265,7 +265,7 @@ export function Home({ onNavigate }: Props) {
             style={{ marginTop: 8, flexShrink: 0 }}
           >
             <TrendingUp size={13} />
-            Top Up
+            Deposit
           </motion.button>
         </div>
 

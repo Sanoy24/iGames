@@ -236,4 +236,40 @@ describe('BingoRulesService', () => {
       expect(service.splitPrizeMinor(50000, 0)).toEqual([]);
     });
   });
+
+  // ─── multi-line patterns (any_two_lines / any_three_lines) ──────────────────
+  describe('evaluatePatternTicket — multi-line patterns', () => {
+    // 5×5 card with a FREE centre. Rows carry contiguous number blocks so a whole
+    // row is completed by drawing exactly that block.
+    const grid: (number | null)[][] = [
+      [1, 2, 3, 4, 5],
+      [6, 7, 8, 9, 10],
+      [11, 12, null, 13, 14],
+      [15, 16, 17, 18, 19],
+      [20, 21, 22, 23, 24],
+    ];
+    const pattern = (patternType: string) => ({ id: patternType, patternType }) as any;
+    const completes = (drawn: number[], patternType: string) =>
+      service
+        .evaluatePatternTicket(grid, drawn, [pattern(patternType)])
+        .completedPatternIds.includes(patternType);
+
+    const row0 = [1, 2, 3, 4, 5];
+    const row1 = [6, 7, 8, 9, 10];
+    const row2 = [11, 12, 13, 14]; // centre is FREE
+
+    it('any_two_lines needs two completed lines', () => {
+      expect(completes(row0, 'any_two_lines')).toBe(false);
+      expect(completes([...row0, ...row1], 'any_two_lines')).toBe(true);
+    });
+
+    it('any_three_lines needs three completed lines', () => {
+      expect(completes([...row0, ...row1], 'any_three_lines')).toBe(false);
+      expect(completes([...row0, ...row1, ...row2], 'any_three_lines')).toBe(true);
+    });
+
+    it('any_line still completes on a single line', () => {
+      expect(completes(row0, 'any_line')).toBe(true);
+    });
+  });
 });

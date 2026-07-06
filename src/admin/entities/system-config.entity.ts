@@ -15,8 +15,20 @@ export class SystemConfig {
   @Column({ type: 'int', default: 0 })
   welcomeBonusMinor: number;
 
+  /** Service fee % of a withdrawal that goes to the platform super-admin. */
   @Column({ type: 'int', default: 0 })
   withdrawalServiceChargePct: number;
+
+  /** Commission % of a withdrawal earned by the agent who processed it. */
+  @Column({ type: 'int', default: 0 })
+  withdrawalCommissionPct: number;
+
+  /**
+   * User id of the designated super-admin whose wallet receives withdrawal
+   * service fees. Null = fees are only tracked in platform_stats (no wallet credit).
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  superAdminUserId?: string | null;
 
   @Column({ type: 'int', default: 0 })
   withdrawalMinAmountMinor: number;

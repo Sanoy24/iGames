@@ -1,7 +1,15 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
 export type BingoRoomStatus = 'open' | 'running' | 'completed' | 'cancelled';
-export type BingoPrizeTier = 'one_line' | 'two_lines' | 'full_house' | '1st' | '2nd' | '3rd';
+export type BingoPrizeTier =
+  | 'one_line'
+  | 'two_lines'
+  | 'full_house'
+  | '1st'
+  | '2nd'
+  | '3rd'
+  | '4th'
+  | '5th';
 export type BingoWinMode = 'line' | 'pattern' | 'prefilled';
 
 export class BingoPrizeConfig {

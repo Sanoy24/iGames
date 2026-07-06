@@ -20,9 +20,12 @@ export class AgentsService {
 
   // ── Config (agent-accessible) ────────────────────────────────────
 
-  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number }> {
+  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }> {
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    return { withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0 };
+    return {
+      withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0,
+      withdrawalCommissionPct: config?.withdrawalCommissionPct ?? 0,
+    };
   }
 
   // ── Withdrawals ────────────────────────────────────────────────────
@@ -86,15 +89,19 @@ export class AgentsService {
   async completeWithdrawal(withdrawalId: string, agentId: string, telebirrReference: string) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
-    // Read service charge from system config directly
+    // Read fee/commission split and the designated super-admin from system config.
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    const serviceChargePct = config?.withdrawalServiceChargePct ?? 0;
+    const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
+    const commissionPct = config?.withdrawalCommissionPct ?? 0;
+    const superAdminUserId = config?.superAdminUserId ?? null;
 
     return this.walletService.completeWithdrawalByAgent({
       withdrawalId,
       agentId,
       telebirrReference,
-      serviceChargePct,
+      serviceFeePct,
+      commissionPct,
+      superAdminUserId,
     });
   }
 
@@ -211,6 +218,45 @@ export class AgentsService {
         : currentMinutes >= startMinutes && currentMinutes < endMinutes;
 
       if (inWindow) return this.toShiftResponse(shift);
+    }
+
+    return null;
+  }
+
+  /**
+   * Player-facing: the Telebirr deposit details of the agent currently on
+   * shift. Returns only the public info a depositing user needs
+   * (full name + Telebirr phone number). Null when nobody is on shift.
+   */
+  async getActiveAgentDepositInfo(): Promise<{ displayName: string; phoneNumber: string | null } | null> {
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const shifts = await this.agentShiftRepository.find({
+      where: { isActive: true },
+      relations: ['user'],
+    });
+
+    for (const shift of shifts) {
+      const dayMatch =
+        shift.daysOfWeek.length === 0 || shift.daysOfWeek.includes(dayOfWeek);
+      if (!dayMatch) continue;
+
+      const startMinutes = shift.startHour * 60 + shift.startMinute;
+      const endMinutes = shift.endHour * 60 + shift.endMinute;
+
+      const isOvernightShift = endMinutes <= startMinutes;
+      const inWindow = isOvernightShift
+        ? currentMinutes >= startMinutes || currentMinutes < endMinutes
+        : currentMinutes >= startMinutes && currentMinutes < endMinutes;
+
+      if (inWindow && shift.user) {
+        return {
+          displayName: shift.user.displayName,
+          phoneNumber: shift.user.phoneNumber ?? null,
+        };
+      }
     }
 
     return null;

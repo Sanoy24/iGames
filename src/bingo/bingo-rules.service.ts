@@ -96,10 +96,22 @@ export const BUILT_IN_PATTERNS: Array<{
     sortOrder: 5,
   },
   {
+    name: 'Any Two Lines',
+    description: 'Complete any two lines (rows, columns, or diagonals)',
+    patternType: 'any_two_lines',
+    sortOrder: 6,
+  },
+  {
+    name: 'Any Three Lines',
+    description: 'Complete any three lines (rows, columns, or diagonals)',
+    patternType: 'any_three_lines',
+    sortOrder: 7,
+  },
+  {
     name: 'Full House',
     description: 'Mark every number on the card',
     patternType: 'coverall',
-    sortOrder: 6,
+    sortOrder: 8,
   },
 ];
 
@@ -470,24 +482,44 @@ export class BingoRulesService {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
+  /**
+   * Count fully-marked lines on a 5×5 card: every row, every column, and (for a
+   * square 5×5 grid) both diagonals. Used by the `any_line` / `any_two_lines` /
+   * `any_three_lines` pattern types, where a card wins by completing at least
+   * N distinct lines of any orientation.
+   */
+  private countCompletedLines(marked: boolean[][]): number {
+    const ROWS = marked.length;
+    const COLS = marked[0]?.length ?? 0;
+    let lines = 0;
+
+    for (let r = 0; r < ROWS; r++) {
+      if (marked[r].every((v) => v)) lines += 1;
+    }
+    for (let c = 0; c < COLS; c++) {
+      if (marked.every((row) => row[c])) lines += 1;
+    }
+    if (ROWS === 5 && COLS === 5) {
+      if ([0, 1, 2, 3, 4].every((i) => marked[i][i])) lines += 1;
+      if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i])) lines += 1;
+    }
+    return lines;
+  }
+
   private isPatternCompleted(marked: boolean[][], pattern: BingoPattern): boolean {
     const ROWS = marked.length;
     const COLS = marked[0]?.length ?? 0;
 
     switch (pattern.patternType as PatternType) {
-      case 'any_line': {
-        for (let r = 0; r < ROWS; r++) {
-          if (marked[r].every((v) => v)) return true;
-        }
-        for (let c = 0; c < COLS; c++) {
-          if (marked.every((row) => row[c])) return true;
-        }
-        if (ROWS === 5 && COLS === 5) {
-          if ([0, 1, 2, 3, 4].every((i) => marked[i][i])) return true;
-          if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i])) return true;
-        }
-        return false;
-      }
+      case 'any_line':
+        return this.countCompletedLines(marked) >= 1;
+
+      case 'any_two_lines':
+        return this.countCompletedLines(marked) >= 2;
+
+      case 'any_three_lines':
+        return this.countCompletedLines(marked) >= 3;
+
       case 'any_row':
         return marked.some((row) => row.every((v) => v));
 

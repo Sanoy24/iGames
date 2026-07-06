@@ -1,6 +1,14 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
-export type PatternType = 'fixed' | 'any_row' | 'any_col' | 'any_diagonal' | 'any_line' | 'coverall';
+export type PatternType =
+  | 'fixed'
+  | 'any_row'
+  | 'any_col'
+  | 'any_diagonal'
+  | 'any_line'
+  | 'any_two_lines'
+  | 'any_three_lines'
+  | 'coverall';
 
 @Entity({ name: 'bingo_patterns', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class BingoPattern {

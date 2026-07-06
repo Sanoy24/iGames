@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
-import { authApi, walletApi, paymentsApi, type TelebirrPreview } from '../lib/api';
+import { authApi, walletApi, paymentsApi, type TelebirrPreview, type ActiveAgent } from '../lib/api';
 
 // Keys are the backend ledger `entryType` values
 // (see LedgerEntryType: stake | win | refund | adjustment | bonus | deposit |
@@ -114,6 +114,8 @@ export function Wallet() {
   const [isPreviewing,   setIsPreviewing]   = useState(false);
   const [preview,        setPreview]        = useState<TelebirrPreview | null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
+  const [activeAgent,    setActiveAgent]    = useState<ActiveAgent | null>(null);
+  const [agentLoading,   setAgentLoading]   = useState(false);
 
   const [showWithdraw,   setShowWithdraw]   = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -138,6 +140,23 @@ export function Wallet() {
   }, [addToast, setWallet]);
 
   useEffect(() => { void loadWallet(); }, [loadWallet]);
+
+  const toggleTopup = () => {
+    setShowTopup((open) => {
+      const next = !open;
+      if (next) {
+        setShowWithdraw(false);
+        setAgentLoading(true);
+        paymentsApi.getActiveAgent()
+          .then(setActiveAgent)
+          .catch(() => setActiveAgent(null))
+          .finally(() => setAgentLoading(false));
+      } else {
+        resetTopup();
+      }
+      return next;
+    });
+  };
 
   const handlePreview = async () => {
     if (!receiptInput.trim()) return;
@@ -252,11 +271,11 @@ export function Wallet() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <motion.button
             className="btn btn-primary"
-            onClick={() => { setShowTopup(v => !v); setShowWithdraw(false); if (showTopup) resetTopup(); }}
+            onClick={toggleTopup}
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
-            {showTopup ? <><X size={15} /> Cancel</> : <><ArrowUpToLine size={15} /> Top Up</>}
+            {showTopup ? <><X size={15} /> Cancel</> : <><ArrowUpToLine size={15} /> Deposit</>}
           </motion.button>
           <motion.button
             className="btn btn-secondary"
@@ -264,7 +283,7 @@ export function Wallet() {
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
-            {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Payout</>}
+            {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Withdraw</>}
           </motion.button>
         </div>
 
@@ -283,8 +302,65 @@ export function Wallet() {
               <div className="admin-form" style={{ marginTop: 16 }}>
                 <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Deposit</h3>
                 <p className="text-muted" style={{ fontSize: 13, marginBottom: 14 }}>
-                  Transfer money via Telebirr, then paste your SMS confirmation message or the receipt link below.
+                  Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.
                 </p>
+
+                {/* Active agent — where to send the Telebirr transfer */}
+                {agentLoading ? (
+                  <div className="card-muted" style={{ marginBottom: 14, fontSize: 13 }}>
+                    <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', marginRight: 6, verticalAlign: 'middle' }} />
+                    Finding the agent on duty…
+                  </div>
+                ) : activeAgent ? (
+                  <div style={{
+                    background: 'rgba(250,204,21,0.07)',
+                    border: '1px solid rgba(250,204,21,0.25)',
+                    borderRadius: 10,
+                    padding: '14px 16px',
+                    marginBottom: 14,
+                  }}>
+                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
+                      Send Telebirr to
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <UserIcon size={14} style={{ color: 'var(--gold)' }} />
+                      <strong style={{ fontSize: 14 }}>{activeAgent.displayName}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Phone size={14} style={{ color: 'var(--gold)' }} />
+                      {activeAgent.phoneNumber ? (
+                        <>
+                          <strong style={{ fontSize: 15, letterSpacing: '0.02em' }}>{activeAgent.phoneNumber}</strong>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => {
+                              void navigator.clipboard?.writeText(activeAgent.phoneNumber!);
+                              addToast('success', 'Phone number copied');
+                            }}
+                            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px' }}
+                          >
+                            <Copy size={12} /> Copy
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-muted" style={{ fontSize: 13 }}>No phone number on file</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{
+                    background: 'rgba(239,68,68,0.07)',
+                    border: '1px solid rgba(239,68,68,0.25)',
+                    borderRadius: 10,
+                    padding: '12px 14px',
+                    marginBottom: 14,
+                    fontSize: 13,
+                    color: 'var(--danger)',
+                  }}>
+                    No agent is on duty right now. Please try again shortly before sending your deposit.
+                  </div>
+                )}
 
                 {/* Step 1 — paste & verify */}
                 {!preview && (

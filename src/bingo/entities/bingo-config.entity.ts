@@ -23,6 +23,14 @@ export class BingoConfig {
   @Column({ type: 'int', default: 200 })
   defaultMaxTickets: number;
 
+  /**
+   * Maximum number of cartelas (tickets) a single user may buy in one bingo
+   * room/game. 0 = unlimited. Enforced across all purchases in the room, not
+   * just per transaction.
+   */
+  @Column({ type: 'int', default: 0 })
+  maxCartelasPerUser: number;
+
   @Column({ type: 'int', default: 20000 })
   defaultOneLineMinor: number;
 
@@ -73,12 +81,50 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   prefilledThirdPlacePct: number;
 
+  /** Enable 4th place prize in prefilled mode. */
+  @Column({ type: 'boolean', default: false })
+  prefilledFourthPlaceEnabled: boolean;
+
+  /** % of prize pool awarded to 4th place (only when enabled). */
+  @Column({ type: 'int', default: 0 })
+  prefilledFourthPlacePct: number;
+
+  /** Enable 5th place prize in prefilled mode. */
+  @Column({ type: 'boolean', default: false })
+  prefilledFifthPlaceEnabled: boolean;
+
+  /** % of prize pool awarded to 5th place (only when enabled). */
+  @Column({ type: 'int', default: 0 })
+  prefilledFifthPlacePct: number;
+
   /**
    * Winning pattern for prefilled/derash mode — the BingoPattern a cartela card
    * must complete to win a place. Null falls back to the built-in "Any Line".
+   * Legacy field: used as the default pattern for any place whose own
+   * per-place pattern is unset (and specifically the 1st-place default).
    */
   @Column({ type: 'varchar', length: 36, nullable: true })
   prefilledWinPatternId?: string | null;
+
+  /**
+   * Per-place winning patterns. Each place may require a DIFFERENT pattern to win
+   * (e.g. 1st = Any Line, 2nd = Any Two Lines, 3rd = L Shape). Null on a place
+   * falls back to `prefilledWinPatternId`, then to the built-in "Any Line".
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledFirstPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledSecondPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledThirdPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledFourthPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledFifthPatternId?: string | null;
 
   /** Minimum balls drawn before any prize tier can be settled (0 = immediate). */
   @Column({ type: 'int', default: 0 })

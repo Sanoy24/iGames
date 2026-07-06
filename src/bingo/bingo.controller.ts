@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -99,5 +100,29 @@ export class BingoController {
     this.gameEventsGateway.emitBingoRoomUpdated(roomState);
 
     return tickets;
+  }
+
+  @Delete('rooms/:id/cartelas/:cartelaNumber')
+  @Throttle({ strict: { ttl: 60_000, limit: 60 } })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOkResponse({ description: 'Released a cartela and refunded its stake (sales window only)' })
+  async releaseCartela(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') roomId: string,
+    @Param('cartelaNumber') cartelaNumber: string,
+  ) {
+    const n = Number(cartelaNumber);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new BadRequestException('cartelaNumber must be a positive integer');
+    }
+
+    const result = await this.bingoService.releaseCartela({ userId: user.id, roomId, cartelaNumber: n });
+
+    // Emit room updated so every client sees the cartela freed in real-time.
+    const roomState = await this.bingoService.getRoomState({ roomId });
+    this.gameEventsGateway.emitBingoRoomUpdated(roomState);
+
+    return result;
   }
 }

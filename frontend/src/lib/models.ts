@@ -176,6 +176,7 @@ export type BingoConfig = {
   autoRepeatIntervalMinutes: number;
   defaultTicketPriceMinor: number;
   defaultMaxTickets: number;
+  maxCartelasPerUser?: number;
   defaultOneLineMinor: number;
   defaultTwoLinesMinor: number;
   defaultFullHouseMinor: number;

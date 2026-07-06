@@ -1,4 +1,4 @@
-import { IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -16,6 +16,18 @@ export class UpdateSystemConfigDto {
   @Min(0)
   @Max(100)
   withdrawalServiceChargePct?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  withdrawalCommissionPct?: number;
+
+  /** User id of the super-admin whose wallet receives service fees (null = none). */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  superAdminUserId?: string | null;
 
   @IsOptional()
   @IsInt()

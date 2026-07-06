@@ -194,7 +194,7 @@ const NumberCell = memo(({ n, called, isCurrent, style }: {
         : {
             background: 'rgba(255,255,255,0.03)',
             border: '1px solid rgba(255,255,255,0.05)',
-            color: 'rgba(255,255,255,0.2)',
+            color: '#fff',
           }
     }
   >
@@ -209,59 +209,59 @@ NumberCell.displayName = 'NumberCell';
 // (owned by anyone in this room) are locked.
 
 const CartelaGrid = memo(({
-  gridSize, takenSet, mySet, selectedSet, salesOpen, onToggle,
+  gridSize, takenSet, mySet, pendingSet, salesOpen, onTap,
 }: {
   gridSize: number;
   takenSet: Set<number>;
   mySet: Set<number>;
-  selectedSet: Set<number>;
+  pendingSet: Set<number>;
   salesOpen: boolean;
-  onToggle: (n: number) => void;
+  onTap: (n: number) => void;
 }) => {
   const cols = 10;
   const nums = useMemo(() => Array.from({ length: gridSize }, (_, i) => i + 1), [gridSize]);
 
   return (
-    <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+    <div className="grid gap-0.5" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
       {nums.map((n) => {
-        const mine     = mySet.has(n);
-        const taken    = takenSet.has(n);
-        const selected = selectedSet.has(n);
+        const mine        = mySet.has(n);
+        const takenByOther = takenSet.has(n) && !mine;
+        const pending     = pendingSet.has(n);
         const s = getPrefilledStyle(n, gridSize);
 
         let cellStyle: React.CSSProperties;
         let textStyle: React.CSSProperties = {};
 
         if (mine) {
-          // Cartelas I own → green.
-          cellStyle = { background: 'rgba(52,211,153,0.18)', border: '1.5px solid rgba(52,211,153,0.7)' };
+          // Cartelas I own → green. Tapping again (while sales are open) refunds it.
+          cellStyle = { background: 'rgba(52,211,153,0.20)', border: '1.5px solid rgba(52,211,153,0.85)' };
           textStyle = { color: '#34d399', fontWeight: 900 };
-        } else if (selected) {
-          cellStyle = { background: 'rgba(251,191,36,0.20)', border: '1.5px solid rgba(251,191,36,0.85)', boxShadow: '0 0 6px rgba(251,191,36,0.4)' };
-          textStyle = { color: '#fbbf24', fontWeight: 900 };
-        } else if (taken) {
+        } else if (takenByOther) {
           // Taken by someone else → red (locked).
           cellStyle = { background: 'rgba(248,113,113,0.16)', border: '1px solid rgba(248,113,113,0.5)' };
           textStyle = { color: '#f87171', fontWeight: 900 };
         } else {
-          cellStyle = { background: s.bg, border: `1px solid ${s.color}22` };
-          textStyle = { color: s.color };
+          // Available → black tile, white number, group colour kept as a thin
+          // accent border so the design language survives on big 200/300 grids.
+          cellStyle = { background: '#000', border: `1px solid ${s.color}55` };
+          textStyle = { color: '#ffffff', fontWeight: 900 };
         }
 
-        const canToggle = !taken && !mine && salesOpen;
+        const canTap = salesOpen && !takenByOther && !pending;
 
         return (
           <motion.button
             key={n}
-            whileTap={canToggle ? { scale: 0.86 } : {}}
-            disabled={!canToggle}
-            onClick={() => canToggle && onToggle(n)}
-            className="aspect-square rounded-[2px] flex items-center justify-center text-[11px] leading-none tracking-tight font-black font-mono select-none transition-all duration-75"
+            whileTap={canTap ? { scale: 0.86 } : {}}
+            disabled={!canTap}
+            onClick={() => canTap && onTap(n)}
+            className="aspect-square rounded-[3px] flex items-center justify-center text-[13px] sm:text-[14px] leading-none tracking-tight font-black font-mono select-none transition-all duration-75"
             style={{
               ...cellStyle,
               ...textStyle,
-              cursor: canToggle ? 'pointer' : 'default',
+              cursor: canTap ? 'pointer' : 'default',
               minWidth: 0,
+              opacity: pending ? 0.45 : 1,
             }}
           >
             {n}
@@ -912,7 +912,7 @@ export function Bingo({ onBack }: BingoProps) {
   const [loading, setLoading]             = useState(true);
   const [holdingResult, setHoldingResult] = useState(false);
   const [buying, setBuying]               = useState(false);
-  const [selectedCartelas, setSelectedCartelas] = useState<Set<number>>(new Set());
+  const [pendingCartelas, setPendingCartelas] = useState<Set<number>>(new Set());
   const [localTickets, setLocalTickets]   = useState<BingoTicket[]>([]);
   const localRoomIdRef                    = useRef<string | null>(null);
   const [showChat, setShowChat]           = useState(false);
@@ -1217,8 +1217,6 @@ export function Bingo({ onBack }: BingoProps) {
     return nums;
   }, [myTickets]);
 
-  const selectedTotalMinor = room ? selectedCartelas.size * room.ticketPriceMinor : 0;
-
   // ── Buy ──────────────────────────────────────────────────────────────────────
   const buyTickets = async () => {
     if (!room || !salesOpen || alreadyBought) return;
@@ -1238,39 +1236,43 @@ export function Bingo({ onBack }: BingoProps) {
     }
   };
 
-  const toggleCartela = useCallback((n: number) => {
-    setSelectedCartelas((prev) => {
-      const next = new Set(prev);
-      if (next.has(n)) next.delete(n);
-      else next.add(n);
-      return next;
-    });
-  }, []);
-
-  const buyCartelas = useCallback(async () => {
-    if (!room || room.status !== 'open' || selectedCartelas.size === 0 || buying) return;
+  // Instant buy-or-refund on a single tap. Tapping an available cartela buys it
+  // immediately; tapping one you already own (while sales are open) refunds it.
+  // A per-cartela pending guard prevents a double-tap from firing twice.
+  const handleCartelaTap = useCallback(async (n: number) => {
+    if (!room || room.status !== 'open') return;
     if (!currentUser) { addToast('error', 'Log in to buy cartelas'); return; }
-    const numbers = Array.from(selectedCartelas);
-    setBuying(true);
+    if (pendingCartelas.has(n)) return;
+
+    const owned = myCartelaSet.has(n);
+    if (!owned && takenSet.has(n)) return; // taken by someone else — locked
+
+    setPendingCartelas((prev) => new Set(prev).add(n));
     try {
-      const bought = await bingoApi.purchaseCartelas(room.id, numbers, createIdempotencyKey('bingo-cartelas'));
-      localRoomIdRef.current = room.id;
-      setLocalTickets((prev) => [...prev, ...bought]);
-      setSelectedCartelas(new Set());
+      if (owned) {
+        await bingoApi.releaseCartela(room.id, n);
+        setLocalTickets((prev) => prev.filter((t) => t.cartelaNumber !== n));
+        addToast('info', `Cartela #${n} refunded`);
+      } else {
+        const bought = await bingoApi.purchaseCartelas(room.id, [n], createIdempotencyKey('bingo-cartela'));
+        localRoomIdRef.current = room.id;
+        setLocalTickets((prev) => [...prev, ...bought]);
+        soundEngine.cashout();
+        addToast('success', `Cartela #${n} purchased!`);
+      }
       const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
       setWallet(nextWallet);
-      soundEngine.cashout();
-      addToast('success', numbers.length === 1 ? `Cartela #${numbers[0]} purchased!` : `${numbers.length} cartelas purchased!`);
     } catch (err) {
       const msg = getErrorMessage(err);
-      if (msg.toLowerCase().includes('taken')) addToast('error', 'A cartela was just taken — adjust your picks');
+      if (msg.toLowerCase().includes('taken')) addToast('error', 'That cartela was just taken');
       else if (msg.toLowerCase().includes('balance') || msg.toLowerCase().includes('insufficient') || msg.toLowerCase().includes('enough')) addToast('error', 'Insufficient balance');
+      else if (msg.toLowerCase().includes('closed')) addToast('error', 'Sales are closed');
       else addToast('error', msg);
       void loadCurrent();
     } finally {
-      setBuying(false);
+      setPendingCartelas((prev) => { const next = new Set(prev); next.delete(n); return next; });
     }
-  }, [room, currentUser, selectedCartelas, buying, addToast, loadCurrent, setWallet]);
+  }, [room, currentUser, pendingCartelas, myCartelaSet, takenSet, addToast, loadCurrent, setWallet]);
 
   const sendChat = useCallback(() => {
     const text = chatInput.trim();
@@ -1388,14 +1390,14 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
                   </div>
                 </div>
-                <p className="text-[9px] text-slate-500">Pick one or more cartelas, then pay. Each cartela is a hidden bingo card.</p>
+                <p className="text-[9px] text-slate-500">Tap a cartela to buy it instantly. Tap your own again to refund it while the timer runs. Each cartela is a hidden bingo card.</p>
                 <CartelaGrid
                   gridSize={gridSize}
                   takenSet={takenSet}
                   mySet={myCartelaSet}
-                  selectedSet={selectedCartelas}
+                  pendingSet={pendingCartelas}
                   salesOpen={salesOpen}
-                  onToggle={toggleCartela}
+                  onTap={handleCartelaTap}
                 />
               </div>
             ) : (
@@ -1460,33 +1462,18 @@ export function Bingo({ onBack }: BingoProps) {
             )}
           </div>
 
-          {/* ── Pay-once bar (derash) ── */}
+          {/* ── Owned summary (derash) — buying happens instantly on tap ── */}
           {isPrefilledMode && phase === 'buy' && (
-            <div className="card space-y-2">
+            <div className="card">
               <div className="flex items-center justify-between text-[10px]">
                 <span className="font-black uppercase tracking-wider text-slate-400">
-                  Selected: <span className="text-amber-400">{selectedCartelas.size}</span>
-                  {myCartelaSet.size > 0 && <span className="text-emerald-400"> · Owned: {myCartelaSet.size}</span>}
+                  Owned: <span className="text-emerald-400">{myCartelaSet.size}</span>
+                  {room && myCartelaSet.size > 0 && (
+                    <span className="text-slate-500"> · {formatCreditsFull(myCartelaSet.size * room.ticketPriceMinor)} ETB staked</span>
+                  )}
                 </span>
                 <span className="text-slate-500">{remainingTickets} cartelas left</span>
               </div>
-              <motion.button
-                whileHover={!buying && selectedCartelas.size > 0 ? { scale: 1.02, y: -2 } : {}}
-                whileTap={{ scale: 0.97 }}
-                onClick={buyCartelas}
-                disabled={buying || selectedCartelas.size === 0}
-                className="btn btn-primary btn-full py-3.5 text-base font-black"
-              >
-                {buying ? (
-                  <span className="flex items-center gap-2 justify-center">
-                    <RefreshCw size={15} className="animate-spin" /> Processing…
-                  </span>
-                ) : selectedCartelas.size === 0 ? (
-                  'Select cartelas to buy'
-                ) : (
-                  `Buy ${selectedCartelas.size} cartela${selectedCartelas.size > 1 ? 's' : ''} — ${formatCreditsFull(selectedTotalMinor)} ETB`
-                )}
-              </motion.button>
             </div>
           )}
 

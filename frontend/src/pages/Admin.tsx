@@ -1361,6 +1361,7 @@ function BingoAdmin() {
     autoRepeatIntervalMinutes: 0,
     defaultTicketPriceMinor: 500,
     defaultMaxTickets: 200,
+    maxCartelasPerUser: 0,
     defaultOneLineMinor: 20000,
     defaultTwoLinesMinor: 50000,
     defaultFullHouseMinor: 100000,
@@ -1398,6 +1399,7 @@ function BingoAdmin() {
         autoRepeatIntervalMinutes: c.autoRepeatIntervalMinutes,
         defaultTicketPriceMinor: c.defaultTicketPriceMinor,
         defaultMaxTickets: c.defaultMaxTickets,
+        maxCartelasPerUser: c.maxCartelasPerUser ?? 0,
         defaultOneLineMinor: c.defaultOneLineMinor,
         defaultTwoLinesMinor: c.defaultTwoLinesMinor,
         defaultFullHouseMinor: c.defaultFullHouseMinor,
@@ -1633,6 +1635,11 @@ function BingoAdmin() {
               <span>Default Max Tickets Per Room</span>
               <input className="input" type="number" min={1} value={cfgForm.defaultMaxTickets}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultMaxTickets: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Max Cartelas Per User (0 = unlimited)</span>
+              <input className="input" type="number" min={0} value={cfgForm.maxCartelasPerUser ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, maxCartelasPerUser: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
               <span>Default One-Line Prize (ETB)</span>

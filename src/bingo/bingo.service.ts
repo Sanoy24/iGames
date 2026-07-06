@@ -552,8 +552,10 @@ export class BingoService implements OnModuleInit {
 
     if (input.userId) {
       this.validateUuid(input.userId, 'userId');
+      // Exclude cancelled (refunded) tickets — a released cartela must stop
+      // counting as owned so its grid cell reverts to the available style.
       const tickets = await this.bingoTicketRepository.find({
-        where: { roomId: room.id, userId: input.userId },
+        where: { roomId: room.id, userId: input.userId, status: Not('cancelled') },
         order: { createdAt: 'DESC' },
       });
       response.tickets = tickets.map((ticket) => this.toTicketResponse(ticket));
@@ -1322,50 +1324,17 @@ export class BingoService implements OnModuleInit {
         }
       }
 
-      // Not eligible for an open place. If the card DID complete a winning
-      // pattern that has already been awarded, the player was beaten to it →
-      // disqualified. Otherwise the tap was premature → ignored (no penalty).
-      const beaten = await this.completesAnySettledDerashPlace(room, cfg, ticket, manager);
-      if (beaten) {
-        ticket.status = 'disqualified';
-        ticket.settlementStatus = 'settled';
-        await manager.save(ticket);
-        // A disqualification can remove the last active card, ending the game.
-        await this.finalizeDerashIfDone(room, cfg, 75, manager);
-        await manager.save(room);
-        return finish('disqualified');
-      }
-
+      // Any BINGO tap that is not an actual win disqualifies the card — calling
+      // Bingo without a winning pattern (or after being beaten to every place)
+      // is penalised the way a false call is in hall bingo.
+      ticket.status = 'disqualified';
+      ticket.settlementStatus = 'settled';
       await manager.save(ticket);
-      return finish('ignored');
+      // Removing this card from play can end the game (last active card gone).
+      await this.finalizeDerashIfDone(room, cfg, 75, manager);
+      await manager.save(room);
+      return finish('disqualified');
     });
-  }
-
-  /**
-   * True if the card completes the pattern of any place that has ALREADY been
-   * settled in this room — i.e. it "had bingo" but lost the race for that place.
-   */
-  private async completesAnySettledDerashPlace(
-    room: BingoRoom,
-    cfg: BingoConfig,
-    ticket: BingoTicket,
-    manager: EntityManager,
-  ): Promise<boolean> {
-    const settledPlaces = room.settledTiers.filter((t): t is PrefilledPlace =>
-      ['1st', '2nd', '3rd', '4th', '5th'].includes(t),
-    );
-    for (const place of settledPlaces) {
-      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
-      if (
-        pattern &&
-        this.bingoRulesService
-          .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
-          .completedPatternIds.includes(pattern.id)
-      ) {
-        return true;
-      }
-    }
-    return false;
   }
 
   /**

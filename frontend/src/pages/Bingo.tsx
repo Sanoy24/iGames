@@ -1290,8 +1290,12 @@ export function Bingo({ onBack }: BingoProps) {
 
   // Keep the Auto switch in sync with the server (source of truth). A card in
   // manual mode reports autoClaim === false, so if any of my cards is manual the
-  // switch shows OFF. Re-derives on every poll so a refresh never desyncs it.
+  // switch shows OFF. Re-derives on every poll so a refresh never desyncs it —
+  // except while a toggle is in flight, so an older poll can't flip it back
+  // (which would hide the BINGO buttons for a beat).
+  const autoBusyRef = useRef(false);
   useEffect(() => {
+    if (autoBusyRef.current) return;
     const tix = room?.tickets ?? [];
     if (tix.length > 0) setAutoMode(tix.every((t) => t.autoClaim !== false));
   }, [room?.tickets]);
@@ -1299,6 +1303,7 @@ export function Bingo({ onBack }: BingoProps) {
   const toggleAuto = async () => {
     if (!room) return;
     const next = !autoMode;
+    autoBusyRef.current = true;
     setAutoMode(next); // optimistic
     try {
       await bingoApi.setAuto(room.id, next);
@@ -1306,6 +1311,8 @@ export function Bingo({ onBack }: BingoProps) {
     } catch (e) {
       setAutoMode(!next); // revert on failure
       addToast('error', getErrorMessage(e));
+    } finally {
+      autoBusyRef.current = false;
     }
   };
 
@@ -1319,7 +1326,7 @@ export function Bingo({ onBack }: BingoProps) {
         addToast('success', '🎉 BINGO! You won!');
       } else if (res.result === 'disqualified') {
         soundEngine.pop();
-        addToast('error', 'Too slow — another player called Bingo first. This card is disqualified.');
+        addToast('error', 'Wrong call — this card has no Bingo (or was beaten to it). It is now disqualified.');
       } else {
         addToast('info', 'No Bingo on this card yet.');
       }
@@ -1593,7 +1600,7 @@ export function Bingo({ onBack }: BingoProps) {
                       </div>
                       {phase === 'playing' && !autoMode && (
                         <p className="w-full text-[8px] leading-tight text-amber-400/80 text-center">
-                          Manual mode — tap <b>BINGO</b> the moment your card wins. Beat the system and other players!
+                          Manual mode — only tap <b>BINGO</b> when your card actually wins. A wrong call <b>disqualifies</b> the card!
                         </p>
                       )}
                       <div className="w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide" style={{ maxHeight: 340 }}>

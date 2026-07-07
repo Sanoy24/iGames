@@ -14,6 +14,7 @@ export type User = {
     deposit: boolean;
     withdraw: boolean;
   };
+  isOnDuty?: boolean;
   wallets?: Wallet[];
   createdAt?: string;
   updatedAt?: string;

@@ -58,6 +58,15 @@ export class User {
     withdraw: boolean;
   };
 
+  /**
+   * Admin-controlled "on duty" flag for agents. Only an on-duty agent is shown to
+   * players as the deposit destination and may claim/complete withdrawals. At most
+   * one agent is on duty at a time (single primary) — turning one on turns the rest
+   * off. Replaces the timezone-dependent shift schedule for routing.
+   */
+  @Column({ type: 'boolean', default: false })
+  isOnDuty: boolean;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

@@ -548,6 +548,8 @@ function AgentsAdmin() {
     status: 'active'
   });
 
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try { setAgents(await adminAgentsApi.listAgents()); }
@@ -556,6 +558,20 @@ function AgentsAdmin() {
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Single primary: putting one agent on duty takes everyone else off. The backend
+  // enforces this, so we just reload to reflect the new coverage.
+  const toggleOnDuty = async (agent: User) => {
+    setTogglingId(agent.id);
+    try {
+      await adminAgentsApi.setAgentOnDuty(agent.id, !agent.isOnDuty);
+      addToast('success', agent.isOnDuty ? `${agent.displayName} taken off duty` : `${agent.displayName} is now on duty`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setTogglingId(null); }
+  };
+
+  const onDutyAgent = agents.find((a) => a.isOnDuty) ?? null;
 
   const createAgent = async () => {
     if (!form.displayName.trim() || !form.phoneNumber.trim() || form.password.length < 8) {
@@ -782,6 +798,26 @@ function AgentsAdmin() {
         </div>
       )}
 
+      {/* On-duty coverage — the single agent players deposit to right now. */}
+      <div
+        className="adm-panel"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+          borderColor: onDutyAgent ? 'rgba(52,211,153,0.5)' : 'rgba(248,113,113,0.4)',
+        }}
+      >
+        <span style={{
+          width: 9, height: 9, borderRadius: '50%',
+          background: onDutyAgent ? '#34d399' : '#f87171',
+          boxShadow: onDutyAgent ? '0 0 8px #34d399' : 'none',
+        }} />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>
+          {onDutyAgent
+            ? <>On duty: <span style={{ color: '#34d399' }}>{onDutyAgent.displayName}</span>{onDutyAgent.phoneNumber ? ` · ${onDutyAgent.phoneNumber}` : ''}</>
+            : <span style={{ color: '#f87171' }}>Nobody is on duty — players can&apos;t deposit right now.</span>}
+        </span>
+      </div>
+
       <div className="adm-panel">
         {loading && agents.length === 0 ? (
           <div className="adm-empty">Loading agents…</div>
@@ -793,7 +829,7 @@ function AgentsAdmin() {
               <tr>
                 <th>Name</th>
                 <th>Phone</th>
-                <th>Working Hours</th>
+                <th>On Duty</th>
                 <th>Permissions</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -801,11 +837,6 @@ function AgentsAdmin() {
             </thead>
             <tbody>
               {agents.map((a) => {
-                const pad = (n?: number) => n !== undefined ? String(n).padStart(2, '0') : '--';
-                const timeStr = a.workStartHour !== undefined && a.workEndHour !== undefined
-                  ? `${pad(a.workStartHour)}:${pad(a.workStartMinute)} - ${pad(a.workEndHour)}:${pad(a.workEndMinute)}`
-                  : 'All day';
-                
                 const permissionsList: string[] = [];
                 if (a.agentPermissions?.deposit !== false) permissionsList.push('Deposit');
                 if (a.agentPermissions?.withdraw !== false) permissionsList.push('Withdraw');
@@ -815,7 +846,15 @@ function AgentsAdmin() {
                   <tr key={a.id} className="adm-tr">
                     <td><strong>{a.displayName}</strong></td>
                     <td className="adm-td-muted">{a.phoneNumber ?? '—'}</td>
-                    <td className="adm-td-muted">{timeStr}</td>
+                    <td>
+                      <button
+                        className={`adm-btn adm-btn-xs ${a.isOnDuty ? 'adm-btn-primary' : 'adm-btn-secondary'}`}
+                        disabled={togglingId === a.id}
+                        onClick={() => void toggleOnDuty(a)}
+                      >
+                        {togglingId === a.id ? '…' : a.isOnDuty ? '● On duty' : 'Set on duty'}
+                      </button>
+                    </td>
                     <td className="adm-td-muted">{permStr}</td>
                     <td>
                       <span className={`badge ${a.status === 'active' || !a.status ? 'badge-green' : 'badge-red'}`}>

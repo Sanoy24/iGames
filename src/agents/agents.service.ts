@@ -47,30 +47,20 @@ export class AgentsService {
     return { ledger, withdrawals };
   }
 
+  /**
+   * Unified agent gate: an agent may only act while the admin has them **on duty**,
+   * and only for actions their permissions allow. Replaces the old timezone-based
+   * working-hours window (which broke when the server clock wasn't Ethiopia time).
+   */
   verifyAgentWorkingHoursAndPermission(agent: any, permission: 'deposit' | 'withdraw') {
-    // 1. Check permission
-    if (agent.agentPermissions && agent.agentPermissions[permission] === false) {
-      throw new BadRequestException(`Agent does not have ${permission} permission`);
+    // 1. Must be on duty (admin-controlled).
+    if (!agent.isOnDuty) {
+      throw new BadRequestException('You are not on duty. Ask an admin to put you on duty.');
     }
 
-    // 2. Check working hours if they are set
-    if (agent.workStartHour !== undefined && agent.workEndHour !== undefined) {
-      const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const startMinutes = agent.workStartHour * 60 + (agent.workStartMinute || 0);
-      const endMinutes = agent.workEndHour * 60 + (agent.workEndMinute || 0);
-
-      const isOvernight = endMinutes <= startMinutes;
-      const inWindow = isOvernight
-        ? currentMinutes >= startMinutes || currentMinutes < endMinutes
-        : currentMinutes >= startMinutes && currentMinutes < endMinutes;
-
-      if (!inWindow) {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        throw new BadRequestException(
-          `Action outside working hours (${pad(agent.workStartHour)}:${pad(agent.workStartMinute || 0)} - ${pad(agent.workEndHour)}:${pad(agent.workEndMinute || 0)})`
-        );
-      }
+    // 2. Must have permission for this action.
+    if (agent.agentPermissions && agent.agentPermissions[permission] === false) {
+      throw new BadRequestException(`Agent does not have ${permission} permission`);
     }
   }
 
@@ -229,37 +219,18 @@ export class AgentsService {
    * (full name + Telebirr phone number). Null when nobody is on shift.
    */
   async getActiveAgentDepositInfo(): Promise<{ displayName: string; phoneNumber: string | null } | null> {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    // The deposit destination is simply whichever agent the admin has on duty
+    // (single primary). No timezone / schedule math — it's an explicit switch.
+    const agent = await this.usersService.findOnDutyAgent();
+    if (!agent) return null;
 
-    const shifts = await this.agentShiftRepository.find({
-      where: { isActive: true },
-      relations: ['user'],
-    });
+    // An on-duty agent still needs the deposit permission to receive deposits.
+    if (agent.agentPermissions && agent.agentPermissions.deposit === false) return null;
 
-    for (const shift of shifts) {
-      const dayMatch =
-        shift.daysOfWeek.length === 0 || shift.daysOfWeek.includes(dayOfWeek);
-      if (!dayMatch) continue;
-
-      const startMinutes = shift.startHour * 60 + shift.startMinute;
-      const endMinutes = shift.endHour * 60 + shift.endMinute;
-
-      const isOvernightShift = endMinutes <= startMinutes;
-      const inWindow = isOvernightShift
-        ? currentMinutes >= startMinutes || currentMinutes < endMinutes
-        : currentMinutes >= startMinutes && currentMinutes < endMinutes;
-
-      if (inWindow && shift.user) {
-        return {
-          displayName: shift.user.displayName,
-          phoneNumber: shift.user.phoneNumber ?? null,
-        };
-      }
-    }
-
-    return null;
+    return {
+      displayName: agent.displayName,
+      phoneNumber: agent.phoneNumber ?? null,
+    };
   }
 
   private toShiftResponse(shift: AgentShift) {

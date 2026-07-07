@@ -251,6 +251,44 @@ export class UsersService {
     return user;
   }
 
+  /**
+   * Admin sets an agent's on-duty status. Enforces a single primary: turning an
+   * agent ON turns every other agent OFF in the same transaction, so at most one
+   * agent is ever on duty. Turning OFF simply clears this agent.
+   */
+  async setAgentOnDuty(agentId: string, onDuty: boolean): Promise<User> {
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(User);
+      const user = await repo.findOneBy({ id: agentId });
+      if (!user || !user.roles.includes('agent')) {
+        throw new NotFoundException('Agent not found');
+      }
+
+      if (onDuty) {
+        // Single primary: clear anyone else who is currently on duty.
+        await repo
+          .createQueryBuilder()
+          .update(User)
+          .set({ isOnDuty: false })
+          .where('isOnDuty = :on', { on: true })
+          .andWhere('id != :id', { id: agentId })
+          .execute();
+      }
+
+      user.isOnDuty = onDuty;
+      await repo.save(user);
+      return user;
+    });
+  }
+
+  /** The single agent currently on duty (active account only), or null. */
+  async findOnDutyAgent(): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: { isOnDuty: true, status: 'active' },
+      order: { updatedAt: 'DESC' },
+    });
+  }
+
   async findBackofficeUserByCredentials(
     phoneNumber: string,
     password: string,

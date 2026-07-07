@@ -541,6 +541,8 @@ export const adminAgentsApi = {
     api.post<User>('/admin/agents', dto).then((r) => r.data),
   updateAgent: (id: string, dto: Partial<User & { password?: string }>) =>
     api.patch<User>(`/admin/agents/${id}`, dto).then((r) => r.data),
+  setAgentOnDuty: (id: string, onDuty: boolean) =>
+    api.patch<User>(`/admin/agents/${id}/on-duty`, { onDuty }).then((r) => r.data),
   listActions: (limit = 100) =>
     api.get<{
       events: AgentActionEvent[];

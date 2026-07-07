@@ -9,6 +9,7 @@ import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminService } from './admin.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
+import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
@@ -121,6 +122,14 @@ export class AdminController {
     @Body() dto: UpdateAgentDto,
   ) {
     return this.usersService.updateAgentUser(id, dto);
+  }
+
+  @Patch('agents/:id/on-duty')
+  setAgentOnDuty(
+    @Param('id') id: string,
+    @Body() dto: SetAgentOnDutyDto,
+  ) {
+    return this.usersService.setAgentOnDuty(id, dto.onDuty);
   }
 
   @Get('agents/actions')

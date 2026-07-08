@@ -639,6 +639,9 @@ const PLACE_LABEL: Record<PrefilledPlaceKey, string> = { '1st': '1st', '2nd': '2
 // How long each live per-place win window stays on screen before the next in the
 // queue (or the underlying game) is shown again.
 const LIVE_PLACE_WIN_MS = 3_400;
+// Beat where the winning ball sits in the "now calling" display BEFORE the 5×5
+// winner card pops — so the call is seen first, then the card, then the summary.
+const NOW_CALLING_HOLD_MS = 1_400;
 
 export type LivePlaceWin = { place: PrefilledPlaceKey; entry: Record<string, unknown> };
 
@@ -1042,6 +1045,18 @@ export function Bingo({ onBack }: BingoProps) {
 
   const advanceLiveQueue = useCallback(() => setLivePlaceQueue((q) => q.slice(1)), []);
 
+  // Stage each live win: when a new place reaches the front of the queue, hold for
+  // a beat so the winning ball is seen in "now calling" first, THEN arm the 5×5
+  // card popup. Disarming on head change re-plays the beat for every place.
+  const [popupArmed, setPopupArmed] = useState(false);
+  const headPlace = livePlaceQueue[0]?.place ?? null;
+  useEffect(() => {
+    if (!headPlace) { setPopupArmed(false); return; }
+    setPopupArmed(false);
+    const id = setTimeout(() => setPopupArmed(true), NOW_CALLING_HOLD_MS);
+    return () => clearTimeout(id);
+  }, [headPlace]);
+
   // Single source of truth for live win windows: watch the room's settlement
   // summary and queue a 5×5 window for each newly-won place. Whatever path
   // updated the room (socket draw event, room-completed event, or a poll) drives
@@ -1235,14 +1250,19 @@ export function Bingo({ onBack }: BingoProps) {
       setHoldingResult(false);
       return;
     }
-    // Use resultDisplaySeconds from the room config if available, else fall back to constant.
-    const displayMs = ((room.resultDisplaySeconds ?? (RESULT_DISPLAY_MS / 1000)) * 1000);
     holdingResultRef.current = true;
     setHoldingResult(true);
+
+    // Hold the room open (no room switch) while the live per-place 5×5 windows are
+    // still playing — the summary "win window" only shows once the queue drains, so
+    // don't start its display countdown until then. Otherwise a multi-place
+    // leaderboard round could burn the whole result window on the live popups and
+    // never show the summary. The effect re-runs when the queue length changes.
+    if (livePlaceQueue.length > 0) return;
+
+    // Use resultDisplaySeconds from the room config if available, else fall back to constant.
+    const displayMs = ((room.resultDisplaySeconds ?? (RESULT_DISPLAY_MS / 1000)) * 1000);
     setResultSecs(Math.ceil(displayMs / 1000));
-    // NB: we intentionally do NOT clear the live queue here. The place that ENDS
-    // the game (or the sole 1st place) settles on the final draw, so we let its
-    // live 5×5 window play out; the summary overlay is gated on the queue draining.
 
     if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
     resultTimerRef.current = setTimeout(() => {
@@ -1262,7 +1282,7 @@ export function Bingo({ onBack }: BingoProps) {
       if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [room?.id, room?.status, loadCurrent]);
+  }, [room?.id, room?.status, livePlaceQueue.length, loadCurrent]);
 
   // ── Buy-window countdown ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -1529,7 +1549,7 @@ export function Bingo({ onBack }: BingoProps) {
           game-ending place after completion; the summary overlay above waits for
           this queue to drain, so every winner gets its live 5×5 moment. */}
       <AnimatePresence>
-        {livePlaceQueue.length > 0 && room && (
+        {popupArmed && livePlaceQueue.length > 0 && room && (
           <LivePlaceWinPopup
             key={livePlaceQueue[0].place}
             win={livePlaceQueue[0]}

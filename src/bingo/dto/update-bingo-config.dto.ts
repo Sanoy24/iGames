@@ -56,6 +56,9 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0)
   globalBingoBotWinInterval?: number;
 
+  @IsOptional() @IsIn(['race', 'leaderboard'])
+  prefilledRankingMode?: 'race' | 'leaderboard';
+
   @IsOptional() @IsInt() @Min(1) @Max(100)
   prefilledFirstPlacePct?: number;
 

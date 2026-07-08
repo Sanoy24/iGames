@@ -6,6 +6,7 @@ import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
+import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
 
 @Injectable()
 export class AgentsService {
@@ -48,14 +49,15 @@ export class AgentsService {
   }
 
   /**
-   * Unified agent gate: an agent may only act while the admin has them **on duty**,
-   * and only for actions their permissions allow. Replaces the old timezone-based
-   * working-hours window (which broke when the server clock wasn't Ethiopia time).
+   * Unified agent gate: an agent may only act while **effectively on duty** — i.e.
+   * inside their working window (Ethiopia time) or manually pinned on — and only
+   * for actions their permissions allow. All time math is Ethiopia-based, so it no
+   * longer depends on the server clock.
    */
   verifyAgentWorkingHoursAndPermission(agent: any, permission: 'deposit' | 'withdraw') {
-    // 1. Must be on duty (admin-controlled).
-    if (!agent.isOnDuty) {
-      throw new BadRequestException('You are not on duty. Ask an admin to put you on duty.');
+    // 1. Must be on duty (scheduled window or admin override).
+    if (!isAgentEffectivelyOnDuty(agent)) {
+      throw new BadRequestException('You are off duty right now (outside your working hours).');
     }
 
     // 2. Must have permission for this action.

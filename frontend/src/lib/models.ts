@@ -14,7 +14,11 @@ export type User = {
     deposit: boolean;
     withdraw: boolean;
   };
-  isOnDuty?: boolean;
+  workDaysOfWeek?: number[];
+  onDutyMode?: 'auto' | 'on' | 'off';
+  /** Server-computed (Ethiopia time) — read-only annotations from listAgents. */
+  effectiveOnDuty?: boolean;
+  withinWorkingWindow?: boolean;
   wallets?: Wallet[];
   createdAt?: string;
   updatedAt?: string;
@@ -192,6 +196,7 @@ export type BingoConfig = {
   minTicketsToStart?: number;
   houseEdgePct?: number;
   globalBingoBotWinInterval?: number;
+  prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;
   prefilledSecondPlacePct?: number;

@@ -93,6 +93,14 @@ export class BingoRoom {
   houseEdgePct: number;
 
   /**
+   * Derash place-decision mode, snapshotted from config at creation so a running
+   * room keeps its behaviour even if the admin flips the config mid-game.
+   * `race` = places locked first-come; `leaderboard` = ranks resolved at the end.
+   */
+  @Column({ type: 'varchar', length: 12, default: 'race' })
+  rankingMode: 'race' | 'leaderboard';
+
+  /**
    * DB-level "one active game at a time" guard. Set to 1 while the room is open
    * or running, and NULL once it completes or is cancelled. The UNIQUE index
    * lets MySQL hold at most one non-NULL row (multiple NULLs are allowed), so

@@ -6,6 +6,7 @@ import { User } from './entities/user.entity';
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
+import { AgentDutyMode, isAgentEffectivelyOnDuty, isWithinWorkingWindow } from '../common/agent-duty.util';
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -160,6 +161,7 @@ export class UsersService {
     workStartMinute?: number;
     workEndHour?: number;
     workEndMinute?: number;
+    workDaysOfWeek?: number[];
     agentPermissions?: { deposit: boolean; withdraw: boolean };
   }): Promise<User> {
     const normalizedPhone = normalizeEthiopianPhone(input.phoneNumber);
@@ -185,6 +187,7 @@ export class UsersService {
         workStartMinute: input.workStartMinute,
         workEndHour: input.workEndHour,
         workEndMinute: input.workEndMinute,
+        workDaysOfWeek: input.workDaysOfWeek ?? [],
         agentPermissions: input.agentPermissions ?? { deposit: true, withdraw: true },
       });
       await userRepo.save(user);
@@ -214,6 +217,7 @@ export class UsersService {
       workStartMinute?: number;
       workEndHour?: number;
       workEndMinute?: number;
+      workDaysOfWeek?: number[];
       agentPermissions?: { deposit: boolean; withdraw: boolean };
       status?: 'active' | 'suspended' | 'closed';
     }
@@ -245,6 +249,7 @@ export class UsersService {
     user.workStartMinute = update.workStartMinute;
     user.workEndHour = update.workEndHour;
     user.workEndMinute = update.workEndMinute;
+    if (update.workDaysOfWeek !== undefined) user.workDaysOfWeek = update.workDaysOfWeek;
     if (update.agentPermissions !== undefined) user.agentPermissions = update.agentPermissions;
 
     await this.userRepository.save(user);
@@ -252,11 +257,11 @@ export class UsersService {
   }
 
   /**
-   * Admin sets an agent's on-duty status. Enforces a single primary: turning an
-   * agent ON turns every other agent OFF in the same transaction, so at most one
-   * agent is ever on duty. Turning OFF simply clears this agent.
+   * Admin sets an agent's on-duty mode (`auto` | `on` | `off`). Force-`on` is
+   * single-primary: putting one agent force-on demotes any other force-on agent
+   * back to `auto`, so at most one agent is ever manually pinned on.
    */
-  async setAgentOnDuty(agentId: string, onDuty: boolean): Promise<User> {
+  async setAgentOnDutyMode(agentId: string, mode: AgentDutyMode): Promise<User> {
     return this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(User);
       const user = await repo.findOneBy({ id: agentId });
@@ -264,29 +269,53 @@ export class UsersService {
         throw new NotFoundException('Agent not found');
       }
 
-      if (onDuty) {
-        // Single primary: clear anyone else who is currently on duty.
+      if (mode === 'on') {
         await repo
           .createQueryBuilder()
           .update(User)
-          .set({ isOnDuty: false })
-          .where('isOnDuty = :on', { on: true })
+          .set({ onDutyMode: 'auto' })
+          .where('onDutyMode = :on', { on: 'on' })
           .andWhere('id != :id', { id: agentId })
           .execute();
       }
 
-      user.isOnDuty = onDuty;
+      user.onDutyMode = mode;
       await repo.save(user);
       return user;
     });
   }
 
-  /** The single agent currently on duty (active account only), or null. */
+  /**
+   * The single agent effectively on duty right now, or null. Prefers a manually
+   * pinned (`on`) agent, otherwise the earliest-starting agent whose Ethiopia-time
+   * working window currently covers now. Only active accounts are considered.
+   */
   async findOnDutyAgent(): Promise<User | null> {
-    return this.userRepository.findOne({
-      where: { isOnDuty: true, status: 'active' },
-      order: { updatedAt: 'DESC' },
+    const agents = await this.userRepository
+      .createQueryBuilder('user')
+      .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .andWhere('user.status = :status', { status: 'active' })
+      .getMany();
+
+    const now = new Date();
+    const onDuty = agents.filter((a) => isAgentEffectivelyOnDuty(a, now));
+    if (onDuty.length === 0) return null;
+
+    const forced = onDuty.filter((a) => a.onDutyMode === 'on');
+    if (forced.length > 0) {
+      // Most recently pinned wins (single-primary should leave just one anyway).
+      forced.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      return forced[0];
+    }
+
+    // Scheduled: deterministic pick by earliest start time, then creation order.
+    onDuty.sort((a, b) => {
+      const sa = (a.workStartHour ?? 0) * 60 + (a.workStartMinute ?? 0);
+      const sb = (b.workStartHour ?? 0) * 60 + (b.workStartMinute ?? 0);
+      if (sa !== sb) return sa - sb;
+      return a.createdAt.getTime() - b.createdAt.getTime();
     });
+    return onDuty[0];
   }
 
   async findBackofficeUserByCredentials(
@@ -368,7 +397,16 @@ export class UsersService {
       .take(limit)
       .getManyAndCount();
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // Annotate each agent with their live Ethiopia-time duty state so the admin UI
+    // can show who is actually covering deposits without re-deriving the timezone.
+    const now = new Date();
+    const annotated = data.map((u) => ({
+      ...u,
+      effectiveOnDuty: isAgentEffectivelyOnDuty(u, now),
+      withinWorkingWindow: isWithinWorkingWindow(u, now),
+    }));
+
+    return { data: annotated, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async getProfile(userId: string): Promise<User> {

@@ -129,7 +129,7 @@ export class AdminController {
     @Param('id') id: string,
     @Body() dto: SetAgentOnDutyDto,
   ) {
-    return this.usersService.setAgentOnDuty(id, dto.onDuty);
+    return this.usersService.setAgentOnDutyMode(id, dto.mode);
   }
 
   @Get('agents/actions')

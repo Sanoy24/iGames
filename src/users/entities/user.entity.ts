@@ -59,13 +59,18 @@ export class User {
   };
 
   /**
-   * Admin-controlled "on duty" flag for agents. Only an on-duty agent is shown to
-   * players as the deposit destination and may claim/complete withdrawals. At most
-   * one agent is on duty at a time (single primary) — turning one on turns the rest
-   * off. Replaces the timezone-dependent shift schedule for routing.
+   * On-duty control for agents. `auto` follows the working window
+   * (`workDaysOfWeek` + work hours, evaluated in Ethiopia time); `on`/`off` are
+   * admin overrides that win over the schedule until cleared back to `auto`.
+   * Only an effectively-on-duty agent is shown to players as the deposit
+   * destination and may claim/complete withdrawals. Force-`on` is single-primary.
    */
-  @Column({ type: 'boolean', default: false })
-  isOnDuty: boolean;
+  @Column({ type: 'varchar', length: 8, default: 'auto' })
+  onDutyMode: 'auto' | 'on' | 'off';
+
+  /** Days the agent works (0=Sun..6=Sat). Empty/absent = every day. */
+  @Column({ type: 'json', nullable: true })
+  workDaysOfWeek?: number[];
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

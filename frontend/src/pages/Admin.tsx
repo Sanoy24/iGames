@@ -514,6 +514,30 @@ function PlayersAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Agents
 // ══════════════════════════════════════════════════════════════════
+const AGENT_WEEKDAYS: { d: number; label: string }[] = [
+  { d: 1, label: 'Mon' }, { d: 2, label: 'Tue' }, { d: 3, label: 'Wed' },
+  { d: 4, label: 'Thu' }, { d: 5, label: 'Fri' }, { d: 6, label: 'Sat' }, { d: 0, label: 'Sun' },
+];
+
+function DaysPicker({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
+  const toggle = (d: number) => onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d]);
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      {AGENT_WEEKDAYS.map(({ d, label }) => (
+        <button
+          key={d}
+          type="button"
+          onClick={() => toggle(d)}
+          className={`adm-btn adm-btn-xs ${value.includes(d) ? 'adm-btn-primary' : 'adm-btn-secondary'}`}
+          style={{ minWidth: 42 }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AgentsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [agents, setAgents] = useState<User[]>([]);
@@ -530,6 +554,7 @@ function AgentsAdmin() {
     workStartMinute: 0,
     workEndHour: 17,
     workEndMinute: 0,
+    workDaysOfWeek: [] as number[],
     deposit: true,
     withdraw: true,
   });
@@ -543,6 +568,7 @@ function AgentsAdmin() {
     workStartMinute: 0,
     workEndHour: 17,
     workEndMinute: 0,
+    workDaysOfWeek: [] as number[],
     deposit: true,
     withdraw: true,
     status: 'active'
@@ -559,19 +585,19 @@ function AgentsAdmin() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Single primary: putting one agent on duty takes everyone else off. The backend
-  // enforces this, so we just reload to reflect the new coverage.
-  const toggleOnDuty = async (agent: User) => {
+  // Set an agent's duty mode: 'auto' follows their working hours, 'on'/'off' are
+  // manual overrides. Force-'on' is single-primary (backend demotes other pins).
+  const setDutyMode = async (agent: User, mode: 'auto' | 'on' | 'off') => {
     setTogglingId(agent.id);
     try {
-      await adminAgentsApi.setAgentOnDuty(agent.id, !agent.isOnDuty);
-      addToast('success', agent.isOnDuty ? `${agent.displayName} taken off duty` : `${agent.displayName} is now on duty`);
+      await adminAgentsApi.setAgentOnDuty(agent.id, mode);
       await load();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setTogglingId(null); }
   };
 
-  const onDutyAgent = agents.find((a) => a.isOnDuty) ?? null;
+  // The agent players actually deposit to right now (server-computed, Ethiopia time).
+  const onDutyAgent = agents.find((a) => a.effectiveOnDuty) ?? null;
 
   const createAgent = async () => {
     if (!form.displayName.trim() || !form.phoneNumber.trim() || form.password.length < 8) {
@@ -588,6 +614,7 @@ function AgentsAdmin() {
         workStartMinute: form.workStartMinute,
         workEndHour: form.workEndHour,
         workEndMinute: form.workEndMinute,
+        workDaysOfWeek: form.workDaysOfWeek,
         agentPermissions: {
           deposit: form.deposit,
           withdraw: form.withdraw,
@@ -602,6 +629,7 @@ function AgentsAdmin() {
         workStartMinute: 0,
         workEndHour: 17,
         workEndMinute: 0,
+        workDaysOfWeek: [],
         deposit: true,
         withdraw: true,
       });
@@ -621,6 +649,7 @@ function AgentsAdmin() {
       workStartMinute: agent.workStartMinute !== undefined ? agent.workStartMinute : 0,
       workEndHour: agent.workEndHour !== undefined ? agent.workEndHour : 17,
       workEndMinute: agent.workEndMinute !== undefined ? agent.workEndMinute : 0,
+      workDaysOfWeek: agent.workDaysOfWeek ?? [],
       deposit: agent.agentPermissions ? agent.agentPermissions.deposit : true,
       withdraw: agent.agentPermissions ? agent.agentPermissions.withdraw : true,
       status: agent.status || 'active'
@@ -646,6 +675,7 @@ function AgentsAdmin() {
         workStartMinute: editForm.workStartMinute,
         workEndHour: editForm.workEndHour,
         workEndMinute: editForm.workEndMinute,
+        workDaysOfWeek: editForm.workDaysOfWeek,
         agentPermissions: {
           deposit: editForm.deposit,
           withdraw: editForm.withdraw,
@@ -693,7 +723,7 @@ function AgentsAdmin() {
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
             </label>
             <label className="adm-field">
-              <span>Work Hours Timeframe</span>
+              <span>Work Hours Timeframe <em className="adm-field-hint">— Ethiopia time (UTC+3)</em></span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="input" type="number" min={0} max={23} placeholder="Start Hr" value={form.workStartHour} style={{ width: 80 }}
                   onChange={(e) => setForm((f) => ({ ...f, workStartHour: Number(e.target.value) }))} />
@@ -707,6 +737,10 @@ function AgentsAdmin() {
                 <input className="input" type="number" min={0} max={59} placeholder="Min" value={form.workEndMinute} style={{ width: 80 }}
                   onChange={(e) => setForm((f) => ({ ...f, workEndMinute: Number(e.target.value) }))} />
               </div>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Working Days <em className="adm-field-hint">— none selected = every day</em></span>
+              <DaysPicker value={form.workDaysOfWeek} onChange={(v) => setForm((f) => ({ ...f, workDaysOfWeek: v }))} />
             </label>
             <div className="adm-field" style={{ flexDirection: 'row', gap: 16, alignItems: 'center', gridColumn: 'span 2' }}>
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
@@ -759,7 +793,7 @@ function AgentsAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>Work Hours Timeframe</span>
+              <span>Work Hours Timeframe <em className="adm-field-hint">— Ethiopia time (UTC+3)</em></span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="input" type="number" min={0} max={23} placeholder="Start Hr" value={editForm.workStartHour} style={{ width: 80 }}
                   onChange={(e) => setEditForm((f) => ({ ...f, workStartHour: Number(e.target.value) }))} />
@@ -773,6 +807,10 @@ function AgentsAdmin() {
                 <input className="input" type="number" min={0} max={59} placeholder="Min" value={editForm.workEndMinute} style={{ width: 80 }}
                   onChange={(e) => setEditForm((f) => ({ ...f, workEndMinute: Number(e.target.value) }))} />
               </div>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Working Days <em className="adm-field-hint">— none selected = every day</em></span>
+              <DaysPicker value={editForm.workDaysOfWeek} onChange={(v) => setEditForm((f) => ({ ...f, workDaysOfWeek: v }))} />
             </label>
             <div className="adm-field" style={{ flexDirection: 'row', gap: 16, alignItems: 'center', gridColumn: 'span 2' }}>
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
@@ -829,6 +867,7 @@ function AgentsAdmin() {
               <tr>
                 <th>Name</th>
                 <th>Phone</th>
+                <th>Working Hours</th>
                 <th>On Duty</th>
                 <th>Permissions</th>
                 <th>Status</th>
@@ -842,18 +881,43 @@ function AgentsAdmin() {
                 if (a.agentPermissions?.withdraw !== false) permissionsList.push('Withdraw');
                 const permStr = permissionsList.length > 0 ? permissionsList.join(', ') : 'None';
 
+                const pad = (n?: number) => n !== undefined ? String(n).padStart(2, '0') : '00';
+                const hoursStr = a.workStartHour !== undefined && a.workEndHour !== undefined
+                  ? `${pad(a.workStartHour)}:${pad(a.workStartMinute)}–${pad(a.workEndHour)}:${pad(a.workEndMinute)}`
+                  : 'All day';
+                const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+                const daysStr = a.workDaysOfWeek && a.workDaysOfWeek.length > 0
+                  ? [...a.workDaysOfWeek].sort((x, y) => x - y).map((d) => DAY_LABELS[d]).join(' ')
+                  : 'Every day';
+                const mode = a.onDutyMode ?? 'auto';
+
                 return (
                   <tr key={a.id} className="adm-tr">
                     <td><strong>{a.displayName}</strong></td>
                     <td className="adm-td-muted">{a.phoneNumber ?? '—'}</td>
+                    <td className="adm-td-muted">
+                      <div style={{ fontSize: 12 }}>{hoursStr}</div>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>{daysStr} · Ethiopia</div>
+                    </td>
                     <td>
-                      <button
-                        className={`adm-btn adm-btn-xs ${a.isOnDuty ? 'adm-btn-primary' : 'adm-btn-secondary'}`}
-                        disabled={togglingId === a.id}
-                        onClick={() => void toggleOnDuty(a)}
-                      >
-                        {togglingId === a.id ? '…' : a.isOnDuty ? '● On duty' : 'Set on duty'}
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                          background: a.effectiveOnDuty ? '#34d399' : '#64748b',
+                          boxShadow: a.effectiveOnDuty ? '0 0 6px #34d399' : 'none',
+                        }} title={a.effectiveOnDuty ? 'On duty now' : 'Off duty now'} />
+                        <select
+                          className="input"
+                          style={{ width: 90, padding: '4px 6px', fontSize: 12 }}
+                          value={mode}
+                          disabled={togglingId === a.id}
+                          onChange={(e) => void setDutyMode(a, e.target.value as 'auto' | 'on' | 'off')}
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="on">Force On</option>
+                          <option value="off">Force Off</option>
+                        </select>
+                      </div>
                     </td>
                     <td className="adm-td-muted">{permStr}</td>
                     <td>
@@ -1441,6 +1505,7 @@ function BingoAdmin() {
     minTicketsToStart: 0,
     houseEdgePct: 20,
     globalBingoBotWinInterval: 0,
+    prefilledRankingMode: 'race' as 'race' | 'leaderboard',
     prefilledFirstPlacePct: 80,
     prefilledSecondPlaceEnabled: false,
     prefilledSecondPlacePct: 0,
@@ -1488,6 +1553,7 @@ function BingoAdmin() {
         minTicketsToStart: c.minTicketsToStart ?? 0,
         houseEdgePct: c.houseEdgePct ?? 20,
         globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
+        prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as 'race' | 'leaderboard',
         prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
         prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
         prefilledSecondPlacePct: c.prefilledSecondPlacePct ?? 0,
@@ -1772,6 +1838,20 @@ function BingoAdmin() {
 
           <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
           <div className="adm-field-grid">
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Ranking Mode</span>
+              <select
+                className="input"
+                value={cfgForm.prefilledRankingMode ?? 'race'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledRankingMode: e.target.value as 'race' | 'leaderboard' }))}
+              >
+                <option value="race">Race — first to complete each place's pattern locks that place</option>
+                <option value="leaderboard">Leaderboard — round runs to the 1st-place pattern, then ranks by final standing</option>
+              </select>
+              <span className="adm-field-hint">
+                Leaderboard mode reshuffles ranks as cards progress and settles everyone at the end. Set distinct patterns per place (1st hardest → last easiest) for it to be meaningful.
+              </span>
+            </label>
             <label className="adm-field">
               <span>Default Winning Pattern</span>
               <select

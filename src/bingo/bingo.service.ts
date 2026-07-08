@@ -160,6 +160,7 @@ export class BingoService implements OnModuleInit {
         defaultWinMode: 'prefilled',
         defaultNumberRange: 75,
         defaultGridSize: 75,
+        prefilledRankingMode: 'race',
         prefilledFirstPlacePct: 80,
         prefilledSecondPlaceEnabled: false,
         prefilledSecondPlacePct: 0,
@@ -297,6 +298,7 @@ export class BingoService implements OnModuleInit {
       gridSize,
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
+      rankingMode: cfg.prefilledRankingMode ?? 'race',
       scheduledStartAt,
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -479,6 +481,7 @@ export class BingoService implements OnModuleInit {
       gridSize,
       patternPrizes: dto.patternPrizes ?? [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
+      rankingMode: cfg.prefilledRankingMode ?? 'race',
       scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : new Date(),
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -889,11 +892,14 @@ export class BingoService implements OnModuleInit {
         const soldTickets = await this.countSoldTickets(validRoomId, manager);
         if (soldTickets > 0) {
           if (room.winMode === 'prefilled') {
-            // All balls drawn → every card completes every pattern now; run a final
-            // settle pass to fill any still-open places, then reconcile the pool
-            // (which also marks non-winning cards lost). No generic lost-sweep here.
-            await this.evaluateAndSettleDerash(room, cfg, manager);
-            await this.reconcileDerashPool(room, cfg, manager);
+            // All balls drawn → resolve the room. Leaderboard mode ranks the whole
+            // queue at once; race mode fills any still-open places then reconciles.
+            if (room.rankingMode === 'leaderboard') {
+              await this.settleDerashLeaderboard(room, cfg, manager);
+            } else {
+              await this.evaluateAndSettleDerash(room, cfg, manager);
+              await this.reconcileDerashPool(room, cfg, manager);
+            }
           } else if (room.winMode === 'pattern') {
             const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
             const patterns =
@@ -942,10 +948,14 @@ export class BingoService implements OnModuleInit {
       if (rngResult.auditLogId) room.rngAuditLogIds = [...room.rngAuditLogIds, rngResult.auditLogId];
 
       if (room.winMode === 'prefilled') {
-        if (room.drawnNumbers.length >= minDrawsBeforeWin) {
-          await this.evaluateAndSettleDerash(room, cfg, manager);
+        if (room.rankingMode === 'leaderboard') {
+          await this.progressDerashLeaderboard(room, cfg, maxNumber, minDrawsBeforeWin, manager);
+        } else {
+          if (room.drawnNumbers.length >= minDrawsBeforeWin) {
+            await this.evaluateAndSettleDerash(room, cfg, manager);
+          }
+          await this.finalizeDerashIfDone(room, cfg, maxNumber, manager);
         }
-        await this.finalizeDerashIfDone(room, cfg, maxNumber, manager);
       } else if (room.winMode === 'pattern') {
         const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
         const patterns =
@@ -1116,6 +1126,171 @@ export class BingoService implements OnModuleInit {
 
       await this.awardDerashPlace({ room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
     }
+  }
+
+  /**
+   * Leaderboard mode per-draw progression. Nobody is paid during play; the room
+   * simply runs until a card completes the **1st-place pattern** (or the ball pool
+   * is exhausted, or no cards remain), then the whole queue is settled at once by
+   * `settleDerashLeaderboard`. Cards are re-marked every draw so the UI stays live.
+   */
+  private async progressDerashLeaderboard(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    maxNumber: number,
+    minDrawsBeforeWin: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const inPlay = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
+      order: { createdAt: 'ASC' },
+    });
+
+    // Re-mark every in-play card so boards/cartelas light up as numbers are called.
+    const drawn = new Set(room.drawnNumbers);
+    for (const ticket of inPlay) {
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawn.has(v))
+        .sort((a, b) => a - b);
+      await manager.save(ticket);
+    }
+
+    // Nothing left to play for → close and reconcile (refunds if truly empty).
+    if (inPlay.length === 0) {
+      room.status = 'completed';
+      room.activeGuard = null;
+      await this.reconcileDerashPool(room, cfg, manager);
+      return;
+    }
+
+    let ended = room.drawnNumbers.length >= maxNumber;
+    if (!ended && room.drawnNumbers.length >= minDrawsBeforeWin) {
+      const firstPattern = await this.resolvePrefilledPlacePattern(cfg, '1st', manager);
+      if (firstPattern) {
+        ended = inPlay.some((t) =>
+          this.bingoRulesService
+            .evaluatePatternTicket(t.grid, room.drawnNumbers, [firstPattern])
+            .completedPatternIds.includes(firstPattern.id),
+        );
+      }
+    }
+
+    if (ended) {
+      await this.settleDerashLeaderboard(room, cfg, manager);
+      room.status = 'completed';
+      room.activeGuard = null;
+    }
+  }
+
+  /**
+   * Leaderboard settlement — called once at round end. Builds a queue of cards
+   * ordered by the **hardest place-pattern each completed** (1st is hardest), ties
+   * broken by **who reached that pattern first**, then assigns ranks by POSITION:
+   * queue #1 → 1st, #2 → 2nd, … through the enabled places. A card can be promoted
+   * into a higher empty slot than the pattern it actually completed. Cards that
+   * completed no pattern are unranked (win nothing). Reuses `awardDerashPlace` +
+   * `reconcileDerashPool`, so the money math is identical to race mode.
+   */
+  private async settleDerashLeaderboard(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    manager: EntityManager,
+  ): Promise<void> {
+    const inPlay = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
+      order: { createdAt: 'ASC' },
+    });
+    if (inPlay.length === 0) return;
+
+    const drawnSet = new Set(room.drawnNumbers);
+    for (const ticket of inPlay) {
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawnSet.has(v))
+        .sort((a, b) => a - b);
+      await manager.save(ticket);
+    }
+
+    // Enabled places in order 1st→…→5th (hardest→easiest by convention). Nothing is
+    // settled yet in leaderboard mode, so this is the full enabled list.
+    const places = this.openPrefilledPlaces(room, cfg);
+    if (places.length === 0) return;
+
+    const placePattern = new Map<PrefilledPlace, BingoPattern>();
+    for (const place of places) {
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      if (pattern) placePattern.set(place, pattern);
+    }
+    if (placePattern.size === 0) return;
+
+    // Rank each card by the hardest place it reached and how early it got there.
+    type Ranked = { ticket: BingoTicket; bestRank: number; reachedAt: number; order: number };
+    const ranked: Ranked[] = [];
+    inPlay.forEach((ticket, order) => {
+      const completion = this.computeDerashCompletionIndex(ticket.grid, room.drawnNumbers, placePattern);
+      let bestRank = Number.POSITIVE_INFINITY;
+      let reachedAt = Number.POSITIVE_INFINITY;
+      places.forEach((place, idx) => {
+        const at = completion.get(place);
+        if (at !== undefined && idx < bestRank) {
+          bestRank = idx;
+          reachedAt = at;
+        }
+      });
+      if (bestRank !== Number.POSITIVE_INFINITY) ranked.push({ ticket, bestRank, reachedAt, order });
+    });
+
+    // Queue order: hardest tier first, then earliest to reach it, then purchase order.
+    ranked.sort((a, b) => a.bestRank - b.bestRank || a.reachedAt - b.reachedAt || a.order - b.order);
+
+    const soldTickets = await this.countSoldTickets(room.id, manager);
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const houseEdgePct = room.houseEdgePct ?? 20;
+
+    // Assign ranks strictly by queue position, capped at the enabled place count.
+    for (let i = 0; i < ranked.length && i < places.length; i++) {
+      const place = places[i];
+      const pattern = placePattern.get(place);
+      if (!pattern) continue;
+      await this.awardDerashPlace({
+        room,
+        winner: ranked[i].ticket,
+        place,
+        pattern,
+        totalPotMinor,
+        houseEdgePct,
+        cfg,
+        manager,
+      });
+    }
+
+    // Top up filled places to share the whole pool and mark non-winners lost.
+    await this.reconcileDerashPool(room, cfg, manager);
+  }
+
+  /**
+   * For one card, the 1-based draw index at which it FIRST completes each place's
+   * pattern (absent = never completed within the drawn numbers). Used to rank the
+   * leaderboard queue: the hardest pattern reached and how early it was reached.
+   */
+  private computeDerashCompletionIndex(
+    grid: (number | null)[][],
+    drawnNumbers: number[],
+    placePattern: Map<PrefilledPlace, BingoPattern>,
+  ): Map<PrefilledPlace, number> {
+    const completion = new Map<PrefilledPlace, number>();
+    const partial: number[] = [];
+    for (let k = 0; k < drawnNumbers.length; k += 1) {
+      partial.push(drawnNumbers[k]);
+      for (const [place, pattern] of placePattern) {
+        if (completion.has(place)) continue;
+        const state = this.bingoRulesService.evaluatePatternTicket(grid, partial, [pattern]);
+        if (state.completedPatternIds.includes(pattern.id)) completion.set(place, k + 1);
+      }
+      if (completion.size === placePattern.size) break;
+    }
+    return completion;
   }
 
   /** Enabled derash places (1st always) that are not yet settled, in place order. */
@@ -1400,6 +1575,18 @@ export class BingoService implements OnModuleInit {
         lock: { mode: 'pessimistic_write' },
       });
       if (!ticket) throw new NotFoundException('Cartela not found for this player in this room');
+
+      // Leaderboard mode has no per-place claiming — ranks are resolved once, at
+      // round end, by final achievement. A manual "Bingo" tap is a harmless no-op.
+      if (room.rankingMode === 'leaderboard') {
+        const soldTickets = await this.countSoldTickets(roomId, manager);
+        const takenSpots = await this.getTakenSpots(roomId);
+        return {
+          result: 'ignored',
+          ticket: this.toTicketResponse(ticket),
+          room: this.toRoomResponse(room, soldTickets, takenSpots),
+        };
+      }
 
       const finish = async (result: 'won' | 'disqualified' | 'ignored') => {
         const soldTickets = await this.countSoldTickets(roomId, manager);

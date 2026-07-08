@@ -61,6 +61,18 @@ export class BingoConfig {
   @Column({ type: 'int', default: 75 })
   defaultGridSize: number;
 
+  /**
+   * How derash places are decided:
+   * - `race`: each place is locked to the first cartela to complete that place's
+   *   pattern, in order (the original behaviour).
+   * - `leaderboard`: the round runs until a cartela completes the 1st-place
+   *   pattern (or the pool is exhausted); ranks are then assigned by a live queue
+   *   ordered by best pattern reached, ties by who reached it first. Patterns
+   *   should be configured hardest (1st) → easiest (last) for this to be meaningful.
+   */
+  @Column({ type: 'varchar', length: 12, default: 'race' })
+  prefilledRankingMode: 'race' | 'leaderboard';
+
   /** % of prize pool awarded to 1st place in prefilled mode. */
   @Column({ type: 'int', default: 80 })
   prefilledFirstPlacePct: number;

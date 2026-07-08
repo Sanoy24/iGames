@@ -38,6 +38,30 @@
 | Bingo: online player count shows 0 | Socket gateway doesn't emit on connect | `useSocketConnection` emits `request.counts` on `'connect'` event; gateway handles `@SubscribeMessage('request.counts')` |
 | Bingo: a logged-in player's own cartelas/tickets vanish on tab switch or reload | The read endpoint (`GET /bingo/current`, `/rooms/:id/state`, `/sync`) has **no guard**, so `request.user` is undefined and the server never returns the caller's tickets — they only lived in client memory | Apply `OptionalJwtAuthGuard` (see D-14). Do NOT hand-roll token parsing in the controller. |
 | A guard that `extends JwtAuthGuard` injects `undefined` deps at boot | Subclass without an explicit constructor loses `design:paramtypes` DI metadata | Declare an explicit constructor that calls `super(...)` with the same `@Inject`-decorated params (see `OptionalJwtAuthGuard`) |
+| Derash cartela refund rejected ("Sales are closed" / "not found") | Refund is `open`-window + own-active-ticket only | `releaseCartela` allows a refund only while `room.status==='open'` and for the caller's own `active` ticket. This is intended; it's not a bug (see D-20). |
+| Derash leaderboard round ends the instant the first line hits / no leaderboard develops | Every place uses the same pattern (e.g. all "Any Line"), so the 1st-place pattern completes immediately | In leaderboard mode set **distinct patterns hardest (1st) → easiest (last)**. The round ends on the 1st-place pattern (see D-18). |
+| Derash leaderboard win dialog never shows / room switches too fast | The result-display countdown ran concurrently with the live-win queue | The countdown now starts only after `livePlaceQueue` drains (result-hold effect depends on `livePlaceQueue.length`). Don't revert that gate (see D-22). |
+| Called number lights up on the board/cards before it shows in "now calling" | All surfaces read one reveal cursor + the caller has an entrance animation | Board/tickets read the **trailing** `boardCount`/`ticketCount` cursors; now-calling reads `revealedCount`. Cascade order is deliberate (see D-22) — don't collapse them. |
+
+---
+
+## Agents / On-Duty & Deposits
+
+| Symptom | Root Cause | Fix |
+| --- | --- | --- |
+| "No agent is on duty right now" during real Ethiopian working hours | Old routing read the **server clock** (`new Date().getHours()`), which on a UTC host is 3h behind Ethiopia | Availability is now `isAgentEffectivelyOnDuty` evaluated in Ethiopia time via `src/common/agent-duty.util.ts`. Admin sets an agent's `onDutyMode` and/or working window. Never use a raw `new Date()` hour for agent availability (see D-21). |
+| Agent gets "You are off duty right now" completing a withdrawal/deposit | `onDutyMode==='off'`, or `auto` but outside the Ethiopia-time working window | Admin sets the agent **Force On** or fixes their `workDaysOfWeek`/hours. `verifyAgentWorkingHoursAndPermission` gates on effective-on-duty + `agentPermissions`. |
+| Two agents both appear on duty / deposits split unexpectedly | `auto` windows overlap, or two agents Force-On | Force-`on` is single-primary (`setAgentOnDutyMode` demotes other `on` to `auto`). `findOnDutyAgent` picks one (forced-on first, else earliest start). Give agents non-overlapping windows or pin one. |
+| Editing an agent's shift in the **Shifts** tab has no effect on deposits | `AgentShift` + `workStartHour` schedule are **dormant** — they no longer route | Use Admin → Agents → On-Duty + Working Days. The old shift UI is kept intentionally but unused (see D-21). |
+
+---
+
+## Wallet / Withdrawal Fees
+
+| Symptom | Root Cause | Fix |
+| --- | --- | --- |
+| `Service fee and commission would consume the entire withdrawal amount` | `withdrawalServiceChargePct + withdrawalCommissionPct >= 100`, so net ≤ 0 | Lower the two percentages so `fee + commission < gross` (see D-19). |
+| Super-admin never receives the service fee | `superAdminUserId` unset, or equals the processing agent | Set a designated super-admin in Admin → System Config. Fee still increments `platform_stats` for reporting either way. |
 
 ---
 

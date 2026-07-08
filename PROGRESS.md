@@ -6,12 +6,12 @@
 
 ## Current Verified State
 
-**Date**: 2026-07-05  
-**Branch**: `migration/mysql`  
-**DB**: MySQL 8 + TypeORM (entities now declare `InnoDB ROW_FORMAT=DYNAMIC`; ALTER still needed on pre-existing production tables). New tables: `broadcast_messages`, `notifications` (auto-created via `synchronize`).  
-**Backend build**: `npx nest build` — clean  
+**Date**: 2026-07-08  
+**Branch**: `migration/mysql` (this session's work is **uncommitted** in the working tree)  
+**DB**: MySQL 8 + TypeORM (entities declare `InnoDB ROW_FORMAT=DYNAMIC`; ALTER still needed on pre-existing production tables). This session added **columns only** (all additive, auto-created via `synchronize`): `users.onDutyMode`/`workDaysOfWeek`, `bingo_config.prefilledRankingMode` + 4th/5th place + `prefilledFirst..FifthPatternId`, `bingo_rooms.rankingMode`, `system_configs.withdrawalCommissionPct`/`superAdminUserId`, `withdrawals.serviceFeeMinor`/`commissionMinor`.  
+**Backend build**: `npx tsc --noEmit` — clean  
 **Frontend build**: `npm run build` in `frontend/` — ✓ clean  
-**Tests**: `npx jest` — **158/158 pass**  
+**Tests**: `npx jest` — **171/171 pass**  
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -26,6 +26,13 @@
 | Bingo — paced ball reveal (calm ~1.5s cadence, breathing caller, current-ball ring on board) | Passing |
 | Bingo — derash win dialog renders the winner's 5×5 for all players (settlementSummary.winnerGrid + fallbacks) | Passing |
 | Bingo — logged-in player's own cartelas restore after tab switch/reload (OptionalJwtAuthGuard on read endpoints) | Passing |
+| Bingo — derash **up to 5 places, each with its own pattern** (`prefilledFirst..FifthPatternId`); sequential winner reveal + final standings | Passing |
+| Bingo — derash **rankingMode: race \| leaderboard** (leaderboard resolves ranks at round end by final achievement, promotion by queue position) | Passing |
+| Bingo — `any_two_lines` / `any_three_lines` built-in patterns | Passing |
+| Bingo — **instant-buy cartelas + tap-to-refund** (DELETE release endpoint, refund ledger, frees pool card); Pay bar removed; black-tile grid | Passing |
+| Bingo — **staged reveal**: now-calling → board → ticket cascade, held 5×5 win popup, result countdown waits for live-win queue | Passing |
+| Withdrawals — **service fee → super-admin wallet, commission → agent** (two cuts from gross; DB-config %) | Passing |
+| Agents — **admin-controlled on-duty + Ethiopia-time working schedule** (`onDutyMode`, `workDaysOfWeek`); deposit routing + withdrawal gate; fixes "No agent on duty" timezone bug | Passing |
 | Crash — JWT guards, stale round abandonment on bootstrap, RNG fix (min:1), bet/cashout hardening | Passing |
 | Admin panel — sidebar layout, KPI icons + donut, Account tab, Bingo config, bot top-up/delete | Passing |
 | Admin — Telegram Broadcast tab (text/image/buttons, send-now/once/recurring, live TG preview, delivery progress) | Passing |
@@ -44,6 +51,32 @@
 ---
 
 ## Session Record
+
+### Session: 2026-07-07 → 2026-07-08 (derash overhaul + agent duty + fee split)
+
+**Goal**: New winning patterns, 5-place per-place-pattern derash + a leaderboard ranking mode, instant-buy/tap-refund cartelas, a withdrawal service-fee/commission split, an admin-controlled agent on-duty + working-hours system, and a staged end-of-round reveal.
+
+**Completed** (all **uncommitted** in the working tree):
+
+- **New patterns** `any_two_lines` / `any_three_lines` — `countCompletedLines` helper in `bingo-rules.service.ts`, seeded built-ins (auto-seed by name on boot), DTO + `PatternType` widened. (BE-18)
+- **Derash 5 places, per-place patterns** — `BingoConfig` gained 4th/5th enable+pct and `prefilledFirst..FifthPatternId`; `BingoPrizeTier` +`4th`/`5th`; settlement resolves each place's own pattern (`resolvePrefilledPlacePattern`). (BE-19)
+- **Instant-buy + tap-refund** — `DELETE /bingo/rooms/:id/cartelas/:n` → `releaseCartela` (refund ledger `bingo-cartela-refund:{ticketId}`, frees pool card, `open`-only). Frontend taps buy/refund a single cartela (per-cartela pending guard); Pay bar removed; available cells → black tile + muted number (`#8f9db0`). (BE-20, FE-16)
+- **Withdrawal fee split** — `WalletService.completeWithdrawalByAgent` now takes `serviceFeePct` + `commissionPct` + `superAdminUserId`: service fee → super-admin wallet (`platform-service-fee:{id}`), commission → agent (`agent-commission:{id}`), net → agent custody. `system_configs.withdrawalCommissionPct`/`superAdminUserId`; `withdrawals.serviceFeeMinor`/`commissionMinor`. Admin config UI + Agent net breakdown. (BE-21, FE-18, D-19)
+- **Agent on-duty + working schedule** — `User.onDutyMode` (`auto`/`on`/`off`) + `workDaysOfWeek`; new `src/common/agent-duty.util.ts` (Ethiopia +180 wall clock, working-window + effective-on-duty). `getActiveAgentDepositInfo` + `verifyAgentWorkingHoursAndPermission` now use effective-on-duty; `PATCH /admin/agents/:id/on-duty`. Admin Agents UI: mode selector + coverage banner + Working-Days picker. `AgentShift`/`workStartHour` left dormant. (BE-22, FE-18, D-21)
+- **Derash leaderboard mode** — `rankingMode: race|leaderboard` (config + room snapshot); `progressDerashLeaderboard` (end on 1st-place pattern / pool exhaustion) + `settleDerashLeaderboard` (queue by hardest tier→earliest, ranks by position, reuses `awardDerashPlace`+`reconcileDerashPool`); `claimBingo` no-op in leaderboard mode. Admin Ranking Mode dropdown. (BE-23, FE-18, D-18)
+- **Staged reveal** — `boardCount`/`ticketCount` trailing cursors (now-calling → board → ticket); `popupArmed` holds the 5×5 win popup behind `NOW_CALLING_HOLD_MS`; result-display countdown starts only after the live-win queue drains. (FE-17, D-22)
+
+**Concurrent (other-agent) work merged cleanly**: `maxCartelasPerUser`, manual `claimBingo`/auto-claim, `finalizeDerashIfDone`, `reconcileDerashPool` (unfilled-place redistribution), `awardDerashPlace`.
+
+**Verified**: `npx tsc --noEmit` clean; `npx jest` **171/171** (added `any_two/three_lines` rules tests); `frontend` `tsc` + `vite build` clean. Live end-to-end not exercised.
+
+**Next best actions**:
+
+1. **Commit** the batch (branch off `migration/mysql`).
+2. Live pass: a leaderboard round (verify sequential reveal + standings + payouts), a withdrawal (super-admin + agent credits), a deposit while an agent is on duty.
+3. Still pending: Crash win notifications; the parked derash "keep-calling / 1st-place" race-mode idea; ROW_FORMAT ALTER (OPS-02).
+
+---
 
 ### Session: 2026-07-04 → 2026-07-05 (broadcast, notifications, bingo polish + fixes)
 

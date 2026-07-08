@@ -125,3 +125,43 @@
 **Decided**: 2026-07-04
 **Decision**: Columns storing admin/user free text that may contain 4-byte characters (emoji 💸🎉) declare `charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci'` explicitly (e.g. `broadcast_messages.title/text`, `notifications.title/body`).
 **Why**: A plain `utf8`/`utf8mb3` column silently replaces 4-byte characters with `?` at insert time (3-byte scripts like Amharic store fine, which hides the bug). Add this to any new column that holds arbitrary user/admin text.
+
+---
+
+## Derash / Bingo (continued)
+
+### D-18: Derash places — per-place patterns, up to 5 places, and two ranking modes
+**Decided**: 2026-07-08
+**Decision**: A derash room awards up to **5 places** (`1st..5th`), each with **its own winning pattern** (`BingoConfig.prefilledFirst..FifthPatternId`, falling back to `prefilledWinPatternId` → built-in "Any Line"). New line-count patterns `any_two_lines` / `any_three_lines` (via `BingoRulesService.countCompletedLines`). A room carries `rankingMode` (snapshotted from `BingoConfig.prefilledRankingMode`):
+- **`race`** (default, original): each enabled place is an **independent** "first cartela to complete THIS place's pattern" race, awarded incrementally as draws land; the pool is reconciled across FILLED places at the end (`reconcileDerashPool`), so unfilled places don't leak to the house.
+- **`leaderboard`**: nobody is paid during play. The round runs until a cartela completes the **1st-place pattern** (or the pool is exhausted / no cards remain), then `settleDerashLeaderboard` builds a queue ordered by **hardest place-pattern reached → earliest to reach it → purchase order** and assigns ranks by **position** (queue #1 → 1st, …). A card can be **promoted into a higher empty slot** than the pattern it completed; each card wins exactly one place.
+**Why**: Race is a fast "first to bingo" feel; leaderboard reflects final achievement and lets standings reshuffle (the user's explicit design). Both are DB-config selectable, so neither is lost.
+**Constraints**: For leaderboard mode set **distinct patterns hardest (1st) → easiest (last)** — if every place is "Any Line" the round ends on the first single line with no leaderboard. Leaderboard settlement **reuses `awardDerashPlace` + `reconcileDerashPool`** — do not fork the payout math. `claimBingo` (manual "Bingo") is a **no-op in leaderboard mode**. Both modes are snapshotted onto the room at creation so a running room ignores a mid-game config flip.
+
+### D-20: Instant-buy cartelas + tap-to-refund (no Pay button)
+**Decided**: 2026-07-08
+**Decision**: In derash, tapping an available cartela **buys it immediately** (single-cartela purchase); tapping a cartela you own **refunds it** while the room is `open` via `DELETE /bingo/rooms/:id/cartelas/:cartelaNumber` → `BingoService.releaseCartela` (refund ledger `bingo-cartela-refund:{ticketId}` in one transaction, frees the pool `BingoCard`, decrements `soldTickets`). The client uses a per-cartela pending guard; the Pay bar is gone.
+**Why**: A one-tap buy/undo is simpler than select-then-pay; refund-anytime-while-open (the user's choice) is the most forgiving.
+**Constraint**: Refund is allowed **only while `status === 'open'`** and only for the caller's own `active` ticket; the idempotency key makes a double-tap safe. Available grid cells render as a **black tile + muted number** (`#8f9db0`) with the group colour kept as a thin accent border — legible on big 200/300 grids.
+
+### D-22: Staged end-of-round reveal (now-calling → board → ticket → win window)
+**Decided**: 2026-07-08
+**Decision**: The reveal cascades across three trailing cursors so a called number is **seen in "now calling" first**, then marks on the **board** (`NOW_CALLING_LEAD_MS` later), then on the **tickets** (`BOARD_TO_TICKET_MS` later): `revealedCount` (announce, + pop sound) → `boardCount` → `ticketCount`. The per-place 5×5 win popup is held behind `NOW_CALLING_HOLD_MS` (`popupArmed`) so the winning ball is seen before the card pops, and the result-display **countdown only starts once the live-win queue drains** (so a multi-place leaderboard round never burns its whole result window on the live popups).
+**Why**: Previously every surface read one cursor, so numbers lit up on the board/cards at the same instant they entered "now calling" — and the caller's entrance animation made it look last. The user wanted a clear now-calling → grid → ticket → window order.
+**Constraint**: Each trailing cursor **snaps backwards instantly** (room switch/reset) but lags going forward. Don't collapse the board/ticket back onto `revealedNumbers`. All three delays sit comfortably inside the `REVEAL_BASE_MS` (1.5s) per-ball cadence.
+
+---
+
+## Wallet / Agents (continued)
+
+### D-19: Withdrawal deductions — service fee → super-admin wallet, commission → agent
+**Decided**: 2026-07-08
+**Decision**: On withdrawal completion, two cuts come out of the **gross**: a **service fee** (`system_configs.withdrawalServiceChargePct`) credited to a **designated super-admin's wallet** (`superAdminUserId`), and a **commission** (`withdrawalCommissionPct`) credited to the **processing agent** as a distinct `agent_receipt` earning. The user nets `gross − serviceFee − commission`; the agent also receives that net as payout custody. `withdrawals` stores `serviceFeeMinor` + `commissionMinor` (and `serviceChargeMinor` = their sum). Ledger keys: `platform-service-fee:{id}`, `agent-commission:{id}`, `agent-receipt:{id}`.
+**Why**: The platform (super-admin) and the agent both earn a share of the withdrawal; the super-admin fee lands in a real, auditable wallet instead of only the `platform_stats` counter (which is still incremented for reporting).
+**Constraints**: `serviceFee + commission < gross` (else `BadRequestException`). All credits happen inside the same transaction as the reservation settle; total credited (net + commission + serviceFee) = gross. The super-admin credit is skipped if `superAdminUserId` is unset or equals the agent.
+
+### D-21: Agent on-duty is the single signal; working hours are Ethiopia-time
+**Decided**: 2026-07-08
+**Decision**: An agent's availability is governed by **`User.onDutyMode`** (`auto` | `on` | `off`) plus a per-agent **working window** (`workDaysOfWeek` + existing `workStartHour/Minute/workEndHour/Minute`). **Effective on-duty** = `on`, or (`auto` **and** inside the window). Force-`on` is single-primary (setting one demotes other `on` agents to `auto`). The **deposit destination** (`getActiveAgentDepositInfo`) is the one effectively-on-duty agent (respecting deposit permission), and the **withdrawal/claim gate** (`verifyAgentWorkingHoursAndPermission`) requires effective-on-duty. All time math lives in `src/common/agent-duty.util.ts` and is evaluated in **Ethiopia time (+180 min, no DST)** by shifting the instant then reading its UTC wall clock. Admin sets mode via `PATCH /admin/agents/:id/on-duty`.
+**Why**: The old routing read the **server clock** (`new Date().getHours()`), so on a UTC host an Ethiopia 9–21 shift was effectively 12–24 → "No agent is on duty right now" during real working hours. Collapsing to one flag + a fixed-offset schedule removes both the timezone bug and the duplicate `AgentShift`/`workStartHour` gate.
+**Constraints**: The `agent_shifts` table + its admin Shift UI and the per-agent `workStartHour/End` window are **retained but dormant** (they no longer route) — the user may revisit; don't delete them. `agentPermissions.{deposit,withdraw}` still apply on top of on-duty. Any new "is this agent available" check must use `isAgentEffectivelyOnDuty` — never a raw `new Date()` hour.

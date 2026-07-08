@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0",
-    "updated": "2026-07-05",
+    "updated": "2026-07-08",
     "schema": "Each feature: id, area, title, behavior, status, verification, evidence, notes",
     "statuses": ["not_started", "in_progress", "blocked", "passing"],
     "rule": "Status only moves to 'passing' when verification command exits 0 and output matches expected. Agent cannot self-declare passing."
@@ -299,6 +299,87 @@
       "status": "passing",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
       "evidence": "frontend/src/pages/Wallet.tsx (ENTRY_LABELS, matchesTxFilter). Commit 405d50f."
+    },
+    {
+      "id": "BE-18",
+      "area": "bingo",
+      "title": "Winning patterns: any_two_lines / any_three_lines",
+      "behavior": "PatternType widened with any_two_lines/any_three_lines; BingoRulesService.countCompletedLines counts full rows+cols+2 diagonals on a 5x5; isPatternCompleted returns true at >=2 / >=3. Seeded as built-in patterns (auto-seed by name on boot). DTO accepts the new types.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest bingo-rules",
+      "evidence": "src/bingo/bingo-rules.service.ts, entities/bingo-pattern.entity.ts, dto/create-bingo-pattern.dto.ts. Unit tests added (bingo-rules 29 cases). See D-18."
+    },
+    {
+      "id": "BE-19",
+      "area": "bingo",
+      "title": "Derash up to 5 places, each with its own pattern",
+      "behavior": "BingoConfig adds prefilledFourth/FifthPlaceEnabled+Pct and prefilledFirst..FifthPatternId; BingoPrizeTier +4th/5th. Settlement resolves each place's own pattern (resolvePrefilledPlacePattern, falling back to prefilledWinPatternId -> Any Line). Weights/prize math extended to 5 places.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/bingo/entities/bingo-config.entity.ts, bingo-room.entity.ts, bingo.service.ts, dto/update-bingo-config.dto.ts. See D-18."
+    },
+    {
+      "id": "BE-20",
+      "area": "bingo",
+      "title": "Cartela release + refund endpoint",
+      "behavior": "DELETE /bingo/rooms/:id/cartelas/:cartelaNumber -> releaseCartela: refunds the stake (refund ledger bingo-cartela-refund:{ticketId}) in one transaction, frees the pool BingoCard, decrements soldTickets. Only while room.status==='open' and only the caller's own active ticket. Idempotent per ticket.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/bingo/bingo.service.ts (releaseCartela), bingo.controller.ts (DELETE route). See D-20."
+    },
+    {
+      "id": "BE-21",
+      "area": "wallet",
+      "title": "Withdrawal service fee -> super-admin, commission -> agent",
+      "behavior": "completeWithdrawalByAgent takes serviceFeePct + commissionPct + superAdminUserId. Service fee credits the designated super-admin wallet (platform-service-fee:{id}), commission credits the agent (agent-commission:{id}), net credits the agent as payout custody (agent-receipt:{id}); user nets gross - fee - commission. withdrawals stores serviceFeeMinor/commissionMinor. Guards fee+commission < gross.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/wallet/wallet.service.ts, entities/withdrawal.entity.ts; src/admin/entities/system-config.entity.ts (+withdrawalCommissionPct, superAdminUserId); src/agents/agents.service.ts. See D-19."
+    },
+    {
+      "id": "BE-22",
+      "area": "agents",
+      "title": "Agent on-duty + Ethiopia-time working schedule",
+      "behavior": "User.onDutyMode (auto|on|off) + workDaysOfWeek. src/common/agent-duty.util.ts evaluates the working window and effective-on-duty in Ethiopia time (+180, no DST). getActiveAgentDepositInfo returns the effectively-on-duty agent; verifyAgentWorkingHoursAndPermission gates on it. PATCH /admin/agents/:id/on-duty sets mode (force-on is single-primary). Fixes the server-clock 'No agent on duty' bug. AgentShift/workStartHour left dormant.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/common/agent-duty.util.ts, src/users/users.service.ts (setAgentOnDutyMode, findOnDutyAgent), src/agents/agents.service.ts, src/admin/admin.controller.ts. See D-21."
+    },
+    {
+      "id": "BE-23",
+      "area": "bingo",
+      "title": "Derash leaderboard ranking mode",
+      "behavior": "BingoConfig.prefilledRankingMode + BingoRoom.rankingMode (race|leaderboard, snapshotted). Leaderboard: no incremental payout; progressDerashLeaderboard ends the round on the 1st-place pattern (or pool exhaustion / no cards), then settleDerashLeaderboard ranks a queue by hardest place-pattern reached -> earliest -> purchase order and assigns ranks by position (promotion into empty slots). Reuses awardDerashPlace + reconcileDerashPool. claimBingo is a no-op in leaderboard mode.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/bingo/bingo.service.ts (progressDerashLeaderboard, settleDerashLeaderboard, computeDerashCompletionIndex). See D-18."
+    },
+    {
+      "id": "FE-16",
+      "area": "frontend/bingo",
+      "title": "Instant-buy + tap-to-refund cartelas; grid restyle",
+      "behavior": "Tapping an available cartela buys it immediately; tapping your own (while open) refunds it (bingoApi.releaseCartela); per-cartela pending guard; Pay bar removed. CartelaGrid available cells render as a black tile + muted number (#8f9db0) with the group colour as a thin accent border; owned=green, taken=red.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (CartelaGrid, handleCartelaTap), lib/api.ts (releaseCartela). See D-20."
+    },
+    {
+      "id": "FE-17",
+      "area": "frontend/bingo",
+      "title": "Sequential place reveal + standings + staged reveal cascade",
+      "behavior": "Result overlay reveals winners one place at a time (medal + name + last-4 phone) then a Final Standings list. Reveal is staged across trailing cursors: now-calling -> board (NOW_CALLING_LEAD_MS) -> ticket (BOARD_TO_TICKET_MS); the 5x5 win popup is held behind NOW_CALLING_HOLD_MS (popupArmed); the result-display countdown starts only after the live-win queue drains.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (RoomResultOverlay, boardCount/ticketCount, popupArmed, result-hold effect). See D-18, D-22."
+    },
+    {
+      "id": "FE-18",
+      "area": "frontend/admin",
+      "title": "Admin config UI: ranking mode, per-place patterns, fee/commission, super-admin, agent on-duty/hours",
+      "behavior": "Bingo settings: Ranking Mode dropdown, 4th/5th place enable+pct, per-place pattern selectors. System config: commission %, super-admin picker (admin users). Agents: On-Duty selector (Auto/Force On/Force Off) + coverage banner + Working-Days picker (Ethiopia). Agent page shows the fee + commission net breakdown.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Admin.tsx (AgentsAdmin, ConfigAdmin, bingo cfgForm), Agent.tsx, lib/api.ts, lib/models.ts. See D-18, D-19, D-21."
     },
     {
       "id": "OPS-01",

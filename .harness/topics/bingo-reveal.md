@@ -112,10 +112,72 @@ a clone of any reference app. Do not regress:
 
 ---
 
+## Derash places, per-place patterns & ranking modes (2026-07-08, see D-18)
+
+A derash room awards **up to 5 places** (`1st..5th`), each with **its own winning
+pattern** — `BingoConfig.prefilledFirst..FifthPatternId`, falling back to
+`prefilledWinPatternId` → built-in "Any Line" (`resolvePrefilledPlacePattern`). Place
+enable/pct live on the config (`prefilledSecond..FifthPlaceEnabled/Pct`), and the whole
+house-adjusted pool is split across the **filled** places by weight
+(`reconcileDerashPool`), so unfilled places don't leak to the house. New line-count
+patterns `any_two_lines` / `any_three_lines` come from `BingoRulesService.countCompletedLines`
+(rows + cols + both 5×5 diagonals).
+
+The room snapshots a **`rankingMode`** from `BingoConfig.prefilledRankingMode`:
+
+| Mode | How places are decided | Ends when | Manual claim |
+| --- | --- | --- | --- |
+| `race` (default) | each enabled place is an **independent** "first cartela to complete THIS place's pattern" race, awarded incrementally per draw | every place filled / pool exhausted / no cards (`finalizeDerashIfDone`) | `claimBingo` awards a place |
+| `leaderboard` | **nobody paid during play**; at the end a queue ordered by hardest place-pattern reached → earliest → purchase order is assigned ranks by **position** (promotion into empty higher slots) | a cartela completes the **1st-place pattern** / pool exhausted / no cards | `claimBingo` is a **no-op** |
+
+- Leaderboard settlement (`settleDerashLeaderboard`, `computeDerashCompletionIndex`)
+  **reuses `awardDerashPlace` + `reconcileDerashPool`** — the payout math is identical to
+  race mode; don't fork it.
+- For leaderboard mode the admin must set **distinct patterns hardest (1st) → easiest
+  (last)** — if every place is "Any Line" the round ends on the first single line and no
+  leaderboard develops.
+- `rankingMode` is **snapshotted onto the room** at creation, so flipping the config
+  mid-game doesn't change a running room.
+
+## Buying cartelas: instant buy + tap-to-refund (see D-20)
+
+Tapping an **available** cartela buys it immediately (single-cartela purchase); tapping
+a cartela **you own** refunds it **while the room is `open`** via
+`DELETE /bingo/rooms/:id/cartelas/:n` → `releaseCartela` (refund ledger + frees the pool
+`BingoCard` + decrements `soldTickets`). There is **no Pay bar**. The client uses a
+per-cartela pending guard. Available grid cells render as a **black tile + muted number**
+(`#8f9db0`) with the group colour as a thin accent border — legible on 200/300 grids.
+
+## Reveal cascade & staged win (see D-22)
+
+The reveal is deliberately **staged across three trailing cursors** so a called number is
+**seen in "now calling" first**, then marks on the board, then on the tickets:
+
+```
+room.drawnNumbers ─poll→ drawnNumbers[]
+        │
+   revealedCount  → now calling (announce + pop sound)
+        │  (+ NOW_CALLING_LEAD_MS)
+   boardCount     → NumberBoard (boardNumbers)
+        │  (+ BOARD_TO_TICKET_MS)
+   ticketCount    → tickets (ticketSet)
+```
+
+Then the per-place **5×5 win popup** is held behind `NOW_CALLING_HOLD_MS` (`popupArmed`)
+so the winning ball is seen before the card pops, and the **result-display countdown only
+starts once the live-win queue drains** (the result-hold effect depends on
+`livePlaceQueue.length`) — otherwise a multi-place leaderboard round burns its whole
+result window on the live popups and never shows the summary. Each trailing cursor
+**snaps backwards instantly** (room switch/reset) but lags going forward.
+
+---
+
 ## Gotchas
 
-- Cards must read the **paced** `revealedSet`/`revealedNumbers`, never `room.drawnNumbers`
-  directly — otherwise cards mark ahead of the caller.
+- Cards must read the **paced** cursors (`ticketSet`/`boardNumbers`/`revealedNumbers`),
+  never `room.drawnNumbers` directly — otherwise cards mark ahead of the caller.
+- Now-calling reads `revealedCount`; the board reads the trailing `boardCount`; tickets
+  read the further-trailing `ticketCount`. Don't collapse them back onto one cursor (D-22).
 - `game-lifecycle.md` still describes the original 90-ball `line` flow. For `prefilled`
   rooms the pool is `numberRange` (not a fixed 90) and the "tiers" are winning patterns,
   not one/two-line/full-house.

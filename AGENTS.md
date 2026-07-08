@@ -59,12 +59,12 @@ Agent confidence is not a completion signal. The verification command is.
 iGames/
 ├── src/                  # NestJS backend
 │   ├── admin/            # Admin REST endpoints, stats, system config
-│   ├── agents/           # Agent withdrawal-processing endpoints
+│   ├── agents/           # Agent withdrawal-processing; admin-controlled on-duty + working schedule
 │   ├── auth/             # JWT, Telegram Mini App login, credentials login
 │   ├── bingo/            # Bingo rooms, tickets, draw engine, win modes
 │   ├── bots/             # Auto-playing Keno/Bingo bots
 │   ├── broadcast/        # Admin Telegram broadcast (now/scheduled/recurring, image upload)
-│   ├── common/           # Shared pipes, guards, interceptors, decorators
+│   ├── common/           # Shared pipes, guards, interceptors, decorators; agent-duty.util (Ethiopia-time on-duty)
 │   ├── crash/            # Crash game rounds, bets, scheduler
 │   ├── events/           # Socket.IO gateway (real-time game events + user_{id} room)
 │   ├── keno/             # Keno config, draws, tickets, rules, paytable

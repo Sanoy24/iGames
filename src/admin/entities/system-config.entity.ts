@@ -30,6 +30,10 @@ export class SystemConfig {
   @Column({ type: 'varchar', length: 36, nullable: true })
   superAdminUserId?: string | null;
 
+  /** Minimum a single Telebirr deposit must be to be accepted. 0 = no minimum. */
+  @Column({ type: 'int', default: 0 })
+  minDepositMinor: number;
+
   @Column({ type: 'int', default: 0 })
   withdrawalMinAmountMinor: number;
 

@@ -116,6 +116,7 @@ export function Wallet() {
   const [isSubmitting,   setIsSubmitting]   = useState(false);
   const [activeAgent,    setActiveAgent]    = useState<ActiveAgent | null>(null);
   const [agentLoading,   setAgentLoading]   = useState(false);
+  const [minDepositMinor, setMinDepositMinor] = useState(0);
 
   const [showWithdraw,   setShowWithdraw]   = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -151,6 +152,9 @@ export function Wallet() {
           .then(setActiveAgent)
           .catch(() => setActiveAgent(null))
           .finally(() => setAgentLoading(false));
+        paymentsApi.getConfig()
+          .then((c) => setMinDepositMinor(c.minDepositMinor))
+          .catch(() => setMinDepositMinor(0));
       } else {
         resetTopup();
       }
@@ -301,9 +305,14 @@ export function Wallet() {
             >
               <div className="admin-form" style={{ marginTop: 16 }}>
                 <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Deposit</h3>
-                <p className="text-muted" style={{ fontSize: 13, marginBottom: 14 }}>
+                <p className="text-muted" style={{ fontSize: 13, marginBottom: minDepositMinor > 0 ? 8 : 14 }}>
                   Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.
                 </p>
+                {minDepositMinor > 0 && (
+                  <p style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700, margin: '0 0 14px' }}>
+                    Minimum deposit: {new Intl.NumberFormat().format(minDepositMinor)} ETB
+                  </p>
+                )}
 
                 {/* Active agent — where to send the Telebirr transfer */}
                 {agentLoading ? (

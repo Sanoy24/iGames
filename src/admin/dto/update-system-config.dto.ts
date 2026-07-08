@@ -29,6 +29,12 @@ export class UpdateSystemConfigDto {
   @IsString()
   superAdminUserId?: string | null;
 
+  /** Minimum accepted Telebirr deposit (minor units). 0 = no minimum. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minDepositMinor?: number;
+
   @IsOptional()
   @IsInt()
   @Min(0)

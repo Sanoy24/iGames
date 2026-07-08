@@ -1,8 +1,9 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AdminService } from '../admin/admin.service';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
@@ -38,8 +39,69 @@ export class PaymentsService {
     private readonly telebirrDepositRepository: Repository<TelebirrDeposit>,
     private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
     private readonly walletService: WalletService,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    private readonly adminService: AdminService,
   ) {}
+
+  /** Player-facing deposit rules (currently just the admin-set minimum). */
+  async getPublicConfig(): Promise<{ minDepositMinor: number }> {
+    const config = await this.adminService.getSystemConfig();
+    return { minDepositMinor: config.minDepositMinor ?? 0 };
+  }
+
+  /**
+   * Ops self-test: can THIS server reach Ethiotelecom's receipt service? Telebirr
+   * deposits depend entirely on fetching the real receipt, so if the host (e.g. a
+   * locked-down cPanel box) can't make the outbound request, every deposit fails.
+   * Optionally pass a real `receipt` id to also test the full fetch + parse path.
+   */
+  async telebirrHealth(receipt?: string): Promise<Record<string, unknown>> {
+    const host = 'https://transactioninfo.ethiotelecom.et/';
+    const startedAt = Date.now();
+    let connectivity: Record<string, unknown>;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res: { status: number } = await (globalThis as {
+        fetch: (u: string, o: unknown) => Promise<{ status: number }>;
+      }).fetch(host, { method: 'GET', redirect: 'manual', signal: controller.signal });
+      clearTimeout(timer);
+      connectivity = { reachable: true, httpStatus: res.status, latencyMs: Date.now() - startedAt };
+    } catch (error) {
+      const code = (error as { cause?: { code?: string } })?.cause?.code
+        ?? (error as { name?: string })?.name;
+      connectivity = {
+        reachable: false,
+        latencyMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+        code,
+      };
+    }
+
+    const result: Record<string, unknown> = {
+      host,
+      checkedAt: new Date().toISOString(),
+      connectivity,
+      verdict: connectivity.reachable
+        ? 'OK — this server can reach Ethiotelecom; Telebirr deposits should work.'
+        : 'BLOCKED — this server cannot reach Ethiotelecom; deposits will fail. Check cPanel outbound firewall / DNS / allowed hosts.',
+    };
+    if (receipt) {
+      result.receiptProbe = await this.telebirrReceiptVerifierService.probeReceipt(receipt);
+    }
+    return result;
+  }
+
+  /** Throws if the amount is below the admin-configured minimum deposit. */
+  private async assertMeetsMinimum(amountMinor: number): Promise<void> {
+    const config = await this.adminService.getSystemConfig();
+    const min = config.minDepositMinor ?? 0;
+    if (min > 0 && amountMinor < min) {
+      throw new BadRequestException(
+        `The minimum deposit is ${min.toLocaleString()} ETB. This receipt is for ${amountMinor.toLocaleString()} ETB.`,
+      );
+    }
+  }
 
   async previewTelebirrReceipt(
     userId: string,
@@ -50,6 +112,9 @@ export class PaymentsService {
       throw new ConflictException('receiptNo or receiptUrl is required');
     }
     const verified = await this.telebirrReceiptVerifierService.verifyReceipt(submittedReceipt, userId);
+    // Reject below-minimum receipts at the verify step so the player is told
+    // before they try to confirm the deposit.
+    await this.assertMeetsMinimum(verified.amountMinor);
     const p = verified.parsedReceipt;
     return {
       receiptNo: verified.receiptNo,
@@ -75,6 +140,9 @@ export class PaymentsService {
       submittedReceipt,
       userId
     );
+
+    // Enforce the admin-configured minimum deposit before crediting.
+    await this.assertMeetsMinimum(verified.amountMinor);
 
     let credited = false;
     const result = await this.dataSource.transaction(async (manager) => {

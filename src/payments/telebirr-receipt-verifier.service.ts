@@ -173,37 +173,106 @@ export class TelebirrReceiptVerifierService {
       throw new BadRequestException(`Agent "${matchingAgent.displayName}" does not have deposit permission`);
     }
 
-    // Check agent work timeframe at the time of transaction
-    if (matchingAgent.workStartHour !== undefined && matchingAgent.workEndHour !== undefined) {
-      const txMinutes = txDate.getHours() * 60 + txDate.getMinutes();
-      const startMinutes = matchingAgent.workStartHour * 60 + (matchingAgent.workStartMinute || 0);
-      const endMinutes = matchingAgent.workEndHour * 60 + (matchingAgent.workEndMinute || 0);
-
-      const isOvernight = endMinutes <= startMinutes;
-      const inWindow = isOvernight
-        ? txMinutes >= startMinutes || txMinutes < endMinutes
-        : txMinutes >= startMinutes && txMinutes < endMinutes;
-
-      if (!inWindow) {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        throw new BadRequestException(
-          `Transaction occurred outside agent's working hours (${pad(matchingAgent.workStartHour)}:${pad(matchingAgent.workStartMinute || 0)} - ${pad(matchingAgent.workEndHour)}:${pad(matchingAgent.workEndMinute || 0)})`
-        );
-      }
+    // Verify the money actually landed on THIS agent's Telebirr account, not just a
+    // coincidentally matching display name. Telebirr masks the account number, so
+    // we compare the visible digits: a definite mismatch is rejected; a fully-masked
+    // (indeterminate) account falls back to the name match.
+    const receiverAccountMatched = this.accountMatchesPhone(
+      parsedReceipt.credited_party_acc_no,
+      matchingAgent.phoneNumber,
+    );
+    if (receiverAccountMatched === false) {
+      throw new BadRequestException(
+        `Telebirr payment went to an account that does not match agent "${matchingAgent.displayName}"`,
+      );
     }
+
+    // Minimum-deposit enforcement lives in PaymentsService.assertMeetsMinimum so
+    // both the preview and submit paths reject below-minimum receipts with one
+    // clear message.
+    const amountMinor = await this.toCreditMinor(amountBirr);
 
     return {
       receiptNo,
-      amountMinor: await this.toCreditMinor(amountBirr),
+      amountMinor,
       parsedReceipt,
       verification: {
         receiverNameMatched: true,
-        receiverAccountMatched: true,
+        receiverAccountMatched,
         transactionStatusAccepted,
-        expectedReceiverName: matchingAgent.displayName
+        expectedReceiverName: matchingAgent.displayName,
+        expectedReceiverAccount: matchingAgent.phoneNumber ?? undefined,
       },
       agentId: matchingAgent.id
     };
+  }
+
+  /**
+   * Does the receipt's (usually masked) credited account belong to `agentPhone`?
+   * Returns true (match), false (definite mismatch → reject), or null (can't tell,
+   * e.g. fully masked → fall back to the name match). Telebirr shows the account
+   * like `251912***789` / `0912****4321`; we compare the visible trailing digits,
+   * and do a full compare when the account is not masked at all.
+   */
+  private accountMatchesPhone(receiptAcc?: string, agentPhone?: string): boolean | null {
+    if (!receiptAcc || !agentPhone) return null;
+    // Canonical 9-digit local number (9XXXXXXXX), stripping +251 / 0 prefixes.
+    const phoneTail = agentPhone.replace(/\D/g, '').slice(-9);
+    if (phoneTail.length < 9) return null;
+
+    const isMasked = /[*xX•·.]/.test(receiptAcc.replace(/^\+?251|^0/, ''));
+    const accDigits = receiptAcc.replace(/\D/g, '');
+
+    // Not masked → compare the full local number.
+    if (!isMasked && accDigits.length >= 9) {
+      return accDigits.slice(-9) === phoneTail;
+    }
+
+    // Masked → compare the visible trailing run of digits (Telebirr reliably shows
+    // the last few). Require ≥3 to be meaningful.
+    const trailing = receiptAcc.match(/(\d+)\D*$/)?.[1] ?? '';
+    if (trailing.length >= 3) {
+      return phoneTail.endsWith(trailing.slice(-9));
+    }
+    return null;
+  }
+
+  /**
+   * Diagnostic probe (no DB write, no credit): fetch + parse a receipt so an ops
+   * self-test can confirm the server can actually reach and read Ethiotelecom.
+   */
+  async probeReceipt(receiptNo: string): Promise<{
+    loaded: boolean;
+    parsed: boolean;
+    amount?: number;
+    receiver?: string;
+    receiverAccount?: string;
+    transactionStatus?: string;
+    error?: string;
+  }> {
+    if (!/^[A-Za-z0-9_-]{4,80}$/.test(receiptNo)) {
+      return { loaded: false, parsed: false, error: 'Receipt number format is invalid' };
+    }
+    let html: string;
+    try {
+      html = await this.loadReceipt(receiptNo);
+    } catch (error) {
+      const detail = (error as { response?: { detail?: string } })?.response?.detail;
+      return { loaded: false, parsed: false, error: detail ?? (error instanceof Error ? error.message : String(error)) };
+    }
+    try {
+      const parsed = telebirrReceipt.utils.parseFromHTML(html);
+      return {
+        loaded: true,
+        parsed: true,
+        amount: parsed.settled_amount ?? parsed.total_amount,
+        receiver: parsed.credited_party_name ?? parsed.to,
+        receiverAccount: parsed.credited_party_acc_no,
+        transactionStatus: parsed.transaction_status,
+      };
+    } catch (error) {
+      return { loaded: true, parsed: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async loadReceipt(receiptNo: string): Promise<string> {

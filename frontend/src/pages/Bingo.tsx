@@ -1911,7 +1911,11 @@ export function Bingo({ onBack }: BingoProps) {
             text: string;
             timestamp: string;
         }) => {
-            if (p.roomId !== roomIdRef.current) return;
+            // Bingo chat is a single global lobby — the server broadcasts to every
+            // player in `game_bingo`, not per-room. Rooms rotate each round with a
+            // fresh id, so filtering on the current room id silently dropped every
+            // message whose sender was on a (transiently) different room id — which
+            // is why "text from others" never showed. Accept all lobby messages.
             setChatMessages((prev) => [...prev.slice(-49), { ...p }]);
         };
 

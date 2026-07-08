@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
   Image as ImageIcon, Megaphone, Play, Plus, RefreshCw, Send, Settings,
@@ -952,6 +952,7 @@ function ConfigAdmin() {
   const [form, setForm] = useState<SystemConfig>({
     telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
     withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, superAdminUserId: null,
+    minDepositMinor: 0,
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
   });
@@ -965,6 +966,7 @@ function ConfigAdmin() {
     withdrawalServiceChargePct: c.withdrawalServiceChargePct,
     withdrawalCommissionPct: c.withdrawalCommissionPct ?? 0,
     superAdminUserId: c.superAdminUserId ?? null,
+    minDepositMinor: c.minDepositMinor ?? 0,
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
     withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
@@ -1009,6 +1011,7 @@ function ConfigAdmin() {
         <div className="adm-panel-head">Payments & Wallet</div>
         <div className="adm-field-grid">
           {field('telebirrCreditMinorPerBirr', 'ETB per Birr deposited', '1 = flat (10 Birr → 10 ETB)')}
+          {field('minDepositMinor', 'Minimum Deposit (ETB)', '0 = no minimum')}
           {field('welcomeBonusMinor', 'Welcome Bonus (ETB)', '0 = disabled')}
         </div>
       </div>
@@ -2149,6 +2152,20 @@ const ROUND_TICKET_BADGE: Record<string, string> = {
   cancelled: 'badge-gold', active: 'badge-violet',
 };
 
+// Rank/tier presentation for the round-details winners. Places sort in award order;
+// line/pattern tiers come after the numeric places.
+const BINGO_PLACE_META: Record<string, { label: string; medal: string; order: number }> = {
+  '1st': { label: '1st place', medal: '🥇', order: 0 },
+  '2nd': { label: '2nd place', medal: '🥈', order: 1 },
+  '3rd': { label: '3rd place', medal: '🥉', order: 2 },
+  '4th': { label: '4th place', medal: '🏅', order: 3 },
+  '5th': { label: '5th place', medal: '🎖️', order: 4 },
+  full_house: { label: 'Full house', medal: '🏆', order: 5 },
+  two_lines: { label: 'Two lines', medal: '🎯', order: 6 },
+  one_line: { label: 'One line', medal: '➖', order: 7 },
+};
+const placeMeta = (place: string) => BINGO_PLACE_META[place] ?? { label: place, medal: '🏆', order: 99 };
+
 function RoundCardMini({ grid, marked }: { grid: Array<Array<number | null>>; marked: number[] }) {
   const markedSet = new Set(marked);
   return (
@@ -2183,6 +2200,7 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
   }>;
   const winnerPlaces = room ? Object.keys(summary) : [];
   const winners = details?.tickets.filter((t) => t.payoutMinor > 0 || t.wonTiers.length > 0) ?? [];
+  const [openCard, setOpenCard] = useState<string | null>(null);
 
   return (
     <div className="adm-modal-overlay" onClick={onClose}
@@ -2201,6 +2219,13 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
             {/* KPIs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
               <Kpi label="Status" value={room.status} color="#6366f1" />
+              <Kpi
+                label="Ranking"
+                value={room.winMode === 'prefilled'
+                  ? (room.rankingMode === 'leaderboard' ? 'Leaderboard' : 'Race')
+                  : (room.winMode ?? '—')}
+                color="#a855f7"
+              />
               <Kpi label="Cartelas Sold" value={String(details.totals.soldTickets)} color="#3b82f6" />
               <Kpi label="Total Pot" value={formatCreditsFull(details.totals.totalPotMinor)} color="#f59e0b" />
               <Kpi label="Prize Pool" value={formatCreditsFull(details.totals.prizePoolMinor)} color="#10b981" />
@@ -2226,30 +2251,43 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
               </div>
             </div>
 
-            {/* Winners */}
+            {/* Winners — ranked (1st → 5th, then line/pattern tiers), each with its 5×5 */}
             <div>
-              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Winners</div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                Winners &amp; ranks ({winnerPlaces.length})
+              </div>
               {winnerPlaces.length === 0 && winners.length === 0 ? (
                 <div className="adm-empty">No winners recorded for this round.</div>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                  {winnerPlaces.map((place) => {
-                    const w = summary[place];
-                    return (
-                      <div key={place} style={{ border: '1px solid rgba(16,185,129,0.3)', borderRadius: 10, padding: 12, minWidth: 180, background: 'rgba(16,185,129,0.05)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <span className="badge badge-green" style={{ textTransform: 'uppercase' }}>{place}</span>
-                          <strong style={{ color: '#10b981' }}>{formatCreditsFull(w.prizeMinor ?? 0)}</strong>
+                  {[...winnerPlaces]
+                    .sort((a, b) => placeMeta(a).order - placeMeta(b).order)
+                    .map((place) => {
+                      const w = summary[place];
+                      const meta = placeMeta(place);
+                      return (
+                        <div key={place} style={{ border: '1px solid rgba(16,185,129,0.3)', borderRadius: 10, padding: 12, minWidth: 190, background: 'rgba(16,185,129,0.05)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: 13 }}>
+                              <span style={{ fontSize: 16 }}>{meta.medal}</span>{meta.label}
+                            </span>
+                            <strong style={{ color: '#10b981' }}>{formatCreditsFull(w.prizeMinor ?? 0)} ETB</strong>
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>
+                            {w.winnerDisplayName ?? 'Player'}
+                            {w.winnerPhoneLast4 ? <span className="adm-td-muted" style={{ fontWeight: 400 }}> · ••{w.winnerPhoneLast4}</span> : null}
+                          </div>
+                          <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <span>Cartela <strong>#{w.winnerCartelaNumber ?? '—'}</strong></span>
+                            <span>·</span>
+                            <span>Pattern: <strong>{w.patternName ?? 'Any Line'}</strong></span>
+                          </div>
+                          {w.winnerGrid
+                            ? <RoundCardMini grid={w.winnerGrid} marked={w.winnerMarkedNumbers ?? []} />
+                            : <span className="adm-td-muted" style={{ fontSize: 11 }}>Card not recorded.</span>}
                         </div>
-                        <div style={{ fontSize: 13, fontWeight: 700 }}>{w.winnerDisplayName ?? 'Player'}</div>
-                        <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 8 }}>
-                          Cartela #{w.winnerCartelaNumber ?? '—'} · {w.patternName ?? 'Any Line'}
-                          {w.winnerPhoneLast4 ? ` · ••${w.winnerPhoneLast4}` : ''}
-                        </div>
-                        {w.winnerGrid && <RoundCardMini grid={w.winnerGrid} marked={w.winnerMarkedNumbers ?? []} />}
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -2259,25 +2297,46 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
               <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
                 All cartelas ({details.tickets.length})
               </div>
+              <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 6 }}>Click a row to show that cartela&apos;s 5×5 card (marked = called numbers).</div>
               <div style={{ overflowX: 'auto' }}>
                 <table className="adm-table">
-                  <thead><tr><th>Cartela</th><th>Player</th><th>Mode</th><th>Status</th><th>Stake</th><th>Payout</th><th>Won</th></tr></thead>
+                  <thead><tr><th></th><th>Cartela</th><th>Player</th><th>Mode</th><th>Status</th><th>Stake</th><th>Payout</th><th>Won</th></tr></thead>
                   <tbody>
-                    {details.tickets.map((t: BingoRoundTicket) => (
-                      <tr key={t.id} className="adm-tr">
-                        <td><strong>#{t.cartelaNumber ?? '—'}</strong></td>
-                        <td>
-                          {t.userName}
-                          {t.isBot && <span className="badge badge-violet" style={{ marginLeft: 6, fontSize: 9 }}>BOT</span>}
-                          {t.phoneLast4 && <span className="adm-td-muted" style={{ fontSize: 10, display: 'block' }}>••{t.phoneLast4}</span>}
-                        </td>
-                        <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.autoClaim ? 'Auto' : 'Manual'}</td>
-                        <td><span className={`badge ${ROUND_TICKET_BADGE[t.status] ?? 'badge-gold'}`}>{t.status}</span></td>
-                        <td className="adm-td-muted">{formatCredits(t.stakeMinor)}</td>
-                        <td>{t.payoutMinor > 0 ? <strong style={{ color: '#10b981' }}>{formatCredits(t.payoutMinor)}</strong> : <span className="adm-td-muted">—</span>}</td>
-                        <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.wonTiers.length > 0 ? t.wonTiers.join(', ') : '—'}</td>
-                      </tr>
-                    ))}
+                    {details.tickets.map((t: BingoRoundTicket) => {
+                      const isOpen = openCard === t.id;
+                      return (
+                        <Fragment key={t.id}>
+                          <tr className="adm-tr" style={{ cursor: 'pointer' }}
+                            onClick={() => setOpenCard(isOpen ? null : t.id)}>
+                            <td style={{ width: 18, color: 'var(--text-muted)' }}>{isOpen ? '▾' : '▸'}</td>
+                            <td><strong>#{t.cartelaNumber ?? '—'}</strong></td>
+                            <td>
+                              {t.userName}
+                              {t.isBot && <span className="badge badge-violet" style={{ marginLeft: 6, fontSize: 9 }}>BOT</span>}
+                              {t.phoneLast4 && <span className="adm-td-muted" style={{ fontSize: 10, display: 'block' }}>••{t.phoneLast4}</span>}
+                            </td>
+                            <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.autoClaim ? 'Auto' : 'Manual'}</td>
+                            <td><span className={`badge ${ROUND_TICKET_BADGE[t.status] ?? 'badge-gold'}`}>{t.status}</span></td>
+                            <td className="adm-td-muted">{formatCredits(t.stakeMinor)}</td>
+                            <td>{t.payoutMinor > 0 ? <strong style={{ color: '#10b981' }}>{formatCredits(t.payoutMinor)}</strong> : <span className="adm-td-muted">—</span>}</td>
+                            <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.wonTiers.length > 0 ? t.wonTiers.join(', ') : '—'}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr>
+                              <td colSpan={8} style={{ padding: '8px 12px 14px', background: 'rgba(255,255,255,0.02)' }}>
+                                <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <RoundCardMini grid={t.grid} marked={t.markedNumbers} />
+                                  <div className="adm-td-muted" style={{ fontSize: 11, lineHeight: 1.7 }}>
+                                    <div>Marked: <strong>{t.markedNumbers.length}</strong> numbers</div>
+                                    <div>Cartela #{t.cartelaNumber ?? '—'} · {t.wonTiers.length > 0 ? `won ${t.wonTiers.join(', ')}` : 'no win'}</div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

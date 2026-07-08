@@ -169,6 +169,9 @@ export const paymentsApi = {
 
   getActiveAgent: () =>
     api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
+
+  getConfig: () =>
+    api.get<{ minDepositMinor: number }>('/payments/config').then((r) => r.data),
 };
 
 // ── Keno ──────────────────────────────────────────────────────────
@@ -262,6 +265,7 @@ export type SystemConfig = {
   withdrawalServiceChargePct: number;
   withdrawalCommissionPct: number;
   superAdminUserId?: string | null;
+  minDepositMinor: number;
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
   maxPendingWithdrawalsPerUser: number;

@@ -54,6 +54,12 @@ export class BingoAdminController {
     return room;
   }
 
+  @Get('rooms/:id/details')
+  @ApiOkResponse({ description: 'Full round detail for traceability: room, winners, and every cartela/card.' })
+  getRoomDetails(@Param('id') roomId: string) {
+    return this.bingoService.getRoomAdminDetails(roomId);
+  }
+
   @Post('rooms/:id/cancel')
   async cancelRoom(@Param('id') roomId: string) {
     const room = await this.bingoService.cancelRoom(roomId);

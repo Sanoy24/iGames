@@ -375,8 +375,40 @@ export const adminKenoApi = {
 };
 
 // ── Admin: Bingo ──────────────────────────────────────────────────
+export type BingoRoundTicket = {
+  id: string;
+  userId: string;
+  userName: string;
+  phoneLast4: string;
+  isBot: boolean;
+  cartelaNumber: number | null;
+  status: string;
+  settlementStatus: string;
+  autoClaim: boolean;
+  stakeMinor: number;
+  payoutMinor: number;
+  wonTiers: string[];
+  grid: Array<Array<number | null>>;
+  markedNumbers: number[];
+  createdAt: string;
+};
+
+export type BingoRoundDetails = {
+  room: BingoRoom & { rankingMode?: string; rngAuditLogIds?: string[]; createdAt?: string };
+  totals: {
+    soldTickets: number;
+    totalPotMinor: number;
+    prizePoolMinor: number;
+    totalPaidOutMinor: number;
+    houseEdgePct: number;
+  };
+  tickets: BingoRoundTicket[];
+};
+
 export const adminBingoApi = {
   getConfig: () => api.get<BingoConfig>('/admin/bingo/config').then((r) => r.data),
+  getRoomDetails: (roomId: string) =>
+    api.get<BingoRoundDetails>(`/admin/bingo/rooms/${roomId}/details`).then((r) => r.data),
   updateConfig: (dto: Partial<BingoConfig>) =>
     api.post<BingoConfig>('/admin/bingo/config', dto).then((r) => r.data),
   listAllRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),

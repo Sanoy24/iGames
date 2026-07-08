@@ -17,6 +17,8 @@ import {
   walletApi,
   type AgentLedgerAction,
   type AgentWithdrawalAction,
+  type BingoRoundDetails,
+  type BingoRoundTicket,
   type BotUser,
   type BroadcastButton,
   type BroadcastMessage,
@@ -1480,6 +1482,22 @@ function BingoAdmin() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPatterns, setShowPatterns] = useState(false);
 
+  // Round details modal (traceability)
+  const [details, setDetails] = useState<BingoRoundDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  const openDetails = async (roomId: string) => {
+    setDetailsLoading(true);
+    setDetails(null);
+    try {
+      setDetails(await adminBingoApi.getRoomDetails(roomId));
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
   // Room creation form
   const [winMode, setWinMode] = useState<'line' | 'pattern'>('line');
   const [numberRange, setNumberRange] = useState(75);
@@ -2092,15 +2110,19 @@ function BingoAdmin() {
                       <td className="adm-td-muted">{formatRelativeTime(room.scheduledStartAt)}</td>
                       <td className="adm-td-muted">{room.drawnNumbers?.length ?? 0}/{maxNum}</td>
                       <td>
-                        {isActive && (
-                          <div className="adm-cell-actions">
+                        <div className="adm-cell-actions">
+                          <button className="adm-btn adm-btn-secondary adm-btn-xs"
+                            onClick={() => void openDetails(room.id)}>
+                            Details
+                          </button>
+                          {isActive && (
                             <button className="adm-btn adm-btn-danger adm-btn-xs"
                               disabled={!!busy}
                               onClick={async () => { setBusy(`c-${room.id}`); try { await adminBingoApi.cancelRoom(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
                               <X size={11} />Cancel
                             </button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2108,6 +2130,173 @@ function BingoAdmin() {
               </tbody>
             </table>
           )}
+      </div>
+
+      {(details || detailsLoading) && (
+        <BingoRoundDetailsModal
+          details={details}
+          loading={detailsLoading}
+          onClose={() => { setDetails(null); setDetailsLoading(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Bingo round details (traceability) ────────────────────────────
+const ROUND_TICKET_BADGE: Record<string, string> = {
+  won: 'badge-green', lost: 'badge-red', disqualified: 'badge-red',
+  cancelled: 'badge-gold', active: 'badge-violet',
+};
+
+function RoundCardMini({ grid, marked }: { grid: Array<Array<number | null>>; marked: number[] }) {
+  const markedSet = new Set(marked);
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 2, width: 120 }}>
+      {grid.flat().map((cell, i) => {
+        const isFree = cell === null;
+        const hit = isFree || markedSet.has(cell as number);
+        return (
+          <div key={i} style={{
+            aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 9, fontWeight: 800, borderRadius: 3,
+            background: isFree ? 'rgba(239,68,68,0.25)' : hit ? 'rgba(16,185,129,0.85)' : 'rgba(255,255,255,0.05)',
+            color: hit && !isFree ? '#000' : isFree ? '#fca5a5' : 'var(--text-muted)',
+            border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            {isFree ? '★' : cell}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BingoRoundDetailsModal({ details, loading, onClose }: {
+  details: BingoRoundDetails | null; loading: boolean; onClose: () => void;
+}) {
+  const room = details?.room;
+  const summary = (room?.settlementSummary ?? {}) as Record<string, {
+    winnerDisplayName?: string; winnerPhoneLast4?: string; winnerCartelaNumber?: number;
+    patternName?: string; prizeMinor?: number; winnerGrid?: Array<Array<number | null>>;
+    winnerMarkedNumbers?: number[];
+  }>;
+  const winnerPlaces = room ? Object.keys(summary) : [];
+  const winners = details?.tickets.filter((t) => t.payoutMinor > 0 || t.wonTiers.length > 0) ?? [];
+
+  return (
+    <div className="adm-modal-overlay" onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}>
+      <div className="adm-panel" onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 900, width: '100%', margin: 'auto', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="adm-panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Round details {room ? `— ${room.name}` : ''}</span>
+          <button className="adm-icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+
+        {loading || !details || !room ? (
+          <div className="adm-empty">Loading round…</div>
+        ) : (
+          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* KPIs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+              <Kpi label="Status" value={room.status} color="#6366f1" />
+              <Kpi label="Cartelas Sold" value={String(details.totals.soldTickets)} color="#3b82f6" />
+              <Kpi label="Total Pot" value={formatCreditsFull(details.totals.totalPotMinor)} color="#f59e0b" />
+              <Kpi label="Prize Pool" value={formatCreditsFull(details.totals.prizePoolMinor)} color="#10b981" />
+              <Kpi label="Paid Out" value={formatCreditsFull(details.totals.totalPaidOutMinor)} color="#22c55e" />
+              <Kpi label="House Edge" value={`${details.totals.houseEdgePct}%`} color="#8b5cf6" />
+            </div>
+
+            {/* Drawn numbers */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                Drawn numbers ({room.drawnNumbers?.length ?? 0}) — in call order
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {(room.drawnNumbers ?? []).map((n, i) => (
+                  <span key={i} title={`Call #${i + 1}`} style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 26, height: 26, borderRadius: '50%', fontSize: 11, fontWeight: 800,
+                    background: i === (room.drawnNumbers!.length - 1) ? 'rgba(245,158,11,0.85)' : 'rgba(255,255,255,0.07)',
+                    color: i === (room.drawnNumbers!.length - 1) ? '#000' : 'var(--text)',
+                  }}>{n}</span>
+                ))}
+                {(room.drawnNumbers?.length ?? 0) === 0 && <span className="adm-td-muted">No numbers drawn.</span>}
+              </div>
+            </div>
+
+            {/* Winners */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Winners</div>
+              {winnerPlaces.length === 0 && winners.length === 0 ? (
+                <div className="adm-empty">No winners recorded for this round.</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  {winnerPlaces.map((place) => {
+                    const w = summary[place];
+                    return (
+                      <div key={place} style={{ border: '1px solid rgba(16,185,129,0.3)', borderRadius: 10, padding: 12, minWidth: 180, background: 'rgba(16,185,129,0.05)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <span className="badge badge-green" style={{ textTransform: 'uppercase' }}>{place}</span>
+                          <strong style={{ color: '#10b981' }}>{formatCreditsFull(w.prizeMinor ?? 0)}</strong>
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{w.winnerDisplayName ?? 'Player'}</div>
+                        <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                          Cartela #{w.winnerCartelaNumber ?? '—'} · {w.patternName ?? 'Any Line'}
+                          {w.winnerPhoneLast4 ? ` · ••${w.winnerPhoneLast4}` : ''}
+                        </div>
+                        {w.winnerGrid && <RoundCardMini grid={w.winnerGrid} marked={w.winnerMarkedNumbers ?? []} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* All cartelas */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                All cartelas ({details.tickets.length})
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="adm-table">
+                  <thead><tr><th>Cartela</th><th>Player</th><th>Mode</th><th>Status</th><th>Stake</th><th>Payout</th><th>Won</th></tr></thead>
+                  <tbody>
+                    {details.tickets.map((t: BingoRoundTicket) => (
+                      <tr key={t.id} className="adm-tr">
+                        <td><strong>#{t.cartelaNumber ?? '—'}</strong></td>
+                        <td>
+                          {t.userName}
+                          {t.isBot && <span className="badge badge-violet" style={{ marginLeft: 6, fontSize: 9 }}>BOT</span>}
+                          {t.phoneLast4 && <span className="adm-td-muted" style={{ fontSize: 10, display: 'block' }}>••{t.phoneLast4}</span>}
+                        </td>
+                        <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.autoClaim ? 'Auto' : 'Manual'}</td>
+                        <td><span className={`badge ${ROUND_TICKET_BADGE[t.status] ?? 'badge-gold'}`}>{t.status}</span></td>
+                        <td className="adm-td-muted">{formatCredits(t.stakeMinor)}</td>
+                        <td>{t.payoutMinor > 0 ? <strong style={{ color: '#10b981' }}>{formatCredits(t.payoutMinor)}</strong> : <span className="adm-td-muted">—</span>}</td>
+                        <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.wonTiers.length > 0 ? t.wonTiers.join(', ') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* RNG audit trail */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>RNG audit log IDs</div>
+              {(room.rngAuditLogIds?.length ?? 0) === 0 ? (
+                <div className="adm-td-muted" style={{ fontSize: 12 }}>None recorded.</div>
+              ) : (
+                <div className="adm-td-muted" style={{ fontSize: 11, wordBreak: 'break-all', lineHeight: 1.6 }}>
+                  {room.rngAuditLogIds!.join(', ')}
+                </div>
+              )}
+              <div className="adm-td-muted" style={{ fontSize: 11, marginTop: 6 }}>Room ID: {room.id}</div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

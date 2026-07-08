@@ -26,6 +26,83 @@ export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
 import { NotificationsService } from '../notifications/notifications.service';
 
+// ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
+
+export type DerashLeaderboardCard = {
+  /** Caller-chosen identifier (e.g. cartela number or an index into the ticket list). */
+  key: number;
+  grid: (number | null)[][];
+  /** Purchase-order tiebreak — lower = bought earlier. */
+  order: number;
+};
+
+export type DerashLeaderboardRank = {
+  key: number;
+  /** Index into `places` of the hardest place-pattern reached (0 = 1st/hardest). */
+  bestRank: number;
+  /** 1-based draw index at which that hardest pattern was reached. */
+  reachedAt: number;
+  order: number;
+};
+
+/**
+ * Pure: the 1-based draw index at which `grid` FIRST completes each place's pattern
+ * (absent = never completed within `drawnNumbers`). No DB, no side effects.
+ */
+export function derashCompletionIndex(
+  bingoRules: BingoRulesService,
+  grid: (number | null)[][],
+  drawnNumbers: number[],
+  placePattern: Map<PrefilledPlace, BingoPattern>,
+): Map<PrefilledPlace, number> {
+  const completion = new Map<PrefilledPlace, number>();
+  const partial: number[] = [];
+  for (let k = 0; k < drawnNumbers.length; k += 1) {
+    partial.push(drawnNumbers[k]);
+    for (const [place, pattern] of placePattern) {
+      if (completion.has(place)) continue;
+      const state = bingoRules.evaluatePatternTicket(grid, partial, [pattern]);
+      if (state.completedPatternIds.includes(pattern.id)) completion.set(place, k + 1);
+    }
+    if (completion.size === placePattern.size) break;
+  }
+  return completion;
+}
+
+/**
+ * Pure leaderboard ranking. Orders cards by **hardest place-pattern reached** →
+ * **earliest to reach it** → **purchase order**, and returns them in queue order
+ * (best first). The caller assigns `places[i]` to `result[i]` up to `places.length`.
+ * Cards that completed no pattern are omitted (they win nothing). This is the exact
+ * logic `settleDerashLeaderboard` uses — extracted so it can be tested without a DB.
+ */
+export function rankDerashLeaderboard(
+  bingoRules: BingoRulesService,
+  cards: DerashLeaderboardCard[],
+  drawnNumbers: number[],
+  places: PrefilledPlace[],
+  placePattern: Map<PrefilledPlace, BingoPattern>,
+): DerashLeaderboardRank[] {
+  const ranked: DerashLeaderboardRank[] = [];
+  for (const card of cards) {
+    const completion = derashCompletionIndex(bingoRules, card.grid, drawnNumbers, placePattern);
+    let bestRank = Number.POSITIVE_INFINITY;
+    let reachedAt = Number.POSITIVE_INFINITY;
+    places.forEach((place, idx) => {
+      const at = completion.get(place);
+      if (at !== undefined && idx < bestRank) {
+        bestRank = idx;
+        reachedAt = at;
+      }
+    });
+    if (bestRank !== Number.POSITIVE_INFINITY) {
+      ranked.push({ key: card.key, bestRank, reachedAt, order: card.order });
+    }
+  }
+  ranked.sort((a, b) => a.bestRank - b.bestRank || a.reachedAt - b.reachedAt || a.order - b.order);
+  return ranked;
+}
+
 export type BingoRoomResponse = {
   id: string;
   name: string;
@@ -565,6 +642,66 @@ export class BingoService implements OnModuleInit {
     }
 
     return response;
+  }
+
+  /**
+   * Full round detail for the admin — everything needed to audit/trace a game:
+   * the room (with drawn numbers, settled places, per-place winner summary, and
+   * RNG audit log ids), pot/prize totals, and EVERY cartela in the round with
+   * its owner, status (won/lost/disqualified/cancelled), payout, and card grid.
+   */
+  async getRoomAdminDetails(roomId: string) {
+    const validId = this.validateUuid(roomId, 'roomId');
+    const room = await this.bingoRoomRepository.findOneBy({ id: validId });
+    if (!room) throw new NotFoundException('Bingo room not found');
+
+    const soldTickets = await this.countSoldTickets(room.id);
+    const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(room.id) : undefined;
+    const roomResponse = this.toRoomResponse(room, soldTickets, takenSpots);
+
+    const tickets = await this.bingoTicketRepository.find({
+      where: { roomId: room.id },
+      relations: ['user'],
+      order: { createdAt: 'ASC' },
+    });
+
+    const houseEdgePct = room.houseEdgePct ?? 20;
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const totalPaidOutMinor = tickets.reduce((sum, t) => sum + Number(t.payoutMinor), 0);
+
+    return {
+      room: {
+        ...roomResponse,
+        rankingMode: room.rankingMode,
+        rngAuditLogIds: room.rngAuditLogIds ?? [],
+        createdAt: room.createdAt,
+      },
+      totals: {
+        soldTickets,
+        totalPotMinor,
+        prizePoolMinor,
+        totalPaidOutMinor,
+        houseEdgePct,
+      },
+      tickets: tickets.map((t) => ({
+        id: t.id,
+        userId: t.userId,
+        userName: t.user?.displayName ?? 'Player',
+        phoneLast4: (t.user?.phoneNumber ?? '').replace(/\D/g, '').slice(-4),
+        isBot: !!(t.user?.productMetadata as Record<string, unknown> | undefined)?.botPolicy,
+        cartelaNumber: t.cartelaNumber ?? null,
+        status: t.status,
+        settlementStatus: t.settlementStatus,
+        autoClaim: t.autoClaim ?? true,
+        stakeMinor: t.stakeMinor,
+        payoutMinor: Number(t.payoutMinor),
+        wonTiers: t.wonTiers ?? [],
+        grid: t.grid,
+        markedNumbers: t.markedNumbers ?? [],
+        createdAt: t.createdAt,
+      })),
+    };
   }
 
   // ── Ticket purchase ──────────────────────────────────────────────────────────
@@ -1224,25 +1361,15 @@ export class BingoService implements OnModuleInit {
     }
     if (placePattern.size === 0) return;
 
-    // Rank each card by the hardest place it reached and how early it got there.
-    type Ranked = { ticket: BingoTicket; bestRank: number; reachedAt: number; order: number };
-    const ranked: Ranked[] = [];
-    inPlay.forEach((ticket, order) => {
-      const completion = this.computeDerashCompletionIndex(ticket.grid, room.drawnNumbers, placePattern);
-      let bestRank = Number.POSITIVE_INFINITY;
-      let reachedAt = Number.POSITIVE_INFINITY;
-      places.forEach((place, idx) => {
-        const at = completion.get(place);
-        if (at !== undefined && idx < bestRank) {
-          bestRank = idx;
-          reachedAt = at;
-        }
-      });
-      if (bestRank !== Number.POSITIVE_INFINITY) ranked.push({ ticket, bestRank, reachedAt, order });
-    });
-
-    // Queue order: hardest tier first, then earliest to reach it, then purchase order.
-    ranked.sort((a, b) => a.bestRank - b.bestRank || a.reachedAt - b.reachedAt || a.order - b.order);
+    // Rank the queue with the exact pure logic the leaderboard spec tests. `key`
+    // is the index into `inPlay` so we can map a rank back to its ticket.
+    const ranked = rankDerashLeaderboard(
+      this.bingoRulesService,
+      inPlay.map((ticket, i) => ({ key: i, grid: ticket.grid, order: i })),
+      room.drawnNumbers,
+      places,
+      placePattern,
+    );
 
     const soldTickets = await this.countSoldTickets(room.id, manager);
     const totalPotMinor = soldTickets * room.ticketPriceMinor;
@@ -1255,7 +1382,7 @@ export class BingoService implements OnModuleInit {
       if (!pattern) continue;
       await this.awardDerashPlace({
         room,
-        winner: ranked[i].ticket,
+        winner: inPlay[ranked[i].key],
         place,
         pattern,
         totalPotMinor,
@@ -1267,30 +1394,6 @@ export class BingoService implements OnModuleInit {
 
     // Top up filled places to share the whole pool and mark non-winners lost.
     await this.reconcileDerashPool(room, cfg, manager);
-  }
-
-  /**
-   * For one card, the 1-based draw index at which it FIRST completes each place's
-   * pattern (absent = never completed within the drawn numbers). Used to rank the
-   * leaderboard queue: the hardest pattern reached and how early it was reached.
-   */
-  private computeDerashCompletionIndex(
-    grid: (number | null)[][],
-    drawnNumbers: number[],
-    placePattern: Map<PrefilledPlace, BingoPattern>,
-  ): Map<PrefilledPlace, number> {
-    const completion = new Map<PrefilledPlace, number>();
-    const partial: number[] = [];
-    for (let k = 0; k < drawnNumbers.length; k += 1) {
-      partial.push(drawnNumbers[k]);
-      for (const [place, pattern] of placePattern) {
-        if (completion.has(place)) continue;
-        const state = this.bingoRulesService.evaluatePatternTicket(grid, partial, [pattern]);
-        if (state.completedPatternIds.includes(pattern.id)) completion.set(place, k + 1);
-      }
-      if (completion.size === placePattern.size) break;
-    }
-    return completion;
   }
 
   /** Enabled derash places (1st always) that are not yet settled, in place order. */

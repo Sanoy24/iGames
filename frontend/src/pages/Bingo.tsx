@@ -241,10 +241,11 @@ const CartelaGrid = memo(({
           cellStyle = { background: 'rgba(248,113,113,0.16)', border: '1px solid rgba(248,113,113,0.5)' };
           textStyle = { color: '#f87171', fontWeight: 900 };
         } else {
-          // Available → black tile, white number, group colour kept as a thin
-          // accent border so the design language survives on big 200/300 grids.
+          // Available → black tile, soft off-white number (not pure white, easier
+          // on the eyes across big 200/300 grids), group colour kept as a thin
+          // accent border so the design language survives.
           cellStyle = { background: '#000', border: `1px solid ${s.color}55` };
-          textStyle = { color: '#ffffff', fontWeight: 900 };
+          textStyle = { color: '#dbe2ea', fontWeight: 900 };
         }
 
         const canTap = salesOpen && !takenByOther && !pending;

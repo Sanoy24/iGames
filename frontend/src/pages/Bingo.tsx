@@ -30,6 +30,11 @@ const REVEAL_BASE_MS = 1_500;
 const REVEAL_MIN_MS  = 650;
 const REVEAL_CATCHUP_BACKLOG = 10;
 
+// Reveal cascade: a called number shows in "now calling" FIRST, then marks on the
+// board a beat later, then on the tickets a beat after that. Never the reverse.
+const NOW_CALLING_LEAD_MS = 500; // now calling → board
+const BOARD_TO_TICKET_MS  = 500; // board → ticket
+
 // 10 cycling colors for the prefilled number grid
 const CYCLE_COLORS = [
   { color: '#f87171', glow: 'rgba(248,113,113,0.5)', bg: 'rgba(248,113,113,0.08)' },
@@ -241,11 +246,11 @@ const CartelaGrid = memo(({
           cellStyle = { background: 'rgba(248,113,113,0.16)', border: '1px solid rgba(248,113,113,0.5)' };
           textStyle = { color: '#f87171', fontWeight: 900 };
         } else {
-          // Available → black tile, soft off-white number (not pure white, easier
+          // Available → black tile, muted slate number (clearly NOT white, easier
           // on the eyes across big 200/300 grids), group colour kept as a thin
           // accent border so the design language survives.
           cellStyle = { background: '#000', border: `1px solid ${s.color}55` };
-          textStyle = { color: '#dbe2ea', fontWeight: 900 };
+          textStyle = { color: '#8f9db0', fontWeight: 900 };
         }
 
         const canTap = salesOpen && !takenByOther && !pending;
@@ -1376,7 +1381,27 @@ export function Bingo({ onBack }: BingoProps) {
     return () => clearTimeout(id);
   }, [revealedCount, drawnNumbers.length, room?.status]);
   const revealedNumbers = useMemo(() => drawnNumbers.slice(0, revealedCount), [drawnNumbers, revealedCount]);
-  const revealedSet     = useMemo(() => new Set(revealedNumbers), [revealedNumbers]);
+
+  // Two trailing cursors so the reveal cascades: now calling (revealedCount) →
+  // board (boardCount, a beat behind) → tickets (ticketCount, a beat behind that).
+  // Each snaps backwards instantly (room switch/reset) but lags going forward.
+  const [boardCount, setBoardCount]   = useState(0);
+  const [ticketCount, setTicketCount] = useState(0);
+  useEffect(() => {
+    if (boardCount === revealedCount) return;
+    if (boardCount > revealedCount) { setBoardCount(revealedCount); return; }
+    const id = setTimeout(() => setBoardCount(revealedCount), NOW_CALLING_LEAD_MS);
+    return () => clearTimeout(id);
+  }, [revealedCount, boardCount]);
+  useEffect(() => {
+    if (ticketCount === boardCount) return;
+    if (ticketCount > boardCount) { setTicketCount(boardCount); return; }
+    const id = setTimeout(() => setTicketCount(boardCount), BOARD_TO_TICKET_MS);
+    return () => clearTimeout(id);
+  }, [boardCount, ticketCount]);
+
+  const boardNumbers = useMemo(() => drawnNumbers.slice(0, boardCount), [drawnNumbers, boardCount]);
+  const ticketSet    = useMemo(() => new Set(drawnNumbers.slice(0, ticketCount)), [drawnNumbers, ticketCount]);
 
   // When a place is won, a card completed its pattern on numbers the server has
   // already drawn. Snap the paced reveal up to the full drawn set so the winner
@@ -1671,7 +1696,7 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
                   </div>
                   <NumberBoard
-                    drawnNumbers={revealedNumbers}
+                    drawnNumbers={boardNumbers}
                     numberRange={ballCount}
                     isPatternMode={boardBingoStyle}
                   />
@@ -1728,7 +1753,7 @@ export function Bingo({ onBack }: BingoProps) {
                       <div className="w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide" style={{ maxHeight: 340 }}>
                         {myTickets.map((ticket) => (
                           <div key={ticket.id} className="w-full flex flex-col gap-1">
-                            <PatternTicketCard ticket={ticket} patternPrizeMap={patternPrizeMap} revealedSet={revealedSet} />
+                            <PatternTicketCard ticket={ticket} patternPrizeMap={patternPrizeMap} revealedSet={ticketSet} />
                             {phase === 'playing' && !autoMode && ticket.status === 'active' && (
                               <button
                                 type="button"

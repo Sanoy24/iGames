@@ -712,7 +712,9 @@ body::before {
    ============================================================ */
 .wallet-bar {
   position: relative;
-  overflow: hidden;
+  /* NOTE: no `overflow: hidden` here — it would clip the NotificationBell dropdown
+     that drops below the bar. The shimmer ::after fades to transparent at both
+     ends, so it needs no clipping. */
 }
 .wallet-bar::after {
   content: '';

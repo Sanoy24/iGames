@@ -398,7 +398,7 @@ const NumberCell = memo(
                     : {
                           background: 'rgba(255,255,255,0.03)',
                           border: '1px solid rgba(255,255,255,0.05)',
-                          color: '#fff',
+                          color: '#f5f5f5',
                       }
             }
         >
@@ -464,14 +464,13 @@ const CartelaGrid = memo(
                         };
                         textStyle = { color: '#f87171', fontWeight: 900 };
                     } else {
-                        // Available → black tile, muted slate number (clearly NOT white, easier
-                        // on the eyes across big 200/300 grids), group colour kept as a thin
-                        // accent border so the design language survives.
+                        // Available → black tile, off-white number, group colour kept as a
+                        // thin accent border so the design language survives on big 200/300 grids.
                         cellStyle = {
                             background: '#000',
                             border: `1px solid ${s.color}55`,
                         };
-                        textStyle = { color: '#f0f3f7', fontWeight: 900 };
+                        textStyle = { color: '#f5f5f5', fontWeight: 900 };
                     }
 
                     const canTap = salesOpen && !takenByOther && !pending;

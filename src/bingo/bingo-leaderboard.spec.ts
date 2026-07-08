@@ -130,29 +130,65 @@ describe('rankDerashLeaderboard', () => {
   });
 
   /**
-   * REAL ROUND — fill in from the actual round to get a definitive verdict.
-   * 1. Paste #44's and #107's (and any others') 5×5 grids below.
-   * 2. Paste the draw order (room.drawnNumbers, in call order).
-   * 3. Set PLACE_PATTERN to the room's per-place patterns.
-   * 4. Change `it.skip` → `it` and run:  npx jest bingo-leaderboard
-   * The assertion will show exactly which cartela SHOULD take each place.
+   * REAL ROUND — room 8b19306f-…-627eb57bd4a8 ("Bingo 15:04", leaderboard).
+   * Result was #47→1st (Any Three Lines), #67→2nd (Any Two Lines), #107→3rd
+   * (Any Line); #44 lost. Question: #44 appeared to make the first single line —
+   * should it have taken 3rd instead of #107? Data pulled straight from the DB
+   * (bingo_rooms.drawnNumbers + settlementSummary, bingo_tickets.grid).
+   *
+   * Verdict: NO. Both #44 and #107 complete exactly one line, but #107's line
+   * (column G) finishes at ball 30 while #44's (its 2nd row) finishes at ball 32,
+   * so #107 correctly outranks #44 for 3rd — even though #44 was bought earlier.
    */
-  it.skip('REAL ROUND #44 vs #107 (fill in real grids + draw order)', () => {
-    const REAL_PLACE_PATTERN = new Map<PrefilledPlace, BingoPattern>([
-      ['1st', pat('1st', 'coverall')],       // <-- set to the room's 1st-place pattern
-      ['2nd', pat('2nd', 'any_two_lines')],  // <-- 2nd
-      ['3rd', pat('3rd', 'any_line')],       // <-- 3rd
+  it('REAL ROUND: #107 finishes its line at ball 30, #44 at ball 32 → #107 correctly wins 3rd', () => {
+    const realPlacePattern = new Map<PrefilledPlace, BingoPattern>([
+      ['1st', pat('r1', 'any_three_lines')],
+      ['2nd', pat('r2', 'any_two_lines')],
+      ['3rd', pat('r3', 'any_line')],
     ]);
-    const cards: DerashLeaderboardCard[] = [
-      // { key: 44,  grid: card([...5 rows...]), order: <purchase index> },
-      // { key: 107, grid: card([...5 rows...]), order: <purchase index> },
-      // ...every other in-play card...
-    ];
-    const drawnNumbers: number[] = [/* the round's called numbers, in order */];
 
-    const ranked = rankDerashLeaderboard(rules, cards, drawnNumbers, PLACES, REAL_PLACE_PATTERN);
-    // eslint-disable-next-line no-console
-    console.log('Standings:', assign(ranked), 'full queue:', ranked);
-    expect(ranked.length).toBeGreaterThan(0);
+    // The actual 42-ball draw order.
+    const drawnNumbers = [
+      74, 56, 69, 33, 18, 66, 48, 38, 16, 6, 7, 59, 61, 68, 43, 58, 15, 19, 17, 64,
+      60, 57, 21, 67, 23, 46, 63, 27, 8, 52, 2, 20, 22, 12, 55, 65, 3, 26, 40, 47, 54, 30,
+    ];
+
+    // Real grids (centre → FREE via the card() helper). #44 was bought 1.6s BEFORE
+    // #107, so it is listed first with the earlier `order` — proving that purchase
+    // order does NOT rescue it; the line-completion ball is what ranks them.
+    const card44 = card([
+      [6, 17, 32, 46, 62],
+      [8, 20, 38, 48, 63],
+      [10, 21, 0, 49, 69],
+      [11, 26, 43, 52, 72],
+      [14, 28, 44, 52, 73],
+    ]);
+    const card107 = card([
+      [1, 17, 32, 46, 61],
+      [5, 21, 34, 48, 62],
+      [11, 23, 0, 52, 65],
+      [13, 28, 38, 59, 74],
+      [15, 29, 45, 60, 75],
+    ]);
+
+    const ranked = rankDerashLeaderboard(
+      rules,
+      [
+        { key: 44, grid: card44, order: 0 },   // bought first
+        { key: 107, grid: card107, order: 1 },
+      ],
+      drawnNumbers,
+      PLACES,
+      realPlacePattern,
+    );
+
+    // Both reach only the one-line tier (index 2 of PLACES). #107 gets there on
+    // ball 30, #44 on ball 32 → #107 ranks ahead. #47 (three lines) and #67 (two
+    // lines) sit above both and take 1st/2nd, so this pair contests 3rd — which
+    // #107 rightly wins.
+    expect(ranked).toEqual([
+      { key: 107, bestRank: 2, reachedAt: 30, order: 1 },
+      { key: 44, bestRank: 2, reachedAt: 32, order: 0 },
+    ]);
   });
 });

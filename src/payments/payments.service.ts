@@ -57,6 +57,29 @@ export class PaymentsService {
    */
   async telebirrHealth(receipt?: string): Promise<Record<string, unknown>> {
     const host = 'https://transactioninfo.ethiotelecom.et/';
+    const hostname = 'transactioninfo.ethiotelecom.et';
+
+    // Step 1: DNS. Distinguishes "can't resolve the name" from "resolves but the
+    // connection is blocked" — different fixes when talking to the host provider.
+    let dns: Record<string, unknown>;
+    const dnsStart = Date.now();
+    try {
+      const { lookup } = await import('node:dns/promises');
+      const timeout = new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error('DNS lookup timed out')), 5000),
+      );
+      const { address } = (await Promise.race([lookup(hostname), timeout])) as { address: string };
+      dns = { resolved: true, address, latencyMs: Date.now() - dnsStart };
+    } catch (error) {
+      dns = {
+        resolved: false,
+        latencyMs: Date.now() - dnsStart,
+        error: error instanceof Error ? error.message : String(error),
+        code: (error as { code?: string })?.code,
+      };
+    }
+
+    // Step 2: HTTPS connect.
     const startedAt = Date.now();
     let connectivity: Record<string, unknown>;
     try {
@@ -78,13 +101,21 @@ export class PaymentsService {
       };
     }
 
+    let verdict: string;
+    if (connectivity.reachable) {
+      verdict = 'OK — this server can reach Ethiotelecom; Telebirr deposits should work.';
+    } else if (!dns.resolved) {
+      verdict = 'DNS FAILED — the server cannot resolve the Ethiotelecom hostname. Ask the host to allow DNS resolution (or set a working resolver like 8.8.8.8).';
+    } else {
+      verdict = 'BLOCKED — DNS resolves but the outbound HTTPS connection is dropped (timeout). Ask the host to allow outbound TCP 443 to transactioninfo.ethiotelecom.et. Deposits will fail until then.';
+    }
+
     const result: Record<string, unknown> = {
       host,
       checkedAt: new Date().toISOString(),
+      dns,
       connectivity,
-      verdict: connectivity.reachable
-        ? 'OK — this server can reach Ethiotelecom; Telebirr deposits should work.'
-        : 'BLOCKED — this server cannot reach Ethiotelecom; deposits will fail. Check cPanel outbound firewall / DNS / allowed hosts.',
+      verdict,
     };
     if (receipt) {
       result.receiptProbe = await this.telebirrReceiptVerifierService.probeReceipt(receipt);

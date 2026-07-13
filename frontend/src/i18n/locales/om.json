@@ -209,7 +209,9 @@
     "crashed": "KUFEERA",
     "stakeEtb": "Kaffaltii (ETB)",
     "flewAway": "Balaliʼe!",
-    "waitingForNextRound": "Marsaa itti aanu eegaa jira"
+    "waitingForNextRound": "Marsaa itti aanu eegaa jira",
+    "allBets": "Kaffaltii Hunda",
+    "noBetsYet": "Ammaaf kaffaltiin hin jiru — jalqabaa taʼi!"
   },
   "admin": {
     "accessRequired": "Hayyama admin barbaachisa.",

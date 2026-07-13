@@ -209,7 +209,9 @@
     "crashed": "WAQA'",
     "stakeEtb": "Stejk (ETB)",
     "flewAway": "Tar 'il Bogħod!",
-    "waitingForNextRound": "Qed jistenna l-lotta li jmiss"
+    "waitingForNextRound": "Qed jistenna l-lotta li jmiss",
+    "allBets": "L-Imħatri Kollha",
+    "noBetsYet": "L-ebda mħatra s'issa — kun l-ewwel!"
   },
   "admin": {
     "accessRequired": "Meħtieġ aċċess ta' amministratur.",

@@ -349,7 +349,9 @@
     "minAmount": "Min {{amount}}",
     "autoCashoutLabel": "Auto Cashout (×)",
     "flewAway": "Flew Away!",
-    "waitingForNextRound": "Waiting for next round"
+    "waitingForNextRound": "Waiting for next round",
+    "allBets": "All Bets",
+    "noBetsYet": "No bets yet — be the first!"
   },
   "admin": {
     "accessRequired": "Admin access required.",

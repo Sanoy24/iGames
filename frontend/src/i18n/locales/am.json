@@ -348,7 +348,9 @@
     "minAmount": "ዝቅተኛ {{amount}}",
     "autoCashoutLabel": "ራስ-ሰር ማውጣት (×)",
     "flewAway": "በረረ!",
-    "waitingForNextRound": "ቀጣዩን ዙር በመጠባበቅ ላይ"
+    "waitingForNextRound": "ቀጣዩን ዙር በመጠባበቅ ላይ",
+    "allBets": "ሁሉም ውርርዶች",
+    "noBetsYet": "እስካሁን ውርርድ የለም — የመጀመሪያው ይሁኑ!"
   },
   "admin": {
     "accessRequired": "የአስተዳዳሪ ፍቃድ ያስፈልጋል።",

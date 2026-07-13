@@ -11,6 +11,15 @@ import { useStore } from '../store/useStore';
 
 type Phase = 'loading' | 'waiting' | 'running' | 'crashed' | 'error';
 type GraphPoint = { x: number; y: number };
+type LiveBet = {
+  betId: string;
+  name: string;
+  stakeMinor: number;
+  autoCashoutX100: number | null;
+  cashedOutAtX100: number | null;
+  payoutMinor: number;
+  status: 'active' | 'won' | 'lost';
+};
 
 function multiplierColor(mx100: number, crashed = false): string {
   if (crashed || mx100 < 150) return '#ef4444';
@@ -75,6 +84,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
   const [config, setConfig] = useState<CrashConfig | null>(null);
   const [recentRounds, setRecentRounds] = useState<CrashRound[]>([]);
   const [myBetHistory, setMyBetHistory] = useState<CrashBet[]>([]);
+  const [liveBets, setLiveBets] = useState<LiveBet[]>([]);
 
   const configRef = useRef<CrashConfig | null>(null);
   const myBetRef = useRef<CrashBet | null>(null);
@@ -158,6 +168,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
       myBetRef.current = null;
       setCashoutResult(null);
       setBetError('');
+      setLiveBets([]); // fresh round → clear the live bets feed
       const secs = configRef.current?.waitingDurationSeconds ?? 12;
       startWaitingTimer(secs);
     };
@@ -197,6 +208,8 @@ export function Crash({ onBack }: { onBack: () => void }) {
       if (myBetRef.current?.status === 'active') {
         setMyBet(prev => prev ? { ...prev, status: 'lost' } : null);
       }
+      // Everyone still in the round busted with the plane.
+      setLiveBets(prev => prev.map(b => (b.status === 'active' ? { ...b, status: 'lost' } : b)));
       Promise.all([
         crashApi.getRecentRounds(12).catch(() => [] as CrashRound[]),
         crashApi.getMyBets(8).catch(() => [] as CrashBet[]),
@@ -220,12 +233,25 @@ export function Crash({ onBack }: { onBack: () => void }) {
       walletApi.getWallet().then(setWallet).catch(() => {});
     };
 
+    // Public live "All Bets" feed (all players + bots).
+    const onBetPublic = (e: { betId: string; name: string; stakeMinor: number; autoCashoutX100: number | null }) => {
+      const bet: LiveBet = { betId: e.betId, name: e.name, stakeMinor: e.stakeMinor, autoCashoutX100: e.autoCashoutX100 ?? null, cashedOutAtX100: null, payoutMinor: 0, status: 'active' };
+      setLiveBets(prev => (prev.some(b => b.betId === e.betId) ? prev : [bet, ...prev].slice(0, 80)));
+    };
+    const onCashoutPublic = (e: { betId: string; cashedOutAtX100: number; payoutMinor: number }) => {
+      setLiveBets(prev => prev.map(b =>
+        b.betId === e.betId ? { ...b, cashedOutAtX100: e.cashedOutAtX100, payoutMinor: e.payoutMinor, status: 'won' } : b,
+      ));
+    };
+
     socket.on('crash.round.waiting', onWaiting);
     socket.on('crash.round.started', onStarted);
     socket.on('crash.tick', onTick);
     socket.on('crash.round.crashed', onCrashed);
     socket.on('crash.bet.placed', onBetPlaced);
     socket.on('crash.bet.cashedout', onCashedOut);
+    socket.on('crash.bet.public', onBetPublic);
+    socket.on('crash.cashout.public', onCashoutPublic);
 
     return () => {
       socket.off('crash.round.waiting', onWaiting);
@@ -234,6 +260,8 @@ export function Crash({ onBack }: { onBack: () => void }) {
       socket.off('crash.round.crashed', onCrashed);
       socket.off('crash.bet.placed', onBetPlaced);
       socket.off('crash.bet.cashedout', onCashedOut);
+      socket.off('crash.bet.public', onBetPublic);
+      socket.off('crash.cashout.public', onCashoutPublic);
       socket.emit('leave.game', { game: 'crash' });
     };
   }, [isSocketConnected, setWallet, startWaitingTimer]);
@@ -689,6 +717,55 @@ export function Crash({ onBack }: { onBack: () => void }) {
 
           </AnimatePresence>
         </div>
+      </div>
+
+      {/* ── Live "All Bets" feed ── */}
+      <div className="card" style={{ padding: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+            {t('crash.allBets')}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{liveBets.length}</span>
+        </div>
+        {liveBets.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '18px 0', color: 'var(--text-muted)', fontSize: 12 }}>
+            {t('crash.noBetsYet')}
+          </div>
+        ) : (
+          <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {liveBets.map(b => (
+              <div
+                key={b.betId}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr auto auto',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  background: b.status === 'won' ? 'rgba(16,185,129,0.10)' : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${b.status === 'won' ? 'rgba(16,185,129,0.25)' : 'var(--border)'}`,
+                  opacity: b.status === 'lost' ? 0.5 : 1,
+                }}
+              >
+                <span style={{ fontWeight: 600, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {b.name}
+                </span>
+                {b.status === 'won' && b.cashedOutAtX100 != null ? (
+                  <span style={{ fontFamily: 'monospace', fontWeight: 800, color: '#10b981', fontSize: 11 }}>
+                    {fmtMult(b.cashedOutAtX100)}
+                  </span>
+                ) : (
+                  <span />
+                )}
+                <span style={{ fontWeight: 700, textAlign: 'right', color: b.status === 'won' ? '#10b981' : 'var(--text-primary)' }}>
+                  {b.status === 'won' ? `+${b.payoutMinor}` : b.stakeMinor} ETB
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Provably fair seed hash */}

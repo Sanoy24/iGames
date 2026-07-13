@@ -209,7 +209,9 @@
     "crashed": "ወዲቑ",
     "stakeEtb": "ውርርድ (ብር)",
     "flewAway": "በሪሩ!",
-    "waitingForNextRound": "ንዝቕጽል ዙር ኣብ ምጽባይ"
+    "waitingForNextRound": "ንዝቕጽል ዙር ኣብ ምጽባይ",
+    "allBets": "ኩሎም ውርርዳት",
+    "noBetsYet": "ክሳብ ሕጂ ውርርድ የለን — ቀዳማይ ኩን!"
   },
   "admin": {
     "accessRequired": "ናይ ኣመሓዳሪ ፍቓድ የድሊ።",

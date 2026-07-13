@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
 import { agentApi, walletApi } from '../lib/api';
@@ -34,6 +35,7 @@ function Step({ n, done, label }: { n: number; done?: boolean; label: string }) 
 }
 
 export function Agent() {
+  const { t } = useTranslation();
   const addToast = useStore((s) => s.addToast);
 
   const [available, setAvailable] = useState<Withdrawal[]>([]);
@@ -173,10 +175,10 @@ export function Agent() {
       {/* View toggle: Withdrawals ↔ Support */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         <button className={`btn btn-sm ${view === 'withdrawals' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('withdrawals')}>
-          <WalletIcon size={14} /> Withdrawals
+          <WalletIcon size={14} /> {t('agent.withdrawalsTab')}
         </button>
         <button className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('support')}>
-          <LifeBuoy size={14} /> Support
+          <LifeBuoy size={14} /> {t('agent.supportTab')}
         </button>
       </div>
 
@@ -191,12 +193,12 @@ export function Agent() {
         marginBottom: 16,
       }}>
         {[
-          { label: 'Balance', value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
-          { label: 'Fee/Comm', value: `${serviceFeePct}/${commissionPct}%` },
-          { label: 'Pool', value: String(available.length) },
-          { label: 'Active', value: String(mine.length) },
-        ].map(({ label, value, accent }) => (
-          <div key={label} style={{
+          { key: 'balance', label: t('agent.balance'), value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
+          { key: 'feeComm', label: t('agent.feeComm'), value: `${serviceFeePct}/${commissionPct}%` },
+          { key: 'pool', label: t('agent.pool'), value: String(available.length) },
+          { key: 'active', label: t('agent.active'), value: String(mine.length) },
+        ].map(({ key, label, value, accent }) => (
+          <div key={key} style={{
             background: 'var(--card-bg)',
             border: '1px solid var(--border)',
             borderRadius: 10,
@@ -213,7 +215,7 @@ export function Agent() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Users size={16} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontWeight: 700, fontSize: 16 }}>Agent Panel</span>
+          <span style={{ fontWeight: 700, fontSize: 16 }}>{t('agent.panelTitle')}</span>
         </div>
         <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void load()} style={{ minWidth: 32 }}>
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />

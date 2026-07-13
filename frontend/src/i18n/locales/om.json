@@ -208,5 +208,24 @@
     "live": "KALLATTII",
     "crashed": "KUFEERA",
     "stakeEtb": "Kaffaltii (ETB)"
+  },
+  "admin": {
+    "accessRequired": "Hayyama admin barbaachisa.",
+    "panelTitle": "Paaneelii Admin",
+    "tabOverview": "Ilaalcha Waliigalaa",
+    "tabPlayers": "Taphattoota",
+    "tabAgents": "Bakka Bu'oota",
+    "tabWithdrawals": "Baasiiwwan",
+    "tabGames": "Taphoota",
+    "tabConfig": "Qindaa'ina",
+    "tabAccount": "Herrega"
+  },
+  "agent": {
+    "panelTitle": "Paaneelii Bakka Bu'aa",
+    "balance": "Baankii",
+    "pool": "Kuusaa",
+    "active": "Hojjetaa",
+    "withdrawalsTab": "Baasiiwwan",
+    "supportTab": "Deeggarsa"
   }
 }

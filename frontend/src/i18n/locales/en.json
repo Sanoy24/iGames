@@ -348,5 +348,27 @@
     "stakeEtb": "Stake (ETB)",
     "minAmount": "Min {{amount}}",
     "autoCashoutLabel": "Auto Cashout (×)"
+  },
+  "admin": {
+    "accessRequired": "Admin access required.",
+    "loginAsDevAdmin": "Login as Dev Admin",
+    "loggedInDev": "Logged in as Dev Admin",
+    "panelTitle": "Admin Panel",
+    "tabOverview": "Overview",
+    "tabPlayers": "Players",
+    "tabAgents": "Agents",
+    "tabWithdrawals": "Withdrawals",
+    "tabGames": "Games",
+    "tabConfig": "Config",
+    "tabAccount": "Account"
+  },
+  "agent": {
+    "panelTitle": "Agent Panel",
+    "balance": "Balance",
+    "feeComm": "Fee/Comm",
+    "pool": "Pool",
+    "active": "Active",
+    "withdrawalsTab": "Withdrawals",
+    "supportTab": "Support"
   }
 }

@@ -208,5 +208,24 @@
     "live": "LIVE",
     "crashed": "WAQA'",
     "stakeEtb": "Stejk (ETB)"
+  },
+  "admin": {
+    "accessRequired": "Meħtieġ aċċess ta' amministratur.",
+    "panelTitle": "Panel tal-Amministratur",
+    "tabOverview": "Ħarsa Ġenerali",
+    "tabPlayers": "Plejers",
+    "tabAgents": "Aġenti",
+    "tabWithdrawals": "Irtirar",
+    "tabGames": "Logħob",
+    "tabConfig": "Konfigurazzjoni",
+    "tabAccount": "Kont"
+  },
+  "agent": {
+    "panelTitle": "Panel tal-Aġent",
+    "balance": "Bilanċ",
+    "pool": "Pixxina",
+    "active": "Attiv",
+    "withdrawalsTab": "Irtirar",
+    "supportTab": "Appoġġ"
   }
 }

@@ -347,5 +347,27 @@
     "stakeEtb": "ውርርድ (ብር)",
     "minAmount": "ዝቅተኛ {{amount}}",
     "autoCashoutLabel": "ራስ-ሰር ማውጣት (×)"
+  },
+  "admin": {
+    "accessRequired": "የአስተዳዳሪ ፍቃድ ያስፈልጋል።",
+    "loginAsDevAdmin": "እንደ ገንቢ አስተዳዳሪ ግባ",
+    "loggedInDev": "እንደ ገንቢ አስተዳዳሪ ገብተዋል",
+    "panelTitle": "የአስተዳዳሪ ፓነል",
+    "tabOverview": "አጠቃላይ እይታ",
+    "tabPlayers": "ተጫዋቾች",
+    "tabAgents": "ወኪሎች",
+    "tabWithdrawals": "ወጪዎች",
+    "tabGames": "ጨዋታዎች",
+    "tabConfig": "ቅንብር",
+    "tabAccount": "መለያ"
+  },
+  "agent": {
+    "panelTitle": "የወኪል ፓነል",
+    "balance": "ቀሪ ሂሳብ",
+    "feeComm": "ክፍያ/ኮሚሽን",
+    "pool": "ገንዳ",
+    "active": "ንቁ",
+    "withdrawalsTab": "ወጪዎች",
+    "supportTab": "ድጋፍ"
   }
 }

@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
   Image as ImageIcon, LifeBuoy, Megaphone, Play, Plus, RefreshCw, Send, Settings,
@@ -50,6 +51,19 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'emoney',      label: 'ETB',         icon: <Coins size={15} /> },
   { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
 ];
+
+// Internal staff tool — labels stay in English by default; translated only
+// where a key exists (see locales' `admin` namespace), falling back to TABS.label.
+const TAB_LABEL_KEY: Partial<Record<AdminTab, string>> = {
+  overview: 'admin.tabOverview',
+  players: 'admin.tabPlayers',
+  agents: 'admin.tabAgents',
+  withdrawals: 'admin.tabWithdrawals',
+  support: 'nav.support',
+  games: 'admin.tabGames',
+  config: 'admin.tabConfig',
+  account: 'admin.tabAccount',
+};
 
 // ── Shared helpers ────────────────────────────────────────────────
 
@@ -3502,6 +3516,7 @@ function BroadcastAdmin() {
 }
 
 export function Admin() {
+  const { t } = useTranslation();
   const user = useStore((s) => s.user);
   const setAuth = useStore((s) => s.setAuth);
   const setWallet = useStore((s) => s.setWallet);
@@ -3515,15 +3530,15 @@ export function Admin() {
         const data = await authApi.devSeedAdmin();
         setAuth(data.user, data.accessToken);
         setWallet(await walletApi.getWallet());
-        addToast('success', 'Logged in as Dev Admin');
+        addToast('success', t('admin.loggedInDev'));
       } catch (err) { addToast('error', getErrorMessage(err)); }
     };
     return (
       <div className="centered-loader" style={{ flex: 1, gap: 16 }}>
         <Shield size={32} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-        <p style={{ color: 'var(--text-muted)' }}>Admin access required.</p>
+        <p style={{ color: 'var(--text-muted)' }}>{t('admin.accessRequired')}</p>
         {import.meta.env.DEV && (
-          <button className="btn btn-primary" onClick={handleDevLogin}>Login as Dev Admin</button>
+          <button className="btn btn-primary" onClick={handleDevLogin}>{t('admin.loginAsDevAdmin')}</button>
         )}
       </div>
     );
@@ -3535,7 +3550,7 @@ export function Admin() {
       <div className="adm-header">
         <Shield size={18} strokeWidth={1.8} />
         <div>
-          <span className="adm-header-title">Admin Panel</span>
+          <span className="adm-header-title">{t('admin.panelTitle')}</span>
           <span className="adm-header-sub">iGames Platform</span>
         </div>
       </div>
@@ -3543,10 +3558,10 @@ export function Admin() {
       {/* Body: sidebar nav + content */}
       <div className="adm-body">
         <nav className="adm-tab-bar">
-          {TABS.map((t) => (
-            <button key={t.id} className={`adm-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
-              {t.icon}
-              <span>{t.label}</span>
+          {TABS.map((tabItem) => (
+            <button key={tabItem.id} className={`adm-tab${tab === tabItem.id ? ' active' : ''}`} onClick={() => setTab(tabItem.id)}>
+              {tabItem.icon}
+              <span>{TAB_LABEL_KEY[tabItem.id] ? t(TAB_LABEL_KEY[tabItem.id]!) : tabItem.label}</span>
             </button>
           ))}
         </nav>

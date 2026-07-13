@@ -208,5 +208,24 @@
     "live": "ቀጥታ",
     "crashed": "ወዲቑ",
     "stakeEtb": "ውርርድ (ብር)"
+  },
+  "admin": {
+    "accessRequired": "ናይ ኣመሓዳሪ ፍቓድ የድሊ።",
+    "panelTitle": "ናይ ኣመሓዳሪ ፓነል",
+    "tabOverview": "ሓፈሻዊ እይታ",
+    "tabPlayers": "ተጻወቲ",
+    "tabAgents": "ወከልቲ",
+    "tabWithdrawals": "ወጻኢታት",
+    "tabGames": "ጸወታታት",
+    "tabConfig": "ቅንብር",
+    "tabAccount": "ሕሳብ"
+  },
+  "agent": {
+    "panelTitle": "ናይ ወኪል ፓነል",
+    "balance": "ዝተረፈ ሒሳብ",
+    "pool": "ገንዳብ",
+    "active": "ንጡፍ",
+    "withdrawalsTab": "ወጻኢታት",
+    "supportTab": "ደገፍ"
   }
 }

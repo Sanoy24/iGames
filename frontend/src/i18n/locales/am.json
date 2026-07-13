@@ -21,32 +21,159 @@
     "retry": "እንደገና ሞክር",
     "loading": "በመጫን ላይ…",
     "online": "ኦንላይን",
-    "playNow": "አሁን ተጫወት"
+    "playNow": "አሁን ተጫወት",
+    "seeAll": "ሁሉንም ይመልከቱ →",
+    "refresh": "አድስ"
   },
-  "support": {
-    "title": "ድጋፍ",
-    "myTickets": "የእኔ ትኬቶች",
-    "liveChat": "ቀጥታ ውይይት",
-    "newTicket": "አዲስ ትኬት",
-    "noTickets": "እስካሁን ምንም ትኬት የለም። እርዳታ ከፈለጉ ይክፈቱ።",
-    "helpAndSupport": "እገዛ እና ድጋፍ",
-    "categoryGeneral": "አጠቃላይ",
-    "categoryComplaint": "ቅሬታ",
-    "categoryDispute": "ክርክር",
-    "categoryRefund": "ገንዘብ ተመላሽ",
-    "subject": "ርዕስ",
-    "submitTicket": "ትኬት አስገባ"
+  "home": {
+    "morning": "እንደምን አደሩ",
+    "afternoon": "እንደምን ዋሉ",
+    "evening": "እንደምን አመሹ",
+    "player": "ተጫዋች",
+    "yourBalance": "ቀሪ ሂሳብዎ",
+    "etbAvailable": "ብር ይገኛል",
+    "onlineNow": "{{count}} አሁን ኦንላይን",
+    "playing": "{{count}} በመጫወት ላይ",
+    "kenoIn": "ኪኖ በ {{time}}",
+    "kenoDrawing": "ኪኖ በመሳብ ላይ…",
+    "inKeno": "በኪኖ",
+    "inBingo": "በቢንጎ",
+    "totalOnline": "ጠቅላላ ኦንላይን",
+    "playNow": "አሁን ተጫወት",
+    "allGames": "ሁሉም ጨዋታዎች →",
+    "seeAll": "ሁሉንም ይመልከቱ →",
+    "recentActivity": "የቅርብ ጊዜ እንቅስቃሴ",
+    "helpFaq": "እገዛ እና ተደጋጋሚ ጥያቄዎች",
+    "won": "አሸነፈ",
+    "on": "በ"
+  },
+  "gameCard": {
+    "fastDraw": "ፈጣን ዕጣ",
+    "liveRooms": "ቀጥታ ክፍሎች",
+    "underMaintenance": "🔧 በጥገና ላይ",
+    "drawIn": "ዕጣ በ {{time}}",
+    "pickNumbers": "1–12 ቁጥሮች ይምረጡ",
+    "nextBingo": "ቀጣዩ ቢንጎ በቅርቡ ይጀምራል! ካርድዎን ይግዙ",
+    "paused": "ቆሟል",
+    "live": "ቀጥታ",
+    "hot": "ትኩስ"
+  },
+  "ledger": {
+    "winnings": "ትርፍ",
+    "ticketPurchase": "የቲኬት ግዢ",
+    "ticketRefund": "የቲኬት ተመላሽ",
+    "refund": "ተመላሽ",
+    "deposit": "ማስገባት",
+    "withdrawal": "ማውጣት",
+    "bonus": "ጉርሻ",
+    "adjustment": "ማስተካከያ",
+    "agentTransfer": "የወኪል ዝውውር",
+    "transaction": "ግብይት"
+  },
+  "faq": {
+    "keno": {
+      "q": "ኪኖ እንዴት ይሠራል?",
+      "a": "ከ1–80 ውስጥ 1–12 ቁጥሮችን ይምረጡ። ዕጣ ሲወጣ 20 ቁጥሮች በዘፈቀደ ይመረጣሉ። ክፍያዎ ከመረጧቸው ስንት እንደተገጣጠሙ ይወሰናል።"
+    },
+    "bingo": {
+      "q": "ቢንጎ እንዴት ይሠራል?",
+      "a": "ወደ ክፍል ገብተው ቲኬቶች ይግዙ። ቁጥሮች አንድ በአንድ ይወጣሉ። አንድ መስመር፣ ሁለት መስመር ወይም ሙሉ ካርድ በማገጣጠም የሽልማት ደረጃዎችን ያሸንፉ።"
+    },
+    "currency": {
+      "q": "መተግበሪያው የትኛውን ገንዘብ ይጠቀማል?",
+      "a": "ሁሉም ሂሳቦች፣ ውርርዶች እና ክፍያዎች በ ETB (የኢትዮጵያ ብር) ይታያሉ።"
+    },
+    "deposit": {
+      "q": "እንዴት ገንዘብ አስገባለሁ?",
+      "a": "ቦርሳ → ማስገባት (ቴሌብር)። መጠኑን ለተረኛው ወኪል ይላኩ፣ ከዚያም የኤስኤምኤስ ማረጋገጫውን በመለጠፍ ሂሳብዎ ወዲያውኑ ይሞላል።"
+    },
+    "withdraw": {
+      "q": "እንዴት ገንዘብ አወጣለሁ?",
+      "a": "ቦርሳ → ማውጣት። መጠኑን እና የቴሌብር ስልክ ቁጥርዎን ያስገቡ። ወኪል ዝውውሩን ያስተናግዳል።"
+    },
+    "instant": {
+      "q": "ሽልማቶች ወዲያውኑ ናቸው?",
+      "a": "አዎ — ከእያንዳንዱ ዕጣ ወይም ክፍል አወራረድ በኋላ ወዲያውኑ ወደ ቦርሳዎ ይገባል።"
+    }
+  },
+  "games": {
+    "chooseGame": "ጨዋታ ይምረጡ",
+    "filterAll": "ሁሉም ጨዋታዎች",
+    "filterKeno": "ፈጣን ዕጣ",
+    "filterBingo": "ቀጥታ ክፍሎች",
+    "filterCrash": "ክራሽ",
+    "maintenance": "🔧 ጥገና",
+    "bingoTag": "በክፍል ላይ የተመሠረተ",
+    "bingoDesc": "ቀጥታ ክፍል ተቀላቅለው ካርዶችን ይያዙ፣ መስመሮችን እና ሙሉ ካርድ ለመሙላት ይሽቀዳደሙ — ከእውነተኛ ተጫዋቾች ጋር ቀጥታ ዕጣ።",
+    "bingoStat1": "3 የሽልማት ደረጃዎች",
+    "bingoStat2": "🎟 1–5 ካርዶች",
+    "bingoStat3": "ቀጥታ ውይይት",
+    "kenoTag": "ፈጣን ዕጣ",
+    "kenoDesc": "ዕድለኛ ቁጥሮችዎን ይምረጡ፣ ቲኬት ይግዙ እና 20 ቁጥሮች ቀጥታ ሲወጡ ይመልከቱ — ትርፍ በእያንዳንዱ ዙር ወዲያውኑ ይከፈላል።",
+    "kenoStat1": "ፈጣን ዙሮች",
+    "kenoStat2": "🎯 1–12 ይምረጡ",
+    "kenoStat3": "ወዲያውኑ ክፍያ",
+    "crashTag": "ማረጋገጥ የሚቻል",
+    "crashDesc": "አባዢው ሲወጣ ይመልከቱ፣ ከመውደቁ በፊት ያውጡ — በጠበቁ ቁጥር አደጋው ይጨምራል።",
+    "crashStat1": "ቀጥታ አባዢ",
+    "crashStat2": "🚀 ራስ-ሰር ማውጣት",
+    "crashStat3": "🔒 ሲድ ሃሽ",
+    "featureFair": "ማረጋገጥ የሚቻል",
+    "featurePayouts": "ወዲያውኑ ክፍያ",
+    "featureRng": "RNG የተረጋገጠ"
+  },
+  "leaderboard": {
+    "title": "የደረጃ ሰሌዳ",
+    "subtitle": "ከፍተኛ አሸናፊዎች",
+    "all": "ሁሌም",
+    "monthly": "ወርሃዊ",
+    "weekly": "ሳምንታዊ",
+    "rank": "ደረጃ",
+    "player": "ተጫዋች",
+    "winnings": "ትርፍ",
+    "wins": "ድሎች",
+    "empty": "እስካሁን አሸናፊ የለም። የመጀመሪያው ይሁኑ!",
+    "you": "እርስዎ"
   },
   "wallet": {
     "title": "ቦርሳ",
     "available": "የሚገኝ",
     "reserved": "የተያዘ",
     "status": "ሁኔታ",
-    "getHelp": "የክፍያ ችግር? እገዛ እና ድጋፍ ያግኙ"
+    "getHelp": "የክፍያ ችግር? እገዛ እና ድጋፍ ያግኙ",
+    "deposit": "ማስገባት",
+    "withdraw": "ማውጣት",
+    "amount": "መጠን",
+    "phoneNumber": "የቴሌብር ስልክ ቁጥር",
+    "requestWithdrawal": "ማውጣት ይጠይቁ",
+    "transactionHistory": "የግብይት ታሪክ",
+    "noTransactions": "እስካሁን ግብይት የለም",
+    "withdrawals": "ወጪዎች",
+    "pending": "በመጠባበቅ ላይ",
+    "processing": "በሂደት ላይ",
+    "completed": "ተጠናቋል",
+    "rejected": "ተቀባይነት አላገኘም"
   },
   "profile": {
     "helpAndSupport": "እገዛ እና ድጋፍ",
-    "logout": "ውጣ"
+    "logout": "ውጣ",
+    "editProfile": "መገለጫ አርትዕ",
+    "changePassword": "የይለፍ ቃል ቀይር",
+    "displayName": "የሚታይ ስም",
+    "phone": "ስልክ",
+    "email": "ኢሜይል"
+  },
+  "login": {
+    "welcome": "እንኳን ደህና መጡ",
+    "signIn": "ይግቡ",
+    "phoneNumber": "ስልክ ቁጥር",
+    "password": "የይለፍ ቃል",
+    "login": "ግባ",
+    "loggingIn": "በመግባት ላይ…"
+  },
+  "notifications": {
+    "title": "ማሳወቂያዎች",
+    "empty": "እስካሁን ማሳወቂያ የለም"
   },
   "language": {
     "label": "ቋንቋ"

@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Zap, Users, Clock, Trophy, Star, TrendingUp } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
@@ -14,11 +15,11 @@ const KENO_BALLS = [7, 23, 45, 68, 80];
 const CRASH_MULTS = ['1.23×', '2.50×', '5.00×', '1.05×'];
 const CRASH_COLORS = ['#10b981', '#10b981', '#ef4444', '#ef4444'];
 
-const FILTER_CHIPS: { id: Filter; label: string; icon: string }[] = [
-  { id: 'all',   label: 'All Games',   icon: '🎮' },
-  { id: 'keno',  label: 'Fast Draw',   icon: '⚡' },
-  { id: 'bingo', label: 'Live Rooms',  icon: '🎯' },
-  { id: 'crash', label: 'Crash',       icon: '🚀' },
+const FILTER_CHIPS: { id: Filter; labelKey: string; icon: string }[] = [
+  { id: 'all',   labelKey: 'games.filterAll',   icon: '🎮' },
+  { id: 'keno',  labelKey: 'games.filterKeno',  icon: '⚡' },
+  { id: 'bingo', labelKey: 'games.filterBingo', icon: '🎯' },
+  { id: 'crash', labelKey: 'games.filterCrash', icon: '🚀' },
 ];
 
 const containerVariants = {
@@ -32,6 +33,7 @@ const itemVariants = {
 };
 
 export function Games({ onNavigate }: Props) {
+  const { t } = useTranslation();
   const liveCounts = useStore((s) => s.liveCounts);
   const gameCatalog = useStore((s) => s.gameCatalog);
   const addToast = useStore((s) => s.addToast);
@@ -75,7 +77,7 @@ export function Games({ onNavigate }: Props) {
           animate={{ scale: 1, opacity: 1 }}
           transition={{ type: 'spring', stiffness: 400, damping: 20, delay: 0.05 }}
         >
-          Games
+          {t('nav.games')}
         </motion.div>
         <motion.h1
           className="hero-title"
@@ -83,7 +85,7 @@ export function Games({ onNavigate }: Props) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.3 }}
         >
-          Choose a Game
+          {t('games.chooseGame')}
         </motion.h1>
         {liveCounts && (
           <motion.div
@@ -96,20 +98,20 @@ export function Games({ onNavigate }: Props) {
             <span className="stat-pill">
               <Users size={11} style={{ display: 'inline', marginRight: 4, color: 'var(--green)' }} />
               <span className="stat-pill-val">{liveCounts.totalOnline}</span>
-              <span className="stat-pill-lbl"> online</span>
+              <span className="stat-pill-lbl"> {t('common.online')}</span>
             </span>
             {liveCounts.kenoOnline > 0 && (
               <span className="stat-pill">
                 <Zap size={11} style={{ display: 'inline', marginRight: 4, color: 'var(--gold)' }} />
                 <span className="stat-pill-val">{liveCounts.kenoOnline}</span>
-                <span className="stat-pill-lbl"> in Keno</span>
+                <span className="stat-pill-lbl"> {t('home.inKeno')}</span>
               </span>
             )}
             {liveCounts.bingoOnline > 0 && (
               <span className="stat-pill">
                 <Star size={11} style={{ display: 'inline', marginRight: 4, color: '#c084fc' }} />
                 <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
-                <span className="stat-pill-lbl"> in Bingo</span>
+                <span className="stat-pill-lbl"> {t('home.inBingo')}</span>
               </span>
             )}
           </motion.div>
@@ -133,7 +135,7 @@ export function Games({ onNavigate }: Props) {
             style={{ position: 'relative', overflow: 'hidden' }}
           >
             <span style={{ marginRight: 5 }}>{chip.icon}</span>
-            {chip.label}
+            {t(chip.labelKey)}
             {filter === chip.id && (
               <motion.span
                 layoutId="filter-pill"
@@ -174,21 +176,21 @@ export function Games({ onNavigate }: Props) {
             >
               <div className="game-banner-content">
                 <span className="game-banner-tag">
-                  {bingo.maint ? '🔧 Maintenance' : 'Room based'}
+                  {bingo.maint ? t('games.maintenance') : t('games.bingoTag')}
                   {liveCounts && liveCounts.bingoOnline > 0 && (
-                    <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {liveCounts.bingoOnline} playing</span>
+                    <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {t('home.playing', { count: liveCounts.bingoOnline })}</span>
                   )}
                 </span>
                 <h2 className="game-banner-title">Bingo</h2>
                 <p className="game-banner-desc">
-                  Join a live room, grab cards, and race to fill lines and full house — real-time draws with real players.
+                  {t('games.bingoDesc')}
                 </p>
                 <div className="game-banner-stats">
-                  <span className="game-stat-pill"><Trophy size={10} style={{ display:'inline', marginRight:3 }} />3 prize tiers</span>
-                  <span className="game-stat-pill">🎟 1–5 cards</span>
-                  <span className="game-stat-pill"><Users size={10} style={{ display:'inline', marginRight:3 }} />Live chat</span>
+                  <span className="game-stat-pill"><Trophy size={10} style={{ display:'inline', marginRight:3 }} />{t('games.bingoStat1')}</span>
+                  <span className="game-stat-pill">{t('games.bingoStat2')}</span>
+                  <span className="game-stat-pill"><Users size={10} style={{ display:'inline', marginRight:3 }} />{t('games.bingoStat3')}</span>
                 </div>
-                <span className="game-banner-cta">Play Now →</span>
+                <span className="game-banner-cta">{t('common.playNow')} →</span>
               </div>
               <div className="game-banner-deco">
                 {BINGO_LETTERS.map((letter, i) => (
@@ -222,21 +224,21 @@ export function Games({ onNavigate }: Props) {
             >
               <div className="game-banner-content">
                 <span className="game-banner-tag">
-                  {keno.maint ? '🔧 Maintenance' : 'Fast draw'}
+                  {keno.maint ? t('games.maintenance') : t('games.kenoTag')}
                   {liveCounts && liveCounts.kenoOnline > 0 && (
-                    <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {liveCounts.kenoOnline} playing</span>
+                    <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {t('home.playing', { count: liveCounts.kenoOnline })}</span>
                   )}
                 </span>
                 <h2 className="game-banner-title">Keno</h2>
                 <p className="game-banner-desc">
-                  Pick your lucky numbers, buy a ticket, and watch 20 numbers drawn live — wins paid instantly every round.
+                  {t('games.kenoDesc')}
                 </p>
                 <div className="game-banner-stats">
-                  <span className="game-stat-pill"><Zap size={10} style={{ display:'inline', marginRight:3 }} />Fast rounds</span>
-                  <span className="game-stat-pill">🎯 Pick 1–12</span>
-                  <span className="game-stat-pill"><Clock size={10} style={{ display:'inline', marginRight:3 }} />Instant payout</span>
+                  <span className="game-stat-pill"><Zap size={10} style={{ display:'inline', marginRight:3 }} />{t('games.kenoStat1')}</span>
+                  <span className="game-stat-pill">{t('games.kenoStat2')}</span>
+                  <span className="game-stat-pill"><Clock size={10} style={{ display:'inline', marginRight:3 }} />{t('games.kenoStat3')}</span>
                 </div>
-                <span className="game-banner-cta">Play Now →</span>
+                <span className="game-banner-cta">{t('common.playNow')} →</span>
               </div>
               <div className="game-banner-deco game-banner-deco-keno">
                 {KENO_BALLS.map((n, i) => (
@@ -269,18 +271,18 @@ export function Games({ onNavigate }: Props) {
             >
               <div className="game-banner-content">
                 <span className="game-banner-tag">
-                  {crash.maint ? '🔧 Maintenance' : 'Provably Fair'}
+                  {crash.maint ? t('games.maintenance') : t('games.crashTag')}
                 </span>
                 <h2 className="game-banner-title">Crash</h2>
                 <p className="game-banner-desc">
-                  Watch the multiplier climb, cash out before it crashes — the longer you wait, the bigger the risk.
+                  {t('games.crashDesc')}
                 </p>
                 <div className="game-banner-stats">
-                  <span className="game-stat-pill"><TrendingUp size={10} style={{ display:'inline', marginRight:3 }} />Live multiplier</span>
-                  <span className="game-stat-pill">🚀 Auto cashout</span>
-                  <span className="game-stat-pill">🔒 Seed hash</span>
+                  <span className="game-stat-pill"><TrendingUp size={10} style={{ display:'inline', marginRight:3 }} />{t('games.crashStat1')}</span>
+                  <span className="game-stat-pill">{t('games.crashStat2')}</span>
+                  <span className="game-stat-pill">{t('games.crashStat3')}</span>
                 </div>
-                <span className="game-banner-cta">Play Now →</span>
+                <span className="game-banner-cta">{t('common.playNow')} →</span>
               </div>
               <div className="game-banner-deco" style={{ gap: 6 }}>
                 {CRASH_MULTS.map((m, i) => (
@@ -312,9 +314,9 @@ export function Games({ onNavigate }: Props) {
         style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}
       >
         {[
-          { icon: '🔒', label: 'Provably Fair' },
-          { icon: '⚡', label: 'Instant Payouts' },
-          { icon: '🎲', label: 'RNG Certified' },
+          { icon: '🔒', label: t('games.featureFair') },
+          { icon: '⚡', label: t('games.featurePayouts') },
+          { icon: '🎲', label: t('games.featureRng') },
         ].map((f) => (
           <div
             key={f.label}

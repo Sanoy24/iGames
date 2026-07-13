@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Bell } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useStore, type AppNotification, type NotificationKind } from '../store/useStore';
@@ -27,6 +28,7 @@ function mapServerNotification(n: ServerNotification): AppNotification {
 }
 
 export function NotificationBell() {
+  const { t } = useTranslation();
   const notifications = useStore((s) => s.notifications);
   const unreadCount = useStore((s) => s.unreadCount);
   const setNotifications = useStore((s) => s.setNotifications);
@@ -140,11 +142,11 @@ export function NotificationBell() {
             }}
           >
             <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13 }}>
-              Notifications
+              {t('notifications.title')}
             </div>
             {notifications.length === 0 ? (
               <div style={{ padding: '20px 14px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>
-                No notifications yet
+                {t('notifications.empty')}
               </div>
             ) : (
               <div style={{ maxHeight: 320, overflowY: 'auto' }}>

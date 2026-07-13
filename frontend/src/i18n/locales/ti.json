@@ -6,6 +6,7 @@
     "top": "ላዕለዋይ",
     "profile": "መግለጺ",
     "agent": "ወኪል",
+    "admin": "ኣመሓዳሪ",
     "support": "ደገፍ"
   },
   "common": {
@@ -13,24 +14,92 @@
     "withdraw": "ኣውጽእ",
     "cancel": "ሰርዝ",
     "save": "ኣቐምጥ",
+    "submit": "ኣእቱ",
     "close": "ዕጾ",
     "back": "ተመለስ",
     "send": "ልኣኽ",
-    "loading": "ይጽዕን ኣሎ…"
+    "retry": "እንደገና ፈትን",
+    "loading": "ይጽዕን ኣሎ…",
+    "online": "ኦንላይን",
+    "playNow": "ሕጂ ተጻወት",
+    "seeAll": "ኩሉ ርአ →",
+    "refresh": "ኣሓድስ"
   },
-  "support": {
-    "title": "ደገፍ",
-    "myTickets": "ናተይ ቲኬታት",
-    "liveChat": "ቀጥታ ዕላል",
-    "newTicket": "ሓድሽ ቲኬት",
-    "helpAndSupport": "ሓገዝን ደገፍን"
+  "home": {
+    "morning": "ደሓን ሓዲርኩም",
+    "afternoon": "ደሓን ውዒልኩም",
+    "evening": "ደሓን ኣምሲኹም",
+    "player": "ተጻዋታይ",
+    "yourBalance": "ዝተረፈ ሒሳብኩም",
+    "etbAvailable": "ብር ኣሎ",
+    "onlineNow": "{{count}} ኦንላይን",
+    "playing": "{{count}} ይጻወቱ",
+    "kenoDrawing": "ኪኖ ይወጽእ ኣሎ…",
+    "inKeno": "ኣብ ኪኖ",
+    "inBingo": "ኣብ ቢንጎ",
+    "totalOnline": "ጠቕላላ ኦንላይን",
+    "playNow": "ሕጂ ተጻወት",
+    "allGames": "ኩሎም ጸወታታት →",
+    "seeAll": "ኩሉ ርአ →",
+    "recentActivity": "ናይ ቀረባ እዋን ንጥፈት",
+    "helpFaq": "ሓገዝን ሕቶታትን",
+    "won": "ተዓዊቱ",
+    "on": "ኣብ"
+  },
+  "gameCard": {
+    "underMaintenance": "🔧 ኣብ ጽገና",
+    "pickNumbers": "ካብ 1–12 ቁጽርታት ምረጽ",
+    "paused": "ደው ኢሉ",
+    "live": "ቀጥታ",
+    "hot": "ውዑይ"
+  },
+  "games": {
+    "chooseGame": "ጸወታ ምረጽ",
+    "filterAll": "ኩሎም ጸወታታት",
+    "filterKeno": "ቅልጡፍ ዕጣ",
+    "filterBingo": "ቀጥታ ክፍልታት",
+    "filterCrash": "ክራሽ",
+    "maintenance": "🔧 ጽገና"
+  },
+  "leaderboard": {
+    "title": "ሰሌዳ ደረጃ",
+    "subtitle": "ላዕለዎት ተዓወትቲ",
+    "all": "ኩሉ ግዜ",
+    "monthly": "ወርሓዊ",
+    "weekly": "ሰሙናዊ",
+    "rank": "ደረጃ",
+    "player": "ተጻዋታይ",
+    "winnings": "ትርፊ",
+    "wins": "ዓወታት",
+    "empty": "ክሳብ ሕጂ ተዓዋቲ የለን። ቀዳማይ ኩን!",
+    "you": "ንስኻ"
   },
   "wallet": {
-    "title": "ቦርሳ"
+    "title": "ቦርሳ",
+    "available": "ዝርከብ",
+    "reserved": "ዝተትሓዘ",
+    "status": "ኩነታት",
+    "deposit": "ኣእቱ",
+    "withdraw": "ኣውጽእ",
+    "amount": "መጠን",
+    "requestWithdrawal": "ምውጻእ ሕተት"
   },
   "profile": {
     "helpAndSupport": "ሓገዝን ደገፍን",
-    "logout": "ውጻእ"
+    "logout": "ውጻእ",
+    "editProfile": "መግለጺ ኣርትዕ",
+    "changePassword": "መሕለፊ ቃል ቀይር"
+  },
+  "login": {
+    "welcome": "እንኳዕ ደሓን መጻእኩም",
+    "phoneNumber": "ቁጽሪ ስልኪ",
+    "password": "መሕለፊ ቃል",
+    "login": "እቶ",
+    "loggingIn": "ይኣቱ ኣሎ…"
+  },
+  "notifications": {
+    "title": "ማሳወቕታታት",
+    "empty": "ክሳብ ሕጂ ማሳወቕታ የለን"
   },
   "language": {
     "label": "ቋንቋ"

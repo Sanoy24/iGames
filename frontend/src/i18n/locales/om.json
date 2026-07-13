@@ -6,6 +6,7 @@
     "top": "Ol'aanaa",
     "profile": "Piroofaayilii",
     "agent": "Bakka bu'aa",
+    "admin": "Bulchaa",
     "support": "Deeggarsa"
   },
   "common": {
@@ -13,25 +14,92 @@
     "withdraw": "Baasi",
     "cancel": "Haqi",
     "save": "Olkaa'i",
+    "submit": "Ergi",
     "close": "Cufi",
     "back": "Deebi'i",
     "send": "Ergi",
+    "retry": "Irra deebi'ii yaali",
     "loading": "Fe'aa jira…",
-    "playNow": "Amma Taphadhu"
+    "online": "online",
+    "playNow": "Amma Taphadhu",
+    "seeAll": "Hunda ilaali →",
+    "refresh": "Haaromsi"
   },
-  "support": {
-    "title": "Deeggarsa",
-    "myTickets": "Tikeetii koo",
-    "liveChat": "Haasawa kallattii",
-    "newTicket": "Tikeetii haaraa",
-    "helpAndSupport": "Gargaarsa fi Deeggarsa"
+  "home": {
+    "morning": "Barii gaarii",
+    "afternoon": "Waaree gaarii",
+    "evening": "Galgala gaarii",
+    "player": "Taphataa",
+    "yourBalance": "Baankii kee",
+    "etbAvailable": "ETB ni jira",
+    "onlineNow": "{{count}} online",
+    "playing": "{{count}} taphachaa",
+    "kenoDrawing": "Keno bahaa jira…",
+    "inKeno": "Keno keessa",
+    "inBingo": "Bingo keessa",
+    "totalOnline": "waliigala online",
+    "playNow": "Amma Taphadhu",
+    "allGames": "Taphoota hunda →",
+    "seeAll": "Hunda ilaali →",
+    "recentActivity": "Sochii dhiheenyaa",
+    "helpFaq": "Gargaarsa fi Gaaffii",
+    "won": "moʼate",
+    "on": "irratti"
+  },
+  "gameCard": {
+    "underMaintenance": "🔧 Suphaa jala",
+    "pickNumbers": "Lakkoofsa 1–12 filadhu",
+    "paused": "DHAABBATE",
+    "live": "KALLATTII",
+    "hot": "HOʼAA"
+  },
+  "games": {
+    "chooseGame": "Taphaa Filadhu",
+    "filterAll": "Taphoota Hunda",
+    "filterKeno": "Baʼii Saffisaa",
+    "filterBingo": "Kutaa Kallattii",
+    "filterCrash": "Crash",
+    "maintenance": "🔧 Suphaa"
+  },
+  "leaderboard": {
+    "title": "Gabatee sadarkaa",
+    "subtitle": "Moʼattoota ol'aanoo",
+    "all": "Yeroo hunda",
+    "monthly": "Jiʼaan",
+    "weekly": "Torbaan",
+    "rank": "Sadarkaa",
+    "player": "Taphataa",
+    "winnings": "Moʼicha",
+    "wins": "moʼichaa",
+    "empty": "Ammaaf moʼataan hin jiru. Jalqabaa taʼi!",
+    "you": "Ati"
   },
   "wallet": {
-    "title": "Boorsaa"
+    "title": "Boorsaa",
+    "available": "Jira",
+    "reserved": "Qabame",
+    "status": "Haala",
+    "deposit": "Galchi",
+    "withdraw": "Baasi",
+    "amount": "Hamma",
+    "requestWithdrawal": "Baasii gaafadhu"
   },
   "profile": {
     "helpAndSupport": "Gargaarsa fi Deeggarsa",
-    "logout": "Ba'i"
+    "logout": "Baʼi",
+    "editProfile": "Piroofaayilii gulaali",
+    "changePassword": "Jecha darbii jijjiiri"
+  },
+  "login": {
+    "welcome": "Baga nagaan dhufte",
+    "phoneNumber": "Lakkoofsa bilbilaa",
+    "password": "Jecha darbii",
+    "login": "Seeni",
+    "loggingIn": "Seenaa jira…"
+  },
+  "notifications": {
+    "title": "Beeksisa",
+    "empty": "Ammaaf beeksisni hin jiru"
   },
   "language": {
     "label": "Afaan"

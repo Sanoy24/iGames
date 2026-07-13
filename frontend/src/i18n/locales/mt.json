@@ -6,6 +6,7 @@
     "top": "Fuq",
     "profile": "Profil",
     "agent": "Aġent",
+    "admin": "Admin",
     "support": "Appoġġ"
   },
   "common": {
@@ -13,25 +14,92 @@
     "withdraw": "Irtira",
     "cancel": "Ikkanċella",
     "save": "Issejvja",
+    "submit": "Ibgħat",
     "close": "Agħlaq",
     "back": "Lura",
     "send": "Ibgħat",
+    "retry": "Erġa' pprova",
     "loading": "Qed jitgħabba…",
-    "playNow": "Ilgħab Issa"
+    "online": "online",
+    "playNow": "Ilgħab Issa",
+    "seeAll": "Ara kollox →",
+    "refresh": "Aġġorna"
   },
-  "support": {
-    "title": "Appoġġ",
-    "myTickets": "Il-biljetti tiegħi",
-    "liveChat": "Chat live",
-    "newTicket": "Biljett ġdid",
-    "helpAndSupport": "Għajnuna u Appoġġ"
+  "home": {
+    "morning": "L-għodwa t-tajba",
+    "afternoon": "Wara nofsinhar it-tajjeb",
+    "evening": "Il-lejla t-tajba",
+    "player": "Plejer",
+    "yourBalance": "Il-Bilanċ Tiegħek",
+    "etbAvailable": "ETB disponibbli",
+    "onlineNow": "{{count}} online",
+    "playing": "{{count}} qed jilagħbu",
+    "kenoDrawing": "Keno qed jinġibed…",
+    "inKeno": "fil-Keno",
+    "inBingo": "fil-Bingo",
+    "totalOnline": "total online",
+    "playNow": "Ilgħab Issa",
+    "allGames": "Il-logħob kollu →",
+    "seeAll": "Ara kollox →",
+    "recentActivity": "Attività Reċenti",
+    "helpFaq": "Għajnuna u FAQ",
+    "won": "rebaħ",
+    "on": "fuq"
+  },
+  "gameCard": {
+    "underMaintenance": "🔧 Taħt manutenzjoni",
+    "pickNumbers": "Agħżel 1–12 numri",
+    "paused": "IMWAQQAF",
+    "live": "LIVE",
+    "hot": "HOT"
+  },
+  "games": {
+    "chooseGame": "Agħżel Logħba",
+    "filterAll": "Il-Logħob Kollu",
+    "filterKeno": "Ġibda Mgħaġġla",
+    "filterBingo": "Kmamar Live",
+    "filterCrash": "Crash",
+    "maintenance": "🔧 Manutenzjoni"
+  },
+  "leaderboard": {
+    "title": "Klassifika",
+    "subtitle": "L-aqwa rebbieħa",
+    "all": "Dejjem",
+    "monthly": "Kull xahar",
+    "weekly": "Kull ġimgħa",
+    "rank": "Pożizzjoni",
+    "player": "Plejer",
+    "winnings": "Rebħ",
+    "wins": "rebħiet",
+    "empty": "Għad m'hemm l-ebda rebbieħ. Kun l-ewwel!",
+    "you": "Int"
   },
   "wallet": {
-    "title": "Kartiera"
+    "title": "Kartiera",
+    "available": "Disponibbli",
+    "reserved": "Riżervat",
+    "status": "Status",
+    "deposit": "Iddepożita",
+    "withdraw": "Irtira",
+    "amount": "Ammont",
+    "requestWithdrawal": "Itlob irtirar"
   },
   "profile": {
     "helpAndSupport": "Għajnuna u Appoġġ",
-    "logout": "Oħroġ"
+    "logout": "Oħroġ",
+    "editProfile": "Editja l-Profil",
+    "changePassword": "Ibdel il-Password"
+  },
+  "login": {
+    "welcome": "Merħba",
+    "phoneNumber": "Numru tat-telefon",
+    "password": "Password",
+    "login": "Idħol",
+    "loggingIn": "Dieħel…"
+  },
+  "notifications": {
+    "title": "Notifiki",
+    "empty": "Għad m'hemm l-ebda notifika"
   },
   "language": {
     "label": "Lingwa"

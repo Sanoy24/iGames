@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { useTranslation, type TFunction } from 'react-i18next';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
 import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
@@ -355,13 +356,14 @@ export function Home({ onNavigate }: Props) {
       {recentActivity.length > 0 && (
         <section className="card">
           <div className="section-header">
-            <div className="section-title" style={{ fontSize: 14 }}>Recent Activity</div>
-            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('wallet')}>See all →</button>
+            <div className="section-title" style={{ fontSize: 14 }}>{t('home.recentActivity')}</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('wallet')}>{t('home.seeAll')}</button>
           </div>
           <div className="activity-feed" style={{ marginTop: 8 }}>
             {recentActivity.slice(0, 4).map((entry, i) => {
               const badge = entryBadge(entry);
-              const label = LEDGER_LABELS[(entry.entryType ?? entry.sourceType ?? '') as string] ?? 'Transaction';
+              const ledgerKey = LEDGER_KEY[(entry.entryType ?? entry.sourceType ?? '') as string];
+              const label = ledgerKey ? t(`ledger.${ledgerKey}`) : t('ledger.transaction');
               const isCredit = entry.direction === 'credit';
               return (
                 <motion.div
@@ -397,10 +399,10 @@ export function Home({ onNavigate }: Props) {
       <section className="card">
         <div className="home-faq-header">
           <HelpCircle size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-          <span className="section-title" style={{ fontSize: 14 }}>Help &amp; FAQ</span>
+          <span className="section-title" style={{ fontSize: 14 }}>{t('home.helpFaq')}</span>
         </div>
         <div className="rules-accordion">
-          {FAQ.map((item, i) => <FaqItem key={i} q={item.q} a={item.a} />)}
+          {FAQ_KEYS.map((k) => <FaqItem key={k} q={t(`faq.${k}.q`)} a={t(`faq.${k}.a`)} />)}
         </div>
       </section>
 

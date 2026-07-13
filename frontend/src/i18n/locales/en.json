@@ -21,32 +21,159 @@
     "retry": "Retry",
     "loading": "Loading…",
     "online": "online",
-    "playNow": "Play Now"
+    "playNow": "Play Now",
+    "seeAll": "See all →",
+    "refresh": "Refresh"
   },
-  "support": {
-    "title": "Support",
-    "myTickets": "My tickets",
-    "liveChat": "Live chat",
-    "newTicket": "New ticket",
-    "noTickets": "No tickets yet. Open one if you need help.",
-    "helpAndSupport": "Help & Support",
-    "categoryGeneral": "General",
-    "categoryComplaint": "Complaint",
-    "categoryDispute": "Dispute",
-    "categoryRefund": "Refund",
-    "subject": "Subject",
-    "submitTicket": "Submit ticket"
+  "home": {
+    "morning": "Good morning",
+    "afternoon": "Good afternoon",
+    "evening": "Good evening",
+    "player": "Player",
+    "yourBalance": "Your Balance",
+    "etbAvailable": "ETB available",
+    "onlineNow": "{{count}} online now",
+    "playing": "{{count}} playing",
+    "kenoIn": "Keno in {{time}}",
+    "kenoDrawing": "Keno drawing…",
+    "inKeno": "in Keno",
+    "inBingo": "in Bingo",
+    "totalOnline": "total online",
+    "playNow": "Play Now",
+    "allGames": "All games →",
+    "seeAll": "See all →",
+    "recentActivity": "Recent Activity",
+    "helpFaq": "Help & FAQ",
+    "won": "won",
+    "on": "on"
+  },
+  "gameCard": {
+    "fastDraw": "Fast Draw",
+    "liveRooms": "Live Rooms",
+    "underMaintenance": "🔧 Under maintenance",
+    "drawIn": "Draw in {{time}}",
+    "pickNumbers": "Pick 1–12 numbers",
+    "nextBingo": "Next Bingo starts soon! Buy your card",
+    "paused": "PAUSED",
+    "live": "LIVE",
+    "hot": "HOT"
+  },
+  "ledger": {
+    "winnings": "Winnings",
+    "ticketPurchase": "Ticket Purchase",
+    "ticketRefund": "Ticket Refund",
+    "refund": "Refund",
+    "deposit": "Deposit",
+    "withdrawal": "Withdrawal",
+    "bonus": "Bonus",
+    "adjustment": "Adjustment",
+    "agentTransfer": "Agent Transfer",
+    "transaction": "Transaction"
+  },
+  "faq": {
+    "keno": {
+      "q": "How does Keno work?",
+      "a": "Pick 1–12 numbers from 1–80. When the draw runs, 20 numbers are randomly selected. Your payout depends on how many of your picks match."
+    },
+    "bingo": {
+      "q": "How does Bingo work?",
+      "a": "Join a room and buy tickets. Numbers are drawn one at a time. Match one row, two rows, or a full card to win prize tiers."
+    },
+    "currency": {
+      "q": "What currency does the app use?",
+      "a": "All balances, stakes, and payouts are shown in ETB (Ethiopian Birr)."
+    },
+    "deposit": {
+      "q": "How do I deposit?",
+      "a": "Wallet → Deposit (Telebirr). Send the amount to the agent on duty, then paste the SMS confirmation to instantly credit your account."
+    },
+    "withdraw": {
+      "q": "How do I withdraw?",
+      "a": "Wallet → Withdraw. Enter the amount and your Telebirr phone number. An agent processes the transfer."
+    },
+    "instant": {
+      "q": "Are winnings instant?",
+      "a": "Yes — credited to your wallet immediately after each draw or room settlement."
+    }
+  },
+  "games": {
+    "chooseGame": "Choose a Game",
+    "filterAll": "All Games",
+    "filterKeno": "Fast Draw",
+    "filterBingo": "Live Rooms",
+    "filterCrash": "Crash",
+    "maintenance": "🔧 Maintenance",
+    "bingoTag": "Room based",
+    "bingoDesc": "Join a live room, grab cards, and race to fill lines and full house — real-time draws with real players.",
+    "bingoStat1": "3 prize tiers",
+    "bingoStat2": "🎟 1–5 cards",
+    "bingoStat3": "Live chat",
+    "kenoTag": "Fast draw",
+    "kenoDesc": "Pick your lucky numbers, buy a ticket, and watch 20 numbers drawn live — wins paid instantly every round.",
+    "kenoStat1": "Fast rounds",
+    "kenoStat2": "🎯 Pick 1–12",
+    "kenoStat3": "Instant payout",
+    "crashTag": "Provably Fair",
+    "crashDesc": "Watch the multiplier climb, cash out before it crashes — the longer you wait, the bigger the risk.",
+    "crashStat1": "Live multiplier",
+    "crashStat2": "🚀 Auto cashout",
+    "crashStat3": "🔒 Seed hash",
+    "featureFair": "Provably Fair",
+    "featurePayouts": "Instant Payouts",
+    "featureRng": "RNG Certified"
+  },
+  "leaderboard": {
+    "title": "Leaderboard",
+    "subtitle": "Top winners",
+    "all": "All time",
+    "monthly": "Monthly",
+    "weekly": "Weekly",
+    "rank": "Rank",
+    "player": "Player",
+    "winnings": "Winnings",
+    "wins": "wins",
+    "empty": "No winners yet. Be the first!",
+    "you": "You"
   },
   "wallet": {
     "title": "Wallet",
     "available": "Available",
     "reserved": "Reserved",
     "status": "Status",
-    "getHelp": "Payment issue? Get help & support"
+    "getHelp": "Payment issue? Get help & support",
+    "deposit": "Deposit",
+    "withdraw": "Withdraw",
+    "amount": "Amount",
+    "phoneNumber": "Telebirr phone number",
+    "requestWithdrawal": "Request withdrawal",
+    "transactionHistory": "Transaction History",
+    "noTransactions": "No transactions yet",
+    "withdrawals": "Withdrawals",
+    "pending": "Pending",
+    "processing": "Processing",
+    "completed": "Completed",
+    "rejected": "Rejected"
   },
   "profile": {
     "helpAndSupport": "Help & Support",
-    "logout": "Log out"
+    "logout": "Log out",
+    "editProfile": "Edit Profile",
+    "changePassword": "Change Password",
+    "displayName": "Display name",
+    "phone": "Phone",
+    "email": "Email"
+  },
+  "login": {
+    "welcome": "Welcome",
+    "signIn": "Sign in",
+    "phoneNumber": "Phone number",
+    "password": "Password",
+    "login": "Log in",
+    "loggingIn": "Logging in…"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No notifications yet"
   },
   "language": {
     "label": "Language"

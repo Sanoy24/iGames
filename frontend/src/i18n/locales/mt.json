@@ -1,0 +1,39 @@
+{
+  "nav": {
+    "home": "Home",
+    "games": "Logħob",
+    "wallet": "Kartiera",
+    "top": "Fuq",
+    "profile": "Profil",
+    "agent": "Aġent",
+    "support": "Appoġġ"
+  },
+  "common": {
+    "deposit": "Iddepożita",
+    "withdraw": "Irtira",
+    "cancel": "Ikkanċella",
+    "save": "Issejvja",
+    "close": "Agħlaq",
+    "back": "Lura",
+    "send": "Ibgħat",
+    "loading": "Qed jitgħabba…",
+    "playNow": "Ilgħab Issa"
+  },
+  "support": {
+    "title": "Appoġġ",
+    "myTickets": "Il-biljetti tiegħi",
+    "liveChat": "Chat live",
+    "newTicket": "Biljett ġdid",
+    "helpAndSupport": "Għajnuna u Appoġġ"
+  },
+  "wallet": {
+    "title": "Kartiera"
+  },
+  "profile": {
+    "helpAndSupport": "Għajnuna u Appoġġ",
+    "logout": "Oħroġ"
+  },
+  "language": {
+    "label": "Lingwa"
+  }
+}

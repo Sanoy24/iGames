@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck, Send, LifeBuoy, ChevronRight } from 'lucide-react';
 import { authApi, userApi } from '../lib/api';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import type { User } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
@@ -28,6 +30,7 @@ function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: 
 }
 
 export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
+  const { t } = useTranslation();
   const storeUser = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
   const clearAuth = useStore((s) => s.clearAuth);
@@ -268,6 +271,14 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
         )}
       </section>
 
+      {/* ── Language ── */}
+      <section className="card">
+        <div className="section-header" style={{ marginBottom: 10 }}>
+          <div className="section-title" style={{ fontSize: 14 }}>{t('language.label')}</div>
+        </div>
+        <LanguageSwitcher />
+      </section>
+
       {/* ── Support entry ── */}
       <section className="card" style={{ padding: 0 }}>
         <button
@@ -277,7 +288,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <LifeBuoy size={18} style={{ color: 'var(--accent)' }} />
-            <span style={{ fontWeight: 600 }}>Help &amp; Support</span>
+            <span style={{ fontWeight: 600 }}>{t('profile.helpAndSupport')}</span>
           </span>
           <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
         </button>

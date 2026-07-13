@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
 import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy, LifeBuoy, ChevronRight } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
@@ -102,6 +103,7 @@ const listItem = {
 };
 
 export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
+  const { t } = useTranslation();
   const wallet    = useStore((state) => state.wallet);
   const setWallet = useStore((state) => state.setWallet);
   const addToast  = useStore((state) => state.addToast);
@@ -304,7 +306,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
             <LifeBuoy size={15} style={{ color: 'var(--accent)' }} />
-            Payment issue? Get help &amp; support
+            {t('wallet.getHelp')}
           </span>
           <ChevronRight size={15} style={{ color: 'var(--text-muted)' }} />
         </button>

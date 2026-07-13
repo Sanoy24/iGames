@@ -31,8 +31,10 @@
   --accent:  #facc15;
 
   /* ── Typography ── */
-  --font-body:    'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-display: 'Outfit', 'Inter', sans-serif;
+  /* 'Noto Sans Ethiopic' is the fallback that renders Amharic/Tigrinya (Ge'ez)
+     glyphs — Latin text still uses Inter/Outfit; only Ge'ez chars fall through. */
+  --font-body:    'Inter', 'Noto Sans Ethiopic', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Outfit', 'Inter', 'Noto Sans Ethiopic', sans-serif;
 
   /* ── Shape ── */
   --radius-xs: 4px;

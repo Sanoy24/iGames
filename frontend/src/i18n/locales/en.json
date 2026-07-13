@@ -1,0 +1,54 @@
+{
+  "nav": {
+    "home": "Home",
+    "games": "Games",
+    "wallet": "Wallet",
+    "top": "Top",
+    "profile": "Profile",
+    "agent": "Agent",
+    "admin": "Admin",
+    "support": "Support"
+  },
+  "common": {
+    "deposit": "Deposit",
+    "withdraw": "Withdraw",
+    "cancel": "Cancel",
+    "save": "Save",
+    "submit": "Submit",
+    "close": "Close",
+    "back": "Back",
+    "send": "Send",
+    "retry": "Retry",
+    "loading": "Loading…",
+    "online": "online",
+    "playNow": "Play Now"
+  },
+  "support": {
+    "title": "Support",
+    "myTickets": "My tickets",
+    "liveChat": "Live chat",
+    "newTicket": "New ticket",
+    "noTickets": "No tickets yet. Open one if you need help.",
+    "helpAndSupport": "Help & Support",
+    "categoryGeneral": "General",
+    "categoryComplaint": "Complaint",
+    "categoryDispute": "Dispute",
+    "categoryRefund": "Refund",
+    "subject": "Subject",
+    "submitTicket": "Submit ticket"
+  },
+  "wallet": {
+    "title": "Wallet",
+    "available": "Available",
+    "reserved": "Reserved",
+    "status": "Status",
+    "getHelp": "Payment issue? Get help & support"
+  },
+  "profile": {
+    "helpAndSupport": "Help & Support",
+    "logout": "Log out"
+  },
+  "language": {
+    "label": "Language"
+  }
+}

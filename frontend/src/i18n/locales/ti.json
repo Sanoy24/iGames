@@ -1,0 +1,38 @@
+{
+  "nav": {
+    "home": "ገዛ",
+    "games": "ጸወታታት",
+    "wallet": "ቦርሳ",
+    "top": "ላዕለዋይ",
+    "profile": "መግለጺ",
+    "agent": "ወኪል",
+    "support": "ደገፍ"
+  },
+  "common": {
+    "deposit": "ኣእቱ",
+    "withdraw": "ኣውጽእ",
+    "cancel": "ሰርዝ",
+    "save": "ኣቐምጥ",
+    "close": "ዕጾ",
+    "back": "ተመለስ",
+    "send": "ልኣኽ",
+    "loading": "ይጽዕን ኣሎ…"
+  },
+  "support": {
+    "title": "ደገፍ",
+    "myTickets": "ናተይ ቲኬታት",
+    "liveChat": "ቀጥታ ዕላል",
+    "newTicket": "ሓድሽ ቲኬት",
+    "helpAndSupport": "ሓገዝን ደገፍን"
+  },
+  "wallet": {
+    "title": "ቦርሳ"
+  },
+  "profile": {
+    "helpAndSupport": "ሓገዝን ደገፍን",
+    "logout": "ውጻእ"
+  },
+  "language": {
+    "label": "ቋንቋ"
+  }
+}

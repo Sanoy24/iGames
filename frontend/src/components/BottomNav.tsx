@@ -8,6 +8,7 @@ import {
   CircleUserRound, UserCircle,
   Trophy,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { soundEngine } from '../lib/audio';
@@ -25,6 +26,7 @@ type NavEntry = {
 };
 
 export function BottomNav({ active, onChange }: Props) {
+  const { t } = useTranslation();
   const user = useStore((s) => s.user);
   const roles = user?.roles ?? [];
   const isPlayer = roles.includes('player');
@@ -35,22 +37,22 @@ export function BottomNav({ active, onChange }: Props) {
     active === id || (id === 'games' && (active === 'keno' || active === 'bingo' || active === 'crash'));
 
   const playerTabs: NavEntry[] = [
-    { id: 'home',        label: 'Home',        icon: <Home size={22} strokeWidth={1.6} />,       activeIcon: <House size={22} strokeWidth={2.4} /> },
-    { id: 'games',       label: 'Games',       icon: <Gamepad2 size={22} strokeWidth={1.6} />,   activeIcon: <Joystick size={22} strokeWidth={2.4} /> },
-    { id: 'leaderboard', label: 'Top',         icon: <Trophy size={22} strokeWidth={1.6} />,     activeIcon: <Trophy size={22} strokeWidth={2.4} /> },
-    { id: 'wallet',      label: 'Wallet',      icon: <Wallet size={22} strokeWidth={1.6} />,     activeIcon: <WalletMinimal size={22} strokeWidth={2.4} /> },
+    { id: 'home',        label: t('nav.home'),   icon: <Home size={22} strokeWidth={1.6} />,       activeIcon: <House size={22} strokeWidth={2.4} /> },
+    { id: 'games',       label: t('nav.games'),  icon: <Gamepad2 size={22} strokeWidth={1.6} />,   activeIcon: <Joystick size={22} strokeWidth={2.4} /> },
+    { id: 'leaderboard', label: t('nav.top'),    icon: <Trophy size={22} strokeWidth={1.6} />,     activeIcon: <Trophy size={22} strokeWidth={2.4} /> },
+    { id: 'wallet',      label: t('nav.wallet'), icon: <Wallet size={22} strokeWidth={1.6} />,     activeIcon: <WalletMinimal size={22} strokeWidth={2.4} /> },
   ];
 
   const agentTabs: NavEntry[] = [
-    { id: 'agent',  label: 'Agent',  icon: <Users size={22} strokeWidth={1.6} />,     activeIcon: <UserCheck size={22} strokeWidth={2.4} /> },
+    { id: 'agent',  label: t('nav.agent'),  icon: <Users size={22} strokeWidth={1.6} />,     activeIcon: <UserCheck size={22} strokeWidth={2.4} /> },
   ];
 
   const adminTabs: NavEntry[] = [
-    { id: 'admin',  label: 'Admin',  icon: <Shield size={22} strokeWidth={1.6} />,    activeIcon: <ShieldCheck size={22} strokeWidth={2.4} /> },
+    { id: 'admin',  label: t('nav.admin'),  icon: <Shield size={22} strokeWidth={1.6} />,    activeIcon: <ShieldCheck size={22} strokeWidth={2.4} /> },
   ];
 
   const profileTab: NavEntry = {
-    id: 'profile', label: 'Profile',
+    id: 'profile', label: t('nav.profile'),
     icon: <CircleUserRound size={22} strokeWidth={1.6} />,
     activeIcon: <UserCircle size={22} strokeWidth={2.4} />,
   };

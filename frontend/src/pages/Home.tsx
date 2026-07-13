@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation, type TFunction } from 'react-i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
 import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
@@ -12,12 +13,23 @@ type Props = { onNavigate: (tab: AppTab) => void; };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function timeGreeting(): string {
+function timeGreeting(t: TFunction): string {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 12) return t('home.morning');
+  if (h < 17) return t('home.afternoon');
+  return t('home.evening');
 }
+
+// Ledger entryType/sourceType → i18n key under `ledger.*`.
+const LEDGER_KEY: Record<string, string> = {
+  ticket_win: 'winnings', win: 'winnings',
+  ticket_purchase: 'ticketPurchase', stake: 'ticketPurchase',
+  ticket_refund: 'ticketRefund', refund: 'refund',
+  deposit: 'deposit', withdrawal: 'withdrawal', bonus: 'bonus',
+  admin_adjustment: 'adjustment', agent_receipt: 'agentTransfer',
+};
+
+const FAQ_KEYS = ['keno', 'bingo', 'currency', 'deposit', 'withdraw', 'instant'] as const;
 
 function useCountdownSecs(targetIso: string | null | undefined) {
   const [secs, setSecs] = useState<number | null>(null);
@@ -50,6 +62,7 @@ function useAnimatedNumber(target: number) {
 // ─── Live wins ticker ─────────────────────────────────────────────────────────
 
 function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
+  const { t } = useTranslation();
   // Duplicate for seamless CSS loop — need enough items to fill viewport twice
   const items = wins.length > 0 ? [...wins, ...wins] : [];
 
@@ -62,9 +75,9 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
           <span key={i} className="ticker-item">
             <Trophy size={11} style={{ color: 'var(--gold)', flexShrink: 0 }} />
             <span className="ticker-item-name">{w.displayName}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>won</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{t('home.won')}</span>
             <span className="ticker-item-win">{new Intl.NumberFormat().format(w.amountMinor)} ETB</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>on {w.game}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{t('home.on')} {w.game}</span>
             <span style={{ color: 'rgba(255,255,255,0.1)', margin: '0 4px' }}>•</span>
           </span>
         ))}
@@ -74,15 +87,6 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
 }
 
 // ─── FAQ ─────────────────────────────────────────────────────────────────────
-
-const FAQ = [
-  { q: 'How does Keno work?', a: 'Pick 1–12 numbers from 1–80. When the draw runs, 20 numbers are randomly selected. Your payout depends on how many of your picks match.' },
-  { q: 'How does Bingo work?', a: 'Join a room and buy tickets. Numbers are drawn one at a time. Match one row, two rows, or a full card to win prize tiers.' },
-  { q: 'What currency does iGames use?', a: 'All balances, stakes, and payouts are shown in ETB (Ethiopian Birr).' },
-  { q: 'How do I deposit?', a: 'Wallet → Deposit (Telebirr). Send the amount to the agent on duty, then paste the SMS confirmation to instantly credit your account.' },
-  { q: 'How do I withdraw?', a: 'Wallet → Withdraw. Enter the amount and your Telebirr phone number. An agent processes the transfer.' },
-  { q: 'Are winnings instant?', a: 'Yes — credited to your wallet immediately after each draw or room settlement.' },
-];
 
 const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = React.useState(false);
@@ -111,20 +115,6 @@ const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
     </div>
   );
 });
-
-const LEDGER_LABELS: Record<string, string> = {
-  ticket_win: 'Winnings',
-  win: 'Winnings',
-  ticket_purchase: 'Ticket Purchase',
-  stake: 'Ticket Purchase',
-  ticket_refund: 'Ticket Refund',
-  refund: 'Refund',
-  deposit: 'Deposit',
-  withdrawal: 'Withdrawal',
-  bonus: 'Bonus',
-  admin_adjustment: 'Adjustment',
-  agent_receipt: 'Agent Transfer',
-};
 
 function entryBadge(entry: LedgerEntry) {
   const type = (entry.entryType ?? entry.sourceType ?? '') as string;
@@ -184,6 +174,7 @@ function GameCard({ onClick, gradientFrom, gradientTo, glowColor, icon, tag, nam
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function Home({ onNavigate }: Props) {
+  const { t } = useTranslation();
   const user = useStore(s => s.user);
   const wallet = useStore(s => s.wallet);
   const liveCounts = useStore(s => s.liveCounts);
@@ -257,9 +248,9 @@ export function Home({ onNavigate }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', fontWeight: 600, marginBottom: 4 }}>
-              {timeGreeting()}, {user?.displayName ?? 'Player'}
+              {timeGreeting(t)}, {user?.displayName ?? t('home.player')}
             </p>
-            <div className="jackpot-label" style={{ textAlign: 'left' }}>Your Balance</div>
+            <div className="jackpot-label" style={{ textAlign: 'left' }}>{t('home.yourBalance')}</div>
             <motion.div
               key={balanceKey}
               className="jackpot-value"
@@ -270,7 +261,7 @@ export function Home({ onNavigate }: Props) {
             >
               {formattedBalance}
             </motion.div>
-            <div className="jackpot-sub" style={{ textAlign: 'left' }}>ETB available</div>
+            <div className="jackpot-sub" style={{ textAlign: 'left' }}>{t('home.etbAvailable')}</div>
           </div>
           <motion.button
             className="btn btn-primary btn-glow btn-sm"
@@ -280,7 +271,7 @@ export function Home({ onNavigate }: Props) {
             style={{ marginTop: 8, flexShrink: 0 }}
           >
             <TrendingUp size={13} />
-            Deposit
+            {t('common.deposit')}
           </motion.button>
         </div>
 
@@ -289,19 +280,19 @@ export function Home({ onNavigate }: Props) {
           {liveCounts && liveCounts.totalOnline > 0 && (
             <span className="live-badge-pulse" style={{ fontSize: 10 }}>
               <span className="pulse-dot" />
-              {liveCounts.totalOnline} online now
+              {t('home.onlineNow', { count: liveCounts.totalOnline })}
             </span>
           )}
           {liveCounts && liveCounts.totalPlaying > 0 && (
             <span className="live-badge-pulse" style={{ fontSize: 10, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}>
               <span className="pulse-dot" style={{ background: 'var(--danger)', boxShadow: '0 0 6px rgba(239,68,68,0.5)' }} />
-              {liveCounts.totalPlaying} playing
+              {t('home.playing', { count: liveCounts.totalPlaying })}
             </span>
           )}
           {activeDraw && (
             <span className="live-badge-pulse" style={{ fontSize: 10, background: 'rgba(245,158,11,0.1)', color: 'var(--gold)', border: '1px solid rgba(245,158,11,0.2)' }}>
               <Clock size={10} />
-              {activeDraw.status === 'open' && countdown ? `Keno in ${countdown}` : 'Keno drawing…'}
+              {activeDraw.status === 'open' && countdown ? t('home.kenoIn', { time: countdown }) : t('home.kenoDrawing')}
             </span>
           )}
         </div>
@@ -313,17 +304,17 @@ export function Home({ onNavigate }: Props) {
           <span className="stat-pill">
             <Zap size={11} style={{ color: '#a78bfa' }} />
             <span className="stat-pill-val">{liveCounts.kenoOnline}</span>
-            <span className="stat-pill-lbl">in Keno</span>
+            <span className="stat-pill-lbl">{t('home.inKeno')}</span>
           </span>
           <span className="stat-pill">
             <Target size={11} style={{ color: '#ef4444' }} />
             <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
-            <span className="stat-pill-lbl">in Bingo</span>
+            <span className="stat-pill-lbl">{t('home.inBingo')}</span>
           </span>
           <span className="stat-pill">
             <Trophy size={11} style={{ color: 'var(--gold)' }} />
             <span className="stat-pill-val">{liveCounts.totalOnline}</span>
-            <span className="stat-pill-lbl">total online</span>
+            <span className="stat-pill-lbl">{t('home.totalOnline')}</span>
           </span>
         </div>
       )}
@@ -331,8 +322,8 @@ export function Home({ onNavigate }: Props) {
       {/* ── Game lobby ── */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span className="section-title" style={{ fontSize: 15 }}>Play Now</span>
-          <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('games')}>All games →</button>
+          <span className="section-title" style={{ fontSize: 15 }}>{t('home.playNow')}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('games')}>{t('home.allGames')}</button>
         </div>
         <div className="lobby-grid">
           {!kenoInfo.hidden && (
@@ -341,9 +332,9 @@ export function Home({ onNavigate }: Props) {
               gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)"
               glowColor="rgba(139,92,246,0.25)"
               icon={<Zap style={{ color: '#a78bfa' }} />}
-              tag="Fast Draw" name="Keno"
-              sub={kenoInfo.maint ? '🔧 Under maintenance' : (countdown && activeDraw?.status === 'open' ? `Draw in ${countdown}` : 'Pick 1–12 numbers')}
-              badge={kenoInfo.maint ? 'PAUSED' : 'LIVE'} badgeColor="rgba(139,92,246,0.25)"
+              tag={t('gameCard.fastDraw')} name="Keno"
+              sub={kenoInfo.maint ? t('gameCard.underMaintenance') : (countdown && activeDraw?.status === 'open' ? t('gameCard.drawIn', { time: countdown }) : t('gameCard.pickNumbers'))}
+              badge={kenoInfo.maint ? t('gameCard.paused') : t('gameCard.live')} badgeColor="rgba(139,92,246,0.25)"
             />
           )}
           {!bingoInfo.hidden && (
@@ -352,9 +343,9 @@ export function Home({ onNavigate }: Props) {
               gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)"
               glowColor="rgba(239,68,68,0.2)"
               icon={<Target style={{ color: '#f87171' }} />}
-              tag="Live Rooms" name="Bingo"
-              sub={bingoInfo.maint ? '🔧 Under maintenance' : 'Next Bingo starts soon! Buy your card'}
-              badge={bingoInfo.maint ? 'PAUSED' : 'HOT'} badgeColor="rgba(239,68,68,0.2)"
+              tag={t('gameCard.liveRooms')} name="Bingo"
+              sub={bingoInfo.maint ? t('gameCard.underMaintenance') : t('gameCard.nextBingo')}
+              badge={bingoInfo.maint ? t('gameCard.paused') : t('gameCard.hot')} badgeColor="rgba(239,68,68,0.2)"
             />
           )}
         </div>

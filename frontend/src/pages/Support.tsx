@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft, MessageSquarePlus, Send, LifeBuoy, MessagesSquare, Plus, X } from 'lucide-react';
 import {
   supportApi,
@@ -303,6 +304,7 @@ function LiveChat() {
 
 // ── Page ──────────────────────────────────────────────────────────
 export function Support({ onBack }: { onBack: () => void }) {
+  const { t } = useTranslation();
   const [view, setView] = useState<'tickets' | 'chat'>('tickets');
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -330,16 +332,16 @@ export function Support({ onBack }: { onBack: () => void }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <button className="btn btn-ghost btn-sm icon-btn" onClick={onBack}><ArrowLeft size={16} /></button>
         <LifeBuoy size={18} style={{ color: 'var(--accent)' }} />
-        <span style={{ fontWeight: 700, fontSize: 17 }}>Support</span>
+        <span style={{ fontWeight: 700, fontSize: 17 }}>{t('support.title')}</span>
       </div>
 
       {/* View switch */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         <button className={`btn btn-sm ${view === 'tickets' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('tickets')}>
-          <MessagesSquare size={14} /> My tickets
+          <MessagesSquare size={14} /> {t('support.myTickets')}
         </button>
         <button className={`btn btn-sm ${view === 'chat' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('chat')}>
-          <MessageSquarePlus size={14} /> Live chat
+          <MessageSquarePlus size={14} /> {t('support.liveChat')}
         </button>
       </div>
 
@@ -348,14 +350,14 @@ export function Support({ onBack }: { onBack: () => void }) {
       ) : (
         <>
           <button className="btn btn-primary" style={{ width: '100%', marginBottom: 14 }} onClick={() => setShowNew(true)}>
-            <Plus size={16} /> New ticket
+            <Plus size={16} /> {t('support.newTicket')}
           </button>
 
           {loading ? (
             <div style={{ textAlign: 'center', padding: 24 }}><div className="spinner" /></div>
           ) : tickets.filter((t) => t.category !== 'live_chat').length === 0 ? (
             <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: 30 }}>
-              No tickets yet. Open one if you need help.
+              {t('support.noTickets')}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

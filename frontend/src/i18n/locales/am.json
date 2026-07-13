@@ -1,0 +1,54 @@
+{
+  "nav": {
+    "home": "መነሻ",
+    "games": "ጨዋታዎች",
+    "wallet": "ቦርሳ",
+    "top": "ከፍተኛ",
+    "profile": "መገለጫ",
+    "agent": "ወኪል",
+    "admin": "አስተዳዳሪ",
+    "support": "ድጋፍ"
+  },
+  "common": {
+    "deposit": "ማስገባት",
+    "withdraw": "ማውጣት",
+    "cancel": "ሰርዝ",
+    "save": "አስቀምጥ",
+    "submit": "አስገባ",
+    "close": "ዝጋ",
+    "back": "ተመለስ",
+    "send": "ላክ",
+    "retry": "እንደገና ሞክር",
+    "loading": "በመጫን ላይ…",
+    "online": "ኦንላይን",
+    "playNow": "አሁን ተጫወት"
+  },
+  "support": {
+    "title": "ድጋፍ",
+    "myTickets": "የእኔ ትኬቶች",
+    "liveChat": "ቀጥታ ውይይት",
+    "newTicket": "አዲስ ትኬት",
+    "noTickets": "እስካሁን ምንም ትኬት የለም። እርዳታ ከፈለጉ ይክፈቱ።",
+    "helpAndSupport": "እገዛ እና ድጋፍ",
+    "categoryGeneral": "አጠቃላይ",
+    "categoryComplaint": "ቅሬታ",
+    "categoryDispute": "ክርክር",
+    "categoryRefund": "ገንዘብ ተመላሽ",
+    "subject": "ርዕስ",
+    "submitTicket": "ትኬት አስገባ"
+  },
+  "wallet": {
+    "title": "ቦርሳ",
+    "available": "የሚገኝ",
+    "reserved": "የተያዘ",
+    "status": "ሁኔታ",
+    "getHelp": "የክፍያ ችግር? እገዛ እና ድጋፍ ያግኙ"
+  },
+  "profile": {
+    "helpAndSupport": "እገዛ እና ድጋፍ",
+    "logout": "ውጣ"
+  },
+  "language": {
+    "label": "ቋንቋ"
+  }
+}

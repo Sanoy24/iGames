@@ -1,0 +1,39 @@
+{
+  "nav": {
+    "home": "Mana",
+    "games": "Taphoota",
+    "wallet": "Boorsaa",
+    "top": "Ol'aanaa",
+    "profile": "Piroofaayilii",
+    "agent": "Bakka bu'aa",
+    "support": "Deeggarsa"
+  },
+  "common": {
+    "deposit": "Galchi",
+    "withdraw": "Baasi",
+    "cancel": "Haqi",
+    "save": "Olkaa'i",
+    "close": "Cufi",
+    "back": "Deebi'i",
+    "send": "Ergi",
+    "loading": "Fe'aa jira…",
+    "playNow": "Amma Taphadhu"
+  },
+  "support": {
+    "title": "Deeggarsa",
+    "myTickets": "Tikeetii koo",
+    "liveChat": "Haasawa kallattii",
+    "newTicket": "Tikeetii haaraa",
+    "helpAndSupport": "Gargaarsa fi Deeggarsa"
+  },
+  "wallet": {
+    "title": "Boorsaa"
+  },
+  "profile": {
+    "helpAndSupport": "Gargaarsa fi Deeggarsa",
+    "logout": "Ba'i"
+  },
+  "language": {
+    "label": "Afaan"
+  }
+}

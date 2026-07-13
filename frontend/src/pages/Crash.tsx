@@ -89,12 +89,14 @@ export function Crash({ onBack }: { onBack: () => void }) {
   const configRef = useRef<CrashConfig | null>(null);
   const myBetRef = useRef<CrashBet | null>(null);
   const waitingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const phaseRef = useRef<Phase>('loading');
 
   const setWallet = useStore(s => s.setWallet);
   const isSocketConnected = useStore(s => s.isSocketConnected);
 
   useEffect(() => { configRef.current = config; }, [config]);
   useEffect(() => { myBetRef.current = myBet; }, [myBet]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
 
   const clearTimer = () => {
     if (waitingTimerRef.current) {
@@ -265,6 +267,35 @@ export function Crash({ onBack }: { onBack: () => void }) {
       socket.emit('leave.game', { game: 'crash' });
     };
   }, [isSocketConnected, setWallet, startWaitingTimer]);
+
+  // Reconciliation fallback — self-heals if a socket phase event was missed
+  // (e.g. the round transitioned in the gap between initial load and the socket
+  // subscription, or an event was dropped). Without this the UI can get stuck on
+  // "waiting" forever while the server has already moved on.
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const active = await crashApi.getActiveRound();
+        const p = phaseRef.current;
+        if (!active) return;
+        if (active.status === 'running' && p !== 'running') {
+          clearTimer();
+          setRound(active);
+          setGraphPoints(g => (g.length ? g : [{ x: 0, y: 100 }]));
+          setPhase('running');
+        } else if (active.status === 'waiting' && p !== 'waiting') {
+          setRound(active);
+          setMultiplierX100(100);
+          setGraphPoints([]);
+          setMyBet(null);
+          myBetRef.current = null;
+          setPhase('waiting');
+          startWaitingTimer(configRef.current?.waitingDurationSeconds ?? 12);
+        }
+      } catch { /* transient — try again next tick */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [startWaitingTimer]);
 
   const handlePlaceBet = async () => {
     if (isBetting || phase !== 'waiting' || myBet) return;

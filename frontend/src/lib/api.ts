@@ -627,5 +627,99 @@ export const adminUsersApi = {
     api.get<AdminUserActivity>(`/admin/users/${userId}/activity?limit=${limit}`).then((r) => r.data),
 };
 
+// ── Support (tickets, complaints, disputes, refunds, live chat) ───
+export type SupportTicketCategory = 'general' | 'complaint' | 'dispute' | 'refund' | 'live_chat';
+export type SupportTicketStatus = 'open' | 'pending_agent' | 'pending_user' | 'resolved' | 'closed';
+export type SupportTicketPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type SupportResolutionType = 'resolved' | 'rejected' | 'refunded';
+
+export type SupportTicket = {
+  id: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  priority: SupportTicketPriority;
+  assignedAgentId: string | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  requestedAmountMinor: number | null;
+  resolutionType: SupportResolutionType | null;
+  resolutionNote: string | null;
+  refundLedgerEntryId: string | null;
+  refundedAmountMinor: number | null;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SupportMessage = {
+  id: string;
+  authorId: string | null;
+  authorRole: 'user' | 'agent' | 'system';
+  body: string;
+  attachments: Record<string, unknown>[] | null;
+  internal: boolean;
+  createdAt: string;
+};
+
+export type SupportTicketThread = { ticket: SupportTicket; messages: SupportMessage[] };
+
+export type CreateTicketInput = {
+  category: Exclude<SupportTicketCategory, 'live_chat'>;
+  subject: string;
+  body: string;
+  relatedType?: string;
+  relatedId?: string;
+  requestedAmountMinor?: number;
+};
+
+export const supportApi = {
+  createTicket: (dto: CreateTicketInput) =>
+    api.post<SupportTicket>('/support/tickets', dto).then((r) => r.data),
+  listMyTickets: (limit = 30) =>
+    api.get<SupportTicket[]>(`/support/tickets?limit=${limit}`).then((r) => r.data),
+  getMyTicket: (id: string) =>
+    api.get<SupportTicketThread>(`/support/tickets/${id}`).then((r) => r.data),
+  postMessage: (id: string, body: string) =>
+    api.post<SupportMessage>(`/support/tickets/${id}/messages`, { body }).then((r) => r.data),
+  closeTicket: (id: string) =>
+    api.post<SupportTicket>(`/support/tickets/${id}/close`).then((r) => r.data),
+};
+
+export type SupportTicketFilter = {
+  status?: SupportTicketStatus;
+  category?: SupportTicketCategory;
+  assignedAgentId?: string; // or 'me'
+  limit?: number;
+  offset?: number;
+};
+
+export const supportAgentApi = {
+  list: (filter: SupportTicketFilter = {}) => {
+    const params = new URLSearchParams();
+    if (filter.status) params.set('status', filter.status);
+    if (filter.category) params.set('category', filter.category);
+    if (filter.assignedAgentId) params.set('assignedAgentId', filter.assignedAgentId);
+    params.set('limit', String(filter.limit ?? 30));
+    params.set('offset', String(filter.offset ?? 0));
+    return api
+      .get<{ items: SupportTicket[]; total: number }>(`/agent/support/tickets?${params.toString()}`)
+      .then((r) => r.data);
+  },
+  get: (id: string) =>
+    api.get<SupportTicketThread>(`/agent/support/tickets/${id}`).then((r) => r.data),
+  reply: (id: string, body: string, internal = false) =>
+    api.post<SupportMessage>(`/agent/support/tickets/${id}/messages`, { body, internal }).then((r) => r.data),
+  update: (id: string, dto: { status?: SupportTicketStatus; priority?: SupportTicketPriority; assignedAgentId?: string | null }) =>
+    api.patch<SupportTicket>(`/agent/support/tickets/${id}`, dto).then((r) => r.data),
+  claim: (id: string) =>
+    api.post<SupportTicket>(`/agent/support/tickets/${id}/claim`).then((r) => r.data),
+  approveRefund: (id: string, dto: { amountMinor?: number; note?: string }) =>
+    api.post<SupportTicket>(`/agent/support/tickets/${id}/refund/approve`, dto).then((r) => r.data),
+  reject: (id: string, reason: string) =>
+    api.post<SupportTicket>(`/agent/support/tickets/${id}/reject`, { reason }).then((r) => r.data),
+};
+
 export default api;
 

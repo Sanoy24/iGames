@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
-  Image as ImageIcon, Megaphone, Play, Plus, RefreshCw, Send, Settings,
+  Image as ImageIcon, LifeBuoy, Megaphone, Play, Plus, RefreshCw, Send, Settings,
   Shield, Trash2, Users, Wallet, X,
 } from 'lucide-react';
 import {
@@ -29,8 +29,9 @@ import {
 import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
+import { SupportConsole } from '../components/SupportConsole';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'broadcast' | 'withdrawals' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -42,6 +43,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
   { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
+  { id: 'support',     label: 'Support',     icon: <LifeBuoy size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
   { id: 'emoney',      label: 'ETB',         icon: <Coins size={15} /> },
   { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
@@ -3557,6 +3559,7 @@ export function Admin() {
           {tab === 'bots'          && <BotsAdmin />}
           {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
+          {tab === 'support'       && <SupportConsole />}
           {tab === 'config'        && <ConfigAdmin />}
           {tab === 'emoney'        && <EMoneyAdmin />}
           {tab === 'account'       && <AccountAdmin />}

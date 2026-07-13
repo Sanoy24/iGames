@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck, Send } from 'lucide-react';
+import { UserCircle, Phone, Mail, Edit3, Check, X, KeyRound, LogOut, ShieldCheck, Send, LifeBuoy, ChevronRight } from 'lucide-react';
 import { authApi, userApi } from '../lib/api';
 import type { User } from '../lib/models';
+import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
 
@@ -26,7 +27,7 @@ function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: 
   );
 }
 
-export function Profile() {
+export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const storeUser = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
   const clearAuth = useStore((s) => s.clearAuth);
@@ -265,6 +266,21 @@ export function Profile() {
             )}
           </div>
         )}
+      </section>
+
+      {/* ── Support entry ── */}
+      <section className="card" style={{ padding: 0 }}>
+        <button
+          className="btn btn-ghost btn-full"
+          onClick={() => onNavigate?.('support')}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px' }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <LifeBuoy size={18} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontWeight: 600 }}>Help &amp; Support</span>
+          </span>
+          <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+        </button>
       </section>
 
       {/* ── Telegram session info ── */}

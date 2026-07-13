@@ -12,6 +12,7 @@ import { Profile } from './pages/Profile';
 import { Agent } from './pages/Agent';
 import { Crash } from './pages/Crash';
 import { Leaderboard } from './pages/Leaderboard';
+import { Support } from './pages/Support';
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
@@ -181,8 +182,9 @@ export function App() {
         {activeTab === 'wallet' && <Wallet />}
         {activeTab === 'leaderboard' && <Leaderboard />}
         {activeTab === 'admin' && <Admin />}
-        {activeTab === 'profile' && <Profile />}
+        {activeTab === 'profile' && <Profile onNavigate={setActiveTab} />}
         {activeTab === 'agent' && <Agent />}
+        {activeTab === 'support' && <Support onBack={() => setActiveTab('profile')} />}
       </main>
       <BottomNav active={activeTab} onChange={setActiveTab} />
       <Toasts />

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, ChevronDown, ChevronUp, Clock, RefreshCw, Send, Undo2, Users, X } from 'lucide-react';
+import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
 import { agentApi, walletApi } from '../lib/api';
+import { SupportConsole } from '../components/SupportConsole';
 import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -48,6 +49,7 @@ export function Agent() {
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
   const [showPool, setShowPool] = useState(false);
+  const [view, setView] = useState<'withdrawals' | 'support'>('withdrawals');
 
   const [transferPhone, setTransferPhone] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
@@ -168,6 +170,19 @@ export function Agent() {
   return (
     <div style={{ maxWidth: 520, margin: '0 auto', padding: '12px 12px 80px' }}>
 
+      {/* View toggle: Withdrawals ↔ Support */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        <button className={`btn btn-sm ${view === 'withdrawals' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('withdrawals')}>
+          <WalletIcon size={14} /> Withdrawals
+        </button>
+        <button className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('support')}>
+          <LifeBuoy size={14} /> Support
+        </button>
+      </div>
+
+      {view === 'support' && <SupportConsole />}
+
+      {view === 'withdrawals' && (<>
       {/* Stats bar */}
       <div style={{
         display: 'grid',
@@ -507,6 +522,7 @@ export function Agent() {
           )}
         </AnimatePresence>
       </div>
+      </>)}
     </div>
   );
 }

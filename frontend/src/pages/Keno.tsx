@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Play, Pause, Trash2, ChevronDown, ChevronUp,
@@ -62,9 +64,9 @@ function getKenoIntervalSeconds(cfg: KenoConfig) {
   return DEFAULT_KENO_INTERVAL_SECONDS;
 }
 
-function formatKenoInterval(cfg: KenoConfig) {
+function formatKenoInterval(cfg: KenoConfig, t: TFunction) {
   const secs = getKenoIntervalSeconds(cfg);
-  if (secs <= 0) return 'Manual';
+  if (secs <= 0) return t('bingo.manual');
   if (secs < 60) return `${secs}s`;
   const mins = secs / 60;
   return Number.isInteger(mins) ? `${mins}m` : `${secs}s`;
@@ -209,6 +211,7 @@ function CollapsibleSection({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function Keno({ onBack }: KenoProps) {
+  const { t } = useTranslation();
   const addToast    = useStore((s) => s.addToast);
   const wallet      = useStore((s) => s.wallet);
   const setWallet   = useStore((s) => s.setWallet);

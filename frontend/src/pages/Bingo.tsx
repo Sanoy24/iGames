@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     ArrowLeft,
@@ -511,6 +512,7 @@ function RecentCallsStrip({
     drawnNumbers: number[];
     isPatternMode: boolean;
 }) {
+    const { t } = useTranslation();
     const last = drawnNumbers.slice(-12);
     const stripRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -522,7 +524,7 @@ function RecentCallsStrip({
     return (
         <div className='relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2'>
             <div className='text-[8px] font-black uppercase tracking-widest text-slate-600 mb-1.5'>
-                Recent calls
+                {t('bingo.recentCalls')}
             </div>
             {/* Keyed by number (unique per room) — NOT array index — so the sliding
           window doesn't remount every pill on each draw. Only the genuinely new
@@ -598,6 +600,7 @@ function CurrentBallDisplay({
     count: number;
     max: number;
 }) {
+    const { t } = useTranslation();
     // `drawnNumbers` is the parent's already-paced "revealed" list, so the last
     // entry here is exactly the ball currently lit on the board and cards — they
     // all advance together.
@@ -615,10 +618,10 @@ function CurrentBallDisplay({
             <div className='flex flex-col items-center gap-2 py-4'>
                 <Trophy size={28} className='text-amber-400' />
                 <span className='text-[10px] font-black text-amber-500 uppercase tracking-widest'>
-                    Draw complete
+                    {t('bingo.drawComplete')}
                 </span>
                 <span className='text-[9px] font-mono text-slate-500'>
-                    {count}/{max} numbers called
+                    {t('bingo.numbersCalled', { count, max })}
                 </span>
             </div>
         );
@@ -629,7 +632,7 @@ function CurrentBallDisplay({
             <div className='flex flex-col items-center gap-3 py-4'>
                 <div className='w-20 h-20 rounded-2xl border-2 border-dashed border-white/10 flex items-center justify-center'>
                     <span className='text-[9px] font-black text-white/30 uppercase tracking-wider'>
-                        Waiting
+                        {t('bingo.waiting')}
                     </span>
                 </div>
                 <span className='text-[9px] text-slate-600 font-mono'>
@@ -642,7 +645,7 @@ function CurrentBallDisplay({
     return (
         <div className='flex flex-col items-center gap-2 py-2'>
             <span className='text-[8px] font-black uppercase tracking-widest text-slate-500'>
-                Now calling
+                {t('bingo.nowCalling')}
             </span>
             {/* `mode="wait"` guarantees the previous ball fully exits before the next
           enters — one unhurried ball at a time, never two mid-flight overlapping
@@ -704,7 +707,7 @@ function CurrentBallDisplay({
                 </motion.div>
             </AnimatePresence>
             <span className='text-[9px] text-slate-600 font-mono'>
-                #{count} of {max}
+                {t('bingo.ofCount', { count, max })}
             </span>
         </div>
     );
@@ -722,6 +725,7 @@ const PatternTicketCard = memo(
         patternPrizeMap: Map<string, string>;
         revealedSet?: Set<number>;
     }) => {
+        const { t } = useTranslation();
         const won = ticket.payoutMinor > 0;
         const grid = ticket.grid as Array<Array<number | null>>;
         // Mark cells from the paced "revealed" set when provided, so a number lights on
@@ -759,7 +763,7 @@ const PatternTicketCard = memo(
                 {ticket.completedPatterns?.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>
                         {ticket.completedPatterns
-                            .map((pid) => patternPrizeMap.get(pid) ?? 'Pattern')
+                            .map((pid) => patternPrizeMap.get(pid) ?? t('bingo.pattern'))
                             .join(' · ')}
                     </p>
                 )}
@@ -804,7 +808,7 @@ const PatternTicketCard = memo(
                                               : 'bg-white/[0.04] border border-white/[0.06] text-slate-400'
                                     }`}
                                 >
-                                    {isFree ? 'FREE' : value}
+                                    {isFree ? t('bingo.free') : value}
                                 </motion.span>
                             );
                         }),
@@ -824,6 +828,7 @@ const BingoTicketCard = memo(
         ticket: BingoTicket;
         patternPrizeMap: Map<string, string>;
     }) => {
+        const { t } = useTranslation();
         if (isPatternGrid(ticket.grid)) {
             return (
                 <PatternTicketCard
@@ -912,8 +917,8 @@ const BingoTicketCard = memo(
                     })}
                 </div>
                 <div className='flex justify-between text-[9px] text-slate-600 pt-1 border-t border-white/[0.05]'>
-                    <span>Stake {formatCredits(ticket.stakeMinor)} ETB</span>
-                    <span>{ticket.completedLines.length}/3 lines</span>
+                    <span>{t('bingo.stakeEtb', { amount: formatCredits(ticket.stakeMinor) })}</span>
+                    <span>{t('bingo.linesOf3', { count: ticket.completedLines.length })}</span>
                 </div>
             </motion.article>
         );
@@ -1084,6 +1089,7 @@ function LivePlaceWinPopup({
     drawnNumbers: number[];
     onDone: () => void;
 }) {
+    const { t } = useTranslation();
     useEffect(() => {
         const id = setTimeout(onDone, LIVE_PLACE_WIN_MS);
         return () => clearTimeout(id);
@@ -1094,7 +1100,7 @@ function LivePlaceWinPopup({
         (entry.winnerGrid as Array<Array<number | null>> | undefined) ?? null;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
-    const name = (entry.winnerDisplayName as string | undefined) ?? 'Player';
+    const name = (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
     const prize = (entry.prizeMinor as number | undefined) ?? 0;
     const cartela = entry.winnerCartelaNumber as number | undefined;
@@ -1131,10 +1137,10 @@ function LivePlaceWinPopup({
                             textShadow: '0 0 22px rgba(52,211,153,0.7)',
                         }}
                     >
-                        BINGO!
+                        {t('bingo.bingoExclaim')}
                     </div>
                     <div className='text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1'>
-                        {PLACE_MEDAL[place]} {PLACE_LABEL[place]} place
+                        {PLACE_MEDAL[place]} {t('bingo.placeOrdinal', { place: PLACE_LABEL[place] })}
                     </div>
                     <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
                         <span
@@ -1144,7 +1150,7 @@ function LivePlaceWinPopup({
                             {name}
                             {last4 ? ` ( *${last4} )` : ''}
                         </span>
-                        <span>wins this place</span>
+                        <span>{t('bingo.winsThisPlace')}</span>
                     </p>
                 </div>
 
@@ -1173,11 +1179,11 @@ function LivePlaceWinPopup({
                                     className='text-[13px] font-black'
                                     style={{ color: '#34d399' }}
                                 >
-                                    Prize: {formatCreditsFull(prize)} ETB
+                                    {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
                                 </span>
                                 {cartela != null && (
                                     <span className='text-[13px] font-black text-slate-100'>
-                                        Card# {cartela}
+                                        {t('bingo.cardHash', { n: cartela })}
                                     </span>
                                 )}
                             </div>
@@ -1202,6 +1208,7 @@ function RoomResultOverlay({
     totalDisplaySecs: number;
     onClose: () => void;
 }) {
+    const { t: tr } = useTranslation();
     const totalWin = myTickets.reduce((s, t) => s + t.payoutMinor, 0);
     const iWon = totalWin > 0;
     const isPrefilledMode = room.winMode === 'prefilled';
@@ -1236,7 +1243,7 @@ function RoomResultOverlay({
         (summary[primaryKey] as Record<string, unknown> | undefined) ??
         summaryEntries.find((e) => e.winnerGrid || e.winnerDisplayName);
     const winnerDisplayName =
-        (winEntry?.winnerDisplayName as string | undefined) ?? 'A lucky player';
+        (winEntry?.winnerDisplayName as string | undefined) ?? tr('bingo.luckyPlayer');
     const prizeMinor =
         (winEntry?.prizeMinor as number | undefined) ?? room.prizeMinor;
     const winnerTicket = iWon
@@ -1253,8 +1260,8 @@ function RoomResultOverlay({
             (ids) => Array.isArray(ids) && ids.length > 0,
         );
     const noWinReason = !hasPlayers
-        ? 'No players — no win this round'
-        : 'No winner this round';
+        ? tr('bingo.noPlayersNoWin')
+        : tr('bingo.noWinnerThisRound');
 
     const progressPct = Math.max(
         0,
@@ -1269,7 +1276,7 @@ function RoomResultOverlay({
     if (isPrefilledMode) {
         const topName =
             (winEntry?.winnerDisplayName as string | undefined) ??
-            'A lucky player';
+            tr('bingo.luckyPlayer');
         return (
             <motion.div
                 initial={{ opacity: 0 }}
@@ -1306,25 +1313,25 @@ function RoomResultOverlay({
                                             '0 0 22px rgba(52,211,153,0.7)',
                                     }}
                                 >
-                                    BINGO!
+                                    {tr('bingo.bingoExclaim')}
                                 </div>
                                 <p className='text-slate-100 text-sm font-bold'>
                                     {iWon ? (
                                         <>
-                                            You won{' '}
+                                            {tr('bingo.youWon')}{' '}
                                             <span style={{ color: '#34d399' }}>
                                                 {formatCreditsFull(totalWin)}{' '}
                                                 ETB
                                             </span>
                                         </>
                                     ) : placeEntries.length > 1 ? (
-                                        'Final standings'
+                                        tr('bingo.finalStandings')
                                     ) : (
                                         <>
                                             <span className='font-black text-white'>
                                                 {topName}
                                             </span>{' '}
-                                            won the game
+                                            {tr('bingo.wonTheGame')}
                                         </>
                                     )}
                                 </p>
@@ -1339,7 +1346,7 @@ function RoomResultOverlay({
                                             '0 0 22px rgba(251,191,36,0.5)',
                                     }}
                                 >
-                                    NO WIN
+                                    {tr('bingo.noWin')}
                                 </div>
                                 <p className='text-slate-200 text-sm font-bold'>
                                     {noWinReason}
@@ -1359,7 +1366,7 @@ function RoomResultOverlay({
                             }}
                         >
                             <div className='text-[9px] font-black uppercase tracking-widest text-slate-300/70 mb-1.5 text-center'>
-                                Final standings
+                                {tr('bingo.finalStandings')}
                             </div>
                             <div className='space-y-1'>
                                 {placeEntries.map(({ place, entry }) => (
@@ -1374,7 +1381,7 @@ function RoomResultOverlay({
                                             <span className='text-[11px] font-black text-white truncate'>
                                                 {(entry.winnerDisplayName as
                                                     | string
-                                                    | undefined) ?? 'Player'}
+                                                    | undefined) ?? tr('bingo.player')}
                                                 {entry.winnerPhoneLast4 ? (
                                                     <span className='text-slate-400'>
                                                         {' '}
@@ -1486,7 +1493,7 @@ function RoomResultOverlay({
                                 : '0 0 20px rgba(248,113,113,0.7), 0 2px 0 rgba(0,0,0,0.6)',
                         }}
                     >
-                        {iWon ? '🏆 You Won!' : hasWinner ? 'BINGO!' : 'NO WIN'}
+                        {iWon ? tr('bingo.youWonExclaim') : hasWinner ? tr('bingo.bingoExclaim') : tr('bingo.noWin')}
                     </div>
                     <p className='text-slate-300 text-sm'>
                         {iWon ? (
@@ -1494,14 +1501,14 @@ function RoomResultOverlay({
                                 <span className='font-bold text-white'>
                                     {winnerDisplayName}
                                 </span>{' '}
-                                — that&apos;s you!
+                                {tr('bingo.thatsYou')}
                             </>
                         ) : hasWinner ? (
                             <>
                                 <span className='font-bold text-white'>
                                     {winnerDisplayName}
                                 </span>{' '}
-                                wins the full house
+                                {tr('bingo.winsFullHouse')}
                             </>
                         ) : (
                             noWinReason
@@ -1630,6 +1637,7 @@ function RoomResultOverlay({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function Bingo({ onBack }: BingoProps) {
+    const { t } = useTranslation();
     const addToast = useStore((s) => s.addToast);
     const setWallet = useStore((s) => s.setWallet);
     const liveCounts = useStore((s) => s.liveCounts);
@@ -1679,8 +1687,8 @@ export function Bingo({ onBack }: BingoProps) {
 
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
         {
-            displayName: 'System',
-            text: 'Welcome to iGames Bingo!',
+            displayName: t('bingo.systemName'),
+            text: t('bingo.welcomeMessage'),
             timestamp: new Date().toISOString(),
             isSystem: true,
         },
@@ -2203,15 +2211,15 @@ export function Bingo({ onBack }: BingoProps) {
             const res = await bingoApi.claimBingo(room.id, ticketId);
             if (res.result === 'won') {
                 soundEngine.cashout();
-                addToast('success', '🎉 BINGO! You won!');
+                addToast('success', t('bingo.toastYouWon'));
             } else if (res.result === 'disqualified') {
                 soundEngine.pop();
                 addToast(
                     'error',
-                    'Wrong call — this card has no Bingo (or was beaten to it). It is now disqualified.',
+                    t('bingo.toastWrongCall'),
                 );
             } else {
-                addToast('info', 'No Bingo on this card yet.');
+                addToast('info', t('bingo.toastNoBingoYet'));
             }
             const [nextWallet] = await Promise.all([
                 walletApi.getWallet(),
@@ -2252,7 +2260,7 @@ export function Bingo({ onBack }: BingoProps) {
             ]);
             setWallet(nextWallet);
             soundEngine.cashout();
-            addToast('success', 'Bought 1 Bingo card!');
+            addToast('success', t('bingo.toastBoughtCard'));
         } catch (err) {
             addToast('error', getErrorMessage(err));
         } finally {
@@ -2267,7 +2275,7 @@ export function Bingo({ onBack }: BingoProps) {
         async (n: number) => {
             if (!room || room.status !== 'open') return;
             if (!currentUser) {
-                addToast('error', 'Log in to buy cartelas');
+                addToast('error', t('bingo.toastLoginToBuy'));
                 return;
             }
             if (pendingCartelas.has(n)) return;
@@ -2282,7 +2290,7 @@ export function Bingo({ onBack }: BingoProps) {
                     setLocalTickets((prev) =>
                         prev.filter((t) => t.cartelaNumber !== n),
                     );
-                    addToast('info', `Cartela #${n} refunded`);
+                    addToast('info', t('bingo.toastCartelaRefunded', { n }));
                 } else {
                     const bought = await bingoApi.purchaseCartelas(
                         room.id,
@@ -2292,7 +2300,7 @@ export function Bingo({ onBack }: BingoProps) {
                     localRoomIdRef.current = room.id;
                     setLocalTickets((prev) => [...prev, ...bought]);
                     soundEngine.cashout();
-                    addToast('success', `Cartela #${n} purchased!`);
+                    addToast('success', t('bingo.toastCartelaPurchased', { n }));
                 }
                 const [nextWallet] = await Promise.all([
                     walletApi.getWallet(),
@@ -2302,15 +2310,15 @@ export function Bingo({ onBack }: BingoProps) {
             } catch (err) {
                 const msg = getErrorMessage(err);
                 if (msg.toLowerCase().includes('taken'))
-                    addToast('error', 'That cartela was just taken');
+                    addToast('error', t('bingo.toastCartelaTaken'));
                 else if (
                     msg.toLowerCase().includes('balance') ||
                     msg.toLowerCase().includes('insufficient') ||
                     msg.toLowerCase().includes('enough')
                 )
-                    addToast('error', 'Insufficient balance');
+                    addToast('error', t('bingo.toastInsufficientBalance'));
                 else if (msg.toLowerCase().includes('closed'))
-                    addToast('error', 'Sales are closed');
+                    addToast('error', t('bingo.toastSalesClosed'));
                 else addToast('error', msg);
                 void loadCurrent();
             } finally {
@@ -2330,6 +2338,7 @@ export function Bingo({ onBack }: BingoProps) {
             addToast,
             loadCurrent,
             setWallet,
+            t,
         ],
     );
 
@@ -2395,13 +2404,13 @@ export function Bingo({ onBack }: BingoProps) {
                     onClick={onBack}
                     className='btn btn-ghost btn-sm flex items-center gap-2'
                 >
-                    <ArrowLeft size={14} /> Home
+                    <ArrowLeft size={14} /> {t('nav.home')}
                 </button>
                 <div className='flex items-center gap-2'>
                     {liveCounts && liveCounts.bingoOnline > 0 && (
                         <span className='live-badge-pulse'>
                             <span className='pulse-dot' />
-                            {liveCounts.bingoOnline} playing
+                            {t('home.playing', { count: liveCounts.bingoOnline })}
                         </span>
                     )}
                     <button
@@ -2441,13 +2450,13 @@ export function Bingo({ onBack }: BingoProps) {
                 <div className='card text-center py-12 space-y-2'>
                     <Sparkles size={28} className='mx-auto text-slate-600' />
                     <p className='text-slate-400 text-sm'>
-                        No Bingo game running right now.
+                        {t('bingo.noGameRunning')}
                     </p>
                     <button
                         onClick={() => void loadCurrent()}
                         className='btn btn-secondary btn-sm mt-1'
                     >
-                        <RefreshCw size={12} /> Refresh
+                        <RefreshCw size={12} /> {t('common.refresh')}
                     </button>
                 </div>
             )}
@@ -2464,28 +2473,32 @@ export function Bingo({ onBack }: BingoProps) {
                     <div className='grid grid-cols-4 gap-2'>
                         {[
                             {
-                                label: 'Derash',
+                                key: 'derash',
+                                label: t('bingo.statDerash'),
                                 value: `${formatCredits(room.prizeMinor)} ETB`,
                                 color: 'text-amber-400',
                             },
                             {
-                                label: 'Players',
+                                key: 'players',
+                                label: t('bingo.statPlayers'),
                                 value: String(room.soldTickets),
                                 color: 'text-slate-200',
                             },
                             {
-                                label: 'Stake',
+                                key: 'stake',
+                                label: t('bingo.statStake'),
                                 value: `${formatCredits(room.ticketPriceMinor)} ETB`,
                                 color: 'text-slate-200',
                             },
                             {
-                                label: 'Called',
+                                key: 'called',
+                                label: t('bingo.statCalled'),
                                 value: `${drawnNumbers.length}/${ballCount}`,
                                 color: 'text-red-400',
                             },
                         ].map((stat) => (
                             <div
-                                key={stat.label}
+                                key={stat.key}
                                 className='rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center'
                             >
                                 <span className='block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5'>
@@ -2538,9 +2551,7 @@ export function Bingo({ onBack }: BingoProps) {
                                     </div>
                                 </div>
                                 <p className='text-[9px] text-slate-500'>
-                                    Tap a cartela to buy it instantly. Tap your
-                                    own again to refund it while the timer runs.
-                                    Each cartela is a hidden bingo card.
+                                    {t('bingo.cartelaInstructions')}
                                 </p>
                                 <CartelaGrid
                                     gridSize={gridSize}
@@ -2569,7 +2580,7 @@ export function Bingo({ onBack }: BingoProps) {
                                             }`}
                                         >
                                             {room.status === 'open'
-                                                ? 'Buy open'
+                                                ? t('bingo.buyOpen')
                                                 : room.status}
                                         </span>
                                         {isPrefilledMode ? (
@@ -2648,8 +2659,8 @@ export function Bingo({ onBack }: BingoProps) {
                                                             }
                                                             title={
                                                                 autoMode
-                                                                    ? 'Auto: cards win automatically'
-                                                                    : 'Manual: tap BINGO to claim'
+                                                                    ? t('bingo.autoTitle')
+                                                                    : t('bingo.manualTitle')
                                                             }
                                                             className='flex items-center gap-1.5'
                                                         >
@@ -2657,8 +2668,8 @@ export function Bingo({ onBack }: BingoProps) {
                                                                 className={`text-[9px] font-black uppercase tracking-wider ${autoMode ? 'text-emerald-400' : 'text-amber-400'}`}
                                                             >
                                                                 {autoMode
-                                                                    ? 'Auto'
-                                                                    : 'Manual'}
+                                                                    ? t('bingo.auto')
+                                                                    : t('bingo.manual')}
                                                             </span>
                                                             <span
                                                                 className={`relative w-8 h-[18px] rounded-full transition-colors duration-200 ${autoMode ? 'bg-emerald-500/80' : 'bg-slate-600'}`}
@@ -2721,13 +2732,13 @@ export function Bingo({ onBack }: BingoProps) {
                                                                         {claimingId ===
                                                                         ticket.id
                                                                             ? '…'
-                                                                            : 'BINGO!'}
+                                                                            : t('bingo.bingoExclaim')}
                                                                     </button>
                                                                 )}
                                                             {ticket.status ===
                                                                 'disqualified' && (
                                                                 <span className='w-full text-center text-[9px] font-black text-red-400 uppercase tracking-wide'>
-                                                                    Disqualified
+                                                                    {t('bingo.disqualified')}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -2773,10 +2784,10 @@ export function Bingo({ onBack }: BingoProps) {
                         <div className='card space-y-2'>
                             <div className='flex items-center justify-between'>
                                 <p className='text-[10px] font-black uppercase tracking-wider text-slate-400'>
-                                    Buy a card
+                                    {t('bingo.buyACard')}
                                 </p>
                                 <span className='text-[10px] text-slate-500'>
-                                    {remainingTickets} spots left
+                                    {t('bingo.spotsLeft', { count: remainingTickets })}
                                 </span>
                             </div>
                             <motion.button
@@ -2796,12 +2807,12 @@ export function Bingo({ onBack }: BingoProps) {
                                             size={15}
                                             className='animate-spin'
                                         />{' '}
-                                        Processing…
+                                        {t('bingo.processing')}
                                     </span>
                                 ) : remainingTickets <= 0 ? (
-                                    'Room Full'
+                                    t('bingo.roomFull')
                                 ) : (
-                                    `Buy Card — ${formatCreditsFull(room.ticketPriceMinor)} ETB`
+                                    t('bingo.buyCardEtb', { amount: formatCreditsFull(room.ticketPriceMinor) })
                                 )}
                             </motion.button>
                         </div>
@@ -2812,10 +2823,10 @@ export function Bingo({ onBack }: BingoProps) {
                             <span className='text-emerald-400 text-lg'>✓</span>
                             <div>
                                 <p className='text-[11px] font-black text-emerald-400'>
-                                    Card purchased
+                                    {t('bingo.cardPurchased')}
                                 </p>
                                 <p className='text-[10px] text-slate-500'>
-                                    Waiting for the draw to begin…
+                                    {t('bingo.waitingForDraw')}
                                 </p>
                             </div>
                         </div>
@@ -2829,8 +2840,8 @@ export function Bingo({ onBack }: BingoProps) {
                         <div className='space-y-2'>
                             <h3 className='text-[10px] font-black uppercase tracking-wider text-slate-500 px-1'>
                                 {isPrefilledMode
-                                    ? `My Cartelas (${myTickets.length})`
-                                    : 'My Card'}
+                                    ? t('bingo.myCartelas', { count: myTickets.length })
+                                    : t('bingo.myCard')}
                             </h3>
                             <div className='grid gap-3 grid-cols-1 sm:grid-cols-2'>
                                 {myTickets.map((ticket) => (
@@ -2852,11 +2863,11 @@ export function Bingo({ onBack }: BingoProps) {
                                 />
                                 <p className='text-slate-500 text-xs'>
                                     {isPrefilledMode
-                                        ? "You didn't buy any cartelas for this round."
-                                        : "You didn't buy a card for this round."}
+                                        ? t('bingo.noCartelasThisRound')
+                                        : t('bingo.noCardThisRound')}
                                 </p>
                                 <p className='text-slate-600 text-[10px]'>
-                                    The next game opens for buy-in soon.
+                                    {t('bingo.nextGameOpensSoon')}
                                 </p>
                             </div>
                         )
@@ -2869,7 +2880,7 @@ export function Bingo({ onBack }: BingoProps) {
                             className='w-full flex items-center justify-between'
                         >
                             <span className='text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2'>
-                                <MessageSquare size={11} /> Room Chat
+                                <MessageSquare size={11} /> {t('bingo.roomChat')}
                             </span>
                             <span className='flex items-center gap-1'>
                                 {chatMessages.filter((m) => !m.isSystem)
@@ -2915,7 +2926,7 @@ export function Bingo({ onBack }: BingoProps) {
                                                             className={`text-[9px] font-bold mb-0.5 ${isOwn ? 'text-amber-400' : 'text-blue-400'}`}
                                                         >
                                                             {isOwn
-                                                                ? 'You'
+                                                                ? t('bingo.you')
                                                                 : msg.displayName}
                                                         </span>
                                                     )}
@@ -2939,7 +2950,7 @@ export function Bingo({ onBack }: BingoProps) {
                                         <input
                                             ref={chatInputRef}
                                             className='input flex-1 text-xs py-1.5'
-                                            placeholder='Say something…'
+                                            placeholder={t('bingo.saySomething')}
                                             maxLength={200}
                                             value={chatInput}
                                             onChange={(e) =>
@@ -2955,7 +2966,7 @@ export function Bingo({ onBack }: BingoProps) {
                                             disabled={!chatInput.trim()}
                                             className='btn btn-primary btn-sm'
                                         >
-                                            Send
+                                            {t('common.send')}
                                         </button>
                                     </div>
                                 </motion.div>

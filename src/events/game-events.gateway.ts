@@ -244,6 +244,11 @@ export class GameEventsGateway
     this.server.to('agents').emit('withdrawal.pending', payload);
   }
 
+  /** Broadcast the updated public game catalog so clients hide/reveal games live. */
+  emitGamesCatalogUpdated(catalog: unknown): void {
+    this.server.emit('games.catalog.updated', catalog);
+  }
+
   emitKenoDrawStarted(payload: KenoDrawStartedPayload): void {
     this.server.emit('keno.draw.started', payload);
   }

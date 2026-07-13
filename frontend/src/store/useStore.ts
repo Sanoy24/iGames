@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { User, Wallet } from '../lib/models';
+import type { GameCatalogEntry } from '../lib/api';
 
 export type Toast = {
   id: string;
@@ -54,6 +55,10 @@ type AppState = {
   // Live counts
   liveCounts: LiveCounts | null;
   setLiveCounts: (counts: LiveCounts) => void;
+
+  // Game availability catalog (admin-controlled). null = not loaded yet.
+  gameCatalog: GameCatalogEntry[] | null;
+  setGameCatalog: (catalog: GameCatalogEntry[]) => void;
 
   // Audio settings
   soundVolume: number;
@@ -168,6 +173,9 @@ export const useStore = create<AppState>((set) => ({
   // Live counts
   liveCounts: null,
   setLiveCounts: (counts) => set({ liveCounts: counts }),
+
+  gameCatalog: null,
+  setGameCatalog: (catalog) => set({ gameCatalog: catalog }),
 
   // Audio settings
   soundVolume: typeof window !== 'undefined' ? Number(localStorage.getItem('soundVolume') ?? '0.5') : 0.5,

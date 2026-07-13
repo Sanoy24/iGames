@@ -9,6 +9,7 @@ import { Repository, DataSource, EntityManager, In, LessThanOrEqual } from 'type
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { GamesService } from '../games/games.service';
 import { User } from '../users/entities/user.entity';
 import { CreateKenoConfigDto } from './dto/create-keno-config.dto';
 import { KenoRulesService } from './keno-rules.service';
@@ -56,7 +57,8 @@ export class KenoService {
     private readonly kenoRulesService: KenoRulesService,
     private readonly rngService: RngService,
     private readonly walletService: WalletService,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    private readonly gamesService: GamesService
   ) {}
 
   async getActiveConfig(): Promise<KenoConfig> {
@@ -120,6 +122,7 @@ export class KenoService {
     overrideDrawId?: string;
     isForcedWin?: boolean;
   }): Promise<KenoTicketResponse> {
+    await this.gamesService.assertPlayable('keno');
     return this.dataSource.transaction(async (manager) => {
       const ticketRepo = manager.getRepository(KenoTicket);
       const existingTicket = await ticketRepo.findOneBy({ userId: input.userId, idempotencyKey: input.idempotencyKey });

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useStore, type LiveCounts } from '../store/useStore';
 import type { Wallet } from '../lib/models';
+import { gamesApi, type GameCatalogEntry } from '../lib/api';
 
 let socketInstance: Socket | null = null;
 
@@ -60,6 +61,8 @@ export function useSocketConnection() {
         setSocketConnected(true);
         // Pull live counts immediately so the UI doesn't wait for the next heartbeat.
         socketInstance?.emit('request.counts');
+        // Refresh the game availability catalog on (re)connect.
+        gamesApi.getCatalog().then((c) => useStore.getState().setGameCatalog(c)).catch(() => {});
       });
       socketInstance.on('disconnect', () => setSocketConnected(false));
 
@@ -87,6 +90,11 @@ export function useSocketConnection() {
 
       socketInstance.on('live.counts', (counts: LiveCounts) => {
         useStore.getState().setLiveCounts(counts);
+      });
+
+      // Admin toggled a game on/off/maintenance — update the catalog live.
+      socketInstance.on('games.catalog.updated', (catalog: GameCatalogEntry[]) => {
+        useStore.getState().setGameCatalog(catalog);
       });
     }
 

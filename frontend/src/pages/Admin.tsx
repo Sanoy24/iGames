@@ -30,8 +30,9 @@ import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPa
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 import { SupportConsole } from '../components/SupportConsole';
+import { GamesAdmin } from '../components/GamesAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -44,6 +45,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
   { id: 'support',     label: 'Support',     icon: <LifeBuoy size={15} /> },
+  { id: 'games',       label: 'Games',       icon: <Dices size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
   { id: 'emoney',      label: 'ETB',         icon: <Coins size={15} /> },
   { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
@@ -3560,6 +3562,7 @@ export function Admin() {
           {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
           {tab === 'support'       && <SupportConsole />}
+          {tab === 'games'         && <GamesAdmin />}
           {tab === 'config'        && <ConfigAdmin />}
           {tab === 'emoney'        && <EMoneyAdmin />}
           {tab === 'account'       && <AccountAdmin />}

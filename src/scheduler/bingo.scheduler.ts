@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { BotsService } from '../bots/bots.service';
+import { GamesService } from '../games/games.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { TelegramBotService } from '../telegram/telegram-bot.service';
@@ -21,6 +22,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly lockService: RedisLockService,
     private readonly telegramBotService: TelegramBotService,
+    private readonly gamesService: GamesService,
   ) {}
 
   /**
@@ -28,7 +30,9 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
    */
   async onApplicationBootstrap(): Promise<void> {
     try {
-      await this.bingoService.autoCreateNextRoom();
+      if (await this.gamesService.isPlayable('bingo')) {
+        await this.bingoService.autoCreateNextRoom();
+      }
     } catch (error) {
       this.logger.error(
         'Bootstrap: Failed to ensure initial Bingo room',
@@ -64,6 +68,9 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
 
     try {
       const cfg = await this.bingoService.getBingoConfig();
+      // When paused by admin (maintenance/hidden), keep drawing for running rooms
+      // so in-flight games finish, but don't start or create any new rooms.
+      const bingoPlayable = await this.gamesService.isPlayable('bingo');
 
       // First thing every tick: collapse to a single well-formed active room.
       // This cancels stale/duplicate rooms — including a leftover running room
@@ -109,8 +116,8 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         }
       }
 
-      // Auto-start rooms whose scheduledStartAt has passed
-      const roomsToStart = await this.bingoService.findRoomsToStart();
+      // Auto-start rooms whose scheduledStartAt has passed (skipped while paused)
+      const roomsToStart = bingoPlayable ? await this.bingoService.findRoomsToStart() : [];
       for (const room of roomsToStart) {
         if (this.shuttingDown) break;
         try {
@@ -134,7 +141,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       // it only here — inside the Redis lock + isRunning guard — makes room
       // creation single-writer, which prevents the duplicate/concurrent rooms
       // that arose when the client-polled getCurrentRoom created rooms.
-      if (!this.shuttingDown) {
+      if (!this.shuttingDown && bingoPlayable) {
         try {
           const newRoom = await this.bingoService.autoCreateNextRoom();
           if (newRoom) {

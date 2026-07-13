@@ -100,6 +100,7 @@ function makeService({
     mockWalletService as any,
     mockRngService as any,
     mockDataSource,
+    { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
   );
 
   return { service, mockManager, mockWalletService, mockRoundRepo, mockRngService };

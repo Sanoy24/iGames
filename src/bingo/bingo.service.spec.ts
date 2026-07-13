@@ -137,6 +137,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     { drawUniqueNumbers: jest.fn() } as any,
     { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
     { safeCreate: jest.fn(), create: jest.fn() } as any,
+    { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
   );
 
   return { service, mockRoomRepo };
@@ -348,6 +349,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { drawUniqueNumbers: jest.fn() } as any,
       { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
       { safeCreate: jest.fn(), create: jest.fn() } as any,
+      { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
     );
 
     const ids = await service.findRunningRoomIdsDue(2);
@@ -379,6 +381,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { drawUniqueNumbers: jest.fn() } as any,
       { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
       { safeCreate: jest.fn(), create: jest.fn() } as any,
+      { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
     );
 
     const ids = await service.findRunningRoomIdsDue(2);

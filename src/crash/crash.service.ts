@@ -10,6 +10,7 @@ import { DataSource, EntityManager, Not, Repository } from 'typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { WalletService } from '../wallet/wallet.service';
 import { RngService } from '../rng/rng.service';
+import { GamesService } from '../games/games.service';
 import { CrashConfig } from './entities/crash-config.entity';
 import { CrashRound } from './entities/crash-round.entity';
 import { CrashBet } from './entities/crash-bet.entity';
@@ -53,6 +54,7 @@ export class CrashService {
     private readonly walletService: WalletService,
     private readonly rngService: RngService,
     private readonly dataSource: DataSource,
+    private readonly gamesService: GamesService,
   ) {}
 
   // ── Config ────────────────────────────────────────────────────────────────
@@ -246,6 +248,7 @@ export class CrashService {
     dto: PlaceCrashBetDto,
     idempotencyKey: string,
   ): Promise<CrashBetResponse> {
+    await this.gamesService.assertPlayable('crash');
     const cfg = await this.getConfig();
 
     if (dto.stakeMinor < cfg.minBetMinor) {

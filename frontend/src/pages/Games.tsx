@@ -33,11 +33,32 @@ const itemVariants = {
 
 export function Games({ onNavigate }: Props) {
   const liveCounts = useStore((s) => s.liveCounts);
+  const gameCatalog = useStore((s) => s.gameCatalog);
+  const addToast = useStore((s) => s.addToast);
   const [filter, setFilter] = useState<Filter>('all');
 
-  const showKeno  = filter === 'all' || filter === 'keno';
-  const showBingo = filter === 'all' || filter === 'bingo';
-  const showCrash = filter === 'all' || filter === 'crash';
+  // Availability: while the catalog is loading (null) default to visible+playable.
+  // Once loaded, a game missing from the catalog is hidden by the backend.
+  const gameInfo = (code: 'keno' | 'bingo' | 'crash') => {
+    if (!gameCatalog) return { hidden: false, maint: false, msg: '' };
+    const entry = gameCatalog.find((g) => g.code === code);
+    if (!entry) return { hidden: true, maint: false, msg: '' };
+    return {
+      hidden: entry.state === 'hidden',
+      maint: entry.state === 'maintenance',
+      msg: entry.maintenanceMessage || `${entry.name} is under maintenance. Please try again later.`,
+    };
+  };
+  const keno = gameInfo('keno');
+  const bingo = gameInfo('bingo');
+  const crash = gameInfo('crash');
+
+  const open = (code: 'keno' | 'bingo' | 'crash', info: { maint: boolean; msg: string }) =>
+    info.maint ? addToast('info', info.msg) : onNavigate(code);
+
+  const showKeno  = (filter === 'all' || filter === 'keno')  && !keno.hidden;
+  const showBingo = (filter === 'all' || filter === 'bingo') && !bingo.hidden;
+  const showCrash = (filter === 'all' || filter === 'crash') && !crash.hidden;
 
   return (
     <motion.div
@@ -144,15 +165,16 @@ export function Games({ onNavigate }: Props) {
               key="bingo"
               variants={itemVariants}
               className="game-banner game-banner-bingo"
-              onClick={() => onNavigate('bingo')}
+              onClick={() => open('bingo', bingo)}
               exit={{ opacity: 0, y: -12, scale: 0.97 }}
               whileHover={{ scale: 1.015, y: -3 }}
               whileTap={{ scale: 0.975 }}
               transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+              style={{ opacity: bingo.maint ? 0.6 : 1 }}
             >
               <div className="game-banner-content">
                 <span className="game-banner-tag">
-                  Room based
+                  {bingo.maint ? '🔧 Maintenance' : 'Room based'}
                   {liveCounts && liveCounts.bingoOnline > 0 && (
                     <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {liveCounts.bingoOnline} playing</span>
                   )}
@@ -191,15 +213,16 @@ export function Games({ onNavigate }: Props) {
               key="keno"
               variants={itemVariants}
               className="game-banner game-banner-keno"
-              onClick={() => onNavigate('keno')}
+              onClick={() => open('keno', keno)}
               exit={{ opacity: 0, y: -12, scale: 0.97 }}
               whileHover={{ scale: 1.015, y: -3 }}
               whileTap={{ scale: 0.975 }}
               transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+              style={{ opacity: keno.maint ? 0.6 : 1 }}
             >
               <div className="game-banner-content">
                 <span className="game-banner-tag">
-                  Fast draw
+                  {keno.maint ? '🔧 Maintenance' : 'Fast draw'}
                   {liveCounts && liveCounts.kenoOnline > 0 && (
                     <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {liveCounts.kenoOnline} playing</span>
                   )}
@@ -237,15 +260,16 @@ export function Games({ onNavigate }: Props) {
               key="crash"
               variants={itemVariants}
               className="game-banner game-banner-crash"
-              onClick={() => onNavigate('crash')}
+              onClick={() => open('crash', crash)}
               exit={{ opacity: 0, y: -12, scale: 0.97 }}
               whileHover={{ scale: 1.015, y: -3 }}
               whileTap={{ scale: 0.975 }}
               transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+              style={{ opacity: crash.maint ? 0.6 : 1 }}
             >
               <div className="game-banner-content">
                 <span className="game-banner-tag">
-                  Provably Fair
+                  {crash.maint ? '🔧 Maintenance' : 'Provably Fair'}
                 </span>
                 <h2 className="game-banner-title">Crash</h2>
                 <p className="game-banner-desc">

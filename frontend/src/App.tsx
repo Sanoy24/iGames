@@ -179,7 +179,7 @@ export function App() {
         {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
         {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
         {activeTab === 'crash' && <Crash onBack={() => setActiveTab('games')} />}
-        {activeTab === 'wallet' && <Wallet />}
+        {activeTab === 'wallet' && <Wallet onNavigate={setActiveTab} />}
         {activeTab === 'leaderboard' && <Leaderboard />}
         {activeTab === 'admin' && <Admin />}
         {activeTab === 'profile' && <Profile onNavigate={setActiveTab} />}

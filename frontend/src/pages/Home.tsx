@@ -187,6 +187,21 @@ export function Home({ onNavigate }: Props) {
   const user = useStore(s => s.user);
   const wallet = useStore(s => s.wallet);
   const liveCounts = useStore(s => s.liveCounts);
+  const gameCatalog = useStore(s => s.gameCatalog);
+  const addToast = useStore(s => s.addToast);
+  const gameInfo = (code: 'keno' | 'bingo' | 'crash') => {
+    if (!gameCatalog) return { hidden: false, maint: false, msg: '' };
+    const e = gameCatalog.find(g => g.code === code);
+    if (!e) return { hidden: true, maint: false, msg: '' };
+    return { hidden: e.state === 'hidden', maint: e.state === 'maintenance', msg: e.maintenanceMessage || `${e.name} is under maintenance.` };
+  };
+  const kenoInfo = gameInfo('keno');
+  const bingoInfo = gameInfo('bingo');
+  const openGame = (code: 'keno' | 'bingo', info: { maint: boolean; msg: string }) => {
+    soundEngine.click();
+    if (info.maint) { addToast('info', info.msg); return; }
+    onNavigate(code);
+  };
   const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
   const [recentActivity, setRecentActivity] = useState<LedgerEntry[]>([]);
   const [recentWins, setRecentWins] = useState<RecentWin[]>([]);
@@ -320,24 +335,28 @@ export function Home({ onNavigate }: Props) {
           <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('games')}>All games →</button>
         </div>
         <div className="lobby-grid">
-          <GameCard
-            onClick={() => { soundEngine.click(); onNavigate('keno'); }}
-            gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)"
-            glowColor="rgba(139,92,246,0.25)"
-            icon={<Zap style={{ color: '#a78bfa' }} />}
-            tag="Fast Draw" name="Keno"
-            sub={countdown && activeDraw?.status === 'open' ? `Draw in ${countdown}` : 'Pick 1–12 numbers'}
-            badge="LIVE" badgeColor="rgba(139,92,246,0.25)"
-          />
-          <GameCard
-            onClick={() => { soundEngine.click(); onNavigate('bingo'); }}
-            gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)"
-            glowColor="rgba(239,68,68,0.2)"
-            icon={<Target style={{ color: '#f87171' }} />}
-            tag="Live Rooms" name="Bingo"
-            sub="Next Bingo starts soon! Buy your card"
-            badge="HOT" badgeColor="rgba(239,68,68,0.2)"
-          />
+          {!kenoInfo.hidden && (
+            <GameCard
+              onClick={() => openGame('keno', kenoInfo)}
+              gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)"
+              glowColor="rgba(139,92,246,0.25)"
+              icon={<Zap style={{ color: '#a78bfa' }} />}
+              tag="Fast Draw" name="Keno"
+              sub={kenoInfo.maint ? '🔧 Under maintenance' : (countdown && activeDraw?.status === 'open' ? `Draw in ${countdown}` : 'Pick 1–12 numbers')}
+              badge={kenoInfo.maint ? 'PAUSED' : 'LIVE'} badgeColor="rgba(139,92,246,0.25)"
+            />
+          )}
+          {!bingoInfo.hidden && (
+            <GameCard
+              onClick={() => openGame('bingo', bingoInfo)}
+              gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)"
+              glowColor="rgba(239,68,68,0.2)"
+              icon={<Target style={{ color: '#f87171' }} />}
+              tag="Live Rooms" name="Bingo"
+              sub={bingoInfo.maint ? '🔧 Under maintenance' : 'Next Bingo starts soon! Buy your card'}
+              badge={bingoInfo.maint ? 'PAUSED' : 'HOT'} badgeColor="rgba(239,68,68,0.2)"
+            />
+          )}
         </div>
       </div>
 

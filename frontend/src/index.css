@@ -10,6 +10,9 @@
   --bg-2:      #10121c;
   --surface:   #181b2a;
   --surface-2: #21253a;
+  /* Opaque card fill used by inline `background: var(--card-bg)` (dropdowns,
+     chat bubbles, stat cards). Must stay opaque so overlays don't show through. */
+  --card-bg:   #1c2032;
 
   --border:    rgba(255, 255, 255, 0.07);
   --border-2:  rgba(255, 255, 255, 0.12);

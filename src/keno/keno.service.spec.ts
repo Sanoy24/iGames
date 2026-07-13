@@ -104,6 +104,7 @@ function makeService({
     { drawUniqueNumbers: jest.fn() } as any,
     { debitInSession: jest.fn().mockResolvedValue({}) } as any,
     { safeCreate: jest.fn(), create: jest.fn() } as any,
+    { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
   );
 
   return { service };

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 import { Cron } from "@nestjs/schedule";
 import { BotsService } from "../bots/bots.service";
 import { KenoService } from "../keno/keno.service";
+import { GamesService } from "../games/games.service";
 import { GameEventsGateway } from "../events/game-events.gateway";
 import { RedisLockService } from "../redis/redis-lock.service";
 import { TelegramBotService } from "../telegram/telegram-bot.service";
@@ -20,6 +21,7 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
         private readonly botsService: BotsService,
         private readonly lockService: RedisLockService,
         private readonly telegramBotService: TelegramBotService,
+        private readonly gamesService: GamesService,
     ) {}
 
     async onApplicationBootstrap(): Promise<void> {
@@ -50,6 +52,8 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
     @Cron('*/5 * * * * *')
     async executeScheduledDraws(): Promise<void> {
         if (this.shuttingDown) return;
+        // Paused by admin (maintenance/hidden): don't execute or spin up new draws.
+        if (!(await this.gamesService.isPlayable('keno'))) return;
         const config = await this.kenoService.getActiveConfig().catch(() => null);
         if (!config || this.kenoService.getAutoScheduleIntervalMs(config) <= 0) return;
 

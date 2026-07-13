@@ -721,5 +721,28 @@ export const supportAgentApi = {
     api.post<SupportTicket>(`/agent/support/tickets/${id}/reject`, { reason }).then((r) => r.data),
 };
 
+// ── Games catalog + admin availability control ───────────────────
+export type GameCode = 'keno' | 'bingo' | 'crash';
+export type GameState = 'enabled' | 'maintenance' | 'hidden';
+
+export type GameCatalogEntry = {
+  code: GameCode;
+  name: string;
+  state: GameState;
+  maintenanceMessage: string | null;
+  playable: boolean;
+  displayOrder: number;
+};
+
+export const gamesApi = {
+  getCatalog: () => api.get<GameCatalogEntry[]>('/games/catalog').then((r) => r.data),
+};
+
+export const adminGamesApi = {
+  list: () => api.get<GameCatalogEntry[]>('/admin/games').then((r) => r.data),
+  update: (code: GameCode, dto: { state?: GameState; maintenanceMessage?: string | null; displayOrder?: number }) =>
+    api.patch<GameCatalogEntry>(`/admin/games/${code}`, dto).then((r) => r.data),
+};
+
 export default api;
 

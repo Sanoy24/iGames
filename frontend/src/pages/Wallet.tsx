@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy, LifeBuoy, ChevronRight } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
+import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, getErrorMessage } from '../lib/utils';
 import { authApi, walletApi, paymentsApi, type TelebirrPreview, type ActiveAgent } from '../lib/api';
@@ -100,7 +101,7 @@ const listItem = {
   show:   { opacity: 1, x: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 28 } },
 };
 
-export function Wallet() {
+export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const wallet    = useStore((state) => state.wallet);
   const setWallet = useStore((state) => state.setWallet);
   const addToast  = useStore((state) => state.addToast);
@@ -290,6 +291,23 @@ export function Wallet() {
             {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Withdraw</>}
           </motion.button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => onNavigate?.('support')}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%', marginTop: 10, padding: '10px 12px',
+            background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',
+            borderRadius: 10, cursor: 'pointer', color: 'var(--text-secondary)',
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
+            <LifeBuoy size={15} style={{ color: 'var(--accent)' }} />
+            Payment issue? Get help &amp; support
+          </span>
+          <ChevronRight size={15} style={{ color: 'var(--text-muted)' }} />
+        </button>
 
         {import.meta.env.DEV && <DevTopup onSuccess={loadWallet} />}
 

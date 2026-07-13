@@ -25,6 +25,7 @@ import { User } from '../users/entities/user.entity';
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
 import { NotificationsService } from '../notifications/notifications.service';
+import { GamesService } from '../games/games.service';
 
 // ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
 
@@ -164,7 +165,8 @@ export class BingoService implements OnModuleInit {
     private readonly bingoRulesService: BingoRulesService,
     private readonly rngService: RngService,
     private readonly walletService: WalletService,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    private readonly gamesService: GamesService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -714,6 +716,7 @@ export class BingoService implements OnModuleInit {
     idempotencyKey: string;
     selectedNumbers?: number[];
   }): Promise<BingoTicketResponse[]> {
+    await this.gamesService.assertPlayable('bingo');
     const userId = this.validateUuid(input.userId, 'userId');
     const roomId = this.validateUuid(input.roomId, 'roomId');
 

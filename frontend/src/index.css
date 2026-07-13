@@ -939,7 +939,7 @@ body::before {
   bottom: -24px;
   width: 230px;
   height: 230px;
-  background: radial-gradient(circle at 0% 100%, rgba(255, 45, 85, 0.22), transparent 68%);
+  background: radial-gradient(circle at 0% 100%, rgba(245, 158, 11, 0.22), transparent 68%);
   pointer-events: none;
   z-index: 1;
 }
@@ -956,7 +956,7 @@ body::before {
   height: 100%;
   width: 40%;
   border-radius: 99px;
-  background: linear-gradient(90deg, transparent, #ff2d55, transparent);
+  background: linear-gradient(90deg, transparent, #f59e0b, transparent);
   animation: crash-loading-slide 1.2s ease-in-out infinite;
 }
 @keyframes crash-loading-slide {

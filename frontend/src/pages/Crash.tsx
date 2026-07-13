@@ -350,7 +350,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
         <div className="crash-stage">
           {/* Rotating sunburst rays — only while the round is live/pending */}
           {(phase === 'running' || phase === 'waiting') && <div className="crash-rays" />}
-          {/* Soft red glow at the launch origin (bottom-left) */}
+          {/* Soft gold glow at the launch origin (bottom-left) */}
           <div className="crash-origin-glow" />
 
           {/* Flight curve */}
@@ -362,8 +362,8 @@ export function Crash({ onBack }: { onBack: () => void }) {
             >
               <defs>
                 <linearGradient id="cg-fill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#ff2d55" stopOpacity="0.45" />
-                  <stop offset="100%" stopColor="#7a0022" stopOpacity="0.05" />
+                  <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.45" />
+                  <stop offset="100%" stopColor="#5c3b00" stopOpacity="0.05" />
                 </linearGradient>
               </defs>
               {svgArea && <path d={svgArea} fill="url(#cg-fill)" />}
@@ -371,11 +371,11 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 <path
                   d={svgPath}
                   fill="none"
-                  stroke="#ff2d55"
+                  stroke="#f59e0b"
                   strokeWidth="3"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  style={{ filter: 'drop-shadow(0 0 6px rgba(255,45,85,0.6))' }}
+                  style={{ filter: 'drop-shadow(0 0 6px rgba(245,158,11,0.6))' }}
                 />
               )}
             </svg>
@@ -395,9 +395,9 @@ export function Crash({ onBack }: { onBack: () => void }) {
               >
                 <Plane
                   size={40}
-                  color="#ff2d55"
-                  fill="#ff2d55"
-                  style={{ filter: 'drop-shadow(0 0 10px rgba(255,45,85,0.75))', transform: 'rotate(-6deg)' }}
+                  color="#f59e0b"
+                  fill="#f59e0b"
+                  style={{ filter: 'drop-shadow(0 0 10px rgba(245,158,11,0.75))', transform: 'rotate(-6deg)' }}
                 />
               </motion.div>
             </motion.div>
@@ -417,7 +417,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                 style={{ textAlign: 'center' }}
               >
-                <Plane size={30} color="#ff2d55" fill="#ff2d55" style={{ filter: 'drop-shadow(0 0 10px rgba(255,45,85,0.6))' }} />
+                <Plane size={30} color="#f59e0b" fill="#f59e0b" style={{ filter: 'drop-shadow(0 0 10px rgba(245,158,11,0.6))' }} />
                 <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.14em', color: '#fff', textTransform: 'uppercase', marginTop: 10 }}>
                   {t('crash.waitingForNextRound')}
                 </div>

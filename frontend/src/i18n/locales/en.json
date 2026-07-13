@@ -347,7 +347,9 @@
     "cashedOutWon": "Cashed out @ {{mult}} — won {{amount}} ETB",
     "stakeEtb": "Stake (ETB)",
     "minAmount": "Min {{amount}}",
-    "autoCashoutLabel": "Auto Cashout (×)"
+    "autoCashoutLabel": "Auto Cashout (×)",
+    "flewAway": "Flew Away!",
+    "waitingForNextRound": "Waiting for next round"
   },
   "admin": {
     "accessRequired": "Admin access required.",

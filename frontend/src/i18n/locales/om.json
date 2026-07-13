@@ -207,7 +207,9 @@
     "tagline": "Utuu hin kufin baasi",
     "live": "KALLATTII",
     "crashed": "KUFEERA",
-    "stakeEtb": "Kaffaltii (ETB)"
+    "stakeEtb": "Kaffaltii (ETB)",
+    "flewAway": "Balaliʼe!",
+    "waitingForNextRound": "Marsaa itti aanu eegaa jira"
   },
   "admin": {
     "accessRequired": "Hayyama admin barbaachisa.",

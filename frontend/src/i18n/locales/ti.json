@@ -207,7 +207,9 @@
     "tagline": "ቅድሚ ምውዳቑ ኣውጽእ",
     "live": "ቀጥታ",
     "crashed": "ወዲቑ",
-    "stakeEtb": "ውርርድ (ብር)"
+    "stakeEtb": "ውርርድ (ብር)",
+    "flewAway": "በሪሩ!",
+    "waitingForNextRound": "ንዝቕጽል ዙር ኣብ ምጽባይ"
   },
   "admin": {
     "accessRequired": "ናይ ኣመሓዳሪ ፍቓድ የድሊ።",

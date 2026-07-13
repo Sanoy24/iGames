@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ArrowLeft, TrendingUp, Clock, Zap, AlertTriangle, Shield,
+  ArrowLeft, TrendingUp, Clock, Zap, AlertTriangle, Shield, Plane,
 } from 'lucide-react';
 import { crashApi, walletApi } from '../lib/api';
 import type { CrashBet, CrashConfig, CrashRound } from '../lib/models';
@@ -305,6 +305,20 @@ export function Crash({ onBack }: { onBack: () => void }) {
   const svgArea = buildArea(graphPoints, W, H);
 
   const hasActiveBet = myBet?.status === 'active';
+  const isCrashed = phase === 'crashed';
+
+  // Screen-space position (as % of the graph box) of the curve's leading tip —
+  // where the Aviator plane rides. Mirrors buildPath's coordinate mapping.
+  const planeTip = (() => {
+    if (graphPoints.length < 2) return { left: 7, top: 84 };
+    const maxX = Math.max(graphPoints[graphPoints.length - 1].x, 1);
+    const maxY = Math.max(...graphPoints.map(p => p.y), 200);
+    const pad = 10;
+    const last = graphPoints[graphPoints.length - 1];
+    const sx = pad + (last.x / maxX) * (W - pad * 2);
+    const sy = H - pad - ((last.y - 100) / (maxY - 99)) * (H - pad * 2);
+    return { left: (sx / W) * 100, top: (sy / H) * 100 };
+  })();
 
   return (
     <motion.div
@@ -331,96 +345,117 @@ export function Crash({ onBack }: { onBack: () => void }) {
         <PhaseBadge phase={phase} secsLeft={waitingSecsLeft} />
       </div>
 
-      {/* ── Game area ── */}
+      {/* ── Game area (Aviator-style) ── */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {/* Graph + multiplier overlay */}
-        <div style={{ position: 'relative', background: '#0c0e18' }}>
-          <svg
-            viewBox={`0 0 ${W} ${H}`}
-            style={{ width: '100%', height: H, display: 'block' }}
-            preserveAspectRatio="none"
-          >
-            <defs>
-              <linearGradient id="cg-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={liveColor} stopOpacity="0.2" />
-                <stop offset="100%" stopColor={liveColor} stopOpacity="0.02" />
-              </linearGradient>
-            </defs>
-            {/* Subtle grid */}
-            {graphPoints.length > 4 && [200, 300, 500, 1000].map(threshold => {
-              const maxY = Math.max(...graphPoints.map(p => p.y), 200);
-              if (threshold > maxY * 1.2) return null;
-              const sy = H - 10 - ((threshold - 100) / (maxY - 99)) * (H - 20);
-              return (
-                <g key={threshold}>
-                  <line x1={10} y1={sy} x2={W - 10} y2={sy}
-                    stroke="rgba(255,255,255,0.05)" strokeWidth="1" strokeDasharray="4 6" />
-                  <text x={W - 12} y={sy - 3} fontSize="9" fill="rgba(255,255,255,0.2)" textAnchor="end">
-                    {(threshold / 100).toFixed(0)}×
-                  </text>
-                </g>
-              );
-            })}
-            {svgArea && <path d={svgArea} fill="url(#cg-fill)" />}
-            {svgPath && (
-              <path
-                d={svgPath}
-                fill="none"
-                stroke={liveColor}
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            )}
-          </svg>
+        <div className="crash-stage">
+          {/* Rotating sunburst rays — only while the round is live/pending */}
+          {(phase === 'running' || phase === 'waiting') && <div className="crash-rays" />}
+          {/* Soft red glow at the launch origin (bottom-left) */}
+          <div className="crash-origin-glow" />
 
-          {/* Multiplier overlay */}
-          <div style={{
-            position: 'absolute', inset: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'none',
-          }}>
-            <div style={{ textAlign: 'center' }}>
+          {/* Flight curve */}
+          {(phase === 'running' || phase === 'crashed') && (
+            <svg
+              viewBox={`0 0 ${W} ${H}`}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <linearGradient id="cg-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ff2d55" stopOpacity="0.45" />
+                  <stop offset="100%" stopColor="#7a0022" stopOpacity="0.05" />
+                </linearGradient>
+              </defs>
+              {svgArea && <path d={svgArea} fill="url(#cg-fill)" />}
+              {svgPath && (
+                <path
+                  d={svgPath}
+                  fill="none"
+                  stroke="#ff2d55"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ filter: 'drop-shadow(0 0 6px rgba(255,45,85,0.6))' }}
+                />
+              )}
+            </svg>
+          )}
+
+          {/* The plane, riding the curve tip — flies away on crash */}
+          {(phase === 'running' || phase === 'crashed') && (
+            <motion.div
+              style={{ position: 'absolute', left: `${planeTip.left}%`, top: `${planeTip.top}%`, zIndex: 3, pointerEvents: 'none' }}
+              animate={isCrashed ? { x: 300, y: -260, opacity: 0 } : { x: 0, y: 0, opacity: 1 }}
+              transition={isCrashed ? { duration: 0.9, ease: 'easeIn' } : { duration: 0.12 }}
+            >
               <motion.div
-                key={`${phase}-${Math.floor(multiplierX100 / 50)}`}
-                style={{
-                  fontSize: 'clamp(42px, 11vw, 68px)',
-                  fontWeight: 900,
-                  fontFamily: 'var(--font-display)',
-                  color: liveColor,
-                  lineHeight: 1,
-                  textShadow: `0 0 40px ${liveColor}66`,
-                  letterSpacing: '-0.03em',
-                  transition: 'color 0.25s ease, text-shadow 0.25s ease',
-                }}
+                style={{ transform: 'translate(-50%, -50%)' }}
+                animate={{ y: [0, -3, 0] }}
+                transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
               >
-                {fmtMult(multiplierX100)}
+                <Plane
+                  size={40}
+                  color="#ff2d55"
+                  fill="#ff2d55"
+                  style={{ filter: 'drop-shadow(0 0 10px rgba(255,45,85,0.75))', transform: 'rotate(-6deg)' }}
+                />
               </motion.div>
-              <AnimatePresence mode="wait">
-                {phase === 'waiting' && (
+            </motion.div>
+          )}
+
+          {/* Center overlay */}
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 4,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none', gap: 6,
+          }}>
+            {phase === 'loading' && <div className="spinner" />}
+
+            {phase === 'waiting' && (
+              <motion.div
+                key="waiting"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                style={{ textAlign: 'center' }}
+              >
+                <Plane size={30} color="#ff2d55" fill="#ff2d55" style={{ filter: 'drop-shadow(0 0 10px rgba(255,45,85,0.6))' }} />
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.14em', color: '#fff', textTransform: 'uppercase', marginTop: 10 }}>
+                  {t('crash.waitingForNextRound')}
+                </div>
+                <div className="crash-loading-bar"><span /></div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                  {t('crash.startingIn', { secs: waitingSecsLeft })}
+                </div>
+              </motion.div>
+            )}
+
+            {(phase === 'running' || phase === 'crashed') && (
+              <>
+                {isCrashed && (
                   <motion.div
-                    key="wait-label"
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}
+                    key="flew"
+                    initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }}
+                    style={{ fontSize: 15, color: '#ef4444', fontWeight: 900, letterSpacing: '0.14em', textTransform: 'uppercase' }}
                   >
-                    {t('crash.startingIn', { secs: waitingSecsLeft })}
+                    {t('crash.flewAway')}
                   </motion.div>
                 )}
-                {phase === 'crashed' && (
-                  <motion.div
-                    key="crash-label"
-                    initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0 }}
-                    style={{ fontSize: 13, color: '#ef4444', fontWeight: 800, marginTop: 6, letterSpacing: '0.06em' }}
-                  >
-                    {t('crash.crashed')}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                <motion.div
+                  key={`${phase}-${Math.floor(multiplierX100 / 50)}`}
+                  style={{
+                    fontSize: 'clamp(46px, 13vw, 76px)',
+                    fontWeight: 900,
+                    fontFamily: 'var(--font-display)',
+                    color: isCrashed ? '#ef4444' : '#ffffff',
+                    lineHeight: 1,
+                    textShadow: isCrashed ? '0 0 44px rgba(239,68,68,0.6)' : '0 0 44px rgba(255,255,255,0.28)',
+                    letterSpacing: '-0.03em',
+                    transition: 'color 0.2s ease, text-shadow 0.2s ease',
+                  }}
+                >
+                  {fmtMult(multiplierX100)}
+                </motion.div>
+              </>
+            )}
           </div>
         </div>
 

@@ -346,7 +346,9 @@
     "cashedOutWon": "ወጥቷል @ {{mult}} — {{amount}} ብር አሸንፏል",
     "stakeEtb": "ውርርድ (ብር)",
     "minAmount": "ዝቅተኛ {{amount}}",
-    "autoCashoutLabel": "ራስ-ሰር ማውጣት (×)"
+    "autoCashoutLabel": "ራስ-ሰር ማውጣት (×)",
+    "flewAway": "በረረ!",
+    "waitingForNextRound": "ቀጣዩን ዙር በመጠባበቅ ላይ"
   },
   "admin": {
     "accessRequired": "የአስተዳዳሪ ፍቃድ ያስፈልጋል።",

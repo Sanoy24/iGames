@@ -207,7 +207,9 @@
     "tagline": "Oħroġ il-flus qabel ma jaqa'",
     "live": "LIVE",
     "crashed": "WAQA'",
-    "stakeEtb": "Stejk (ETB)"
+    "stakeEtb": "Stejk (ETB)",
+    "flewAway": "Tar 'il Bogħod!",
+    "waitingForNextRound": "Qed jistenna l-lotta li jmiss"
   },
   "admin": {
     "accessRequired": "Meħtieġ aċċess ta' amministratur.",

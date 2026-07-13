@@ -184,5 +184,29 @@
     "savingEllipsis": "የቐምጥ ኣሎ…",
     "savedCheck": "✓ ተቐሚጡ",
     "numbersLocked": "ቁጽርታት ተቖሊፎም — ዕጣ ኣብ ምጽባይ።"
+  },
+  "crash": {
+    "enterValidStake": "ቅኑዕ ውርርድ የእቱ",
+    "minBet": "ትሑት ውርርድ: {{amount}} ብር",
+    "maxBet": "ላዕለዋይ ውርርድ: {{amount}} ብር",
+    "noActiveRound": "ንጡፍ ዙር የለን",
+    "betFailed": "ውርርድ ኣይተዓወተን — ሒሳብካ ኣረጋግጽ",
+    "placingBet": "ውርርድ ይግበር ኣሎ...",
+    "placeBet": "ውርርድ ግበር",
+    "waitingForRound": "ዙር ክሳብ ዝጅምር ኣብ ምጽባይ",
+    "cashingOut": "የውጽእ ኣሎ...",
+    "cashOutAt": "ኣውጽእ @ {{mult}}",
+    "potentialWin": "ክርከብ ዝኽእል ዓወት:",
+    "nextRoundSoon": "ዝቕጽል ዙር ኣብ ቀረባ ኪጅምር እዩ...",
+    "failedToLoad": "ጸወታ ምጽዓን ኣይተኻእለን። ኣሓድስ።",
+    "recentRounds": "ናይ ቀረባ ዙርያታት",
+    "noRoundsYet": "ክሳብ ሕጂ ዙር የለን",
+    "myRecentBets": "ናይ ቀረባ ውርርደይ",
+    "active": "ንጡፍ",
+    "howToPlay": "ብኸመይ ትጻወት",
+    "tagline": "ቅድሚ ምውዳቑ ኣውጽእ",
+    "live": "ቀጥታ",
+    "crashed": "ወዲቑ",
+    "stakeEtb": "ውርርድ (ብር)"
   }
 }

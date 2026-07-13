@@ -184,5 +184,29 @@
     "savingEllipsis": "Qed jissejvja…",
     "savedCheck": "✓ Issejvjat",
     "numbersLocked": "Numri msakkra — qed tistenna l-ġibda."
+  },
+  "crash": {
+    "enterValidStake": "Daħħal stejk validu",
+    "minBet": "Stejk minimu: {{amount}} ETB",
+    "maxBet": "Stejk massimu: {{amount}} ETB",
+    "noActiveRound": "L-ebda lotta attiva",
+    "betFailed": "L-imħatra falliet — iċċekkja l-bilanċ",
+    "placingBet": "Qed tqiegħed l-imħatra...",
+    "placeBet": "Qiegħed Imħatra",
+    "waitingForRound": "Qed jistenna li tibda l-lotta",
+    "cashingOut": "Qed toħroġ il-flus...",
+    "cashOutAt": "OĦROĠ @ {{mult}}",
+    "potentialWin": "Rebħ possibbli:",
+    "nextRoundSoon": "Il-lotta li jmiss tibda dalwaqt...",
+    "failedToLoad": "Falliet li tgħabbi l-logħba. Aġġorna biex terġa' tipprova.",
+    "recentRounds": "Lotti Reċenti",
+    "noRoundsYet": "L-ebda lotta s'issa",
+    "myRecentBets": "L-Imħatri Reċenti Tiegħi",
+    "active": "Attiv",
+    "howToPlay": "Kif Tilgħab",
+    "tagline": "Oħroġ il-flus qabel ma jaqa'",
+    "live": "LIVE",
+    "crashed": "WAQA'",
+    "stakeEtb": "Stejk (ETB)"
   }
 }

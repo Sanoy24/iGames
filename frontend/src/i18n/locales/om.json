@@ -184,5 +184,29 @@
     "savingEllipsis": "Olkaaʼaa jira…",
     "savedCheck": "✓ Olkaaʼameera",
     "numbersLocked": "Lakkoofsonni cufameera — baʼii eegaa jira."
+  },
+  "crash": {
+    "enterValidStake": "Kaffaltii sirrii galchi",
+    "minBet": "Kaffaltii xiqqaa: {{amount}} ETB",
+    "maxBet": "Kaffaltii guddaa: {{amount}} ETB",
+    "noActiveRound": "Marsaan hojjetaa hin jiru",
+    "betFailed": "Kaffaltiin hin milkoofne — baankii mirkaneessi",
+    "placingBet": "Kaffaltii kaaʼaa jira...",
+    "placeBet": "Kaffaltii Kaaʼi",
+    "waitingForRound": "Marsaan akka jalqabuu eegaa jira",
+    "cashingOut": "Baʼaa jira...",
+    "cashOutAt": "BAASI @ {{mult}}",
+    "potentialWin": "Moʼicha dandaʼamu:",
+    "nextRoundSoon": "Marsaan itti aanu dhihootti jalqaba...",
+    "failedToLoad": "Taphicha fe'uun hin milkoofne. Haaromsi.",
+    "recentRounds": "Marsaawwan Dhiheenyaa",
+    "noRoundsYet": "Ammaaf marsaan hin jiru",
+    "myRecentBets": "Kaffaltiiwwan Koo Dhiheenyaa",
+    "active": "Hojjetaa",
+    "howToPlay": "Akkamitti Akka Taphatamu",
+    "tagline": "Utuu hin kufin baasi",
+    "live": "KALLATTII",
+    "crashed": "KUFEERA",
+    "stakeEtb": "Kaffaltii (ETB)"
   }
 }

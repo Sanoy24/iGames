@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, TrendingUp, Clock, Zap, AlertTriangle, Shield,
@@ -56,6 +57,7 @@ function buildArea(points: GraphPoint[], W: number, H: number): string {
 const QUICK_STAKES = [10, 50, 100, 500]; // whole ETB (flat 1:1)
 
 export function Crash({ onBack }: { onBack: () => void }) {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('loading');
   const [round, setRound] = useState<CrashRound | null>(null);
   const [multiplierX100, setMultiplierX100] = useState(100);
@@ -240,25 +242,25 @@ export function Crash({ onBack }: { onBack: () => void }) {
     if (isBetting || phase !== 'waiting' || myBet) return;
     const stakeVal = parseFloat(stake);
     if (!stake || isNaN(stakeVal) || stakeVal <= 0) {
-      setBetError('Enter a valid stake');
+      setBetError(t('crash.enterValidStake'));
       return;
     }
     const stakeMinor = Math.round(stakeVal);
     const cfg = configRef.current;
     if (cfg && stakeMinor < cfg.minBetMinor) {
-      setBetError(`Min bet: ${cfg.minBetMinor} ETB`);
+      setBetError(t('crash.minBet', { amount: cfg.minBetMinor }));
       return;
     }
     if (cfg && stakeMinor > cfg.maxBetMinor) {
-      setBetError(`Max bet: ${cfg.maxBetMinor} ETB`);
+      setBetError(t('crash.maxBet', { amount: cfg.maxBetMinor }));
       return;
     }
     const acVal = autoCashout ? parseFloat(autoCashout) : undefined;
     if (acVal !== undefined && (isNaN(acVal) || acVal < 1.01)) {
-      setBetError('Auto cashout must be ≥ 1.01×');
+      setBetError(t('crash.autoCashoutMin'));
       return;
     }
-    if (!round) { setBetError('No active round'); return; }
+    if (!round) { setBetError(t('crash.noActiveRound')); return; }
 
     setBetError('');
     setIsBetting(true);
@@ -270,7 +272,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
       walletApi.getWallet().then(setWallet).catch(() => {});
     } catch (e: unknown) {
       const raw = (e as { response?: { data?: { message?: unknown } } })?.response?.data?.message;
-      setBetError(typeof raw === 'string' ? raw : 'Bet failed — check balance');
+      setBetError(typeof raw === 'string' ? raw : t('crash.betFailed'));
     } finally {
       setIsBetting(false);
     }
@@ -317,14 +319,14 @@ export function Crash({ onBack }: { onBack: () => void }) {
           type="button"
           className="btn btn-secondary btn-sm icon-btn"
           onClick={onBack}
-          aria-label="Back"
+          aria-label={t('common.back')}
           style={{ padding: '8px 10px' }}
         >
           <ArrowLeft size={18} />
         </button>
         <div style={{ flex: 1 }}>
           <h1 style={{ fontSize: 18, fontWeight: 800, fontFamily: 'var(--font-display)', lineHeight: 1 }}>Crash</h1>
-          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Cash out before it crashes</p>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{t('crash.tagline')}</p>
         </div>
         <PhaseBadge phase={phase} secsLeft={waitingSecsLeft} />
       </div>
@@ -403,7 +405,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                     exit={{ opacity: 0 }}
                     style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}
                   >
-                    Starting in {waitingSecsLeft}s
+                    {t('crash.startingIn', { secs: waitingSecsLeft })}
                   </motion.div>
                 )}
                 {phase === 'crashed' && (
@@ -414,7 +416,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                     exit={{ opacity: 0 }}
                     style={{ fontSize: 13, color: '#ef4444', fontWeight: 800, marginTop: 6, letterSpacing: '0.06em' }}
                   >
-                    CRASHED
+                    {t('crash.crashed')}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -439,7 +441,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 color: '#10b981', fontSize: 13, fontWeight: 700,
               }}>
                 <Zap size={14} />
-                Cashed out @ {fmtMult(cashoutResult.mx100)} — won {cashoutResult.payoutMinor} ETB
+                {t('crash.cashedOutWon', { mult: fmtMult(cashoutResult.mx100), amount: cashoutResult.payoutMinor })}
               </div>
             </motion.div>
           )}
@@ -462,21 +464,21 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div>
                     <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Stake (ETB)
+                      {t('crash.stakeEtb')}
                     </label>
                     <input
                       className="input"
                       type="number"
                       min="0"
                       step="1"
-                      placeholder={config ? `Min ${config.minBetMinor}` : '1'}
+                      placeholder={config ? t('crash.minAmount', { amount: config.minBetMinor }) : '1'}
                       value={stake}
                       onChange={e => { setStake(e.target.value); setBetError(''); }}
                     />
                   </div>
                   <div>
                     <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Auto Cashout (×)
+                      {t('crash.autoCashoutLabel')}
                     </label>
                     <input
                       className="input"
@@ -515,7 +517,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                   disabled={!stake || isBetting}
                   onClick={handlePlaceBet}
                 >
-                  {isBetting ? 'Placing bet...' : 'Place Bet'}
+                  {isBetting ? t('crash.placingBet') : t('crash.placeBet')}
                 </button>
               </motion.div>
             )}
@@ -536,15 +538,15 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 }}
               >
                 <div style={{ fontSize: 14, color: '#10b981', fontWeight: 700, marginBottom: 6 }}>
-                  Bet locked — {myBet.stakeMinor} ETB
+                  {t('crash.betLocked', { amount: myBet.stakeMinor })}
                 </div>
                 {myBet.autoCashoutX100 && (
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    Auto cashout @ {fmtMult(myBet.autoCashoutX100)}
+                    {t('crash.autoCashoutAt', { mult: fmtMult(myBet.autoCashoutX100) })}
                   </div>
                 )}
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                  <Clock size={11} /> Waiting for round to start
+                  <Clock size={11} /> {t('crash.waitingForRound')}
                 </div>
               </motion.div>
             )}
@@ -584,10 +586,10 @@ export function Crash({ onBack }: { onBack: () => void }) {
                     opacity: isCashingOut ? 0.6 : 1,
                   }}
                 >
-                  {isCashingOut ? 'Cashing out...' : `CASH OUT @ ${fmtMult(multiplierX100)}`}
+                  {isCashingOut ? t('crash.cashingOut') : t('crash.cashOutAt', { mult: fmtMult(multiplierX100) })}
                 </motion.button>
                 <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
-                  Potential win: <strong style={{ color: liveColor }}>
+                  {t('crash.potentialWin')} <strong style={{ color: liveColor }}>
                     {((myBet!.stakeMinor * multiplierX100) / 100).toFixed(0)} ETB
                   </strong>
                 </p>
@@ -603,7 +605,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                 exit={{ opacity: 0 }}
                 style={{ textAlign: 'center', padding: '8px 0', color: 'var(--text-muted)', fontSize: 13 }}
               >
-                Round in progress — place your bet next round
+                {t('crash.roundInProgress')}
               </motion.div>
             )}
 
@@ -618,7 +620,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
               >
                 {myBet?.status === 'lost' && !cashoutResult && (
                   <p style={{ fontSize: 14, color: '#ef4444', fontWeight: 700, marginBottom: 6 }}>
-                    Lost {myBet.stakeMinor} ETB
+                    {t('crash.lostAmount', { amount: myBet.stakeMinor })}
                   </p>
                 )}
                 {round?.seed && (
@@ -629,10 +631,10 @@ export function Crash({ onBack }: { onBack: () => void }) {
                     wordBreak: 'break-all',
                     marginBottom: 6,
                   }}>
-                    Seed: {round.seed}
+                    {t('crash.seedLabel', { seed: round.seed })}
                   </p>
                 )}
-                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Next round starting soon...</p>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('crash.nextRoundSoon')}</p>
               </motion.div>
             )}
 
@@ -646,7 +648,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
             {/* Error */}
             {phase === 'error' && (
               <motion.div key="error" style={{ textAlign: 'center', padding: '12px 0' }}>
-                <p style={{ fontSize: 13, color: 'var(--danger)' }}>Failed to load game. Refresh to retry.</p>
+                <p style={{ fontSize: 13, color: 'var(--danger)' }}>{t('crash.failedToLoad')}</p>
               </motion.div>
             )}
 
@@ -660,7 +662,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <Shield size={12} color="var(--text-muted)" />
             <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Provably Fair — Committed Seed Hash
+              {t('crash.provablyFairHash')}
             </span>
           </div>
           <p style={{
@@ -675,18 +677,18 @@ export function Crash({ onBack }: { onBack: () => void }) {
       {/* Recent rounds */}
       <div>
         <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Recent Rounds
+          {t('crash.recentRounds')}
         </h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {recentRounds.length === 0 ? (
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No rounds yet</span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('crash.noRoundsYet')}</span>
           ) : recentRounds.map(r => {
             const cp = r.crashPointX100 ?? 100;
             const col = multiplierColor(cp, true);
             return (
               <div
                 key={r.id}
-                title={r.seed ? `Seed: ${r.seed}` : undefined}
+                title={r.seed ? t('crash.seedLabel', { seed: r.seed }) : undefined}
                 style={{
                   padding: '4px 10px', borderRadius: 6,
                   fontSize: 12, fontWeight: 700,
@@ -707,7 +709,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
       {myBetHistory.length > 0 && (
         <div>
           <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            My Recent Bets
+            {t('crash.myRecentBets')}
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {myBetHistory.map(b => {
@@ -740,7 +742,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
                       ? `+${b.payoutMinor} ETB`
                       : lost
                       ? `-${b.stakeMinor} ETB`
-                      : 'Active'}
+                      : t('crash.active')}
                   </span>
                 </div>
               );
@@ -754,15 +756,15 @@ export function Crash({ onBack }: { onBack: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
           <TrendingUp size={13} color="var(--text-muted)" />
           <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            How to Play
+            {t('crash.howToPlay')}
           </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
-            { icon: '1', text: 'Place your bet during the waiting phase' },
-            { icon: '2', text: 'Watch the multiplier climb after launch' },
-            { icon: '3', text: 'Cash out any time — higher = riskier' },
-            { icon: '4', text: 'Wait too long and you lose your stake' },
+            { icon: '1', text: t('crash.step1') },
+            { icon: '2', text: t('crash.step2') },
+            { icon: '3', text: t('crash.step3') },
+            { icon: '4', text: t('crash.step4') },
           ].map(step => (
             <div key={step.icon} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{
@@ -783,6 +785,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
 }
 
 function PhaseBadge({ phase, secsLeft }: { phase: Phase; secsLeft: number }) {
+  const { t } = useTranslation();
   const base: React.CSSProperties = {
     display: 'inline-flex', alignItems: 'center', gap: 5,
     padding: '4px 10px', borderRadius: 20,
@@ -799,12 +802,12 @@ function PhaseBadge({ phase, secsLeft }: { phase: Phase; secsLeft: number }) {
       animate={{ opacity: [1, 0.6, 1] }}
       transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
     >
-      <TrendingUp size={11} /> LIVE
+      <TrendingUp size={11} /> {t('crash.live')}
     </motion.div>
   );
   if (phase === 'crashed') return (
     <div style={{ ...base, background: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.28)' }}>
-      <AlertTriangle size={11} /> CRASHED
+      <AlertTriangle size={11} /> {t('crash.crashed')}
     </div>
   );
   return null;

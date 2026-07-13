@@ -165,11 +165,14 @@
   },
   "login": {
     "welcome": "Welcome",
-    "signIn": "Sign in",
-    "phoneNumber": "Phone number",
+    "signIn": "Sign In",
+    "title": "Agent / Admin Login",
+    "subtitle": "Sign in with your credentials",
+    "footer": "Players open this app via the Telegram bot.",
+    "phoneNumber": "Phone Number",
     "password": "Password",
     "login": "Log in",
-    "loggingIn": "Logging in…"
+    "loggingIn": "Signing in…"
   },
   "notifications": {
     "title": "Notifications",

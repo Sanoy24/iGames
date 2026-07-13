@@ -260,15 +260,15 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
 
         <div className="stats-grid" style={{ marginBottom: 16 }}>
           <div className="stat-card">
-            <span className="stat-label">Available</span>
+            <span className="stat-label">{t('wallet.available')}</span>
             <strong>{formatCreditsFull(wallet?.availableMinor ?? 0)}</strong>
           </div>
           <div className="stat-card">
-            <span className="stat-label">Reserved</span>
+            <span className="stat-label">{t('wallet.reserved')}</span>
             <strong>{formatCreditsFull(wallet?.reservedMinor ?? 0)}</strong>
           </div>
           <div className="stat-card">
-            <span className="stat-label">Status</span>
+            <span className="stat-label">{t('wallet.status')}</span>
             <strong style={{ textTransform: 'capitalize', color: wallet?.status === 'active' ? 'var(--green)' : 'var(--danger)' }}>
               {wallet?.status ?? '—'}
             </strong>
@@ -282,7 +282,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
-            {showTopup ? <><X size={15} /> Cancel</> : <><ArrowUpToLine size={15} /> Deposit</>}
+            {showTopup ? <><X size={15} /> {t('common.cancel')}</> : <><ArrowUpToLine size={15} /> {t('common.deposit')}</>}
           </motion.button>
           <motion.button
             className="btn btn-secondary"
@@ -290,7 +290,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
-            {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Withdraw</>}
+            {showWithdraw ? <><X size={15} /> {t('common.cancel')}</> : <><ArrowDownToLine size={15} /> {t('common.withdraw')}</>}
           </motion.button>
         </div>
 
@@ -581,7 +581,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
           >
             <div className="section-header">
               <div>
-                <div className="section-title">Withdrawal Requests</div>
+                <div className="section-title">{t('wallet.withdrawals')}</div>
                 <p className="section-copy">Track your Telebirr cashout requests.</p>
               </div>
             </div>
@@ -605,10 +605,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                         w.status === 'rejected'   ? 'badge-red'    :
                         w.status === 'processing' ? 'badge-violet' : 'badge-gold'
                       }`}>
-                        {w.status === 'pending'    ? 'Pending'    :
-                         w.status === 'processing' ? 'Processing' :
-                         w.status === 'completed'  ? 'Completed'  :
-                         w.status === 'rejected'   ? 'Rejected'   : w.status}
+                        {w.status === 'pending'    ? t('wallet.pending')    :
+                         w.status === 'processing' ? t('wallet.processing') :
+                         w.status === 'completed'  ? t('wallet.completed')  :
+                         w.status === 'rejected'   ? t('wallet.rejected')   : w.status}
                       </span>
                     </div>
                   </div>
@@ -634,7 +634,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <TrendingUp size={16} style={{ color: 'var(--gold)' }} />
             <div>
-              <div className="section-title">Transaction History</div>
+              <div className="section-title">{t('wallet.transactionHistory')}</div>
               <p className="section-copy">Your balance activity and game results.</p>
             </div>
           </div>

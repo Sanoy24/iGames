@@ -322,6 +322,15 @@ export class GameEventsGateway
     this.server.to(`user_${userId}`).emit('crash.bet.cashedout', payload);
   }
 
+  /** Public live "All Bets" feed — broadcast to everyone watching the crash room. */
+  emitCrashBetPublic(payload: Record<string, unknown>): void {
+    this.server.to('game_crash').emit('crash.bet.public', payload);
+  }
+
+  emitCrashCashoutPublic(payload: Record<string, unknown>): void {
+    this.server.to('game_crash').emit('crash.cashout.public', payload);
+  }
+
   @SubscribeMessage('enter.crash')
   async handleEnterCrash(client: Socket) {
     await client.join('game_crash');

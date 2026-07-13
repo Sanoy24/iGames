@@ -11,6 +11,8 @@ import { createHash, randomBytes } from 'crypto';
 import { WalletService } from '../wallet/wallet.service';
 import { RngService } from '../rng/rng.service';
 import { GamesService } from '../games/games.service';
+import { GameEventsGateway } from '../events/game-events.gateway';
+import { User } from '../users/entities/user.entity';
 import { CrashConfig } from './entities/crash-config.entity';
 import { CrashRound } from './entities/crash-round.entity';
 import { CrashBet } from './entities/crash-bet.entity';
@@ -55,7 +57,60 @@ export class CrashService {
     private readonly rngService: RngService,
     private readonly dataSource: DataSource,
     private readonly gamesService: GamesService,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    private readonly gateway: GameEventsGateway,
   ) {}
+
+  // Cache of masked display names for the live "All Bets" feed (avoids a DB
+  // hit per bot bet every round). Bounded by distinct bettors.
+  private readonly maskedNameCache = new Map<string, string>();
+
+  /** Aviator-style privacy masking: "Abebe" → "A***e". */
+  private maskName(name: string): string {
+    const n = (name ?? '').trim();
+    if (n.length <= 1) return n || 'Player';
+    if (n.length === 2) return `${n[0]}*`;
+    return `${n[0]}***${n[n.length - 1]}`;
+  }
+
+  private async resolveMaskedName(userId: string): Promise<string> {
+    const cached = this.maskedNameCache.get(userId);
+    if (cached) return cached;
+    const user = await this.userRepo.findOne({ where: { id: userId }, select: ['displayName'] });
+    const masked = this.maskName(user?.displayName ?? 'Player');
+    this.maskedNameCache.set(userId, masked);
+    return masked;
+  }
+
+  /** Best-effort broadcast of a bet to the public live feed (never throws). */
+  private async broadcastBetPlaced(bet: CrashBetResponse): Promise<void> {
+    try {
+      const name = await this.resolveMaskedName(bet.userId);
+      this.gateway.emitCrashBetPublic({
+        betId: bet.id,
+        roundId: bet.roundId,
+        name,
+        stakeMinor: bet.stakeMinor,
+        autoCashoutX100: bet.autoCashoutX100,
+      });
+    } catch (err) {
+      this.logger.debug(`Crash bet broadcast skipped: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private broadcastCashout(bet: CrashBetResponse): void {
+    try {
+      this.gateway.emitCrashCashoutPublic({
+        betId: bet.id,
+        roundId: bet.roundId,
+        cashedOutAtX100: bet.cashedOutAtX100,
+        payoutMinor: bet.payoutMinor,
+      });
+    } catch (err) {
+      this.logger.debug(`Crash cashout broadcast skipped: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   // ── Config ────────────────────────────────────────────────────────────────
 
@@ -258,7 +313,7 @@ export class CrashService {
       throw new BadRequestException(`Maximum bet is ${cfg.maxBetMinor} ETB`);
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       // Idempotency guard
       const existing = await manager.findOne(CrashBet, {
         where: { idempotencyKey },
@@ -308,10 +363,14 @@ export class CrashService {
       await manager.save(bet);
       return this.toBetResponse(bet);
     });
+
+    // Post-commit: surface the bet on the public live feed (best-effort).
+    void this.broadcastBetPlaced(result);
+    return result;
   }
 
   async cashOut(userId: string, roundId: string, currentMultiplierX100: number): Promise<CrashBetResponse> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const round = await manager.findOne(CrashRound, { where: { id: roundId } });
       if (!round || round.status !== 'running') {
         throw new BadRequestException('Round is not running');
@@ -351,6 +410,10 @@ export class CrashService {
 
       return this.toBetResponse(bet);
     });
+
+    // Post-commit: update the public live feed row to "cashed out" (best-effort).
+    this.broadcastCashout(result);
+    return result;
   }
 
   // Called by scheduler each tick to auto-cashout eligible bets

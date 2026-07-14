@@ -28,13 +28,6 @@ function multiplierColor(mx100: number, crashed = false): string {
   return '#10b981';
 }
 
-function multiplierColorRunning(mx100: number): string {
-  if (mx100 >= 500) return '#ef4444';
-  if (mx100 >= 300) return '#f59e0b';
-  if (mx100 >= 150) return '#10b981';
-  return 'rgba(16,185,129,0.7)';
-}
-
 function fmtMult(mx100: number): string {
   return (mx100 / 100).toFixed(2) + '×';
 }
@@ -355,12 +348,6 @@ export function Crash({ onBack }: { onBack: () => void }) {
       setIsCashingOut(false);
     }
   };
-
-  const liveColor = phase === 'crashed'
-    ? '#ef4444'
-    : phase === 'running'
-    ? multiplierColorRunning(multiplierX100)
-    : 'var(--text-muted)';
 
   const W = 400, H = 180;
   const svgPath = buildPath(graphPoints, W, H);

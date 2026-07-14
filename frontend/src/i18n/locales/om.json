@@ -218,7 +218,13 @@
     "flewAway": "Balaliʼe!",
     "waitingForNextRound": "Marsaa itti aanu eegaa jira",
     "allBets": "Kaffaltii Hunda",
-    "noBetsYet": "Ammaaf kaffaltiin hin jiru — jalqabaa taʼi!"
+    "noBetsYet": "Ammaaf kaffaltiin hin jiru — jalqabaa taʼi!",
+    "bet": "KAFFALI",
+    "cashOut": "BAASI",
+    "tabBet": "Kaffali",
+    "tabAuto": "Ofumaan",
+    "insufficientBalance": "Baankiin hin gaʼu",
+    "autoCashoutPlaceholder": "× irratti ofumaan baasi  (fkn 2.00)"
   },
   "admin": {
     "accessRequired": "Hayyama admin barbaachisa.",

@@ -218,7 +218,13 @@
     "flewAway": "በሪሩ!",
     "waitingForNextRound": "ንዝቕጽል ዙር ኣብ ምጽባይ",
     "allBets": "ኩሎም ውርርዳት",
-    "noBetsYet": "ክሳብ ሕጂ ውርርድ የለን — ቀዳማይ ኩን!"
+    "noBetsYet": "ክሳብ ሕጂ ውርርድ የለን — ቀዳማይ ኩን!",
+    "bet": "ውርርድ",
+    "cashOut": "ኣውጽእ",
+    "tabBet": "ውርርድ",
+    "tabAuto": "ራእሰ-ሰር",
+    "insufficientBalance": "እኹል ሒሳብ የለን",
+    "autoCashoutPlaceholder": "ኣብ × ራእሰ-ሰር ኣውጽእ  (ንኣብነት 2.00)"
   },
   "admin": {
     "accessRequired": "ናይ ኣመሓዳሪ ፍቓድ የድሊ።",

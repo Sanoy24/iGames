@@ -358,7 +358,13 @@
     "flewAway": "Flew Away!",
     "waitingForNextRound": "Waiting for next round",
     "allBets": "All Bets",
-    "noBetsYet": "No bets yet — be the first!"
+    "noBetsYet": "No bets yet — be the first!",
+    "bet": "BET",
+    "cashOut": "CASH OUT",
+    "tabBet": "Bet",
+    "tabAuto": "Auto",
+    "insufficientBalance": "Insufficient balance",
+    "autoCashoutPlaceholder": "Auto cash out at ×  (e.g. 2.00)"
   },
   "admin": {
     "accessRequired": "Admin access required.",

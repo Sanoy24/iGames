@@ -85,12 +85,14 @@ export function Crash({ onBack }: { onBack: () => void }) {
   const [recentRounds, setRecentRounds] = useState<CrashRound[]>([]);
   const [myBetHistory, setMyBetHistory] = useState<CrashBet[]>([]);
   const [liveBets, setLiveBets] = useState<LiveBet[]>([]);
+  const [betMode, setBetMode] = useState<'bet' | 'auto'>('bet');
 
   const configRef = useRef<CrashConfig | null>(null);
   const myBetRef = useRef<CrashBet | null>(null);
   const waitingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<Phase>('loading');
 
+  const wallet = useStore(s => s.wallet);
   const setWallet = useStore(s => s.setWallet);
   const isSocketConnected = useStore(s => s.isSocketConnected);
 
@@ -128,6 +130,7 @@ export function Crash({ onBack }: { onBack: () => void }) {
       if (cancelled) return;
       setConfig(cfg);
       configRef.current = cfg;
+      setStake(prev => prev || String(cfg.minBetMinor || 10));
       setRecentRounds(rounds);
       setMyBetHistory(bets);
       if (active) {
@@ -366,6 +369,18 @@ export function Crash({ onBack }: { onBack: () => void }) {
   const hasActiveBet = myBet?.status === 'active';
   const isCrashed = phase === 'crashed';
 
+  // ── Bet controls (Aviator-style stepper + chips) ──
+  const minBet = config?.minBetMinor ?? 1;
+  const maxBet = config?.maxBetMinor ?? 100000;
+  const walletMinor = wallet?.availableMinor ?? 0;
+  const stakeNum = Math.max(0, Math.floor(parseFloat(stake) || 0));
+  const insufficient = stakeNum > walletMinor;
+  const stepAmount = Math.max(1, Math.round(minBet));
+  const adjustStake = (delta: number) => setStake(String(Math.max(minBet, Math.min(maxBet, stakeNum + delta))));
+  const addStake = (v: number) => setStake(String(Math.min(maxBet, stakeNum + v)));
+  const potentialWin = myBet ? Math.floor((myBet.stakeMinor * multiplierX100) / 100) : 0;
+  const canBet = phase === 'waiting' && !myBet && stakeNum >= minBet && !insufficient && !isBetting;
+
   // Screen-space position (as % of the graph box) of the curve's leading tip —
   // where the Aviator plane rides. Mirrors buildPath's coordinate mapping.
   const planeTip = (() => {
@@ -541,212 +556,125 @@ export function Crash({ onBack }: { onBack: () => void }) {
           )}
         </AnimatePresence>
 
-        {/* Bet / cashout panel */}
-        <div style={{ padding: '16px', borderTop: '1px solid var(--border)' }}>
-          <AnimatePresence mode="wait">
-
-            {/* Waiting — no bet yet */}
-            {phase === 'waiting' && !myBet && (
-              <motion.div
-                key="bet-form"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-              >
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div>
-                    <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {t('crash.stakeEtb')}
-                    </label>
-                    <input
-                      className="input"
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder={config ? t('crash.minAmount', { amount: config.minBetMinor }) : '1'}
-                      value={stake}
-                      onChange={e => { setStake(e.target.value); setBetError(''); }}
-                    />
+        {/* ── Bet / cashout panel (Aviator-style, tap-to-play) ── */}
+        <div style={{ padding: 14, borderTop: '1px solid var(--border)' }}>
+          {phase === 'loading' ? (
+            <div style={{ textAlign: 'center', padding: '10px 0' }}><div className="spinner" /></div>
+          ) : phase === 'error' ? (
+            <p style={{ fontSize: 13, color: 'var(--danger)', textAlign: 'center', padding: '10px 0', margin: 0 }}>{t('crash.failedToLoad')}</p>
+          ) : (
+            <>
+              {/* Amount picker — only while betting is open */}
+              {phase === 'waiting' && !myBet && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+                  {/* Bet / Auto toggle */}
+                  <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: 3 }}>
+                    {(['bet', 'auto'] as const).map(m => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setBetMode(m)}
+                        style={{
+                          flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                          fontSize: 12, fontWeight: 700,
+                          background: betMode === m ? 'var(--surface-2)' : 'transparent',
+                          color: betMode === m ? 'var(--text-primary)' : 'var(--text-muted)',
+                        }}
+                      >
+                        {m === 'bet' ? t('crash.tabBet') : t('crash.tabAuto')}
+                      </button>
+                    ))}
                   </div>
-                  <div>
-                    <label style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      {t('crash.autoCashoutLabel')}
-                    </label>
+
+                  {/* − amount + stepper */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#0c0e18', border: '1px solid var(--border)', borderRadius: 12, padding: '6px 8px' }}>
+                    <button type="button" className="crash-step" aria-label="decrease" onClick={() => adjustStake(-stepAmount)}>−</button>
+                    <div style={{ flex: 1, textAlign: 'center', minWidth: 0 }}>
+                      <input
+                        value={stake}
+                        onChange={e => { setStake(e.target.value.replace(/[^0-9]/g, '')); setBetError(''); }}
+                        inputMode="numeric"
+                        style={{ width: '100%', textAlign: 'center', background: 'transparent', border: 'none', color: '#fff', fontSize: 26, fontWeight: 800, fontFamily: 'var(--font-display)', outline: 'none' }}
+                      />
+                      <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.12em', marginTop: -2 }}>ETB</div>
+                    </div>
+                    <button type="button" className="crash-step" aria-label="increase" onClick={() => adjustStake(stepAmount)}>+</button>
+                  </div>
+
+                  {/* quick-add chips */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                    {QUICK_STAKES.map(v => (
+                      <button key={v} type="button" className="btn btn-secondary btn-sm" style={{ fontSize: 12, padding: '7px 0' }} onClick={() => addStake(v)}>
+                        +{v}
+                      </button>
+                    ))}
+                  </div>
+
+                  {betMode === 'auto' && (
                     <input
                       className="input"
                       type="number"
                       min="1.01"
                       step="0.1"
-                      placeholder="e.g. 2.00"
+                      placeholder={t('crash.autoCashoutPlaceholder')}
                       value={autoCashout}
                       onChange={e => { setAutoCashout(e.target.value); setBetError(''); }}
                     />
-                  </div>
+                  )}
+
+                  {betError && <p style={{ fontSize: 12, color: 'var(--danger)', margin: 0 }}>{betError}</p>}
                 </div>
+              )}
 
-                {/* Quick stake chips */}
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {QUICK_STAKES.map(v => (
-                    <button
-                      key={v}
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setStake(v.toString())}
-                      style={{ flex: 1, fontSize: 11, padding: '6px 4px' }}
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
-
-                {betError && (
-                  <p style={{ fontSize: 12, color: 'var(--danger)', margin: '-4px 0 0' }}>{betError}</p>
-                )}
-
-                <button
-                  type="button"
-                  className="btn btn-primary btn-full"
-                  disabled={!stake || isBetting}
-                  onClick={handlePlaceBet}
-                >
-                  {isBetting ? t('crash.placingBet') : t('crash.placeBet')}
-                </button>
-              </motion.div>
-            )}
-
-            {/* Waiting — bet locked in */}
-            {phase === 'waiting' && myBet && (
-              <motion.div
-                key="bet-queued"
-                initial={{ opacity: 0, scale: 0.96 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                style={{
-                  background: 'rgba(16,185,129,0.07)',
-                  border: '1px solid rgba(16,185,129,0.2)',
-                  borderRadius: 10,
-                  padding: '14px 16px',
-                  textAlign: 'center',
-                }}
-              >
-                <div style={{ fontSize: 14, color: '#10b981', fontWeight: 700, marginBottom: 6 }}>
-                  {t('crash.betLocked', { amount: myBet.stakeMinor })}
-                </div>
-                {myBet.autoCashoutX100 && (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    {t('crash.autoCashoutAt', { mult: fmtMult(myBet.autoCashoutX100) })}
-                  </div>
-                )}
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                  <Clock size={11} /> {t('crash.waitingForRound')}
-                </div>
-              </motion.div>
-            )}
-
-            {/* Running — cashout */}
-            {phase === 'running' && hasActiveBet && (
-              <motion.div
-                key="cashout-btn"
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-              >
+              {/* One big button that morphs with the phase */}
+              {phase === 'running' && hasActiveBet ? (
                 <motion.button
                   type="button"
                   onClick={handleCashOut}
                   disabled={isCashingOut}
-                  animate={{
-                    boxShadow: [
-                      `0 0 0px 0px ${liveColor}00`,
-                      `0 0 20px 6px ${liveColor}44`,
-                      `0 0 0px 0px ${liveColor}00`,
-                    ],
-                  }}
-                  transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-                  style={{
-                    width: '100%',
-                    padding: '18px 24px',
-                    fontSize: 20,
-                    fontWeight: 900,
-                    fontFamily: 'var(--font-display)',
-                    letterSpacing: '-0.02em',
-                    background: liveColor,
-                    color: '#000',
-                    border: 'none',
-                    borderRadius: 12,
-                    cursor: isCashingOut ? 'not-allowed' : 'pointer',
-                    opacity: isCashingOut ? 0.6 : 1,
-                  }}
+                  className="crash-action"
+                  style={{ background: '#f59e0b', color: '#1a1200', cursor: isCashingOut ? 'not-allowed' : 'pointer', opacity: isCashingOut ? 0.7 : 1 }}
+                  animate={{ boxShadow: ['0 0 0 0 rgba(245,158,11,0)', '0 0 22px 6px rgba(245,158,11,0.4)', '0 0 0 0 rgba(245,158,11,0)'] }}
+                  transition={{ duration: 1.3, repeat: Infinity, ease: 'easeInOut' }}
                 >
-                  {isCashingOut ? t('crash.cashingOut') : t('crash.cashOutAt', { mult: fmtMult(multiplierX100) })}
+                  <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '0.04em' }}>{isCashingOut ? t('crash.cashingOut') : t('crash.cashOut')}</span>
+                  {!isCashingOut && <span style={{ fontSize: 20, fontWeight: 900, fontFamily: 'var(--font-display)' }}>{potentialWin} ETB</span>}
                 </motion.button>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
-                  {t('crash.potentialWin')} <strong style={{ color: liveColor }}>
-                    {((myBet!.stakeMinor * multiplierX100) / 100).toFixed(0)} ETB
-                  </strong>
-                </p>
-              </motion.div>
-            )}
-
-            {/* Running — spectating */}
-            {phase === 'running' && !hasActiveBet && !cashoutResult && (
-              <motion.div
-                key="spectating"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                style={{ textAlign: 'center', padding: '8px 0', color: 'var(--text-muted)', fontSize: 13 }}
-              >
-                {t('crash.roundInProgress')}
-              </motion.div>
-            )}
-
-            {/* Crashed */}
-            {phase === 'crashed' && (
-              <motion.div
-                key="crashed-panel"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                style={{ textAlign: 'center', padding: '8px 0' }}
-              >
-                {myBet?.status === 'lost' && !cashoutResult && (
-                  <p style={{ fontSize: 14, color: '#ef4444', fontWeight: 700, marginBottom: 6 }}>
-                    {t('crash.lostAmount', { amount: myBet.stakeMinor })}
-                  </p>
-                )}
-                {round?.seed && (
-                  <p style={{
-                    fontSize: 10,
-                    color: 'var(--text-muted)',
-                    fontFamily: 'monospace',
-                    wordBreak: 'break-all',
-                    marginBottom: 6,
-                  }}>
-                    {t('crash.seedLabel', { seed: round.seed })}
-                  </p>
-                )}
-                <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t('crash.nextRoundSoon')}</p>
-              </motion.div>
-            )}
-
-            {/* Loading */}
-            {phase === 'loading' && (
-              <motion.div key="loading" style={{ textAlign: 'center', padding: '16px 0' }}>
-                <div className="spinner" />
-              </motion.div>
-            )}
-
-            {/* Error */}
-            {phase === 'error' && (
-              <motion.div key="error" style={{ textAlign: 'center', padding: '12px 0' }}>
-                <p style={{ fontSize: 13, color: 'var(--danger)' }}>{t('crash.failedToLoad')}</p>
-              </motion.div>
-            )}
-
-          </AnimatePresence>
+              ) : phase === 'waiting' && myBet ? (
+                <div className="crash-action" style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981', cursor: 'default' }}>
+                  <span style={{ fontSize: 14, fontWeight: 800 }}>✓ {t('crash.betLocked', { amount: myBet.stakeMinor })}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>{t('crash.waitingForRound')}</span>
+                </div>
+              ) : phase === 'running' ? (
+                <div className="crash-action" style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', cursor: 'default' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{t('crash.roundInProgress')}</span>
+                </div>
+              ) : phase === 'crashed' ? (
+                <div className="crash-action" style={{ background: myBet?.status === 'lost' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.04)', color: myBet?.status === 'lost' ? '#ef4444' : 'var(--text-muted)', cursor: 'default' }}>
+                  {myBet?.status === 'lost'
+                    ? <span style={{ fontSize: 14, fontWeight: 800 }}>{t('crash.lostAmount', { amount: myBet.stakeMinor })}</span>
+                    : <span style={{ fontSize: 13, fontWeight: 700 }}>{t('crash.nextRoundSoon')}</span>}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handlePlaceBet}
+                  disabled={!canBet}
+                  className="crash-action"
+                  style={{ background: insufficient ? 'rgba(255,255,255,0.06)' : '#10b981', color: insufficient ? 'var(--text-muted)' : '#04140c', cursor: canBet ? 'pointer' : 'not-allowed', opacity: canBet ? 1 : 0.75 }}
+                >
+                  {isBetting
+                    ? <span style={{ fontSize: 15, fontWeight: 800 }}>{t('crash.placingBet')}</span>
+                    : insufficient
+                      ? <span style={{ fontSize: 14, fontWeight: 800 }}>{t('crash.insufficientBalance')}</span>
+                      : (<>
+                          <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: '0.04em' }}>{t('crash.bet')}</span>
+                          <span style={{ fontSize: 20, fontWeight: 900, fontFamily: 'var(--font-display)' }}>{stakeNum} ETB</span>
+                        </>)}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
 

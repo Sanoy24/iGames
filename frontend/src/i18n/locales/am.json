@@ -357,7 +357,13 @@
     "flewAway": "በረረ!",
     "waitingForNextRound": "ቀጣዩን ዙር በመጠባበቅ ላይ",
     "allBets": "ሁሉም ውርርዶች",
-    "noBetsYet": "እስካሁን ውርርድ የለም — የመጀመሪያው ይሁኑ!"
+    "noBetsYet": "እስካሁን ውርርድ የለም — የመጀመሪያው ይሁኑ!",
+    "bet": "ውርርድ",
+    "cashOut": "አውጣ",
+    "tabBet": "ውርርድ",
+    "tabAuto": "ራስ-ሰር",
+    "insufficientBalance": "በቂ ሂሳብ የለም",
+    "autoCashoutPlaceholder": "በ × ራስ-ሰር አውጣ  (ለምሳሌ 2.00)"
   },
   "admin": {
     "accessRequired": "የአስተዳዳሪ ፍቃድ ያስፈልጋል።",

@@ -218,7 +218,13 @@
     "flewAway": "Tar 'il Bogħod!",
     "waitingForNextRound": "Qed jistenna l-lotta li jmiss",
     "allBets": "L-Imħatri Kollha",
-    "noBetsYet": "L-ebda mħatra s'issa — kun l-ewwel!"
+    "noBetsYet": "L-ebda mħatra s'issa — kun l-ewwel!",
+    "bet": "IMĦATRA",
+    "cashOut": "OĦROĠ",
+    "tabBet": "Imħatra",
+    "tabAuto": "Awto",
+    "insufficientBalance": "Bilanċ insuffiċjenti",
+    "autoCashoutPlaceholder": "Oħroġ awtomatikament f'×  (eż. 2.00)"
   },
   "admin": {
     "accessRequired": "Meħtieġ aċċess ta' amministratur.",

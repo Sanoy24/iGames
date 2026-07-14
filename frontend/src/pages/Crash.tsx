@@ -58,6 +58,11 @@ function buildArea(points: GraphPoint[], W: number, H: number): string {
 
 const QUICK_STAKES = [10, 50, 100, 500]; // whole ETB (flat 1:1)
 
+// Multiplier growth rate — MUST match the backend (crash.scheduler GROWTH_K) so
+// the locally-animated multiplier tracks the server's actual value tick-for-tick.
+const GROWTH_K = 0.00006;
+const multAt = (elapsedMs: number) => Math.max(100, Math.floor(100 * Math.exp(GROWTH_K * elapsedMs)));
+
 export function Crash({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('loading');
@@ -84,6 +89,10 @@ export function Crash({ onBack }: { onBack: () => void }) {
   const myBetRef = useRef<CrashBet | null>(null);
   const waitingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const phaseRef = useRef<Phase>('loading');
+  // Local animation clock: ms timestamp the current round started (client-side),
+  // continuously re-synced from server ticks. Drives the 60fps rAF climb.
+  const runStartRef = useRef<number | null>(null);
+  const histRef = useRef<GraphPoint[]>([{ x: 0, y: 100 }]);
 
   const wallet = useStore(s => s.wallet);
   const setWallet = useStore(s => s.setWallet);
@@ -158,6 +167,8 @@ export function Crash({ onBack }: { onBack: () => void }) {
 
     const onWaiting = (payload: { roundId: string; seedHash: string }) => {
       clearTimer();
+      runStartRef.current = null;
+      histRef.current = [{ x: 0, y: 100 }];
       setRound({ id: payload.roundId, status: 'waiting', seedHash: payload.seedHash });
       setPhase('waiting');
       setMultiplierX100(100);
@@ -173,6 +184,8 @@ export function Crash({ onBack }: { onBack: () => void }) {
 
     const onStarted = (payload: { roundId: string; seedHash: string }) => {
       clearTimer();
+      runStartRef.current = Date.now();
+      histRef.current = [{ x: 0, y: 100 }];
       setRound(prev =>
         prev
           ? { ...prev, status: 'running' }
@@ -183,9 +196,11 @@ export function Crash({ onBack }: { onBack: () => void }) {
       setGraphPoints([{ x: 0, y: 100 }]);
     };
 
+    // Ticks only re-anchor the local clock to the server's elapsed time — the
+    // rAF loop below does the actual 60fps drawing, so it stays smooth even if
+    // ticks are sparse or the socket is quiet.
     const onTick = (payload: { multiplierX100: number; elapsedMs: number }) => {
-      setMultiplierX100(payload.multiplierX100);
-      setGraphPoints(prev => [...prev.slice(-300), { x: payload.elapsedMs, y: payload.multiplierX100 }]);
+      runStartRef.current = Date.now() - payload.elapsedMs;
     };
 
     const onCrashed = (payload: {
@@ -276,10 +291,15 @@ export function Crash({ onBack }: { onBack: () => void }) {
         if (!active) return;
         if (active.status === 'running' && p !== 'running') {
           clearTimer();
+          const startedAt = (active as { startedAt?: string | null }).startedAt;
+          runStartRef.current = startedAt ? Date.parse(startedAt) : Date.now();
+          histRef.current = [{ x: 0, y: 100 }];
           setRound(active);
-          setGraphPoints(g => (g.length ? g : [{ x: 0, y: 100 }]));
+          setGraphPoints([{ x: 0, y: 100 }]);
           setPhase('running');
         } else if (active.status === 'waiting' && p !== 'waiting') {
+          runStartRef.current = null;
+          histRef.current = [{ x: 0, y: 100 }];
           setRound(active);
           setMultiplierX100(100);
           setGraphPoints([]);
@@ -292,6 +312,37 @@ export function Crash({ onBack }: { onBack: () => void }) {
     }, 3000);
     return () => clearInterval(id);
   }, [startWaitingTimer]);
+
+  // 60fps local animation of the running curve — the plane climbs smoothly from
+  // the round's start time using the SAME growth curve as the server, so it works
+  // even when socket ticks are sparse or absent (ticks only re-anchor the clock).
+  useEffect(() => {
+    if (phase !== 'running') return;
+    let raf = 0;
+    const frame = () => {
+      const start = runStartRef.current;
+      if (start != null) {
+        const elapsed = Math.max(0, Date.now() - start);
+        const m = multAt(elapsed);
+        setMultiplierX100(m);
+        const hist = histRef.current;
+        const last = hist[hist.length - 1];
+        // Commit a sampled point every ~40ms; downsample if the array gets long
+        // (keeps the origin + overall shape, so the auto-zoom stays smooth).
+        if (elapsed - last.x >= 40) {
+          hist.push({ x: elapsed, y: m });
+          if (hist.length > 320) {
+            histRef.current = hist.filter((_, i) => i === 0 || i % 2 === 0 || i === hist.length - 1);
+          }
+        }
+        // Render committed history + the live tip so the plane glides at 60fps.
+        setGraphPoints([...histRef.current, { x: elapsed, y: m }]);
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [phase]);
 
   const handlePlaceBet = async () => {
     if (isBetting || phase !== 'waiting' || myBet) return;

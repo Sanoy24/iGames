@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository, Table } from 'typeorm';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { GameCode, GameSetting, GameState } from './entities/game-setting.entity';
 
@@ -36,13 +36,37 @@ export class GamesService implements OnApplicationBootstrap {
     @InjectRepository(GameSetting)
     private readonly repo: Repository<GameSetting>,
     private readonly gateway: GameEventsGateway,
+    private readonly dataSource: DataSource,
   ) {}
 
-  /** Seed a row for each known game on boot so admins always have all toggles. */
   private seeded = false;
+  private tableEnsured = false;
 
   async onApplicationBootstrap(): Promise<void> {
     await this.ensureSeeded();
+  }
+
+  /**
+   * Self-heal: create the game_settings table if it doesn't exist. Belt-and-
+   * suspenders so the feature works on a plain restart even if the boot-time
+   * schema sync was skipped or failed for this one table.
+   */
+  private async ensureTable(): Promise<void> {
+    if (this.tableEnsured) return;
+    const qr = this.dataSource.createQueryRunner();
+    try {
+      await qr.connect();
+      const meta = this.dataSource.getMetadata(GameSetting);
+      if (!(await qr.hasTable(meta.tableName))) {
+        await qr.createTable(Table.create(meta, this.dataSource.driver), true);
+        this.logger.log(`Self-healed: created ${meta.tableName} table`);
+      }
+      this.tableEnsured = true;
+    } catch (err) {
+      this.logger.warn(`ensureTable failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      await qr.release();
+    }
   }
 
   /**
@@ -52,6 +76,7 @@ export class GamesService implements OnApplicationBootstrap {
    */
   private async ensureSeeded(): Promise<void> {
     if (this.seeded) return;
+    await this.ensureTable();
     try {
       for (const g of GAME_DEFAULTS) {
         const existing = await this.repo.findOneBy({ gameCode: g.code });
@@ -94,9 +119,14 @@ export class GamesService implements OnApplicationBootstrap {
   }
 
   async getState(code: GameCode): Promise<GameState> {
-    const row = await this.repo.findOneBy({ gameCode: code });
-    // Absent row = treat as enabled (fail open); it gets seeded on next boot.
-    return row?.state ?? 'enabled';
+    try {
+      const row = await this.repo.findOneBy({ gameCode: code });
+      // Absent row = treat as enabled (fail open); it gets seeded on next boot.
+      return row?.state ?? 'enabled';
+    } catch {
+      // Table not ready yet (first boot before self-heal) — fail open.
+      return 'enabled';
+    }
   }
 
   async isPlayable(code: GameCode): Promise<boolean> {

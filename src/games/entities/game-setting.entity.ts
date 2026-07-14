@@ -2,7 +2,6 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -28,8 +27,8 @@ export class GameSetting {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  // `unique: true` already creates an index — no separate @Index needed.
   @Column({ type: 'varchar', length: 20, unique: true })
-  @Index()
   gameCode: GameCode;
 
   @Column({ type: 'enum', enum: ['enabled', 'maintenance', 'hidden'], default: 'enabled' })

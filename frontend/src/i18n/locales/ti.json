@@ -104,6 +104,13 @@
   "language": {
     "label": "ቋንቋ"
   },
+  "support": {
+    "title": "ደገፍ",
+    "myTickets": "ናተይ ቲኬታት",
+    "liveChat": "ቀጥታ ዕላል",
+    "newTicket": "ሓድሽ ቲኬት",
+    "noTickets": "ክሳብ ሕጂ ቲኬት የለን። ሓገዝ እንተደሊኻ ሓድሽ ክፈት።"
+  },
   "bingo": {
     "recentCalls": "ናይ ቀረባ ጻውዒታት",
     "drawComplete": "ዕጣ ተዛዚሙ",

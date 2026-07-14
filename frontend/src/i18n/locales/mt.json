@@ -104,6 +104,13 @@
   "language": {
     "label": "Lingwa"
   },
+  "support": {
+    "title": "Appoġġ",
+    "myTickets": "Il-biljetti tiegħi",
+    "liveChat": "Chat live",
+    "newTicket": "Biljett ġdid",
+    "noTickets": "L-ebda biljett s'issa. Iftaħ wieħed jekk teħtieġ għajnuna."
+  },
   "bingo": {
     "recentCalls": "Sejħiet reċenti",
     "drawComplete": "Ġibda kompluta",

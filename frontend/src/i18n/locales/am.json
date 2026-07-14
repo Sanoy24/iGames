@@ -181,6 +181,13 @@
   "language": {
     "label": "ቋንቋ"
   },
+  "support": {
+    "title": "ድጋፍ",
+    "myTickets": "የእኔ ትኬቶች",
+    "liveChat": "ቀጥታ ውይይት",
+    "newTicket": "አዲስ ትኬት",
+    "noTickets": "እስካሁን ትኬት የለም። እርዳታ ከፈለጉ አዲስ ይክፈቱ።"
+  },
   "bingo": {
     "recentCalls": "የቅርብ ጊዜ ጥሪዎች",
     "drawComplete": "ዕጣ ተጠናቋል",

@@ -82,9 +82,13 @@ export function GamesAdmin() {
   const [games, setGames] = useState<GameCatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [error, setError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try { setGames(await adminGamesApi.list()); }
+    catch (e) { setError(getErrorMessage(e)); }
     finally { setLoading(false); }
   }, []);
 
@@ -106,6 +110,17 @@ export function GamesAdmin() {
 
       {loading && games.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 24 }}><div className="spinner" /></div>
+      ) : error ? (
+        <div style={{ textAlign: 'center', padding: 20, color: 'var(--danger, #ef4444)', fontSize: 13 }}>
+          {error}
+          <div style={{ marginTop: 10 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => void load()}>Retry</button>
+          </div>
+        </div>
+      ) : games.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>
+          No games found. If this persists, restart the backend so the game list can seed.
+        </div>
       ) : (
         games.map((g) => <GameRow key={g.code} game={g} onSaved={load} />)
       )}

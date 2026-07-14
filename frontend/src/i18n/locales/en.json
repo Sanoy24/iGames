@@ -181,6 +181,13 @@
   "language": {
     "label": "Language"
   },
+  "support": {
+    "title": "Support",
+    "myTickets": "My tickets",
+    "liveChat": "Live chat",
+    "newTicket": "New ticket",
+    "noTickets": "No tickets yet. Open one if you need help."
+  },
   "bingo": {
     "recentCalls": "Recent calls",
     "drawComplete": "Draw complete",

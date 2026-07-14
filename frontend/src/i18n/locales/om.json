@@ -104,6 +104,13 @@
   "language": {
     "label": "Afaan"
   },
+  "support": {
+    "title": "Deeggarsa",
+    "myTickets": "Tikeetii koo",
+    "liveChat": "Haasawa kallattii",
+    "newTicket": "Tikeetii haaraa",
+    "noTickets": "Ammaaf tikeetiin hin jiru. Gargaarsa yoo barbaadde haaraa banadhu."
+  },
   "bingo": {
     "recentCalls": "Waamamoota dhiheenyaa",
     "drawComplete": "Baʼiin xumurameera",

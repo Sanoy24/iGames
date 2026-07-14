@@ -39,7 +39,19 @@ export class GamesService implements OnApplicationBootstrap {
   ) {}
 
   /** Seed a row for each known game on boot so admins always have all toggles. */
+  private seeded = false;
+
   async onApplicationBootstrap(): Promise<void> {
+    await this.ensureSeeded();
+  }
+
+  /**
+   * Idempotently seed a row for each known game. Called on boot AND lazily on the
+   * first catalog/admin read, so the games always appear even if the process that
+   * created the table never ran the bootstrap seed (e.g. added mid-deploy).
+   */
+  private async ensureSeeded(): Promise<void> {
+    if (this.seeded) return;
     try {
       for (const g of GAME_DEFAULTS) {
         const existing = await this.repo.findOneBy({ gameCode: g.code });
@@ -50,6 +62,7 @@ export class GamesService implements OnApplicationBootstrap {
           this.logger.log(`Seeded game setting for ${g.code}`);
         }
       }
+      this.seeded = true;
     } catch (err) {
       this.logger.warn(`Game settings seed skipped: ${err instanceof Error ? err.message : err}`);
     }
@@ -68,12 +81,14 @@ export class GamesService implements OnApplicationBootstrap {
 
   /** Public catalog: everything that isn't hidden, ordered for display. */
   async getPublicCatalog(): Promise<GameCatalogEntry[]> {
+    await this.ensureSeeded();
     const rows = await this.repo.find({ order: { displayOrder: 'ASC' } });
     return rows.filter((r) => r.state !== 'hidden').map((r) => this.toEntry(r));
   }
 
   /** Admin view: all games including hidden ones. */
   async getAdminList(): Promise<GameCatalogEntry[]> {
+    await this.ensureSeeded();
     const rows = await this.repo.find({ order: { displayOrder: 'ASC' } });
     return rows.map((r) => this.toEntry(r));
   }

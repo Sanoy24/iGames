@@ -16,6 +16,8 @@ import {
   broadcastApi,
   broadcastImageUrl,
   walletApi,
+  type AdminGameStat,
+  type AdminUserActivity,
   type AgentLedgerAction,
   type AgentWithdrawalAction,
   type BingoRoundDetails,
@@ -268,6 +270,9 @@ function PlayersAdmin() {
   const [adjustReason, setAdjustReason] = useState('');
   const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
 
+  // Player detail drill-down
+  const [detailUser, setDetailUser] = useState<User | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -472,6 +477,12 @@ function PlayersAdmin() {
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button
                           className="adm-btn adm-btn-secondary adm-btn-xs"
+                          onClick={() => setDetailUser(u)}
+                        >
+                          View
+                        </button>
+                        <button
+                          className="adm-btn adm-btn-secondary adm-btn-xs"
                           onClick={() => { setAdjustingUser(u); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
                         >
                           Adjust Wallet
@@ -523,6 +534,135 @@ function PlayersAdmin() {
               >
                 Next
               </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {detailUser && (
+        <PlayerDetailModal user={detailUser} onClose={() => setDetailUser(null)} />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Player detail drill-down (games played, deposits, withdrawals, wins)
+// ══════════════════════════════════════════════════════════════════
+function PlayerDetailModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const addToast = useStore((s) => s.addToast);
+  const [activity, setActivity] = useState<AdminUserActivity | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    adminUsersApi
+      .getUserActivity(user.id, 30)
+      .then((a) => { if (alive) setActivity(a); })
+      .catch((e) => addToast('error', getErrorMessage(e)))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [user.id, addToast]);
+
+  const gs = activity?.gameStats;
+  const gameRows: Array<{ label: string; color: string; s?: AdminGameStat }> = [
+    { label: 'Bingo', color: '#ec4899', s: gs?.bingo },
+    { label: 'Keno', color: '#8b5cf6', s: gs?.keno },
+    { label: 'Crash', color: '#f59e0b', s: gs?.crash },
+  ];
+
+  return (
+    <div className="adm-modal-overlay" onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}>
+      <div className="adm-panel" onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 860, width: '100%', margin: 'auto', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="adm-panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Player — {user.displayName}{user.phoneNumber ? ` · ${user.phoneNumber}` : ''}</span>
+          <button className="adm-icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+
+        {loading || !activity ? (
+          <div className="adm-empty">Loading player activity…</div>
+        ) : (
+          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Headline KPIs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+              <Kpi label="Games Played" value={String(gs?.totalGamesPlayed ?? 0)} color="#6366f1" icon={<Dices size={16} />} />
+              <Kpi label="Total Wins" value={String(gs?.totalWins ?? 0)} color="#22c55e" icon={<Activity size={16} />} />
+              <Kpi label="Total Staked" value={formatCreditsFull(gs?.totalStakedMinor ?? 0)} color="#f59e0b" icon={<Coins size={16} />} />
+              <Kpi label="Total Won" value={formatCreditsFull(gs?.totalWinMinor ?? 0)} color="#10b981" icon={<Wallet size={16} />} />
+              <Kpi label="Deposits (credited)" value={formatCreditsFull(activity.totals.depositMinor)} color="#3b82f6" icon={<Wallet size={16} />} />
+              <Kpi label="Withdrawn (completed)" value={formatCreditsFull(activity.totals.completedWithdrawalMinor)} color="#ef4444" icon={<Wallet size={16} />} />
+              <Kpi label="Balance" value={formatCreditsFull(activity.totals.walletAvailableMinor)} color="#8b5cf6" icon={<Wallet size={16} />} />
+            </div>
+
+            {/* Per-game breakdown */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Games by type</div>
+              <table className="adm-table">
+                <thead>
+                  <tr className="adm-tr">
+                    <th>Game</th><th>Tickets / Bets</th><th>Rounds</th><th>Staked</th><th>Wins</th><th>Won</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gameRows.map(({ label, color, s }) => (
+                    <tr key={label} className="adm-tr">
+                      <td><span className="badge" style={{ background: `${color}22`, color }}>{label}</span></td>
+                      <td><strong>{s?.tickets ?? 0}</strong></td>
+                      <td className="adm-td-muted">{s?.rounds ?? 0}</td>
+                      <td>{formatCreditsFull(s?.stakedMinor ?? 0)}</td>
+                      <td style={{ color: (s?.wins ?? 0) > 0 ? 'var(--green)' : undefined }}>{s?.wins ?? 0}</td>
+                      <td>{formatCreditsFull(s?.winMinor ?? 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Deposits */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Deposits ({activity.deposits.length})</div>
+              {activity.deposits.length === 0 ? (
+                <div className="adm-empty">No deposits.</div>
+              ) : (
+                <table className="adm-table">
+                  <thead><tr className="adm-tr"><th>When</th><th>Amount</th><th>Status</th><th>Agent</th></tr></thead>
+                  <tbody>
+                    {activity.deposits.map((d) => (
+                      <tr key={d.id} className="adm-tr">
+                        <td className="adm-td-muted">{formatDateTime(d.createdAt)}</td>
+                        <td><strong>{formatCreditsFull(Number(d.amountMinor))}</strong></td>
+                        <td><span className={`badge ${d.status === 'credited' ? 'badge-green' : 'badge-gold'}`}>{d.status}</span></td>
+                        <td className="adm-td-muted">{d.agent?.displayName ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Withdrawals */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Withdrawal requests ({activity.withdrawals.length})</div>
+              {activity.withdrawals.length === 0 ? (
+                <div className="adm-empty">No withdrawal requests.</div>
+              ) : (
+                <table className="adm-table">
+                  <thead><tr className="adm-tr"><th>When</th><th>Amount</th><th>Status</th><th>Agent</th></tr></thead>
+                  <tbody>
+                    {activity.withdrawals.map((w) => (
+                      <tr key={w.id} className="adm-tr">
+                        <td className="adm-td-muted">{formatDateTime(w.createdAt)}</td>
+                        <td><strong>{formatCreditsFull(Number(w.amountMinor))}</strong></td>
+                        <td><span className={`badge ${w.status === 'completed' ? 'badge-green' : w.status === 'rejected' ? 'badge-red' : 'badge-gold'}`}>{w.status}</span></td>
+                        <td className="adm-td-muted">{w.agent?.displayName ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}

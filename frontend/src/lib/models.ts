@@ -276,6 +276,7 @@ export type Withdrawal = {
   status: 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
   destinationAccount: string;
   agentId?: string;
+  agent?: User;
   claimedAt?: string;
   serviceChargeMinor?: number;
   serviceFeeMinor?: number;

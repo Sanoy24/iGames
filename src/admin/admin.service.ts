@@ -265,7 +265,7 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
 
-    const [ledger, withdrawals, deposits] = await Promise.all([
+    const [ledger, withdrawals, deposits, gameStats] = await Promise.all([
       this.dataSource.getRepository(LedgerEntry).find({
         where: { userId },
         order: { createdAt: 'DESC' },
@@ -283,6 +283,7 @@ export class AdminService {
         order: { createdAt: 'DESC' },
         take: safeLimit,
       }),
+      this.getUserGameStats(userId),
     ]);
 
     return {
@@ -290,6 +291,7 @@ export class AdminService {
       ledger,
       withdrawals,
       deposits,
+      gameStats,
       totals: {
         walletAvailableMinor: user.wallets?.[0]?.availableMinor ?? 0,
         walletReservedMinor: user.wallets?.[0]?.reservedMinor ?? 0,
@@ -300,6 +302,58 @@ export class AdminService {
           .filter((withdrawal) => withdrawal.status === 'completed')
           .reduce((sum, withdrawal) => sum + Number(withdrawal.amountMinor), 0),
       },
+    };
+  }
+
+  /**
+   * Per-game play summary for one player: tickets/bets bought, distinct rounds
+   * played, total staked, wins (a win = positive payout, robust across all three
+   * games' status enums), and total won. Cancelled/refunded rows are excluded so
+   * "games played" reflects real participation. All money is integer minor units.
+   */
+  async getUserGameStats(userId: string) {
+    const agg = async (table: string, roundCol: string, extraWhere: string) => {
+      const rows: Array<{
+        tickets: string | number;
+        rounds: string | number;
+        staked: string | number;
+        wins: string | number;
+        winMinor: string | number;
+      }> = await this.dataSource.query(
+        `SELECT COUNT(*) tickets,
+                COUNT(DISTINCT ${roundCol}) rounds,
+                COALESCE(SUM(stakeMinor),0) staked,
+                COALESCE(SUM(CASE WHEN payoutMinor > 0 THEN 1 ELSE 0 END),0) wins,
+                COALESCE(SUM(payoutMinor),0) winMinor
+           FROM ${table}
+          WHERE userId = ?${extraWhere}`,
+        [userId],
+      );
+      const r = rows[0] ?? {};
+      return {
+        tickets: Number(r.tickets ?? 0),
+        rounds: Number(r.rounds ?? 0),
+        stakedMinor: Number(r.staked ?? 0),
+        wins: Number(r.wins ?? 0),
+        winMinor: Number(r.winMinor ?? 0),
+      };
+    };
+
+    const [bingo, keno, crash] = await Promise.all([
+      agg('bingo_tickets', 'roomId', ` AND status <> 'cancelled'`),
+      agg('keno_tickets', 'drawId', ` AND status <> 'cancelled'`),
+      agg('crash_bets', 'roundId', ''),
+    ]);
+
+    return {
+      bingo,
+      keno,
+      crash,
+      totalGamesPlayed: bingo.tickets + keno.tickets + crash.tickets,
+      totalRoundsPlayed: bingo.rounds + keno.rounds + crash.rounds,
+      totalStakedMinor: bingo.stakedMinor + keno.stakedMinor + crash.stakedMinor,
+      totalWins: bingo.wins + keno.wins + crash.wins,
+      totalWinMinor: bingo.winMinor + keno.winMinor + crash.winMinor,
     };
   }
 

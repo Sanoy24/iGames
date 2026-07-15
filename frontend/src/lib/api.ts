@@ -556,11 +556,31 @@ export type AdminUserDeposit = {
   createdAt: string;
 };
 
+export type AdminGameStat = {
+  tickets: number;
+  rounds: number;
+  stakedMinor: number;
+  wins: number;
+  winMinor: number;
+};
+
+export type AdminUserGameStats = {
+  bingo: AdminGameStat;
+  keno: AdminGameStat;
+  crash: AdminGameStat;
+  totalGamesPlayed: number;
+  totalRoundsPlayed: number;
+  totalStakedMinor: number;
+  totalWins: number;
+  totalWinMinor: number;
+};
+
 export type AdminUserActivity = {
   user: User;
   ledger: LedgerEntry[];
   withdrawals: Withdrawal[];
   deposits: AdminUserDeposit[];
+  gameStats: AdminUserGameStats;
   totals: {
     walletAvailableMinor: number;
     walletReservedMinor: number;

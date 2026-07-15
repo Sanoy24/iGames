@@ -309,6 +309,8 @@
     "startsIn": "ይጀምራል",
     "idleWaiting": "ተጫዋቾችን በመጠበቅ ላይ",
     "idleHint": "ጨዋታውን ለመጀመር ካርቴላ ይግዙ",
+    "yourCartelas": "የተገዙ ({{count}})",
+    "tapToRefund": "ለማስወገድ ይንኩ",
     "autoTitle": "አውቶማቲክ: ካርዶች በራስ-ሰር ያሸንፋሉ",
     "manualTitle": "በእጅ: ለመጠየቅ ቢንጎ ይንኩ",
     "auto": "አውቶማቲክ",

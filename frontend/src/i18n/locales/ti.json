@@ -248,6 +248,8 @@
     "startsIn": "ይጅምር",
     "idleWaiting": "ተጻወትቲ ንጽበ ኣለና",
     "idleHint": "ጸወታ ንምጅማር ካርተላ ግዝኡ",
+    "yourCartelas": "ዝተገዝኡ ({{count}})",
+    "tapToRefund": "ንምውጋድ ተንክፍ",
     "auto": "ራእሰ-ሰር",
     "manual": "ብኢድ",
     "disqualified": "ብቑዕ ኣይኮነን",

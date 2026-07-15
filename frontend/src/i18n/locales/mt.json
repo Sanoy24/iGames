@@ -248,6 +248,8 @@
     "startsIn": "Jibda fi",
     "idleWaiting": "Nistennew il-plejers",
     "idleHint": "Ixtri kartella biex tibda l-logħba",
+    "yourCartelas": "Mixtrija ({{count}})",
+    "tapToRefund": "Agħfas biex tneħħi",
     "auto": "Awtomatiku",
     "manual": "Manwali",
     "disqualified": "Skwalifikat",

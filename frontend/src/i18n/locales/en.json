@@ -322,6 +322,8 @@
     "cardPurchased": "Card purchased",
     "waitingForDraw": "Waiting for the draw to begin…",
     "myCartelas": "My Cartelas ({{count}})",
+    "yourCartelas": "Bought ({{count}})",
+    "tapToRefund": "Tap to remove",
     "myCard": "My Card",
     "noCartelasThisRound": "You didn't buy any cartelas for this round.",
     "noCardThisRound": "You didn't buy a card for this round.",

@@ -2566,6 +2566,45 @@ export function Bingo({ onBack }: BingoProps) {
                                 <p className='text-[9px] text-slate-500'>
                                     {t('bingo.cartelaInstructions')}
                                 </p>
+                                {/* Bought cartelas — live chips. Tap a chip to remove (refund). */}
+                                {myCartelaSet.size > 0 && (
+                                    <div className='flex items-center gap-1.5 flex-wrap rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-2 py-1.5'>
+                                        <span className='text-[8px] font-black uppercase tracking-wider text-emerald-400/80 mr-0.5'>
+                                            {t('bingo.yourCartelas', {
+                                                count: myCartelaSet.size,
+                                            })}
+                                        </span>
+                                        {[...myCartelaSet]
+                                            .sort((a, b) => a - b)
+                                            .map((n) => {
+                                                const busy =
+                                                    pendingCartelas.has(n);
+                                                return (
+                                                    <button
+                                                        key={n}
+                                                        type='button'
+                                                        onClick={() =>
+                                                            handleCartelaTap(n)
+                                                        }
+                                                        disabled={busy}
+                                                        title={t(
+                                                            'bingo.tapToRefund',
+                                                        )}
+                                                        className={`group flex items-center gap-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono font-black text-[11px] pl-2 pr-1.5 py-0.5 border border-emerald-400/30 transition ${
+                                                            busy
+                                                                ? 'opacity-50'
+                                                                : 'hover:bg-red-500/20 hover:text-red-300 hover:border-red-400/40'
+                                                        }`}
+                                                    >
+                                                        {n}
+                                                        <span className='text-[10px] leading-none opacity-60 group-hover:opacity-100'>
+                                                            ×
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })}
+                                    </div>
+                                )}
                                 <CartelaGrid
                                     gridSize={gridSize}
                                     takenSet={takenSet}

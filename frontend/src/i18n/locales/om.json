@@ -248,6 +248,8 @@
     "startsIn": "Ni jalqaba",
     "idleWaiting": "Taphattoota eeggachaa jira",
     "idleHint": "Taphicha jalqabuuf kaartelaa bitaa",
+    "yourCartelas": "Kan bitaman ({{count}})",
+    "tapToRefund": "Balleessuuf tuqi",
     "auto": "Ofumaan",
     "manual": "Harkaan",
     "disqualified": "Hin fudhatamne",

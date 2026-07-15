@@ -32,6 +32,16 @@ export class PaymentsController {
     return this.agentsService.getActiveAgentDepositInfo();
   }
 
+  /**
+   * All on-duty agents that can receive deposits, so the player can CHOOSE which
+   * one to send their Telebirr transfer to. Empty array when nobody is on shift.
+   */
+  @Get('active-agents')
+  @ApiOkResponse({ description: 'List of on-duty deposit agents the player may pick from' })
+  getActiveAgents() {
+    return this.agentsService.getActiveAgentsDepositInfo();
+  }
+
   @Get('config')
   @ApiOkResponse({ description: 'Player-facing deposit rules (e.g. minimum deposit amount)' })
   getConfig() {

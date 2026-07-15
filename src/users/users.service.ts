@@ -318,6 +318,34 @@ export class UsersService {
     return onDuty[0];
   }
 
+  /**
+   * Every active agent currently on duty — used when a player may CHOOSE which
+   * agent to deposit to (more than one on duty). Ordered so the same primary that
+   * `findOnDutyAgent` picks comes first: force-pinned agents (most recent first),
+   * then scheduled agents by earliest start.
+   */
+  async findOnDutyAgents(): Promise<User[]> {
+    const agents = await this.userRepository
+      .createQueryBuilder('user')
+      .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .andWhere('user.status = :status', { status: 'active' })
+      .getMany();
+
+    const now = new Date();
+    const onDuty = agents.filter((a) => isAgentEffectivelyOnDuty(a, now));
+
+    return onDuty.sort((a, b) => {
+      const aForced = a.onDutyMode === 'on' ? 1 : 0;
+      const bForced = b.onDutyMode === 'on' ? 1 : 0;
+      if (aForced !== bForced) return bForced - aForced; // forced-on first
+      if (aForced && bForced) return b.updatedAt.getTime() - a.updatedAt.getTime();
+      const sa = (a.workStartHour ?? 0) * 60 + (a.workStartMinute ?? 0);
+      const sb = (b.workStartHour ?? 0) * 60 + (b.workStartMinute ?? 0);
+      if (sa !== sb) return sa - sb;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+  }
+
   async findBackofficeUserByCredentials(
     phoneNumber: string,
     password: string,

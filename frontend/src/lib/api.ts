@@ -156,6 +156,7 @@ function extractTelebirrReceiptBody(rawText: string): { receiptUrl: string } | {
 }
 
 export type ActiveAgent = {
+  id?: string;
   displayName: string;
   phoneNumber: string | null;
 };
@@ -169,6 +170,9 @@ export const paymentsApi = {
 
   getActiveAgent: () =>
     api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
+
+  getActiveAgents: () =>
+    api.get<ActiveAgent[]>('/payments/active-agents').then((r) => r.data),
 
   getConfig: () =>
     api.get<{ minDepositMinor: number }>('/payments/config').then((r) => r.data),

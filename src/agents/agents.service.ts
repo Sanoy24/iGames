@@ -235,6 +235,24 @@ export class AgentsService {
     };
   }
 
+  /**
+   * Player-facing: ALL agents currently on duty that can receive deposits — so the
+   * player can CHOOSE who to send their Telebirr transfer to when more than one is
+   * available. Returns public info only (id + name + Telebirr phone). Empty when
+   * nobody is on duty. Deposit attribution is still driven by the receipt itself
+   * (the verifier matches the recipient name/phone), so this is purely a chooser.
+   */
+  async getActiveAgentsDepositInfo(): Promise<Array<{ id: string; displayName: string; phoneNumber: string | null }>> {
+    const agents = await this.usersService.findOnDutyAgents();
+    return agents
+      .filter((a) => !(a.agentPermissions && a.agentPermissions.deposit === false))
+      .map((a) => ({
+        id: a.id,
+        displayName: a.displayName,
+        phoneNumber: a.phoneNumber ?? null,
+      }));
+  }
+
   private toShiftResponse(shift: AgentShift) {
     return {
       id: shift.id,

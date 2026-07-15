@@ -120,6 +120,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const [preview,        setPreview]        = useState<TelebirrPreview | null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
   const [activeAgent,    setActiveAgent]    = useState<ActiveAgent | null>(null);
+  const [agentList,      setAgentList]      = useState<ActiveAgent[]>([]);
   const [agentLoading,   setAgentLoading]   = useState(false);
   const [minDepositMinor, setMinDepositMinor] = useState(0);
 
@@ -153,9 +154,14 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
       if (next) {
         setShowWithdraw(false);
         setAgentLoading(true);
-        paymentsApi.getActiveAgent()
-          .then(setActiveAgent)
-          .catch(() => setActiveAgent(null))
+        paymentsApi.getActiveAgents()
+          .then((list) => {
+            setAgentList(list);
+            // Default to the primary (first) on-duty agent; the player can switch
+            // when more than one is available.
+            setActiveAgent(list[0] ?? null);
+          })
+          .catch(() => { setAgentList([]); setActiveAgent(null); })
           .finally(() => setAgentLoading(false));
         paymentsApi.getConfig()
           .then((c) => setMinDepositMinor(c.minDepositMinor))
@@ -334,6 +340,40 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                   <p style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700, margin: '0 0 14px' }}>
                     Minimum deposit: {new Intl.NumberFormat().format(minDepositMinor)} ETB
                   </p>
+                )}
+
+                {/* Agent chooser — only when more than one on-duty agent is available */}
+                {!agentLoading && agentList.length > 1 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 8 }}>
+                      Choose an agent to send to
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {agentList.map((a) => {
+                        const selected = activeAgent
+                          ? (a.id ? a.id === activeAgent.id : a.phoneNumber === activeAgent.phoneNumber)
+                          : false;
+                        return (
+                          <button
+                            key={a.id ?? a.phoneNumber ?? a.displayName}
+                            type="button"
+                            onClick={() => setActiveAgent(a)}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 6,
+                              padding: '7px 12px', borderRadius: 999, cursor: 'pointer',
+                              fontSize: 13, fontWeight: 700,
+                              background: selected ? 'rgba(250,204,21,0.14)' : 'rgba(255,255,255,0.03)',
+                              border: `1px solid ${selected ? 'rgba(250,204,21,0.55)' : 'var(--border)'}`,
+                              color: selected ? 'var(--gold)' : 'var(--text-secondary)',
+                            }}
+                          >
+                            <UserIcon size={13} />
+                            {a.displayName}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
 
                 {/* Active agent — where to send the Telebirr transfer */}

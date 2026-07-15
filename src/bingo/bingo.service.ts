@@ -1119,6 +1119,20 @@ export class BingoService implements OnModuleInit {
         return this.toRoomResponse(room, soldTickets, takenSpots);
       }
 
+      // Empty-round cleanup: a RUNNING room with no tickets sold — e.g. a legacy
+      // room that began before the "idle until first ticket" guard existed — is
+      // cancelled QUIETLY (no completion event, no "no players" result overlay)
+      // instead of drawing out an empty game. New rooms can't reach here: they only
+      // start via findRoomsToStart, which requires soldTickets > 0.
+      if (room.status === 'running' && (await this.countSoldTickets(validRoomId, manager)) === 0) {
+        room.status = 'cancelled';
+        room.activeGuard = null;
+        await manager.save(room);
+        this.logger.warn(`Cancelled empty running Bingo room ${validRoomId} (no tickets sold)`);
+        const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
+        return this.toRoomResponse(room, 0, takenSpots);
+      }
+
       // Ball pool drawn from: line is fixed 90-ball, derash is fixed 75-ball
       // (standard B/I/N/G/O), pattern uses the room's configured range. Forcing
       // 75 for derash here means even a legacy/misconfigured room can NEVER call a

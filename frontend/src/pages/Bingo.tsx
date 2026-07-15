@@ -2014,6 +2014,16 @@ export function Bingo({ onBack }: BingoProps) {
             setHoldingResult(false);
             return;
         }
+        // Empty round — nobody bought a ticket (a stray/legacy room that finished with
+        // no players). There is no result to celebrate, so DON'T show the "No players —
+        // no win this round" overlay; quietly advance to the next (idle) room.
+        if ((room.soldTickets ?? 0) === 0) {
+            holdingResultRef.current = false;
+            setHoldingResult(false);
+            roomIdRef.current = null;
+            void loadCurrent();
+            return;
+        }
         holdingResultRef.current = true;
         setHoldingResult(true);
 
@@ -2047,7 +2057,7 @@ export function Bingo({ onBack }: BingoProps) {
             if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
             if (countdownRef.current) clearInterval(countdownRef.current);
         };
-    }, [room?.id, room?.status, livePlaceQueue.length, loadCurrent]);
+    }, [room?.id, room?.status, room?.soldTickets, livePlaceQueue.length, loadCurrent]);
 
     // ── Buy-window countdown ─────────────────────────────────────────────────────
     useEffect(() => {

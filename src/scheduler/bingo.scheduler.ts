@@ -30,6 +30,8 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
    */
   async onApplicationBootstrap(): Promise<void> {
     try {
+      // Relax scheduledStartAt to NULLable on legacy DBs so rooms can idle.
+      await this.bingoService.ensureRoomSchema();
       if (await this.gamesService.isPlayable('bingo')) {
         await this.bingoService.autoCreateNextRoom();
       }
@@ -147,7 +149,9 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           if (newRoom) {
             this.gameEventsGateway.emitBingoRoomUpdated(newRoom);
             this.logger.log(`Auto-created next Bingo room: ${newRoom.id}`);
-            await this.botsService.buyTicketsForBingoRoom(newRoom.id);
+            // No bot pre-buy here: the room must stay IDLE (no countdown, no draws)
+            // until a real player buys the first ticket. Bots fill in last-minute
+            // in the auto-start path once the countdown a purchase started expires.
           }
         } catch (error) {
           this.logger.error(

@@ -420,7 +420,7 @@ export const adminBingoApi = {
     name: string;
     ticketPriceMinor: number;
     maxTickets: number;
-    scheduledStartAt: string;
+    scheduledStartAt: string | null;
     prizes: Record<string, number>;
     winMode?: string;
     numberRange?: number;

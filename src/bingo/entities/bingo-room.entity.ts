@@ -53,9 +53,14 @@ export class BingoRoom {
   @Column({ type: 'json' })
   prizes: BingoPrizeConfig;
 
-  @Column({ type: 'timestamp' })
+  /**
+   * When the buy-window countdown ends and drawing begins. NULL means the room
+   * is IDLE — created but not yet started. It is stamped (now + countdown) only
+   * when the FIRST ticket is sold, so an unplayed room never draws or completes.
+   */
+  @Column({ type: 'timestamp', nullable: true })
   @Index()
-  scheduledStartAt: Date;
+  scheduledStartAt: Date | null;
 
   @Column({ type: 'json' })
   drawnNumbers: number[];

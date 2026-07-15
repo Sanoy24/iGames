@@ -30,7 +30,7 @@ export type BingoRoomUpdatedPayload = {
   roomId: string;
   status: string;
   soldTickets: number;
-  scheduledStartAt: Date;
+  scheduledStartAt: Date | null;
 };
 
 export type BingoNumberDrawnPayload = {

@@ -116,7 +116,7 @@ export type BingoRoomResponse = {
   numberRange: number;
   gridSize: number;
   patternPrizes: Array<{ patternId: string; name: string; prizeMinor: number }>;
-  scheduledStartAt: Date;
+  scheduledStartAt: Date | null;
   drawnNumbers: number[];
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
@@ -261,6 +261,57 @@ export class BingoService implements OnModuleInit {
     return cfg;
   }
 
+  /**
+   * Buy-window countdown length, in ms — identical to the delay the room used to
+   * be created with. Floored to a sane minimum and never shorter than the
+   * configured auto-repeat interval. Stamped onto scheduledStartAt when the FIRST
+   * ticket of an idle room is sold, so the countdown length is unchanged; only
+   * the moment it STARTS moves from room-creation to first-purchase.
+   */
+  private startCountdownDelayMs(cfg: BingoConfig): number {
+    const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
+    return Math.max((cfg.autoRepeatIntervalMinutes ?? 0) * 60_000, salesWindowMs);
+  }
+
+  /**
+   * Kick off the buy-window countdown the moment the first ticket of an idle room
+   * is sold. No-op once already stamped, so later purchases never move the start
+   * time (fixed window). MUST be called while the room row is locked FOR UPDATE
+   * (as in purchaseTickets) so concurrent first sales can't double-stamp.
+   */
+  private startCountdownOnFirstSale(room: BingoRoom, cfg: BingoConfig): void {
+    if (room.scheduledStartAt == null) {
+      room.scheduledStartAt = new Date(Date.now() + this.startCountdownDelayMs(cfg));
+    }
+  }
+
+  /**
+   * One-time, idempotent self-heal: relax bingo_rooms.scheduledStartAt to NULLable
+   * so a room can be created IDLE (no countdown) until its first ticket is sold.
+   * The additive schema-sync only adds new columns; it never alters an existing
+   * NOT NULL column, so this bridges live databases created before idle rooms.
+   * Safe to run every boot — it only ALTERs when the column is still NOT NULL.
+   */
+  async ensureRoomSchema(): Promise<void> {
+    try {
+      const rows: Array<{ IS_NULLABLE: string }> = await this.bingoRoomRepository.query(
+        `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bingo_rooms' AND COLUMN_NAME = 'scheduledStartAt'`,
+      );
+      if (rows[0]?.IS_NULLABLE === 'NO') {
+        await this.bingoRoomRepository.query(
+          `ALTER TABLE bingo_rooms MODIFY COLUMN scheduledStartAt timestamp NULL DEFAULT NULL`,
+        );
+        this.logger.log('Schema self-heal: bingo_rooms.scheduledStartAt is now NULLable (idle rooms)');
+      }
+    } catch (err) {
+      this.logger.error(
+        'Schema self-heal for bingo_rooms.scheduledStartAt failed',
+        err instanceof Error ? err.stack : err,
+      );
+    }
+  }
+
   async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
     const cfg = await this.getBingoConfig();
     Object.assign(cfg, dto);
@@ -350,11 +401,10 @@ export class BingoService implements OnModuleInit {
       `UPDATE bingo_rooms SET activeGuard = NULL WHERE activeGuard IS NOT NULL AND status IN ('completed','cancelled')`,
     );
 
-    const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
-    const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);
-    const scheduledStartAt = new Date(Date.now() + delayMs);
-
-    const timestamp = scheduledStartAt.toLocaleTimeString('en-ET', {
+    // The room is created IDLE: scheduledStartAt stays NULL so it never draws or
+    // completes until someone buys in. The buy-window countdown is stamped later,
+    // on the first ticket sale (see purchaseTickets), using startCountdownDelayMs.
+    const timestamp = new Date().toLocaleTimeString('en-ET', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
@@ -378,7 +428,7 @@ export class BingoService implements OnModuleInit {
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
       rankingMode: cfg.prefilledRankingMode ?? 'race',
-      scheduledStartAt,
+      scheduledStartAt: null, // idle until the first ticket is sold
       drawnNumbers: [],
       rngAuditLogIds: [],
       settledTiers: [],
@@ -403,7 +453,7 @@ export class BingoService implements OnModuleInit {
       }
       throw err;
     }
-    this.logger.log(`Auto-created Bingo room "${room.name}" (${winMode}) starting at ${scheduledStartAt.toISOString()}`);
+    this.logger.log(`Auto-created idle Bingo room "${room.name}" (${winMode}) — countdown starts on first ticket sale`);
     return this.toRoomResponse(room, 0, []);
   }
 
@@ -859,6 +909,7 @@ export class BingoService implements OnModuleInit {
         }
 
         room.soldTickets += cartelaNumbers.length;
+        this.startCountdownOnFirstSale(room, cfg);
         await manager.save(room);
 
         return createdTickets.map((ticket) => this.toTicketResponse(ticket));
@@ -874,6 +925,7 @@ export class BingoService implements OnModuleInit {
       }
 
       room.soldTickets += count;
+      this.startCountdownOnFirstSale(room, cfg);
       await manager.save(room);
 
       const createdTickets: BingoTicket[] = [];

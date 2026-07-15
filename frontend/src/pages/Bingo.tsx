@@ -266,13 +266,13 @@ const NumberBoard = memo(
 
         if (isPatternMode) {
             return (
-                <div className='space-y-1'>
+                <div className='space-y-[2px]'>
                     {/* Column headers */}
-                    <div className='grid grid-cols-5 gap-1'>
+                    <div className='grid grid-cols-5 gap-[2px]'>
                         {BINGO_COLS_75.map((col) => (
                             <div
                                 key={col.letter}
-                                className='text-center text-[11px] font-black py-0.5 rounded-md'
+                                className='text-center text-[10px] font-black rounded leading-tight'
                                 style={{
                                     color: col.color,
                                     background: col.bg,
@@ -283,9 +283,9 @@ const NumberBoard = memo(
                             </div>
                         ))}
                     </div>
-                    {/* Number grid: 15 rows × 5 cols */}
+                    {/* Number grid: 15 rows × 5 cols (dense = short rows) */}
                     {Array.from({ length: 15 }, (_, row) => (
-                        <div key={row} className='grid grid-cols-5 gap-1'>
+                        <div key={row} className='grid grid-cols-5 gap-[2px]'>
                             {BINGO_COLS_75.map((col) => {
                                 const n = col.from + row;
                                 const called = drawnSet.has(n);
@@ -296,6 +296,7 @@ const NumberBoard = memo(
                                         called={called}
                                         isCurrent={n === current}
                                         style={col}
+                                        dense
                                     />
                                 );
                             })}
@@ -364,11 +365,15 @@ const NumberCell = memo(
         called,
         isCurrent,
         style,
+        dense = false,
     }: {
         n: number;
         called: boolean;
         isCurrent: boolean;
         style: { color: string; glow: string; bg: string };
+        // `dense` cells are short rectangles (used by the 75-ball board so its 15
+        // rows don't run tall); non-dense cells stay square.
+        dense?: boolean;
     }) => (
         <motion.div
             // The just-called number keeps pulsing so the eye can find where on the board
@@ -385,7 +390,7 @@ const NumberCell = memo(
                     ? { duration: 0.9, ease: 'easeInOut', repeat: Infinity }
                     : { duration: 0.28, ease: 'backOut' }
             }
-            className='aspect-square rounded-md flex items-center justify-center text-[9px] font-bold font-mono select-none'
+            className={`${dense ? 'h-5 rounded text-[10px]' : 'aspect-square rounded-md text-[9px]'} flex items-center justify-center font-bold font-mono select-none`}
             style={
                 called
                     ? {
@@ -1989,9 +1994,11 @@ export function Bingo({ onBack }: BingoProps) {
     // ── Buy-window countdown ─────────────────────────────────────────────────────
     useEffect(() => {
         setTimeRemainingSecs(null);
-        if (!room || room.status !== 'open') return;
+        // No scheduledStartAt means the room is IDLE — waiting for the first buyer.
+        // Leave the countdown null so the UI shows the idle state, not a 00:00 timer.
+        if (!room || room.status !== 'open' || !room.scheduledStartAt) return;
         const tick = () => {
-            const ms = new Date(room.scheduledStartAt).getTime() - Date.now();
+            const ms = new Date(room.scheduledStartAt as string).getTime() - Date.now();
             setTimeRemainingSecs(Math.max(0, Math.floor(ms / 1000)));
         };
         tick();
@@ -2503,7 +2510,7 @@ export function Bingo({ onBack }: BingoProps) {
                                 key={stat.key}
                                 className='rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center'
                             >
-                                <span className='block text-[8px] font-bold uppercase tracking-wider text-slate-600 mb-0.5'>
+                                <span className='block text-[8px] font-bold uppercase tracking-wider text-slate-300 mb-0.5'>
                                     {stat.label}
                                 </span>
                                 <span
@@ -2535,7 +2542,7 @@ export function Bingo({ onBack }: BingoProps) {
                                         <span className='text-[7px] font-black bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded'>
                                             DERASH
                                         </span>
-                                        {timeRemainingSecs !== null && (
+                                        {timeRemainingSecs !== null ? (
                                             <span
                                                 className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}
                                             >
@@ -2548,6 +2555,10 @@ export function Bingo({ onBack }: BingoProps) {
                                                 {String(
                                                     timeRemainingSecs % 60,
                                                 ).padStart(2, '0')}
+                                            </span>
+                                        ) : (
+                                            <span className='text-[8px] font-black uppercase tracking-wide text-emerald-400 animate-pulse'>
+                                                {t('bingo.idleWaiting')}
                                             </span>
                                         )}
                                     </div>
@@ -2615,10 +2626,10 @@ export function Bingo({ onBack }: BingoProps) {
                                         max={ballCount}
                                     />
                                     {phase === 'buy' &&
-                                        timeRemainingSecs !== null && (
+                                        (timeRemainingSecs !== null ? (
                                             <div className='mt-1 text-center'>
                                                 <div className='text-[8px] text-slate-500 mb-0.5'>
-                                                    Starts in
+                                                    {t('bingo.startsIn')}
                                                 </div>
                                                 <span
                                                     className={`font-mono font-black text-sm ${timeRemainingSecs <= 10 ? 'text-red-400' : 'text-amber-400'}`}
@@ -2635,7 +2646,16 @@ export function Bingo({ onBack }: BingoProps) {
                                                     ).padStart(2, '0')}
                                                 </span>
                                             </div>
-                                        )}
+                                        ) : (
+                                            <div className='mt-1 text-center'>
+                                                <div className='text-[8px] font-black uppercase tracking-wide text-emerald-400 animate-pulse'>
+                                                    {t('bingo.idleWaiting')}
+                                                </div>
+                                                <div className='text-[7px] text-slate-500 mt-0.5'>
+                                                    {t('bingo.idleHint')}
+                                                </div>
+                                            </div>
+                                        ))}
                                     {/* Derash: mapped 5×5 card(s), vertically stacked under the caller,
                      with the owned-count label. The stack scrolls so many cartelas
                      never blow out the layout. */}

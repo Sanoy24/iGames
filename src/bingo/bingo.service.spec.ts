@@ -37,7 +37,7 @@ function makeRoom(overrides: Partial<BingoRoom> = {}): BingoRoom {
 function makeService({ rooms }: { rooms: BingoRoom[] }) {
   const getByStatus = (status: string) =>
     rooms.filter((r) => r.status === status).sort((a, b) =>
-      a.scheduledStartAt.getTime() - b.scheduledStartAt.getTime()
+      (a.scheduledStartAt?.getTime() ?? 0) - (b.scheduledStartAt?.getTime() ?? 0)
     )[0] ?? null;
 
   const getLastCompleted = () =>

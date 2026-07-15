@@ -24,9 +24,17 @@ export type AppNotification = {
 export type LiveCounts = {
   kenoOnline: number;
   bingoOnline: number;
+  crashOnline?: number;
   totalOnline: number;
   totalPlaying: number;
   totalConnections: number;
+  /** House bot breakdown folded into the *Online numbers above (for admin/insight). */
+  bots?: {
+    kenoBots: number;
+    bingoBots: number;
+    crashBots: number;
+    totalBots: number;
+  };
 };
 
 type AppState = {

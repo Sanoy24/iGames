@@ -154,6 +154,27 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   globalBingoBotWinInterval: number;
 
+  /**
+   * Bot liquidity threshold. While a room has FEWER than this many REAL (non-bot)
+   * players, bots join to fill/steer the room. At or above it, bots stay out and
+   * real players compete on a fair draw. 0 = bots never auto-join.
+   */
+  @Column({ type: 'int', default: 10 })
+  botMaxRealPlayers: number;
+
+  /**
+   * How bots influence a below-threshold room:
+   *  - `off`         — bots just fill the room; fully fair draw, no win steering.
+   *  - `statistical` — bots buy most free cartelas so a bot wins the majority of
+   *                    rounds on a genuinely fair draw (a real user still wins
+   *                    occasionally — which is what keeps it undetectable).
+   *  - `guaranteed`  — if a real user would win, the win is redirected to a bot
+   *                    (deterministic house retention; overrides a fair result).
+   *  - `hybrid`      — statistical flooding PLUS the real-user→bot win redirect.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'statistical' })
+  botWinMode: string;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

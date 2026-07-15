@@ -56,6 +56,14 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0)
   globalBingoBotWinInterval?: number;
 
+  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  @IsOptional() @IsInt() @Min(0)
+  botMaxRealPlayers?: number;
+
+  /** How bots steer a below-threshold room. */
+  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid'])
+  botWinMode?: string;
+
   @IsOptional() @IsIn(['race', 'leaderboard'])
   prefilledRankingMode?: 'race' | 'leaderboard';
 

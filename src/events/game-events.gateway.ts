@@ -13,6 +13,7 @@ import { BingoRoomResponse } from '../bingo/bingo.service';
 import { WalletSummary } from '../wallet/wallet.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { User } from '../users/entities/user.entity';
+import { PresenceService } from './presence.service';
 
 export type KenoDrawStartedPayload = {
   drawId: string;
@@ -87,6 +88,7 @@ export class GameEventsGateway
     private readonly userRepository: Repository<User>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly presenceService: PresenceService,
   ) {}
 
   async onApplicationShutdown(signal?: string) {
@@ -174,14 +176,41 @@ export class GameEventsGateway
     return {
       kenoOnline: kenoUsers.size,
       bingoOnline: bingoUsers.size,
+      crashOnline: crashUsers.size,
       totalOnline: totalUsers.size,
       totalPlaying: playingUsers.size,
       totalConnections: socketMap?.size || 0,
     };
   }
 
+  /**
+   * Real socket counts (above) MERGED with house bot presence so the numbers shown
+   * to players include bots — per game (participating bots) and total (all active
+   * bots are "online"). The raw `bots` breakdown is included for the admin panel.
+   */
+  async getLiveCountsWithBots() {
+    const real = this.getLiveCounts();
+    const bots = await this.presenceService.getBotCounts().catch(() => ({
+      kenoBots: 0,
+      bingoBots: 0,
+      crashBots: 0,
+      totalBots: 0,
+    }));
+    return {
+      kenoOnline: real.kenoOnline + bots.kenoBots,
+      bingoOnline: real.bingoOnline + bots.bingoBots,
+      crashOnline: real.crashOnline + bots.crashBots,
+      // Total online = real distinct users online + every active bot (bots count as online).
+      totalOnline: real.totalOnline + bots.totalBots,
+      // Playing = real players in a game + bots participating in a game.
+      totalPlaying: real.totalPlaying + bots.kenoBots + bots.bingoBots + bots.crashBots,
+      totalConnections: real.totalConnections,
+      bots,
+    };
+  }
+
   async broadcastLiveCounts() {
-    const counts = this.getLiveCounts();
+    const counts = await this.getLiveCountsWithBots();
     this.server?.emit('live.counts', counts);
   }
 
@@ -196,8 +225,8 @@ export class GameEventsGateway
 
   /** On-demand pull — clients emit this on connect to populate counts immediately. */
   @SubscribeMessage('request.counts')
-  handleRequestCounts(client: Socket) {
-    client.emit('live.counts', this.getLiveCounts());
+  async handleRequestCounts(client: Socket) {
+    client.emit('live.counts', await this.getLiveCountsWithBots());
   }
 
   @SubscribeMessage('enter.game')

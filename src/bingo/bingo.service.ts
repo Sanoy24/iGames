@@ -1337,6 +1337,18 @@ export class BingoService implements OnModuleInit {
     const totalPotMinor = soldTickets * room.ticketPriceMinor;
     const houseEdgePct = room.houseEdgePct ?? 20;
 
+    // Bot win-steering (house liquidity). While a room has fewer than
+    // botMaxRealPlayers REAL players, guaranteed/hybrid modes redirect a real
+    // user's win to a bot so the house keeps the prize. `statistical`/`off` never
+    // redirect here — statistical relies purely on bots holding most cartelas (a
+    // fair draw), which is the least detectable. See botWinMode config.
+    const botIds = await this.getActiveBotUserIds(manager);
+    const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
+    const belowThreshold =
+      (cfg.botMaxRealPlayers ?? 0) > 0 && realPlayers < (cfg.botMaxRealPlayers ?? 0);
+    const redirectRealWinsToBot =
+      belowThreshold && (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid');
+
     // Each ENABLED, still-open place is an INDEPENDENT "first card to complete this
     // place's pattern" race, evaluated every draw. Independent → not blocked by an
     // earlier unfilled place (so with 1st=Any Three Lines / 3rd=Any Line, 3rd fills
@@ -1362,7 +1374,21 @@ export class BingoService implements OnModuleInit {
       // a later draw may fill this one.
       if (!winner) continue;
 
-      await this.awardDerashPlace({ room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      // House-retention redirect: if the natural winner is a REAL player and the
+      // mode calls for it, hand the place to a bot instead (prefer a bot whose
+      // card also completes the pattern so the revealed winner looks legitimate).
+      let awardee = winner;
+      if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
+        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers);
+        if (botAwardee) {
+          awardee = botAwardee;
+          this.logger.log(
+            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
+          );
+        }
+      }
+
+      await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
     }
 
     // ── House-win for disqualified cards ─────────────────────────────────────────
@@ -2375,6 +2401,60 @@ export class BingoService implements OnModuleInit {
     return manager
       ? manager.countBy(BingoTicket, where)
       : this.bingoTicketRepository.countBy(where);
+  }
+
+  /** Distinct REAL (non-bot) players holding a non-cancelled ticket in the room. */
+  async countRealPlayersInRoom(roomId: string, manager?: EntityManager): Promise<number> {
+    const runner = manager ?? this.bingoTicketRepository.manager;
+    const rows: Array<{ c: number | string }> = await runner.query(
+      `SELECT COUNT(DISTINCT t.userId) AS c
+         FROM bingo_tickets t
+         JOIN users u ON u.id = t.userId
+        WHERE t.roomId = ? AND t.status <> 'cancelled'
+          AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL`,
+      [roomId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  /** Set of active (house-controlled) bot userIds. */
+  private async getActiveBotUserIds(manager: EntityManager): Promise<Set<string>> {
+    const rows: Array<{ id: string }> = await manager.query(
+      `SELECT id FROM users
+        WHERE JSON_EXTRACT(productMetadata, '$.botPolicy') IS NOT NULL
+          AND JSON_EXTRACT(productMetadata, '$.botPolicy.active') = true`,
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Pick the bot cartela to hand a redirected win to. Prefers a bot whose card
+   * actually completes the pattern (so the revealed winner card looks legitimate);
+   * otherwise the in-play bot card closest to completing (most marked cells).
+   */
+  private pickBotRedirectWinner(
+    inPlay: BingoTicket[],
+    botIds: Set<string>,
+    pattern: BingoPattern,
+    drawnNumbers: number[],
+  ): BingoTicket | null {
+    const botTickets = inPlay.filter((t) => botIds.has(t.userId));
+    if (botTickets.length === 0) return null;
+    const drawnSet = new Set(drawnNumbers);
+    const completing = botTickets.find((t) =>
+      this.bingoRulesService
+        .evaluatePatternTicket(t.grid, drawnNumbers, [pattern])
+        .completedPatternIds.includes(pattern.id),
+    );
+    if (completing) return completing;
+    return (
+      botTickets
+        .map((t) => ({
+          t,
+          marks: t.grid.flat().filter((v): v is number => v !== null && drawnSet.has(v)).length,
+        }))
+        .sort((a, b) => b.marks - a.marks)[0]?.t ?? null
+    );
   }
 
   private async findRoom(roomId: string): Promise<BingoRoom> {

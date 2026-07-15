@@ -196,6 +196,10 @@ export type BingoConfig = {
   minTicketsToStart?: number;
   houseEdgePct?: number;
   globalBingoBotWinInterval?: number;
+  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  botMaxRealPlayers?: number;
+  /** How bots steer a below-threshold room. */
+  botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid';
   prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;

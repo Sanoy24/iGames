@@ -1494,6 +1494,7 @@ type PatternPrizeEntry = { patternId: string; name: string; prizeMinor: number }
 
 function BingoAdmin() {
   const addToast = useStore((s) => s.addToast);
+  const liveCounts = useStore((s) => s.liveCounts);
   const [rooms, setRooms] = useState<BingoRoom[]>([]);
   const [cfg, setCfg] = useState<BingoConfig | null>(null);
   const [patterns, setPatterns] = useState<BingoPattern[]>([]);
@@ -1544,6 +1545,8 @@ function BingoAdmin() {
     minTicketsToStart: 0,
     houseEdgePct: 20,
     globalBingoBotWinInterval: 0,
+    botMaxRealPlayers: 10,
+    botWinMode: 'statistical' as 'off' | 'statistical' | 'guaranteed' | 'hybrid',
     prefilledRankingMode: 'race' as 'race' | 'leaderboard',
     prefilledFirstPlacePct: 80,
     prefilledSecondPlaceEnabled: false,
@@ -1592,6 +1595,8 @@ function BingoAdmin() {
         minTicketsToStart: c.minTicketsToStart ?? 0,
         houseEdgePct: c.houseEdgePct ?? 20,
         globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
+        botMaxRealPlayers: c.botMaxRealPlayers ?? 10,
+        botWinMode: (c.botWinMode ?? 'statistical') as 'off' | 'statistical' | 'guaranteed' | 'hybrid',
         prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as 'race' | 'leaderboard',
         prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
         prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
@@ -1872,6 +1877,41 @@ function BingoAdmin() {
               <input className="input" type="number" min={0} value={cfgForm.globalBingoBotWinInterval ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, globalBingoBotWinInterval: Number(e.target.value) }))} />
               <span className="adm-field-hint">After every N completed rooms a random active bot receives a bonus credit. Creates visible bot activity on the wins ticker.</span>
+            </label>
+          </div>
+
+          <div className="adm-panel-head" style={{ marginTop: 12 }}>Bot Liquidity (low-player rooms)</div>
+          {liveCounts && (
+            <div className="adm-field-hint" style={{ marginBottom: 8 }}>
+              Live now (incl. bots): Bingo <b>{liveCounts.bingoOnline}</b>
+              {liveCounts.bots ? <> ({liveCounts.bots.bingoBots} bots)</> : null}
+              {' · '}Total online <b>{liveCounts.totalOnline}</b>
+              {liveCounts.bots ? <> ({liveCounts.bots.totalBots} bots)</> : null}
+              {' · '}Playing <b>{liveCounts.totalPlaying}</b>
+            </div>
+          )}
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>Activate Bots Below N Real Players (0 = never)</span>
+              <input className="input" type="number" min={0} value={cfgForm.botMaxRealPlayers ?? 10}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botMaxRealPlayers: Number(e.target.value) }))} />
+              <span className="adm-field-hint">While a room has fewer than this many REAL players, bots join to fill/steer it. At or above it, bots stay out and real players compete on a fair draw.</span>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Bot Win Mode (below threshold)</span>
+              <select
+                className="input"
+                value={cfgForm.botWinMode ?? 'statistical'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botWinMode: e.target.value as 'off' | 'statistical' | 'guaranteed' | 'hybrid' }))}
+              >
+                <option value="off">Off — bots only fill the room, fully fair draw (no win steering)</option>
+                <option value="statistical">Statistical — bots buy most cartelas, so a bot wins most rounds on a fair draw (least detectable)</option>
+                <option value="guaranteed">Guaranteed — a real user's win is redirected to a bot (deterministic; overrides a fair result)</option>
+                <option value="hybrid">Hybrid — flood cartelas AND redirect any real-user win to a bot</option>
+              </select>
+              <span className="adm-field-hint">
+                Applies only while real players are below the threshold above. Statistical is recommended: it stays genuinely fair (bots just hold more cartelas), so it is undetectable. Guaranteed/Hybrid override a real winner and are easier for a suspicious player to notice.
+              </span>
             </label>
           </div>
 

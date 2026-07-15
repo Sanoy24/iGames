@@ -153,7 +153,9 @@
     "myCard": "Kaardii Koo",
     "roomChat": "Haasawa Kutaa",
     "you": "Ati",
-    "saySomething": "Waan tokko jedhi…"
+    "saySomething": "Waan tokko jedhi…",
+    "cartelaLimit_one": "Taphni kanaaf kaartelaa 1 qofa bituu dandeessa.",
+    "cartelaLimit_other": "Taphni kanaaf hanga kaartelaa {{count}} bituu dandeessa."
   },
   "keno": {
     "autoStoppedBalance": "Taphni ofumaa dhaabame: Baankiin hin gaʼu.",

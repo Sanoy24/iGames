@@ -163,7 +163,9 @@ export const useStore = create<AppState>((set) => ({
   toasts: [],
   addToast: (type, message) => {
     const id = Math.random().toString(36).slice(2);
-    set((s) => ({ toasts: [...s.toasts, { id, type, message }] }));
+    // Dedupe: if the same message is already showing, one is enough — don't
+    // stack a second identical toast (e.g. repeated taps on a capped action).
+    set((s) => (s.toasts.some((t) => t.message === message) ? s : { toasts: [...s.toasts, { id, type, message }] }));
     setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
     }, 3500);

@@ -153,7 +153,9 @@
     "myCard": "Il-Karta Tiegħi",
     "roomChat": "Chat tal-Kamra",
     "you": "Int",
-    "saySomething": "Għid xi ħaġa…"
+    "saySomething": "Għid xi ħaġa…",
+    "cartelaLimit_one": "Tista' tixtri kartellina 1 biss għal din il-logħba.",
+    "cartelaLimit_other": "Tista' tixtri sa {{count}} kartellini għal din il-logħba."
   },
   "keno": {
     "autoStoppedBalance": "Auto Play waqaf: Bilanċ insuffiċjenti.",

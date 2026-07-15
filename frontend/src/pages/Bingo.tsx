@@ -2319,6 +2319,8 @@ export function Bingo({ onBack }: BingoProps) {
                     addToast('error', t('bingo.toastInsufficientBalance'));
                 else if (msg.toLowerCase().includes('closed'))
                     addToast('error', t('bingo.toastSalesClosed'));
+                else if (msg.toLowerCase().includes('limit'))
+                    addToast('error', t('bingo.cartelaLimit', { count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10) }));
                 else addToast('error', msg);
                 void loadCurrent();
             } finally {

@@ -253,7 +253,9 @@
     "roomChat": "Room Chat",
     "you": "You",
     "saySomething": "Say something…",
-    "cartelaInstructions": "Tap a cartela to buy it instantly. Tap your own again to refund it while the timer runs. Each cartela is a hidden bingo card."
+    "cartelaInstructions": "Tap a cartela to buy it instantly. Tap your own again to refund it while the timer runs. Each cartela is a hidden bingo card.",
+    "cartelaLimit_one": "You can buy only 1 cartela for this game.",
+    "cartelaLimit_other": "You can buy up to {{count}} cartelas for this game."
   },
   "keno": {
     "autoStoppedBalance": "Auto Play stopped: Insufficient balance.",

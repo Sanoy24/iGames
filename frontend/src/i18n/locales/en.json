@@ -276,6 +276,8 @@
     "bingoExclaim": "BINGO!",
     "placeOrdinal": "{{place}} place",
     "winsThisPlace": "wins this place",
+    "disqualifiedHouseWins": "called early — disqualified, House wins",
+    "toHouse": "to House",
     "prizeEtb": "Prize: {{amount}} ETB",
     "cardHash": "Card# {{n}}",
     "luckyPlayer": "A lucky player",

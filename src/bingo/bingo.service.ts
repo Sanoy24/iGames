@@ -142,6 +142,10 @@ export type BingoTicketResponse = {
   status: string;
   settlementStatus: string;
   autoClaim: boolean;
+  /** Manual-mode disqualification audit (null/false/0 when not disqualified). */
+  disqualifiedReason?: string | null;
+  disqualifiedWonRound?: boolean;
+  forfeitedWinMinor?: number;
 };
 
 const MIN_BINGO_SALES_WINDOW_MS = 15_000;
@@ -783,6 +787,12 @@ export class BingoService implements OnModuleInit {
         stakeMinor: t.stakeMinor,
         payoutMinor: Number(t.payoutMinor),
         wonTiers: t.wonTiers ?? [],
+        // Manual-mode disqualification audit — lets an agent answer "why wasn't I
+        // paid?": the card won but a premature BINGO call forfeited it to the house.
+        disqualifiedReason: t.disqualifiedReason ?? null,
+        disqualifiedWonRound: t.disqualifiedWonRound ?? false,
+        forfeitedWinMinor: Number(t.forfeitedWinMinor ?? 0),
+        forfeitedPlaces: t.forfeitedPlaces ?? [],
         grid: t.grid,
         markedNumbers: t.markedNumbers ?? [],
         createdAt: t.createdAt,
@@ -1354,6 +1364,47 @@ export class BingoService implements OnModuleInit {
 
       await this.awardDerashPlace({ room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
     }
+
+    // ── House-win for disqualified cards ─────────────────────────────────────────
+    // A card disqualified for a premature "Bingo" call still races for the win. For
+    // any place STILL open after the honest cards had their chance this draw, if a
+    // pending-disqualified card completes the pattern it was the (first) winning
+    // card — but the false call voids the payout, so the HOUSE takes the prize and
+    // we record the forfeit on the card + room summary for audit ("why wasn't I
+    // paid?"). Honest cards are evaluated first (above), so a legit card completing
+    // the same draw always beats the house claim.
+    const pendingDq = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: 'disqualified', settlementStatus: 'pending' },
+      order: { createdAt: 'ASC' },
+    });
+    if (pendingDq.length > 0) {
+      for (const dq of pendingDq) {
+        dq.markedNumbers = dq.grid
+          .flat()
+          .filter((v): v is number => v !== null && drawn.has(v))
+          .sort((a, b) => a - b);
+      }
+      for (const place of this.openPrefilledPlaces(room, cfg)) {
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+        if (!pattern) continue;
+        const dqWinner = pendingDq.find((t) =>
+          this.bingoRulesService
+            .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
+            .completedPatternIds.includes(pattern.id),
+        );
+        if (!dqWinner) continue;
+        await this.awardDerashPlaceToHouse({
+          room,
+          dqTicket: dqWinner,
+          place,
+          pattern,
+          totalPotMinor,
+          houseEdgePct,
+          cfg,
+          manager,
+        });
+      }
+    }
   }
 
   /**
@@ -1580,6 +1631,74 @@ export class BingoService implements OnModuleInit {
   }
 
   /**
+   * Award a derash place to the HOUSE because the (first) card to complete it was
+   * DISQUALIFIED for a premature "Bingo" call. No wallet is credited — the prize is
+   * retained by the house. The card is stamped with the forfeited amount + place
+   * (audit), and the room summary records the disqualified winning card (grid,
+   * cartela, owner, `disqualified`/`houseWon` flags) so every client renders the
+   * reveal flagged "disqualified" and support can later explain the non-payment.
+   * The place is CLOSED — no other player can win it (the winning card was this one).
+   */
+  private async awardDerashPlaceToHouse(input: {
+    room: BingoRoom;
+    dqTicket: BingoTicket;
+    place: PrefilledPlace;
+    pattern: BingoPattern;
+    totalPotMinor: number;
+    houseEdgePct: number;
+    cfg: BingoConfig;
+    manager: EntityManager;
+  }): Promise<void> {
+    const { room, dqTicket, place, pattern, totalPotMinor, houseEdgePct, cfg, manager } = input;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const forfeitedMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+
+    // Record the forfeit on the card — the audit trail behind the unpaid win.
+    dqTicket.disqualifiedWonRound = true;
+    dqTicket.forfeitedWinMinor = (dqTicket.forfeitedWinMinor ?? 0) + forfeitedMinor;
+    dqTicket.forfeitedPlaces = [...(dqTicket.forfeitedPlaces ?? []), place];
+    dqTicket.settlementStatus = 'settled';
+    await manager.save(dqTicket);
+
+    const dqUser = await manager.findOne(User, {
+      where: { id: dqTicket.userId },
+      select: ['displayName', 'phoneNumber'],
+    });
+    const phoneLast4 = (dqUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+
+    // Close the place to everyone (settled) but with NO paying winner.
+    room.settledTiers = [...room.settledTiers, place];
+    room.winnersByTier = { ...room.winnersByTier, [place]: [] };
+    room.settlementSummary = {
+      ...room.settlementSummary,
+      [place]: {
+        winnerCount: 0,
+        disqualified: true,
+        houseWon: true,
+        // The disqualified winning card — shown in the reveal, flagged.
+        winnerId: dqTicket.id,
+        winnerUserId: dqTicket.userId,
+        winnerDisplayName: dqUser?.displayName ?? 'Player',
+        winnerPhoneLast4: phoneLast4,
+        winnerCartelaNumber: dqTicket.cartelaNumber,
+        winnerGrid: dqTicket.grid,
+        winnerMarkedNumbers: dqTicket.markedNumbers,
+        patternName: pattern.name,
+        // What the player forfeited = what the house kept for this place.
+        prizeMinor: forfeitedMinor,
+        forfeitedWinMinor: forfeitedMinor,
+        disqualifiedReason: dqTicket.disqualifiedReason ?? 'premature_claim',
+        totalPotMinor,
+        prizePoolMinor,
+      },
+    };
+    this.logger.log(
+      `Derash house-win: room ${room.id} place ${place} — disqualified cartela #${dqTicket.cartelaNumber} ` +
+        `(ticket ${dqTicket.id}, user ${dqTicket.userId}) forfeited ${forfeitedMinor} to house`,
+    );
+  }
+
+  /**
    * Ends a derash room once there is nothing left to play for: every enabled place
    * is filled, the ball pool is exhausted, or literally no cards remain in play.
    * Shared by the draw tick and the manual claim so a claim that fills the last
@@ -1606,9 +1725,17 @@ export class BingoService implements OnModuleInit {
       roomId: room.id,
       status: In(['active', 'won']),
     });
+    // A disqualified card awaiting resolution keeps the game alive: it may still
+    // complete the winning pattern and hand the prize to the house. Only end when
+    // there are neither in-play cards NOR any unresolved disqualified ones.
+    const pendingDq = await manager.countBy(BingoTicket, {
+      roomId: room.id,
+      status: 'disqualified',
+      settlementStatus: 'pending',
+    });
     if (
       room.settledTiers.length >= totalPlaces ||
-      inPlay === 0 ||
+      (inPlay === 0 && pendingDq === 0) ||
       room.drawnNumbers.length >= maxNumber
     ) {
       room.status = 'completed';
@@ -1639,6 +1766,15 @@ export class BingoService implements OnModuleInit {
     manager: EntityManager,
   ): Promise<void> {
     const filledPlaces = BingoService.PREFILLED_PLACE_KEYS.filter((p) => room.settledTiers.includes(p));
+
+    // Resolve any disqualified card that never became the house-winner so it stops
+    // keeping the game alive. It stays 'disqualified' for audit (never flipped to
+    // 'lost', never refunded — a false call forfeits the stake).
+    await manager.update(
+      BingoTicket,
+      { roomId: room.id, status: 'disqualified', settlementStatus: 'pending' },
+      { settlementStatus: 'settled' },
+    );
 
     if (filledPlaces.length === 0) {
       // No winner at all — refund every in-play stake (house takes nothing when
@@ -1841,13 +1977,20 @@ export class BingoService implements OnModuleInit {
       }
 
       // Nothing to claim. A card that already won something isn't punished for a
-      // redundant tap; a card that has never won and calls a false Bingo is
-      // disqualified, the way a false call is penalised in hall bingo.
+      // redundant tap; a card that has never won and calls a false Bingo (tapped
+      // BINGO before its winning pattern actually completed) is disqualified, the
+      // way a false call is penalised in hall bingo.
       if ((ticket.wonTiers ?? []).length > 0) return finish('ignored');
       ticket.status = 'disqualified';
-      ticket.settlementStatus = 'settled';
+      ticket.disqualifiedReason = 'premature_claim';
+      ticket.disqualifiedAt = new Date();
+      // Stays PENDING (not settled) on purpose: the settlement tick keeps watching
+      // this card. If it turns out to be the round's winning card, the prize goes to
+      // the HOUSE (awardDerashPlaceToHouse) and the forfeit is recorded — never paid.
+      ticket.settlementStatus = 'pending';
       await manager.save(ticket);
-      // Removing this card from play can end the game (last in-play card gone).
+      // A pending-disqualified card that could still complete a winning pattern keeps
+      // the game alive (finalizeDerashIfDone counts pending-DQ cards as in play).
       await this.finalizeDerashIfDone(room, cfg, 75, manager);
       await manager.save(room);
       return finish('disqualified');
@@ -2287,6 +2430,9 @@ export class BingoService implements OnModuleInit {
       status: ticket.status,
       settlementStatus: ticket.settlementStatus,
       autoClaim: ticket.autoClaim ?? true,
+      disqualifiedReason: ticket.disqualifiedReason ?? null,
+      disqualifiedWonRound: ticket.disqualifiedWonRound ?? false,
+      forfeitedWinMinor: ticket.forfeitedWinMinor ?? 0,
     };
   }
 

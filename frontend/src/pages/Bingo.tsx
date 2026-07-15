@@ -620,8 +620,8 @@ function CurrentBallDisplay({
 
     if (status === 'completed') {
         return (
-            <div className='flex flex-col items-center gap-2 py-4'>
-                <Trophy size={28} className='text-amber-400' />
+            <div className='flex flex-col items-center gap-1.5 py-2'>
+                <Trophy size={24} className='text-amber-400' />
                 <span className='text-[10px] font-black text-amber-500 uppercase tracking-widest'>
                     {t('bingo.drawComplete')}
                 </span>
@@ -634,9 +634,9 @@ function CurrentBallDisplay({
 
     if (n === null || status === 'open') {
         return (
-            <div className='flex flex-col items-center gap-3 py-4'>
-                <div className='w-20 h-20 rounded-2xl border-2 border-dashed border-white/10 flex items-center justify-center'>
-                    <span className='text-[9px] font-black text-white/30 uppercase tracking-wider'>
+            <div className='flex flex-col items-center gap-2 py-2'>
+                <div className='w-14 h-14 rounded-xl border-2 border-dashed border-white/10 flex items-center justify-center'>
+                    <span className='text-[8px] font-black text-white/30 uppercase tracking-wider'>
                         {t('bingo.waiting')}
                     </span>
                 </div>
@@ -648,7 +648,7 @@ function CurrentBallDisplay({
     }
 
     return (
-        <div className='flex flex-col items-center gap-2 py-2'>
+        <div className='flex flex-col items-center gap-1 py-1'>
             <span className='text-[8px] font-black uppercase tracking-widest text-slate-500'>
                 {t('bingo.nowCalling')}
             </span>
@@ -687,17 +687,17 @@ function CurrentBallDisplay({
                             ease: 'easeInOut',
                         },
                     }}
-                    className='rounded-2xl flex flex-col items-center justify-center font-black text-white select-none'
+                    className='rounded-xl flex flex-col items-center justify-center font-black text-white select-none'
                     style={{
-                        width: 80,
-                        height: 80,
+                        width: 54,
+                        height: 54,
                         background: `linear-gradient(145deg, ${s!.color}22, ${s!.color}08)`,
                         border: `2px solid ${s!.color}66`,
                     }}
                 >
                     {prefix && (
                         <span
-                            className='text-[9px] font-black leading-none'
+                            className='text-[8px] font-black leading-none'
                             style={{ color: s!.color }}
                         >
                             {prefix}
@@ -705,7 +705,7 @@ function CurrentBallDisplay({
                     )}
                     <span
                         className='leading-none'
-                        style={{ fontSize: n >= 10 ? 28 : 34, color: s!.color }}
+                        style={{ fontSize: n >= 10 ? 22 : 26, color: s!.color }}
                     >
                         {n}
                     </span>
@@ -1109,6 +1109,9 @@ function LivePlaceWinPopup({
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
     const prize = (entry.prizeMinor as number | undefined) ?? 0;
     const cartela = entry.winnerCartelaNumber as number | undefined;
+    // This card was the winner but got disqualified for a premature BINGO call —
+    // the prize goes to the house, not the player. We still reveal the card.
+    const disqualified = !!entry.disqualified;
     const lastCalled =
         drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
 
@@ -1150,13 +1153,22 @@ function LivePlaceWinPopup({
                     <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
                         <span
                             className='rounded-lg px-3 py-1 font-black text-white'
-                            style={{ background: '#2f8f4f' }}
+                            style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
                         >
                             {name}
                             {last4 ? ` ( *${last4} )` : ''}
                         </span>
-                        <span>{t('bingo.winsThisPlace')}</span>
+                        <span>
+                            {disqualified
+                                ? t('bingo.disqualifiedHouseWins')
+                                : t('bingo.winsThisPlace')}
+                        </span>
                     </p>
+                    {disqualified && (
+                        <div className='mt-1.5 inline-block rounded-md bg-red-500/20 border border-red-400/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-300'>
+                            {t('bingo.disqualified')}
+                        </div>
+                    )}
                 </div>
 
                 {grid && (
@@ -1180,12 +1192,23 @@ function LivePlaceWinPopup({
                                 lastCalled={lastCalled}
                             />
                             <div className='flex items-center justify-between px-1 pt-1.5'>
-                                <span
-                                    className='text-[13px] font-black'
-                                    style={{ color: '#34d399' }}
-                                >
-                                    {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
-                                </span>
+                                {disqualified ? (
+                                    <span className='text-[13px] font-black flex items-center gap-1'>
+                                        <span className='line-through text-slate-400'>
+                                            {formatCreditsFull(prize)}
+                                        </span>
+                                        <span className='text-red-300 text-[10px] uppercase tracking-wide'>
+                                            {t('bingo.toHouse')}
+                                        </span>
+                                    </span>
+                                ) : (
+                                    <span
+                                        className='text-[13px] font-black'
+                                        style={{ color: '#34d399' }}
+                                    >
+                                        {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
+                                    </span>
+                                )}
                                 {cartela != null && (
                                     <span className='text-[13px] font-black text-slate-100'>
                                         {t('bingo.cardHash', { n: cartela })}
@@ -1331,6 +1354,13 @@ function RoomResultOverlay({
                                         </>
                                     ) : placeEntries.length > 1 ? (
                                         tr('bingo.finalStandings')
+                                    ) : winEntry?.disqualified ? (
+                                        <>
+                                            <span className='font-black text-white'>
+                                                {topName}
+                                            </span>{' '}
+                                            {tr('bingo.disqualifiedHouseWins')}
+                                        </>
                                     ) : (
                                         <>
                                             <span className='font-black text-white'>
@@ -1374,7 +1404,9 @@ function RoomResultOverlay({
                                 {tr('bingo.finalStandings')}
                             </div>
                             <div className='space-y-1'>
-                                {placeEntries.map(({ place, entry }) => (
+                                {placeEntries.map(({ place, entry }) => {
+                                    const dq = !!entry.disqualified;
+                                    return (
                                     <div
                                         key={place}
                                         className='flex items-center justify-between rounded-lg px-2 py-1 bg-black/20'
@@ -1396,6 +1428,11 @@ function RoomResultOverlay({
                                                         }
                                                     </span>
                                                 ) : null}
+                                                {dq && (
+                                                    <span className='ml-1 rounded bg-red-500/20 border border-red-400/40 px-1 py-px text-[7px] font-black uppercase tracking-wider text-red-300 align-middle'>
+                                                        {tr('bingo.disqualified')}
+                                                    </span>
+                                                )}
                                             </span>
                                         </span>
                                         <span className='flex items-center gap-2 flex-shrink-0'>
@@ -1408,19 +1445,35 @@ function RoomResultOverlay({
                                                     }
                                                 </span>
                                             )}
-                                            <span
-                                                className='text-[11px] font-black'
-                                                style={{ color: '#34d399' }}
-                                            >
-                                                {formatCreditsFull(
-                                                    (entry.prizeMinor as
-                                                        | number
-                                                        | undefined) ?? 0,
-                                                )}
-                                            </span>
+                                            {dq ? (
+                                                <span className='text-[11px] font-black flex items-center gap-1'>
+                                                    <span className='line-through text-slate-500'>
+                                                        {formatCreditsFull(
+                                                            (entry.prizeMinor as
+                                                                | number
+                                                                | undefined) ?? 0,
+                                                        )}
+                                                    </span>
+                                                    <span className='text-red-300 text-[8px] uppercase tracking-wide'>
+                                                        {tr('bingo.toHouse')}
+                                                    </span>
+                                                </span>
+                                            ) : (
+                                                <span
+                                                    className='text-[11px] font-black'
+                                                    style={{ color: '#34d399' }}
+                                                >
+                                                    {formatCreditsFull(
+                                                        (entry.prizeMinor as
+                                                            | number
+                                                            | undefined) ?? 0,
+                                                    )}
+                                                </span>
+                                            )}
                                         </span>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -1689,6 +1742,11 @@ export function Bingo({ onBack }: BingoProps) {
     );
     const resultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    // The calling card (75-window board + caller). On entering the playing phase we
+    // scroll it into view ONCE per room so the player lands on the grid, not the
+    // ticker/stats above it — then leave scrolling to the user (no re-snapping).
+    const callingCardRef = useRef<HTMLDivElement>(null);
+    const focusedRoomRef = useRef<string | null>(null);
 
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
         {
@@ -2012,6 +2070,25 @@ export function Bingo({ onBack }: BingoProps) {
         const id = setInterval(tick, 1000);
         return () => clearInterval(id);
     }, [room?.id, room?.status, room?.soldTickets, room?.scheduledStartAt]);
+
+    // ── Focus the 75-window board when calling opens ─────────────────────────────
+    // On entering the playing (drawing) phase, scroll the calling card into view
+    // ONCE per room so the player lands on the grid + caller rather than the ticker
+    // and stats above it. Guarded by focusedRoomRef so it fires a single time —
+    // never on later draw ticks — leaving the user's own scrolling free and smooth.
+    useEffect(() => {
+        if (!room || room.status !== 'running') return;
+        if (focusedRoomRef.current === room.id) return;
+        focusedRoomRef.current = room.id;
+        // Defer a frame so the board has painted before we scroll to it.
+        const id = requestAnimationFrame(() => {
+            callingCardRef.current?.scrollIntoView({
+                block: 'start',
+                behavior: 'smooth',
+            });
+        });
+        return () => cancelAnimationFrame(id);
+    }, [room?.id, room?.status]);
 
     // ── Win detection ────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -2538,7 +2615,7 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
 
                     {/* ── Cartela picker (derash buy phase) / Number board ── */}
-                    <div className='card p-3'>
+                    <div className='card p-3 scroll-mt-2' ref={callingCardRef}>
                         {isPrefilledMode && phase === 'buy' ? (
                             <div className='space-y-2'>
                                 <div className='flex items-center justify-between'>
@@ -2763,7 +2840,7 @@ export function Bingo({ onBack }: BingoProps) {
                                                     )}
                                                 <div
                                                     className='w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide'
-                                                    style={{ maxHeight: 340 }}
+                                                    style={{ maxHeight: 'min(430px, 62vh)' }}
                                                 >
                                                     {myTickets.map((ticket) => (
                                                         <div

@@ -276,6 +276,8 @@
     "bingoExclaim": "ቢንጎ!",
     "placeOrdinal": "{{place}} ደረጃ",
     "winsThisPlace": "ይህን ደረጃ አሸንፏል",
+    "disqualifiedHouseWins": "ቀድሞ ጠርቷል — ውድቅ ተደርጓል፣ ቤቱ አሸነፈ",
+    "toHouse": "ወደ ቤቱ",
     "prizeEtb": "ሽልማት: {{amount}} ብር",
     "cardHash": "ካርድ# {{n}}",
     "luckyPlayer": "አንድ እድለኛ ተጫዋች",

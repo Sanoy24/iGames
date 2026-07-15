@@ -11,29 +11,31 @@ import { authApi, walletApi, paymentsApi, type TelebirrPreview, type ActiveAgent
 // Keys are the backend ledger `entryType` values
 // (see LedgerEntryType: stake | win | refund | adjustment | bonus | deposit |
 //  reversal | withdrawal | agent_receipt).
-const ENTRY_LABELS: Record<string, string> = {
-  stake: 'Ticket Purchase',
-  win: 'Winnings',
-  refund: 'Refund',
-  deposit: 'Deposit',
-  withdrawal: 'Withdrawal',
-  bonus: 'Bonus ETB',
-  adjustment: 'Balance Adjustment',
-  agent_receipt: 'Agent Transfer',
-  reversal: 'Reversal',
+// Ledger entryType/sourceType → i18n key for the transaction label.
+const ENTRY_KEY: Record<string, string> = {
+  stake: 'wallet.entryTicketPurchase',
+  win: 'wallet.entryWinnings',
+  refund: 'wallet.entryRefund',
+  deposit: 'wallet.entryDeposit',
+  withdrawal: 'wallet.entryWithdrawal',
+  bonus: 'wallet.entryBonus',
+  adjustment: 'wallet.entryAdjustment',
+  agent_receipt: 'wallet.entryAgentTransfer',
+  reversal: 'wallet.entryReversal',
 };
 
 type TxFilter = 'all' | 'wins' | 'purchases' | 'deposits';
 
-const TX_FILTERS: { id: TxFilter; label: string; icon: string }[] = [
-  { id: 'all',       label: 'All',       icon: '📋' },
-  { id: 'wins',      label: 'Wins',      icon: '🏆' },
-  { id: 'purchases', label: 'Purchases', icon: '🎟' },
-  { id: 'deposits',  label: 'Deposits',  icon: '💰' },
+const TX_FILTERS: { id: TxFilter; labelKey: string; icon: string }[] = [
+  { id: 'all',       labelKey: 'wallet.filterAll',       icon: '📋' },
+  { id: 'wins',      labelKey: 'wallet.filterWins',      icon: '🏆' },
+  { id: 'purchases', labelKey: 'wallet.filterPurchases', icon: '🎟' },
+  { id: 'deposits',  labelKey: 'wallet.filterDeposits',  icon: '💰' },
 ];
 
-function formatLedgerTitle(entry: LedgerEntry): string {
-  return ENTRY_LABELS[entry.entryType] ?? ENTRY_LABELS[entry.sourceType] ?? 'Transaction';
+function formatLedgerTitle(entry: LedgerEntry, t: (k: string) => string): string {
+  const key = ENTRY_KEY[entry.entryType] ?? ENTRY_KEY[entry.sourceType];
+  return key ? t(key) : t('wallet.entryTransaction');
 }
 
 function matchesTxFilter(entry: LedgerEntry, filter: TxFilter): boolean {
@@ -635,7 +637,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
             <TrendingUp size={16} style={{ color: 'var(--gold)' }} />
             <div>
               <div className="section-title">{t('wallet.transactionHistory')}</div>
-              <p className="section-copy">Your balance activity and game results.</p>
+              <p className="section-copy">{t('wallet.balanceActivity')}</p>
             </div>
           </div>
           <motion.button
@@ -644,7 +646,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             whileTap={{ scale: 0.9, rotate: 180 }}
           >
-            <RefreshCw size={13} /> Refresh
+            <RefreshCw size={13} /> {t('common.refresh')}
           </motion.button>
         </div>
 
@@ -659,7 +661,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
               style={{ position: 'relative', overflow: 'hidden' }}
             >
               <span style={{ marginRight: 4 }}>{f.icon}</span>
-              {f.label}
+              {t(f.labelKey)}
               {txFilter === f.id && (
                 <motion.span
                   layoutId="tx-pill"
@@ -672,10 +674,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         </div>
 
         {loading && ledger.length === 0 ? (
-          <div className="card-muted">Loading activity…</div>
+          <div className="card-muted">{t('wallet.loadingActivity')}</div>
         ) : filteredLedger.length === 0 ? (
           <motion.div className="card-muted" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            {txFilter === 'all' ? 'No activity yet. Play a game to get started.' : 'No transactions in this category.'}
+            {txFilter === 'all' ? t('wallet.noActivity') : t('wallet.noTxCategory')}
           </motion.div>
         ) : (
           <motion.div
@@ -698,7 +700,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                         : <ArrowUpRight  size={14} />}
                     </motion.span>
                     <div>
-                      <h3>{formatLedgerTitle(entry)}</h3>
+                      <h3>{formatLedgerTitle(entry, t)}</h3>
                       {entry.createdAt && (
                         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                           {new Date(entry.createdAt).toLocaleString()}
@@ -717,7 +719,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                   </motion.span>
                 </div>
                 <div className="ticket-meta">
-                  <span>Balance after: {formatCreditsFull(entry.balanceAfterMinor)}</span>
+                  <span>{t('wallet.balanceAfter', { amount: formatCreditsFull(entry.balanceAfterMinor) })}</span>
                 </div>
               </motion.article>
             ))}

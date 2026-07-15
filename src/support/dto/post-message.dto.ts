@@ -1,4 +1,5 @@
-import { IsArray, IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import type { SupportRequestType } from '../entities/support-message.entity';
 
 export class PostMessageDto {
   @IsString()
@@ -17,4 +18,25 @@ export class PostMessageDto {
   @IsOptional()
   @IsBoolean()
   internal?: boolean;
+
+  // --- Optional inline tagged request (player endpoint) --------------------
+  @IsOptional()
+  @IsIn(['complaint', 'dispute', 'refund'])
+  requestType?: SupportRequestType;
+
+  /** Required for refund requests, integer minor units. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  requestedAmountMinor?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  relatedType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  relatedId?: string;
 }

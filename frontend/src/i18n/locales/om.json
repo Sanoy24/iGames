@@ -170,10 +170,23 @@
   },
   "support": {
     "title": "Deeggarsa",
-    "myTickets": "Tikeetii koo",
-    "liveChat": "Haasawa kallattii",
-    "newTicket": "Tikeetii haaraa",
-    "noTickets": "Ammaaf tikeetiin hin jiru. Gargaarsa yoo barbaadde haaraa banadhu."
+    "emptyChat": "Nagaa jedhi — deeggarsi asuma deebisa.",
+    "messagePlaceholder": "Ergaa barreessi…",
+    "newRequest": "Gaaffii haaraa",
+    "reqRefund": "Deebii",
+    "reqDispute": "Falmii",
+    "reqComplaint": "Komii",
+    "status_pending": "Eegaa jira",
+    "status_approved": "Mirkanaa'e",
+    "status_rejected": "Hin fudhatamne",
+    "refundedAmount": "{{amount}} ETB boorsaa keetti deebi'e",
+    "describeIssue": "Rakkoo kee ibsi…",
+    "enterRefundAmount": "Hamma deebii galchi.",
+    "refundAmountPlaceholder": "Hamma deebii (ETB)",
+    "relatedIdPlaceholder": "ID baasii wal-qabatu (filannoo)",
+    "sendRequest": "Gaaffii ergi",
+    "sending": "Ergaa jira…",
+    "requestSent": "Gaaffiin ergameera."
   },
   "faq": {
     "keno": {

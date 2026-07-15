@@ -1,14 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { SupportService } from './support.service';
-import { CreateTicketDto } from './dto/create-ticket.dto';
 import { PostMessageDto } from './dto/post-message.dto';
 
-/** Player-facing support surface. Every action is scoped to the caller's tickets. */
+/** Player-facing support — one persistent conversation per user. */
 @ApiTags('support')
 @ApiBearerAuth()
 @Controller('support')
@@ -16,35 +15,17 @@ import { PostMessageDto } from './dto/post-message.dto';
 export class SupportController {
   constructor(private readonly support: SupportService) {}
 
-  @Post('tickets')
-  @Throttle({ strict: { ttl: 60_000, limit: 5 } })
-  createTicket(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateTicketDto) {
-    return this.support.createTicket(user.id, dto);
+  /** The caller's single support conversation (thread + messages). */
+  @Get('conversation')
+  getConversation(@CurrentUser() user: AuthenticatedUser) {
+    return this.support.getMyConversation(user.id);
   }
 
-  @Get('tickets')
-  listMyTickets(@CurrentUser() user: AuthenticatedUser, @Query('limit') limit?: string) {
-    return this.support.listMyTickets(user.id, limit ? parseInt(limit, 10) || 30 : 30);
-  }
-
-  @Get('tickets/:id')
-  getMyTicket(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.support.getMyTicket(user.id, id);
-  }
-
-  @Post('tickets/:id/messages')
+  /** Post a message (optionally a tagged refund/dispute/complaint request). */
+  @Post('messages')
   @Throttle({ strict: { ttl: 60_000, limit: 20 } })
-  postMessage(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-    @Body() dto: PostMessageDto,
-  ) {
+  postMessage(@CurrentUser() user: AuthenticatedUser, @Body() dto: PostMessageDto) {
     // A player can never post an internal note, regardless of payload.
-    return this.support.postUserMessage(user.id, id, { ...dto, internal: false });
-  }
-
-  @Post('tickets/:id/close')
-  closeTicket(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.support.closeMyTicket(user.id, id);
+    return this.support.postUserMessage(user.id, { ...dto, internal: false });
   }
 }

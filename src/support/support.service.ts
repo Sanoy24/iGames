@@ -18,13 +18,14 @@ import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
 import {
   SupportMessage,
   SupportMessageAuthorRole,
+  SupportRequestType,
+  SupportRequestStatus,
 } from './entities/support-message.entity';
 import {
   SupportTicket,
   SupportTicketCategory,
   SupportTicketStatus,
 } from './entities/support-ticket.entity';
-import { CreateTicketDto } from './dto/create-ticket.dto';
 import { PostMessageDto } from './dto/post-message.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { ApproveRefundDto, RejectRefundDto } from './dto/resolve-refund.dto';
@@ -41,6 +42,15 @@ export type SupportMessageResponse = {
   attachments: Record<string, unknown>[] | null;
   internal: boolean;
   createdAt: Date;
+  // Present only when the message is a tagged request.
+  requestType: SupportRequestType | null;
+  requestStatus: SupportRequestStatus | null;
+  requestedAmountMinor: number | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  refundedAmountMinor: number | null;
+  resolutionNote: string | null;
+  decidedAt: Date | null;
 };
 
 export type SupportTicketResponse = {
@@ -83,119 +93,96 @@ export class SupportService {
   ) {}
 
   // ==========================================================================
-  // Player-facing
+  // Player-facing — one persistent conversation per user
   // ==========================================================================
 
-  async createTicket(userId: string, dto: CreateTicketDto): Promise<SupportTicketResponse> {
-    if (dto.category === 'refund') {
-      if (!dto.requestedAmountMinor || dto.requestedAmountMinor < 1) {
-        throw new BadRequestException('Refund requests must include a positive requestedAmountMinor');
+  /** The user's single support conversation (created on first contact). */
+  async getOrOpenConversation(userId: string): Promise<SupportTicket> {
+    const existing = await this.ticketRepo.findOne({
+      where: { userId },
+      order: { createdAt: 'ASC' },
+    });
+    if (existing) {
+      // The conversation is permanent — reopen it if it was previously closed.
+      if (existing.status === 'closed' || existing.status === 'resolved') {
+        existing.status = 'open';
+        existing.closedAt = null;
+        await this.ticketRepo.save(existing);
       }
+      return existing;
     }
-
-    if (dto.relatedType && dto.relatedId) {
-      await this.assertRelatedOwnership(userId, dto.relatedType, dto.relatedId);
-    } else if (dto.category === 'dispute' && (!dto.relatedType || !dto.relatedId)) {
-      // Disputes should point at something; allow it but keep it soft for now.
-      this.logger.debug(`Dispute ticket created by ${userId} without a related transaction`);
-    }
-
-    const now = new Date();
-    const ticket = await this.ticketRepo.save(
+    return this.ticketRepo.save(
       this.ticketRepo.create({
         userId,
-        category: dto.category,
-        subject: dto.subject.trim(),
+        category: 'live_chat',
+        subject: 'Support',
         status: 'open',
-        priority: dto.category === 'refund' || dto.category === 'dispute' ? 'high' : 'normal',
-        relatedType: dto.relatedType ?? null,
-        relatedId: dto.relatedId ?? null,
-        requestedAmountMinor: dto.requestedAmountMinor ?? null,
-        lastMessageAt: now,
+        priority: 'normal',
+        lastMessageAt: new Date(),
       }),
     );
-
-    await this.appendMessage(ticket.id, {
-      authorId: userId,
-      authorRole: 'user',
-      body: dto.body.trim(),
-    });
-
-    this.gateway.emitSupportTicketCreated({
-      ticketId: ticket.id,
-      userId,
-      category: ticket.category,
-      subject: ticket.subject,
-      priority: ticket.priority,
-    });
-
-    return this.toTicketResponse(ticket);
   }
 
-  async listMyTickets(userId: string, limit = 30): Promise<SupportTicketResponse[]> {
-    const tickets = await this.ticketRepo.find({
-      where: { userId },
-      order: { lastMessageAt: 'DESC', createdAt: 'DESC' },
-      take: Math.min(Math.max(limit, 1), 100),
-    });
-    return tickets.map((t) => this.toTicketResponse(t));
-  }
-
-  async getMyTicket(userId: string, ticketId: string) {
-    const ticket = await this.ticketRepo.findOneBy({ id: ticketId });
-    if (!ticket || ticket.userId !== userId) {
-      throw new NotFoundException('Ticket not found');
-    }
-    const messages = await this.loadMessages(ticketId, { includeInternal: false });
+  /** The user's conversation thread (creates it if this is first contact). */
+  async getMyConversation(userId: string) {
+    const ticket = await this.getOrOpenConversation(userId);
+    const messages = await this.loadMessages(ticket.id, { includeInternal: false });
     return { ticket: this.toTicketResponse(ticket), messages };
   }
 
-  async postUserMessage(userId: string, ticketId: string, dto: PostMessageDto) {
-    const ticket = await this.ticketRepo.findOneBy({ id: ticketId });
-    if (!ticket || ticket.userId !== userId) {
-      throw new NotFoundException('Ticket not found');
-    }
-    if (ticket.status === 'closed') {
-      throw new ConflictException('This ticket is closed. Please open a new one.');
+  /**
+   * Post a message into the user's one conversation. When `requestType` is set,
+   * the message IS a tagged request (refund/dispute/complaint) the agent must
+   * act on — many such requests can live in the same chat over time.
+   */
+  async postUserMessage(userId: string, dto: PostMessageDto) {
+    const ticket = await this.getOrOpenConversation(userId);
+
+    const requestType = dto.requestType ?? null;
+    let requestedAmountMinor: number | null = null;
+    let relatedType: string | null = null;
+    let relatedId: string | null = null;
+
+    if (requestType) {
+      if (requestType === 'refund') {
+        requestedAmountMinor = dto.requestedAmountMinor ?? null;
+        if (!requestedAmountMinor || requestedAmountMinor < 1) {
+          throw new BadRequestException('A refund request must include a positive amount.');
+        }
+      }
+      if (dto.relatedType && dto.relatedId) {
+        await this.assertRelatedOwnership(userId, dto.relatedType, dto.relatedId);
+        relatedType = dto.relatedType;
+        relatedId = dto.relatedId;
+      }
     }
 
-    const message = await this.appendMessage(ticketId, {
+    const message = await this.appendMessage(ticket.id, {
       authorId: userId,
       authorRole: 'user',
       body: dto.body.trim(),
       attachments: dto.attachments,
+      requestType,
+      requestedAmountMinor,
+      relatedType,
+      relatedId,
     });
 
-    // A user reply re-opens the ball in the agent's court.
-    if (ticket.status !== 'open' && ticket.status !== 'pending_agent') {
-      await this.ticketRepo.update({ id: ticketId }, { status: 'pending_agent' });
+    // A user message (or new request) moves the ball to the agents.
+    await this.ticketRepo.update({ id: ticket.id }, { status: 'pending_agent' });
+
+    this.gateway.emitSupportMessage(ticket.id, this.toMessageEvent(ticket.id, message, ticket.assignedAgentId));
+    if (requestType) {
+      this.gateway.emitSupportTicketCreated({
+        ticketId: ticket.id,
+        userId,
+        category: requestType,
+        subject: ticket.subject,
+        priority: requestType === 'refund' || requestType === 'dispute' ? 'high' : 'normal',
+      });
     }
-
-    this.gateway.emitSupportMessage(ticketId, {
-      ticketId,
-      messageId: message.id,
-      authorRole: 'user',
-      authorId: userId,
-      body: message.body,
-      assignedAgentId: ticket.assignedAgentId,
-      createdAt: message.createdAt,
-    });
 
     return this.toMessageResponse(message);
-  }
-
-  async closeMyTicket(userId: string, ticketId: string): Promise<SupportTicketResponse> {
-    const ticket = await this.ticketRepo.findOneBy({ id: ticketId });
-    if (!ticket || ticket.userId !== userId) {
-      throw new NotFoundException('Ticket not found');
-    }
-    if (ticket.status === 'closed') return this.toTicketResponse(ticket);
-
-    ticket.status = 'closed';
-    ticket.closedAt = new Date();
-    await this.ticketRepo.save(ticket);
-    await this.appendSystemMessage(ticketId, 'Ticket closed by the user.');
-    return this.toTicketResponse(ticket);
   }
 
   // ==========================================================================
@@ -254,18 +241,10 @@ export class SupportService {
         userId: ticket.userId,
         type: 'system',
         title: 'Support replied',
-        body: `An agent replied to your ticket: ${ticket.subject}`,
+        body: 'An agent replied in your support chat.',
         data: { ticketId, category: ticket.category },
       });
-      this.gateway.emitSupportMessage(ticketId, {
-        ticketId,
-        messageId: message.id,
-        authorRole: 'agent',
-        authorId: agentId,
-        body: message.body,
-        assignedAgentId: ticket.assignedAgentId ?? agentId,
-        createdAt: message.createdAt,
-      });
+      this.gateway.emitSupportMessage(ticketId, this.toMessageEvent(ticketId, message, ticket.assignedAgentId ?? agentId));
     }
 
     return this.toMessageResponse(message);
@@ -310,120 +289,103 @@ export class SupportService {
     return this.toTicketResponse(ticket);
   }
 
-  // --- Refund resolution ----------------------------------------------------
+  // --- Request resolution (message-level, inside the one conversation) -------
 
-  async approveRefund(agentId: string, ticketId: string, dto: ApproveRefundDto): Promise<SupportTicketResponse> {
-    const ticket = await this.requireTicket(ticketId);
-    if (ticket.category !== 'refund') {
-      throw new BadRequestException('Only refund tickets can be approved for a refund');
+  /** Load a pending tagged-request message + its conversation, or throw. */
+  private async requireRequestMessage(messageId: string): Promise<{ message: SupportMessage; ticket: SupportTicket }> {
+    const message = await this.messageRepo.findOneBy({ id: messageId });
+    if (!message || !message.requestType) throw new NotFoundException('Request not found');
+    if (message.requestStatus && message.requestStatus !== 'pending') {
+      throw new ConflictException(`Request already ${message.requestStatus}`);
     }
-    if (ticket.resolutionType) {
-      throw new ConflictException(`Ticket already resolved as ${ticket.resolutionType}`);
+    const ticket = await this.requireTicket(message.ticketId);
+    return { message, ticket };
+  }
+
+  /** Approve a refund REQUEST (a tagged message) — credits the wallet. */
+  async approveRefundRequest(agentId: string, messageId: string, dto: ApproveRefundDto): Promise<SupportMessageResponse> {
+    const { message, ticket } = await this.requireRequestMessage(messageId);
+    if (message.requestType !== 'refund') {
+      throw new BadRequestException('Only a refund request can be approved for a refund');
     }
 
-    const amountMinor = dto.amountMinor ?? ticket.requestedAmountMinor ?? 0;
-    if (amountMinor < 1) {
-      throw new BadRequestException('Refund amount must be positive');
-    }
-    if (ticket.requestedAmountMinor && amountMinor > ticket.requestedAmountMinor) {
+    const amountMinor = dto.amountMinor ?? message.requestedAmountMinor ?? 0;
+    if (amountMinor < 1) throw new BadRequestException('Refund amount must be positive');
+    if (message.requestedAmountMinor && amountMinor > message.requestedAmountMinor) {
       throw new BadRequestException('Refund amount cannot exceed the requested amount');
     }
 
-    // Ledger-backed, idempotent: re-approving with the same ticket key will not double-credit.
+    // Ledger-backed, idempotent per REQUEST — re-approving won't double-credit.
     const result = await this.walletService.credit({
       userId: ticket.userId,
       amountMinor,
       entryType: 'refund',
       sourceType: 'support_refund',
-      sourceId: ticket.id,
-      idempotencyKey: `support-refund:${ticket.id}`,
-      metadata: { ticketId: ticket.id, approvedBy: agentId, relatedType: ticket.relatedType, relatedId: ticket.relatedId },
+      sourceId: message.id,
+      idempotencyKey: `support-refund:${message.id}`,
+      metadata: { ticketId: ticket.id, messageId: message.id, approvedBy: agentId, relatedType: message.relatedType, relatedId: message.relatedId },
     });
 
-    ticket.resolutionType = 'refunded';
-    ticket.resolutionNote = dto.note?.trim() ?? null;
-    ticket.refundLedgerEntryId = result.ledgerEntry.id;
-    ticket.refundedAmountMinor = amountMinor;
-    ticket.decidedBy = agentId;
-    ticket.decidedAt = new Date();
-    ticket.status = 'resolved';
-    ticket.closedAt = new Date();
-    await this.ticketRepo.save(ticket);
+    message.requestStatus = 'approved';
+    message.resolutionNote = dto.note?.trim() ?? null;
+    message.refundLedgerEntryId = result.ledgerEntry.id;
+    message.refundedAmountMinor = amountMinor;
+    message.decidedBy = agentId;
+    message.decidedAt = new Date();
+    await this.messageRepo.save(message);
 
-    await this.appendSystemMessage(
-      ticketId,
-      `Refund of ${amountMinor} minor units approved by agent ${agentId} (ledger ${result.ledgerEntry.id}).`,
-    );
+    await this.appendSystemMessage(ticket.id, `Refund of ${amountMinor} approved by agent ${agentId} (ledger ${result.ledgerEntry.id}).`);
     await this.notifications.safeCreate({
       userId: ticket.userId,
       type: 'adjustment',
       title: 'Refund approved',
       body: `Your refund request was approved and ${amountMinor} credited to your wallet.`,
-      data: { ticketId, amountMinor, ledgerEntryId: result.ledgerEntry.id },
+      data: { ticketId: ticket.id, messageId: message.id, amountMinor, ledgerEntryId: result.ledgerEntry.id },
     });
-    this.gateway.emitSupportTicketUpdated(ticket.userId, {
-      ticketId,
-      status: ticket.status,
-      resolutionType: ticket.resolutionType,
+    this.gateway.emitSupportRequestUpdated(ticket.userId, ticket.id, {
+      messageId: message.id,
+      requestType: message.requestType,
+      requestStatus: message.requestStatus,
+      refundedAmountMinor: message.refundedAmountMinor,
     });
 
-    return this.toTicketResponse(ticket);
+    return this.toMessageResponse(message);
   }
 
-  async rejectTicket(agentId: string, ticketId: string, dto: RejectRefundDto): Promise<SupportTicketResponse> {
-    const ticket = await this.requireTicket(ticketId);
-    if (ticket.resolutionType) {
-      throw new ConflictException(`Ticket already resolved as ${ticket.resolutionType}`);
-    }
-    ticket.resolutionType = 'rejected';
-    ticket.resolutionNote = dto.reason.trim();
-    ticket.decidedBy = agentId;
-    ticket.decidedAt = new Date();
-    ticket.status = 'resolved';
-    ticket.closedAt = new Date();
-    await this.ticketRepo.save(ticket);
+  /** Reject any tagged request (refund/dispute/complaint) with a reason. */
+  async rejectRequest(agentId: string, messageId: string, dto: RejectRefundDto): Promise<SupportMessageResponse> {
+    const { message, ticket } = await this.requireRequestMessage(messageId);
 
-    await this.appendSystemMessage(ticketId, `Ticket rejected by agent ${agentId}: ${dto.reason.trim()}`);
+    message.requestStatus = 'rejected';
+    message.resolutionNote = dto.reason.trim();
+    message.decidedBy = agentId;
+    message.decidedAt = new Date();
+    await this.messageRepo.save(message);
+
+    await this.appendSystemMessage(ticket.id, `${message.requestType} request declined by agent ${agentId}: ${dto.reason.trim()}`);
     await this.notifications.safeCreate({
       userId: ticket.userId,
       type: 'system',
-      title: ticket.category === 'refund' ? 'Refund declined' : 'Ticket closed',
-      body: `Your ${ticket.category} request was declined. Reason: ${dto.reason.trim()}`,
-      data: { ticketId, category: ticket.category },
+      title: message.requestType === 'refund' ? 'Refund declined' : 'Request declined',
+      body: `Your ${message.requestType} request was declined. Reason: ${dto.reason.trim()}`,
+      data: { ticketId: ticket.id, messageId: message.id },
     });
-    this.gateway.emitSupportTicketUpdated(ticket.userId, {
-      ticketId,
-      status: ticket.status,
-      resolutionType: ticket.resolutionType,
+    this.gateway.emitSupportRequestUpdated(ticket.userId, ticket.id, {
+      messageId: message.id,
+      requestType: message.requestType,
+      requestStatus: message.requestStatus,
     });
 
-    return this.toTicketResponse(ticket);
+    return this.toMessageResponse(message);
   }
 
   // ==========================================================================
   // Live chat (used by the gateway)
   // ==========================================================================
 
-  /** Find the user's active live-chat ticket, or open a fresh one. */
+  /** Alias — the live chat and the ticket conversation are one and the same. */
   async getOrOpenLiveChat(userId: string): Promise<SupportTicket> {
-    const existing = await this.ticketRepo.findOne({
-      where: { userId, category: 'live_chat' },
-      order: { createdAt: 'DESC' },
-    });
-    if (existing && existing.status !== 'closed' && existing.status !== 'resolved') {
-      return existing;
-    }
-    const now = new Date();
-    return this.ticketRepo.save(
-      this.ticketRepo.create({
-        userId,
-        category: 'live_chat',
-        subject: 'Live chat',
-        status: 'open',
-        priority: 'normal',
-        lastMessageAt: now,
-      }),
-    );
+    return this.getOrOpenConversation(userId);
   }
 
   async appendLiveChatMessage(
@@ -463,6 +425,11 @@ export class SupportService {
       body: string;
       attachments?: Record<string, unknown>[];
       internal?: boolean;
+      requestType?: SupportRequestType | null;
+      requestStatus?: SupportRequestStatus | null;
+      requestedAmountMinor?: number | null;
+      relatedType?: string | null;
+      relatedId?: string | null;
     },
   ): Promise<SupportMessage> {
     const message = await this.messageRepo.save(
@@ -473,6 +440,11 @@ export class SupportService {
         body: input.body,
         attachments: input.attachments ?? null,
         internal: input.internal ?? false,
+        requestType: input.requestType ?? null,
+        requestStatus: input.requestType ? (input.requestStatus ?? 'pending') : null,
+        requestedAmountMinor: input.requestedAmountMinor ?? null,
+        relatedType: input.relatedType ?? null,
+        relatedId: input.relatedId ?? null,
       }),
     );
     // Public messages bump the inbox sort key; internal notes don't reorder the queue.
@@ -541,6 +513,22 @@ export class SupportService {
     };
   }
 
+  /** Socket payload for a single message (includes request tags for the UI). */
+  private toMessageEvent(ticketId: string, m: SupportMessage, assignedAgentId: string | null) {
+    return {
+      ticketId,
+      messageId: m.id,
+      authorRole: m.authorRole,
+      authorId: m.authorId,
+      body: m.body,
+      assignedAgentId: assignedAgentId ?? null,
+      createdAt: m.createdAt,
+      requestType: m.requestType,
+      requestStatus: m.requestStatus,
+      requestedAmountMinor: m.requestedAmountMinor,
+    };
+  }
+
   private toMessageResponse(m: SupportMessage): SupportMessageResponse {
     return {
       id: m.id,
@@ -550,6 +538,14 @@ export class SupportService {
       attachments: m.attachments,
       internal: m.internal,
       createdAt: m.createdAt,
+      requestType: m.requestType,
+      requestStatus: m.requestStatus,
+      requestedAmountMinor: m.requestedAmountMinor,
+      relatedType: m.relatedType,
+      relatedId: m.relatedId,
+      refundedAmountMinor: m.refundedAmountMinor,
+      resolutionNote: m.resolutionNote,
+      decidedAt: m.decidedAt,
     };
   }
 }

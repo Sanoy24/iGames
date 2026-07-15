@@ -243,10 +243,23 @@
   },
   "support": {
     "title": "Support",
-    "myTickets": "My tickets",
-    "liveChat": "Live chat",
-    "newTicket": "New ticket",
-    "noTickets": "No tickets yet. Open one if you need help."
+    "emptyChat": "Say hi — support will reply right here.",
+    "messagePlaceholder": "Type a message…",
+    "newRequest": "New request",
+    "reqRefund": "Refund",
+    "reqDispute": "Dispute",
+    "reqComplaint": "Complaint",
+    "status_pending": "Pending",
+    "status_approved": "Approved",
+    "status_rejected": "Declined",
+    "refundedAmount": "Refunded {{amount}} ETB to your wallet",
+    "describeIssue": "Describe your issue…",
+    "enterRefundAmount": "Enter the refund amount.",
+    "refundAmountPlaceholder": "Refund amount (ETB)",
+    "relatedIdPlaceholder": "Related withdrawal ID (optional)",
+    "sendRequest": "Send request",
+    "sending": "Sending…",
+    "requestSent": "Request sent."
   },
   "bingo": {
     "recentCalls": "Recent calls",

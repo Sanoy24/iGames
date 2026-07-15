@@ -27,7 +27,10 @@ function Badge({ text, cls }: { text: string; cls?: string }) {
   return <span className={`badge ${cls ?? ''}`} style={{ fontSize: 10 }}>{text}</span>;
 }
 
-// ── Detail / thread ───────────────────────────────────────────────
+const REQ_LABEL: Record<string, string> = { refund: 'Refund', dispute: 'Dispute', complaint: 'Complaint' };
+const REQ_STATUS_BADGE: Record<string, string> = { pending: 'badge-gold', approved: 'badge-green', rejected: 'badge-red' };
+
+// ── Detail / conversation ─────────────────────────────────────────
 function ConsoleDetail({ ticketId, onBack, onChanged }: { ticketId: string; onBack: () => void; onChanged: () => void }) {
   const addToast = useStore((s) => s.addToast);
   const meId = useStore((s) => s.user?.id);
@@ -36,17 +39,27 @@ function ConsoleDetail({ ticketId, onBack, onChanged }: { ticketId: string; onBa
   const [reply, setReply] = useState('');
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [refundAmount, setRefundAmount] = useState('');
-  const [refundNote, setRefundNote] = useState('');
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
-  const [showReject, setShowReject] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const prefillAmounts = (msgs: SupportMessage[]) =>
+    setAmounts((prev) => {
+      const next = { ...prev };
+      for (const m of msgs) {
+        if (m.requestType === 'refund' && m.requestStatus === 'pending' && next[m.id] === undefined && m.requestedAmountMinor != null) {
+          next[m.id] = String(m.requestedAmountMinor / 100);
+        }
+      }
+      return next;
+    });
 
   const load = useCallback(async () => {
     const data = await supportAgentApi.get(ticketId);
     setTicket(data.ticket);
     setMessages(data.messages);
-    if (data.ticket.requestedAmountMinor) setRefundAmount((data.ticket.requestedAmountMinor / 100).toString());
+    prefillAmounts(data.messages);
   }, [ticketId]);
 
   useEffect(() => { void load(); }, [load]);
@@ -57,8 +70,16 @@ function ConsoleDetail({ ticketId, onBack, onChanged }: { ticketId: string; onBa
       if (e.ticketId !== ticketId) return;
       setMessages((prev) => prev.some((m) => m.id === e.messageId) ? prev : [...prev, {
         id: e.messageId, authorId: e.authorId, authorRole: e.authorRole, body: e.body, attachments: null, internal: false, createdAt: e.createdAt,
+        requestType: (e.requestType ?? null) as SupportMessage['requestType'], requestStatus: (e.requestStatus ?? null) as SupportMessage['requestStatus'],
+        requestedAmountMinor: e.requestedAmountMinor ?? null, relatedType: null, relatedId: null, refundedAmountMinor: null, resolutionNote: null, decidedAt: null,
       }]);
+      if (e.requestType === 'refund' && e.requestedAmountMinor != null) {
+        setAmounts((prev) => prev[e.messageId] !== undefined ? prev : { ...prev, [e.messageId]: String((e.requestedAmountMinor as number) / 100) });
+      }
     },
+    onRequestUpdated: (e) => setMessages((prev) => prev.map((m) => m.id === e.messageId
+      ? { ...m, requestStatus: (e.requestStatus ?? m.requestStatus) as SupportMessage['requestStatus'], refundedAmountMinor: e.refundedAmountMinor ?? m.refundedAmountMinor }
+      : m)),
     onTicketUpdated: (e) => { if (e.ticketId === ticketId) void load(); },
   }, ticketId);
 
@@ -85,41 +106,38 @@ function ConsoleDetail({ ticketId, onBack, onChanged }: { ticketId: string; onBa
     catch (e) { addToast('error', getErrorMessage(e)); }
   };
 
-  const approveRefund = async () => {
-    const minor = Math.round(parseFloat(refundAmount) * 100);
+  const approveRefund = async (messageId: string) => {
+    const minor = Math.round(parseFloat(amounts[messageId] ?? '') * 100);
     if (!minor || minor < 1) { addToast('error', 'Enter a valid amount.'); return; }
     setBusy(true);
     try {
-      await supportAgentApi.approveRefund(ticketId, { amountMinor: minor, note: refundNote.trim() || undefined });
+      await supportAgentApi.approveRefund(messageId, { amountMinor: minor });
       addToast('success', 'Refund approved and credited.');
       void load(); onChanged();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(false); }
   };
 
-  const reject = async () => {
+  const rejectRequest = async (messageId: string) => {
     if (!rejectReason.trim()) { addToast('error', 'Add a reason.'); return; }
     setBusy(true);
     try {
-      await supportAgentApi.reject(ticketId, rejectReason.trim());
-      addToast('success', 'Ticket rejected.');
-      setShowReject(false); void load(); onChanged();
+      await supportAgentApi.reject(messageId, rejectReason.trim());
+      addToast('success', 'Request declined.');
+      setRejectingId(null); setRejectReason(''); void load(); onChanged();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(false); }
   };
 
   const isResolved = ticket?.status === 'resolved' || ticket?.status === 'closed';
-  const isRefund = ticket?.category === 'refund';
-  const decided = !!ticket?.resolutionType;
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <button className="btn btn-ghost btn-sm icon-btn" onClick={onBack}><ArrowLeft size={16} /></button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ticket?.subject ?? '…'}</div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Conversation</div>
           <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
-            {ticket && <Badge text={CATEGORY_LABEL[ticket.category]} cls="badge-violet" />}
             {ticket && <Badge text={STATUS_LABEL[ticket.status]} cls={STATUS_BADGE[ticket.status]} />}
             {ticket?.priority && ticket.priority !== 'normal' && <Badge text={ticket.priority} cls="badge-gold" />}
           </div>
@@ -131,36 +149,56 @@ function ConsoleDetail({ ticketId, onBack, onChanged }: { ticketId: string; onBa
       <div className="card" style={{ padding: '8px 12px', marginBottom: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
         <div>User: <code>{ticket?.userId}</code></div>
         {ticket?.assignedAgentId && <div>Assigned: <code>{ticket.assignedAgentId}{ticket.assignedAgentId === meId ? ' (you)' : ''}</code></div>}
-        {ticket?.relatedType && <div>Related: {ticket.relatedType} <code>{ticket.relatedId}</code></div>}
-        {isRefund && ticket?.requestedAmountMinor != null && <div>Requested refund: <strong>{formatCredits(ticket.requestedAmountMinor)}</strong></div>}
-        {ticket?.resolutionType && (
-          <div style={{ marginTop: 4 }}>
-            Resolution: <strong>{ticket.resolutionType}</strong>
-            {ticket.refundedAmountMinor != null && ` — ${formatCredits(ticket.refundedAmountMinor)}`}
-            {ticket.resolutionNote && ` (${ticket.resolutionNote})`}
-          </div>
-        )}
       </div>
 
       {/* Thread */}
-      <div ref={scrollRef} style={{ maxHeight: 320, overflowY: 'auto', padding: '4px 2px', marginBottom: 10 }}>
+      <div ref={scrollRef} style={{ maxHeight: 340, overflowY: 'auto', padding: '4px 2px', marginBottom: 10 }}>
         {messages.map((m) => {
           if (m.authorRole === 'system') {
             return <div key={m.id} style={{ textAlign: 'center', margin: '6px 0', fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>{m.body}</div>;
           }
           const mine = m.authorRole === 'agent';
+          const pendingRequest = m.requestType && m.requestStatus === 'pending';
           return (
             <div key={m.id} style={{ display: 'flex', justifyContent: mine ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
-              <div style={{
-                maxWidth: '80%',
-                background: m.internal ? '#f59e0b22' : mine ? 'var(--accent)' : 'var(--card-bg)',
-                color: m.internal ? 'var(--text-primary)' : mine ? '#fff' : 'var(--text-primary)',
-                border: m.internal ? '1px dashed #f59e0b' : mine ? 'none' : '1px solid var(--border)',
-                borderRadius: 12, padding: '8px 11px',
-              }}>
-                {m.internal && <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', marginBottom: 3 }}>INTERNAL NOTE</div>}
-                <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.body}</div>
-                <div style={{ fontSize: 9, opacity: 0.7, marginTop: 3, textAlign: 'right' }}>{formatRelativeTime(m.createdAt)}</div>
+              <div style={{ maxWidth: '86%', display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start', gap: 4 }}>
+                <div style={{
+                  background: m.internal ? '#f59e0b22' : mine ? 'var(--accent)' : 'var(--card-bg)',
+                  color: m.internal ? 'var(--text-primary)' : mine ? '#1a1200' : 'var(--text-primary)',
+                  border: m.internal ? '1px dashed #f59e0b' : mine ? 'none' : '1px solid var(--border)',
+                  borderRadius: 12, padding: '8px 11px',
+                }}>
+                  {m.internal && <div style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', marginBottom: 3 }}>INTERNAL NOTE</div>}
+                  {m.requestType && (
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
+                      <Badge text={REQ_LABEL[m.requestType]} cls="badge-violet" />
+                      {m.requestType === 'refund' && m.requestedAmountMinor != null && <span style={{ fontSize: 11, fontWeight: 800 }}>{formatCredits(m.requestedAmountMinor)} ETB</span>}
+                      {m.requestStatus && <Badge text={m.requestStatus} cls={REQ_STATUS_BADGE[m.requestStatus]} />}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.body}</div>
+                  <div style={{ fontSize: 9, opacity: 0.7, marginTop: 3, textAlign: 'right' }}>{formatRelativeTime(m.createdAt)}</div>
+                </div>
+
+                {/* Inline request actions (agent) */}
+                {pendingRequest && (
+                  <div className="card" style={{ padding: 8, width: 260, maxWidth: '100%' }}>
+                    {m.requestType === 'refund' && (
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                        <input className="input" placeholder="Amount (ETB)" value={amounts[m.id] ?? ''} onChange={(e) => setAmounts((p) => ({ ...p, [m.id]: e.target.value }))} inputMode="decimal" style={{ flex: 1 }} />
+                        <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => approveRefund(m.id)}><CheckCircle2 size={13} /> Approve</button>
+                      </div>
+                    )}
+                    {rejectingId === m.id ? (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input className="input" placeholder="Reason" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} style={{ flex: 1 }} />
+                        <button className="btn btn-sm" disabled={busy} onClick={() => rejectRequest(m.id)} style={{ background: '#ef4444', color: '#fff' }}>Decline</button>
+                      </div>
+                    ) : (
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger, #ef4444)', fontSize: 11 }} onClick={() => { setRejectingId(m.id); setRejectReason(''); }}><XCircle size={13} /> Decline request</button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -184,43 +222,11 @@ function ConsoleDetail({ ticketId, onBack, onChanged }: { ticketId: string; onBa
 
       {/* Status controls */}
       {!isResolved && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {STATUS_OPTIONS.filter((s) => s !== ticket?.status).map((s) => (
             <button key={s} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setStatus(s)}>{STATUS_LABEL[s]}</button>
           ))}
         </div>
-      )}
-
-      {/* Refund decision */}
-      {isRefund && !decided && (
-        <div className="card" style={{ padding: 12, marginBottom: 10 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Refund decision</div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <input className="input" placeholder="Amount (ETB)" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} inputMode="decimal" style={{ flex: 1 }} />
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={approveRefund}><CheckCircle2 size={14} /> Approve</button>
-          </div>
-          <input className="input" placeholder="Note (optional)" value={refundNote} onChange={(e) => setRefundNote(e.target.value)} style={{ marginBottom: 8 }} />
-          {!showReject ? (
-            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger, #ef4444)' }} onClick={() => setShowReject(true)}><XCircle size={14} /> Reject</button>
-          ) : (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input className="input" placeholder="Reason for rejection" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} style={{ flex: 1 }} />
-              <button className="btn btn-sm" disabled={busy} onClick={reject} style={{ background: '#ef4444', color: '#fff' }}>Confirm</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Non-refund reject */}
-      {!isRefund && !decided && !isResolved && (
-        showReject ? (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input className="input" placeholder="Reason" value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} style={{ flex: 1 }} />
-            <button className="btn btn-sm" disabled={busy} onClick={reject} style={{ background: '#ef4444', color: '#fff' }}>Reject</button>
-          </div>
-        ) : (
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowReject(true)} style={{ fontSize: 11 }}>Reject / decline</button>
-        )
       )}
     </div>
   );

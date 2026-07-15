@@ -170,10 +170,23 @@
   },
   "support": {
     "title": "ደገፍ",
-    "myTickets": "ናተይ ቲኬታት",
-    "liveChat": "ቀጥታ ዕላል",
-    "newTicket": "ሓድሽ ቲኬት",
-    "noTickets": "ክሳብ ሕጂ ቲኬት የለን። ሓገዝ እንተደሊኻ ሓድሽ ክፈት።"
+    "emptyChat": "ሰላም በል — ደገፍ ኣብዚ ክምልሰልካ እዩ።",
+    "messagePlaceholder": "መልእኽቲ ጽሓፍ…",
+    "newRequest": "ሓድሽ ሕቶ",
+    "reqRefund": "ገንዘብ ተመላሲ",
+    "reqDispute": "ክርክር",
+    "reqComplaint": "ጥርዓን",
+    "status_pending": "ኣብ ምጽባይ",
+    "status_approved": "ጸዲቑ",
+    "status_rejected": "ተነጺጉ",
+    "refundedAmount": "{{amount}} ብር ናብ ቦርሳኻ ተመሊሱ",
+    "describeIssue": "ጸገምካ ግለጽ…",
+    "enterRefundAmount": "መጠን ተመላሲ ኣእቱ።",
+    "refundAmountPlaceholder": "መጠን ተመላሲ (ብር)",
+    "relatedIdPlaceholder": "ተዛማዲ መለለዪ ምውጻእ (ኣማራጺ)",
+    "sendRequest": "ሕቶ ላኣኽ",
+    "sending": "ይለኣኽ ኣሎ…",
+    "requestSent": "ሕቶ ተላኢኹ።"
   },
   "faq": {
     "keno": {

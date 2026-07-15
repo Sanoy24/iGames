@@ -170,10 +170,23 @@
   },
   "support": {
     "title": "Appoġġ",
-    "myTickets": "Il-biljetti tiegħi",
-    "liveChat": "Chat live",
-    "newTicket": "Biljett ġdid",
-    "noTickets": "L-ebda biljett s'issa. Iftaħ wieħed jekk teħtieġ għajnuna."
+    "emptyChat": "Għid ħellow — l-appoġġ iwieġeb hawn stess.",
+    "messagePlaceholder": "Ikteb messaġġ…",
+    "newRequest": "Talba ġdida",
+    "reqRefund": "Rifużjoni",
+    "reqDispute": "Tilwima",
+    "reqComplaint": "Ilment",
+    "status_pending": "Pendenti",
+    "status_approved": "Approvat",
+    "status_rejected": "Miċħud",
+    "refundedAmount": "{{amount}} ETB ġew rifużjonati fil-kartiera tiegħek",
+    "describeIssue": "Iddeskrivi l-problema tiegħek…",
+    "enterRefundAmount": "Daħħal l-ammont tar-rifużjoni.",
+    "refundAmountPlaceholder": "Ammont tar-rifużjoni (ETB)",
+    "relatedIdPlaceholder": "ID tal-irtirar relatat (mhux obbligatorju)",
+    "sendRequest": "Ibgħat talba",
+    "sending": "Qed jintbagħat…",
+    "requestSent": "It-talba ntbagħtet."
   },
   "faq": {
     "keno": {

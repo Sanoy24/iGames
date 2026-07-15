@@ -29,12 +29,22 @@ export type SupportMessagePayload = {
   body: string;
   assignedAgentId: string | null;
   createdAt: Date;
+  requestType?: string | null;
+  requestStatus?: string | null;
+  requestedAmountMinor?: number | null;
 };
 
 export type SupportTicketUpdatedPayload = {
   ticketId: string;
   status: string;
   resolutionType?: string | null;
+};
+
+export type SupportRequestUpdatedPayload = {
+  messageId: string;
+  requestType: string | null;
+  requestStatus: string | null;
+  refundedAmountMinor?: number | null;
 };
 
 /**
@@ -171,5 +181,12 @@ export class SupportGateway implements OnGatewayConnection {
   emitSupportTicketUpdated(userId: string, payload: SupportTicketUpdatedPayload): void {
     this.server?.to(`support_user_${userId}`).emit('support.ticket.updated', payload);
     this.server?.to(`support_ticket_${payload.ticketId}`).emit('support.ticket.updated', payload);
+  }
+
+  /** A tagged request was approved/rejected — update the user + the thread viewers. */
+  emitSupportRequestUpdated(userId: string, ticketId: string, payload: SupportRequestUpdatedPayload): void {
+    this.server?.to(`support_user_${userId}`).emit('support.request.updated', payload);
+    this.server?.to(`support_ticket_${ticketId}`).emit('support.request.updated', payload);
+    this.server?.to('support_agents').emit('support.request.updated', payload);
   }
 }

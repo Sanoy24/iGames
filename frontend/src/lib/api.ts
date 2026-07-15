@@ -653,6 +653,9 @@ export type SupportTicket = {
   updatedAt: string;
 };
 
+export type SupportRequestType = 'complaint' | 'dispute' | 'refund';
+export type SupportRequestStatus = 'pending' | 'approved' | 'rejected';
+
 export type SupportMessage = {
   id: string;
   authorId: string | null;
@@ -661,30 +664,34 @@ export type SupportMessage = {
   attachments: Record<string, unknown>[] | null;
   internal: boolean;
   createdAt: string;
+  // Present only when the message is a tagged request.
+  requestType: SupportRequestType | null;
+  requestStatus: SupportRequestStatus | null;
+  requestedAmountMinor: number | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  refundedAmountMinor: number | null;
+  resolutionNote: string | null;
+  decidedAt: string | null;
 };
 
-export type SupportTicketThread = { ticket: SupportTicket; messages: SupportMessage[] };
+export type SupportConversation = { ticket: SupportTicket; messages: SupportMessage[] };
 
-export type CreateTicketInput = {
-  category: Exclude<SupportTicketCategory, 'live_chat'>;
-  subject: string;
+export type PostMessageInput = {
   body: string;
+  requestType?: SupportRequestType;
+  requestedAmountMinor?: number;
   relatedType?: string;
   relatedId?: string;
-  requestedAmountMinor?: number;
 };
 
 export const supportApi = {
-  createTicket: (dto: CreateTicketInput) =>
-    api.post<SupportTicket>('/support/tickets', dto).then((r) => r.data),
-  listMyTickets: (limit = 30) =>
-    api.get<SupportTicket[]>(`/support/tickets?limit=${limit}`).then((r) => r.data),
-  getMyTicket: (id: string) =>
-    api.get<SupportTicketThread>(`/support/tickets/${id}`).then((r) => r.data),
-  postMessage: (id: string, body: string) =>
-    api.post<SupportMessage>(`/support/tickets/${id}/messages`, { body }).then((r) => r.data),
-  closeTicket: (id: string) =>
-    api.post<SupportTicket>(`/support/tickets/${id}/close`).then((r) => r.data),
+  /** The user's single support conversation. */
+  getConversation: () =>
+    api.get<SupportConversation>('/support/conversation').then((r) => r.data),
+  /** Post a message, optionally as a tagged refund/dispute/complaint request. */
+  postMessage: (input: PostMessageInput) =>
+    api.post<SupportMessage>('/support/messages', input).then((r) => r.data),
 };
 
 export type SupportTicketFilter = {
@@ -708,17 +715,18 @@ export const supportAgentApi = {
       .then((r) => r.data);
   },
   get: (id: string) =>
-    api.get<SupportTicketThread>(`/agent/support/tickets/${id}`).then((r) => r.data),
+    api.get<SupportConversation>(`/agent/support/tickets/${id}`).then((r) => r.data),
   reply: (id: string, body: string, internal = false) =>
     api.post<SupportMessage>(`/agent/support/tickets/${id}/messages`, { body, internal }).then((r) => r.data),
   update: (id: string, dto: { status?: SupportTicketStatus; priority?: SupportTicketPriority; assignedAgentId?: string | null }) =>
     api.patch<SupportTicket>(`/agent/support/tickets/${id}`, dto).then((r) => r.data),
   claim: (id: string) =>
     api.post<SupportTicket>(`/agent/support/tickets/${id}/claim`).then((r) => r.data),
-  approveRefund: (id: string, dto: { amountMinor?: number; note?: string }) =>
-    api.post<SupportTicket>(`/agent/support/tickets/${id}/refund/approve`, dto).then((r) => r.data),
-  reject: (id: string, reason: string) =>
-    api.post<SupportTicket>(`/agent/support/tickets/${id}/reject`, { reason }).then((r) => r.data),
+  // Request actions are message-level now (a request is a tagged message).
+  approveRefund: (messageId: string, dto: { amountMinor?: number; note?: string }) =>
+    api.post<SupportMessage>(`/agent/support/messages/${messageId}/refund/approve`, dto).then((r) => r.data),
+  reject: (messageId: string, reason: string) =>
+    api.post<SupportMessage>(`/agent/support/messages/${messageId}/reject`, { reason }).then((r) => r.data),
 };
 
 // ── Games catalog + admin availability control ───────────────────

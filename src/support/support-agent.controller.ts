@@ -55,21 +55,23 @@ export class SupportAgentController {
     return this.support.claimTicket(user.id, id);
   }
 
-  @Post('tickets/:id/refund/approve')
+  /** Approve a refund REQUEST (a tagged message inside the conversation). */
+  @Post('messages/:messageId/refund/approve')
   approveRefund(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('messageId') messageId: string,
     @Body() dto: ApproveRefundDto,
   ) {
-    return this.support.approveRefund(user.id, id, dto);
+    return this.support.approveRefundRequest(user.id, messageId, dto);
   }
 
-  @Post('tickets/:id/reject')
+  /** Reject any tagged request (refund/dispute/complaint). */
+  @Post('messages/:messageId/reject')
   reject(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
+    @Param('messageId') messageId: string,
     @Body() dto: RejectRefundDto,
   ) {
-    return this.support.rejectTicket(user.id, id, dto);
+    return this.support.rejectRequest(user.id, messageId, dto);
   }
 }

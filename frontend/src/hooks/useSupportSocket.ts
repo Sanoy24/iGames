@@ -10,6 +10,16 @@ export type SupportMessageEvent = {
   body: string;
   assignedAgentId: string | null;
   createdAt: string;
+  requestType?: string | null;
+  requestStatus?: string | null;
+  requestedAmountMinor?: number | null;
+};
+
+export type SupportRequestEvent = {
+  messageId: string;
+  requestType: string | null;
+  requestStatus: string | null;
+  refundedAmountMinor?: number | null;
 };
 
 export type SupportTicketEvent = {
@@ -35,6 +45,7 @@ type Handlers = {
   onTicketUpdated?: (e: SupportTicketEvent) => void;
   onLivechatActivity?: (e: SupportTicketEvent) => void;
   onTyping?: (e: SupportTypingEvent) => void;
+  onRequestUpdated?: (e: SupportRequestEvent) => void;
 };
 
 // Single shared connection to the dedicated /support namespace. Kept separate
@@ -73,12 +84,14 @@ export function useSupportSocket(handlers: Handlers, openTicketId?: string) {
     const onUpdated = (e: SupportTicketEvent) => ref.current.onTicketUpdated?.(e);
     const onActivity = (e: SupportTicketEvent) => ref.current.onLivechatActivity?.(e);
     const onTyping = (e: SupportTypingEvent) => ref.current.onTyping?.(e);
+    const onRequest = (e: SupportRequestEvent) => ref.current.onRequestUpdated?.(e);
 
     s.on('support.message.new', onMsg);
     s.on('support.ticket.created', onCreated);
     s.on('support.ticket.updated', onUpdated);
     s.on('support.livechat.activity', onActivity);
     s.on('support.typing', onTyping);
+    s.on('support.request.updated', onRequest);
 
     return () => {
       s.off('support.message.new', onMsg);
@@ -86,6 +99,7 @@ export function useSupportSocket(handlers: Handlers, openTicketId?: string) {
       s.off('support.ticket.updated', onUpdated);
       s.off('support.livechat.activity', onActivity);
       s.off('support.typing', onTyping);
+      s.off('support.request.updated', onRequest);
     };
   }, []);
 

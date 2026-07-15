@@ -243,10 +243,23 @@
   },
   "support": {
     "title": "ድጋፍ",
-    "myTickets": "የእኔ ትኬቶች",
-    "liveChat": "ቀጥታ ውይይት",
-    "newTicket": "አዲስ ትኬት",
-    "noTickets": "እስካሁን ትኬት የለም። እርዳታ ከፈለጉ አዲስ ይክፈቱ።"
+    "emptyChat": "ሰላም ይበሉ — ድጋፍ እዚሁ ይመልስልዎታል።",
+    "messagePlaceholder": "መልእክት ይጻፉ…",
+    "newRequest": "አዲስ ጥያቄ",
+    "reqRefund": "ገንዘብ ተመላሽ",
+    "reqDispute": "ክርክር",
+    "reqComplaint": "ቅሬታ",
+    "status_pending": "በመጠባበቅ ላይ",
+    "status_approved": "ጸድቋል",
+    "status_rejected": "ተቀባይነት አላገኘም",
+    "refundedAmount": "{{amount}} ብር ወደ ቦርሳዎ ተመልሷል",
+    "describeIssue": "ችግርዎን ይግለጹ…",
+    "enterRefundAmount": "የተመላሽ መጠኑን ያስገቡ።",
+    "refundAmountPlaceholder": "የተመላሽ መጠን (ብር)",
+    "relatedIdPlaceholder": "ተዛማጅ የማውጣት መለያ (አማራጭ)",
+    "sendRequest": "ጥያቄ ላክ",
+    "sending": "በመላክ ላይ…",
+    "requestSent": "ጥያቄ ተልኳል።"
   },
   "bingo": {
     "recentCalls": "የቅርብ ጊዜ ጥሪዎች",

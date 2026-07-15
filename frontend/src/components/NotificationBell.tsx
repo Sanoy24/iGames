@@ -24,7 +24,31 @@ function mapServerNotification(n: ServerNotification): AppNotification {
     message: n.body,
     timestamp: new Date(n.createdAt).getTime(),
     read: n.read,
+    data: n.data ?? null,
   };
+}
+
+const GAME_KEY: Record<string, string> = {
+  bingo: 'notifications.gameBingo',
+  keno: 'notifications.gameKeno',
+  crash: 'notifications.gameCrash',
+};
+
+/**
+ * Notification bodies are stored in English by the backend. Where the payload
+ * carries structured data (win amount + game) we rebuild a localized label;
+ * otherwise we fall back to the stored text.
+ */
+function localizeNotification(n: AppNotification, t: (k: string, o?: Record<string, unknown>) => string) {
+  if (n.type === 'win' && n.data && typeof n.data.amountMinor === 'number') {
+    const game = String(n.data.game ?? '');
+    const gameLabel = GAME_KEY[game] ? t(GAME_KEY[game]) : game ? game.charAt(0).toUpperCase() + game.slice(1) : '';
+    return {
+      title: t('notifications.winTitle'),
+      message: t('notifications.winBody', { amount: new Intl.NumberFormat().format(n.data.amountMinor as number), game: gameLabel }),
+    };
+  }
+  return { title: n.title, message: n.message };
 }
 
 export function NotificationBell() {
@@ -150,25 +174,28 @@ export function NotificationBell() {
               </div>
             ) : (
               <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    style={{
-                      padding: '9px 14px',
-                      borderBottom: '1px solid var(--border)',
-                      opacity: n.read ? 0.7 : 1,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontSize: 14 }}>{TYPE_ICON[n.type] ?? '🔔'}</span>
-                      <span style={{ fontWeight: 600, fontSize: 12 }}>{n.title}</span>
+                {notifications.map((n) => {
+                  const { title, message } = localizeNotification(n, t);
+                  return (
+                    <div
+                      key={n.id}
+                      style={{
+                        padding: '9px 14px',
+                        borderBottom: '1px solid var(--border)',
+                        opacity: n.read ? 0.7 : 1,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 14 }}>{TYPE_ICON[n.type] ?? '🔔'}</span>
+                        <span style={{ fontWeight: 600, fontSize: 12 }}>{title}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{message}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {new Date(n.timestamp).toLocaleString()}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{n.message}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {new Date(n.timestamp).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </motion.div>

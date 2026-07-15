@@ -76,6 +76,7 @@
   },
   "wallet": {
     "title": "Kartiera",
+    "topUp": "Żid Kreditu",
     "available": "Disponibbli",
     "reserved": "Riżervat",
     "status": "Status",
@@ -99,7 +100,12 @@
   },
   "notifications": {
     "title": "Notifiki",
-    "empty": "Għad m'hemm l-ebda notifika"
+    "empty": "Għad m'hemm l-ebda notifika",
+    "winTitle": "Rbaħt! 🎉",
+    "winBody": "Rbaħt {{amount}} ETB fil-{{game}}.",
+    "gameBingo": "Bingo",
+    "gameKeno": "Keno",
+    "gameCrash": "Crash"
   },
   "language": {
     "label": "Lingwa"
@@ -110,6 +116,32 @@
     "liveChat": "Chat live",
     "newTicket": "Biljett ġdid",
     "noTickets": "L-ebda biljett s'issa. Iftaħ wieħed jekk teħtieġ għajnuna."
+  },
+  "faq": {
+    "keno": {
+      "q": "Kif jaħdem il-Keno?",
+      "a": "Agħżel 1–12 numri minn 1–80. Meta ssir il-ġibda, jintgħażlu 20 numru b'mod każwali. Il-ħlas tiegħek jiddependi minn kemm mill-għażliet tiegħek jaqblu."
+    },
+    "bingo": {
+      "q": "Kif jaħdem il-Bingo?",
+      "a": "Idħol f'kamra u ixtri l-biljetti. In-numri jinġibdu wieħed wieħed. Aqbel ringiela waħda, żewġ ringieli, jew karta sħiħa biex tirbaħ il-premjijiet."
+    },
+    "currency": {
+      "q": "Liema munita tuża l-app?",
+      "a": "Il-bilanċi, l-imħatri u l-ħlasijiet kollha jintwerew f'ETB (Birr Etjopjan)."
+    },
+    "deposit": {
+      "q": "Kif niddepożita?",
+      "a": "Kartiera → Iddepożita (Telebirr). Ibgħat l-ammont lill-aġent tax-xogħol, imbagħad waħħal il-konferma tal-SMS biex tikkredita l-kont tiegħek mill-ewwel."
+    },
+    "withdraw": {
+      "q": "Kif nirtira?",
+      "a": "Kartiera → Irtira. Daħħal l-ammont u n-numru tat-telefon Telebirr tiegħek. Aġent jipproċessa t-trasferiment."
+    },
+    "instant": {
+      "q": "Ir-rebħiet huma instantanji?",
+      "a": "Iva — ikkreditati fil-kartiera tiegħek immedjatament wara kull ġibda jew saldu tal-kamra."
+    }
   },
   "bingo": {
     "recentCalls": "Sejħiet reċenti",

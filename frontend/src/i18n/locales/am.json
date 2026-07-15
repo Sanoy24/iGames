@@ -137,6 +137,7 @@
   },
   "wallet": {
     "title": "ቦርሳ",
+    "topUp": "ሙላ",
     "available": "የሚገኝ",
     "reserved": "የተያዘ",
     "status": "ሁኔታ",
@@ -176,7 +177,12 @@
   },
   "notifications": {
     "title": "ማሳወቂያዎች",
-    "empty": "እስካሁን ማሳወቂያ የለም"
+    "empty": "እስካሁን ማሳወቂያ የለም",
+    "winTitle": "አሸንፈዋል! 🎉",
+    "winBody": "በ{{game}} {{amount}} ብር አሸንፈዋል።",
+    "gameBingo": "ቢንጎ",
+    "gameKeno": "ኬኖ",
+    "gameCrash": "ክራሽ"
   },
   "language": {
     "label": "ቋንቋ"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { RefreshCw, Plus } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
@@ -23,6 +24,7 @@ function EBirrIcon({ size = 20 }: { size?: number }) {
 }
 
 export function WalletBar({ onNavigate }: Props) {
+  const { t } = useTranslation();
   const wallet = useStore((s) => s.wallet);
   const setWallet = useStore((s) => s.setWallet);
   const isSocketConnected = useStore((s) => s.isSocketConnected);
@@ -79,7 +81,7 @@ export function WalletBar({ onNavigate }: Props) {
         onClick={(e) => { e.stopPropagation(); onNavigate('wallet'); }}
       >
         <Plus size={11} />
-        Top Up
+        {t('wallet.topUp')}
       </button>
 
       <NotificationBell />

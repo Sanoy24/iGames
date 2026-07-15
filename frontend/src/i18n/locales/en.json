@@ -137,6 +137,7 @@
   },
   "wallet": {
     "title": "Wallet",
+    "topUp": "Top Up",
     "available": "Available",
     "reserved": "Reserved",
     "status": "Status",
@@ -176,7 +177,12 @@
   },
   "notifications": {
     "title": "Notifications",
-    "empty": "No notifications yet"
+    "empty": "No notifications yet",
+    "winTitle": "You won! 🎉",
+    "winBody": "You won {{amount}} ETB in {{game}}.",
+    "gameBingo": "Bingo",
+    "gameKeno": "Keno",
+    "gameCrash": "Crash"
   },
   "language": {
     "label": "Language"

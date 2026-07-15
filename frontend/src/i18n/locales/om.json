@@ -76,6 +76,7 @@
   },
   "wallet": {
     "title": "Boorsaa",
+    "topUp": "Guuti",
     "available": "Jira",
     "reserved": "Qabame",
     "status": "Haala",
@@ -99,7 +100,12 @@
   },
   "notifications": {
     "title": "Beeksisa",
-    "empty": "Ammaaf beeksisni hin jiru"
+    "empty": "Ammaaf beeksisni hin jiru",
+    "winTitle": "Moʼatte! 🎉",
+    "winBody": "{{game}} keessatti {{amount}} ETB moʼatte.",
+    "gameBingo": "Bingo",
+    "gameKeno": "Keno",
+    "gameCrash": "Crash"
   },
   "language": {
     "label": "Afaan"
@@ -110,6 +116,32 @@
     "liveChat": "Haasawa kallattii",
     "newTicket": "Tikeetii haaraa",
     "noTickets": "Ammaaf tikeetiin hin jiru. Gargaarsa yoo barbaadde haaraa banadhu."
+  },
+  "faq": {
+    "keno": {
+      "q": "Keno akkamitti hojjeta?",
+      "a": "Lakkoofsota 1–12 kan 1–80 keessaa filadhu. Yeroo baʼiin taʼu, lakkoofsonni 20 carraan filatamu. Kaffaltiin kee hangam akka wal-simu irratti hundaaʼa."
+    },
+    "bingo": {
+      "q": "Bingon akkamitti hojjeta?",
+      "a": "Kutaa seenii tikeetii bitadhu. Lakkoofsonni tokko tokkoon baʼu. Sarara tokko, sarara lama, ykn kaardii guutuu wal-simsiisuun badhaasa moʼadhu."
+    },
+    "currency": {
+      "q": "Aappiin maallaqa kam fayyadama?",
+      "a": "Baankiiwwan, kaffaltiiwwanii fi moʼichawwan hundi ETB (Birrii Itoophiyaa) dhaan agarsiifamu."
+    },
+    "deposit": {
+      "q": "Akkamittin galchuu dandaʼa?",
+      "a": "Boorsaa → Galchi (Telebirr). Hamma bakka buʼaa hojii irra jiruuf ergiitii, ergasii mirkaneessa SMS maxxansuun herrega kee yeroo tokkoon guuti."
+    },
+    "withdraw": {
+      "q": "Akkamittin baasuu dandaʼa?",
+      "a": "Boorsaa → Baasi. Hamma fi lakkoofsa bilbila Telebirr kee galchi. Bakka buʼaan dabarsa raawwata."
+    },
+    "instant": {
+      "q": "Moʼichawwan yeroo tokkoon?",
+      "a": "Eeyyee — baʼii ykn xumura kutaa booda yeroo tokkoon boorsaa keetti galu."
+    }
   },
   "bingo": {
     "recentCalls": "Waamamoota dhiheenyaa",

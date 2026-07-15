@@ -17,6 +17,8 @@ export type AppNotification = {
   message: string;
   timestamp: number;
   read: boolean;
+  /** Structured payload (amountMinor, game, …) used to render a localized label. */
+  data?: Record<string, unknown> | null;
 };
 
 export type LiveCounts = {

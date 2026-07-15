@@ -16,13 +16,14 @@ function isTelegramMode(): boolean {
 }
 
 function InfoRow({ icon, label, value, empty }: { icon: React.ReactNode; label: string; value?: string; empty?: string }) {
+  const { t } = useTranslation();
   return (
     <div className="profile-info-row">
       <span className="profile-info-icon">{icon}</span>
       <div className="profile-info-body">
         <span className="profile-info-label">{label}</span>
         <span className={value ? 'profile-info-value' : 'profile-info-empty'}>
-          {value ?? empty ?? 'Not set'}
+          {value ?? empty ?? t('profile.notSet')}
         </span>
       </div>
     </div>
@@ -83,7 +84,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
       setProfile(updated);
       if (storeUser) setUser({ ...storeUser, displayName: updated.displayName, phoneNumber: updated.phoneNumber });
       setEditing(false);
-      addToast('success', 'Profile updated.');
+      addToast('success', t('profile.profileUpdated'));
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -93,7 +94,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
 
   const changePassword = async () => {
     if (newPassword.length < 8) {
-      addToast('error', 'New password must be at least 8 characters.');
+      addToast('error', t('profile.passwordMinLength'));
       return;
     }
     setChangingPassword(true);
@@ -101,7 +102,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
       await authApi.changePassword(currentPassword, newPassword);
       setCurrentPassword('');
       setNewPassword('');
-      addToast('success', 'Password changed. Sign in again with the new password.');
+      addToast('success', t('profile.passwordChanged'));
       localStorage.setItem('manualLogout', '1');
       clearAuth();
     } catch (err) {
@@ -150,10 +151,10 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
         >
           <UserCircle size={64} strokeWidth={1.2} />
         </motion.div>
-        <h1 className="profile-name">{user?.displayName ?? 'Player'}</h1>
+        <h1 className="profile-name">{user?.displayName ?? t('profile.role_player')}</h1>
         <div className="profile-role-row">
           {(user?.roles ?? ['player']).map((role) => (
-            <span key={role} className="badge badge-gold">{role}</span>
+            <span key={role} className="badge badge-gold">{t(`profile.role_${role}`, { defaultValue: role })}</span>
           ))}
           {telegramMode && (
             <span className="badge" style={{ background: 'rgba(37,99,235,0.15)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.25)' }}>
@@ -167,20 +168,20 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
       {/* ── Account stats ── */}
       <div className="profile-stats-grid">
         <div className="profile-stat-card">
-          <span className="profile-stat-label">Account Status</span>
+          <span className="profile-stat-label">{t('profile.accountStatus')}</span>
           <span
             className="profile-stat-value"
-            style={{ fontSize: 14, color: user?.status === 'active' ? 'var(--green)' : 'var(--danger)', textTransform: 'capitalize' }}
+            style={{ fontSize: 14, color: user?.status === 'active' ? 'var(--green)' : 'var(--danger)' }}
           >
-            {user?.status ?? 'active'}
+            {t(`profile.status_${user?.status ?? 'active'}`, { defaultValue: user?.status ?? 'active' })}
           </span>
         </div>
         <div className="profile-stat-card">
-          <span className="profile-stat-label">Last Login</span>
+          <span className="profile-stat-label">{t('profile.lastLogin')}</span>
           <span className="profile-stat-value" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
             {user?.lastLoginAt
               ? new Date(user.lastLoginAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-              : 'This session'}
+              : t('profile.thisSession')}
           </span>
         </div>
       </div>
@@ -190,10 +191,10 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
         <div className="info-banner info-banner-gold">
           <Phone size={18} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 1 }} />
           <div>
-            <p style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>Add your Telebirr number</p>
-            <p style={{ fontSize: 12, lineHeight: 1.5 }}>Required to process withdrawal payouts via Telebirr.</p>
+            <p style={{ fontWeight: 700, marginBottom: 4, fontSize: 13 }}>{t('profile.addTelebirrTitle')}</p>
+            <p style={{ fontSize: 12, lineHeight: 1.5 }}>{t('profile.addTelebirrDesc')}</p>
             <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={startEdit}>
-              Add Phone Number
+              {t('profile.addPhoneNumber')}
             </button>
           </div>
         </div>
@@ -203,13 +204,13 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
       <section className="card">
         <div className="section-header">
           <div>
-            <div className="section-title">Your Info</div>
-            <p className="section-copy">Manage your display name and payout phone number.</p>
+            <div className="section-title">{t('profile.yourInfo')}</div>
+            <p className="section-copy">{t('profile.yourInfoDesc')}</p>
           </div>
           {!editing && (
             <button className="btn btn-secondary btn-sm" onClick={startEdit}>
               <Edit3 size={13} style={{ marginRight: 4 }} />
-              Edit
+              {t('profile.edit')}
             </button>
           )}
         </div>
@@ -217,33 +218,33 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
         {editing ? (
           <div className="stack-sm" style={{ marginTop: 8 }}>
             <label className="form-field">
-              <span>Display Name</span>
+              <span>{t('profile.displayNameLabel')}</span>
               <input
                 className="input"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Your name"
+                placeholder={t('profile.yourNamePlaceholder')}
                 maxLength={64}
               />
             </label>
             <label className="form-field">
-              <span>Telebirr Phone Number</span>
+              <span>{t('profile.telebirrPhoneNumber')}</span>
               <input
                 className="input"
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
-                placeholder="e.g. 0912345678"
+                placeholder={t('profile.phonePlaceholder')}
                 type="tel"
               />
             </label>
             <div className="action-row" style={{ marginTop: 8 }}>
               <button className="btn btn-secondary" onClick={cancelEdit} disabled={saving}>
                 <X size={14} style={{ marginRight: 4 }} />
-                Cancel
+                {t('common.cancel')}
               </button>
               <button className="btn btn-primary" onClick={saveProfile} disabled={saving}>
                 <Check size={14} style={{ marginRight: 4 }} />
-                {saving ? 'Saving…' : 'Save Changes'}
+                {saving ? t('profile.saving') : t('profile.saveChanges')}
               </button>
             </div>
           </div>
@@ -251,19 +252,19 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
           <div className="profile-info-list">
             <InfoRow
               icon={<UserCircle size={16} />}
-              label="Display Name"
+              label={t('profile.displayNameLabel')}
               value={user?.displayName}
             />
             <InfoRow
               icon={<Phone size={16} />}
-              label="Telebirr Phone"
+              label={t('profile.telebirrPhone')}
               value={user?.phoneNumber}
-              empty="Not set — add your number to enable payouts"
+              empty={t('profile.phoneNotSet')}
             />
             {user?.email && (
               <InfoRow
                 icon={<Mail size={16} />}
-                label="Email"
+                label={t('profile.email')}
                 value={user.email}
               />
             )}
@@ -301,9 +302,9 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
             <div>
               <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Send size={14} style={{ color: '#60a5fa' }} />
-                Session
+                {t('profile.session')}
               </div>
-              <p className="section-copy">Your session is managed by Telegram.</p>
+              <p className="section-copy">{t('profile.sessionManagedByTelegram')}</p>
             </div>
           </div>
           <button
@@ -313,10 +314,10 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
             style={{ marginTop: 4 }}
           >
             <LogOut size={14} style={{ marginRight: 6 }} />
-            {loggingOut ? 'Ending session…' : 'End Session'}
+            {loggingOut ? t('profile.endingSession') : t('profile.endSession')}
           </button>
           <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
-            Reopen the app via Telegram to sign in again automatically.
+            {t('profile.reopenViaTelegram')}
           </p>
         </section>
       ) : (
@@ -326,14 +327,14 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
             <div>
               <div className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <ShieldCheck size={15} style={{ color: 'var(--text-muted)' }} />
-                Security
+                {t('profile.security')}
               </div>
-              <p className="section-copy">Change your password or end this session.</p>
+              <p className="section-copy">{t('profile.securityDesc')}</p>
             </div>
           </div>
           <div className="stack-sm">
             <label className="form-field">
-              <span>Current Password</span>
+              <span>{t('profile.currentPassword')}</span>
               <input
                 className="input"
                 type="password"
@@ -343,7 +344,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
               />
             </label>
             <label className="form-field">
-              <span>New Password</span>
+              <span>{t('profile.newPassword')}</span>
               <input
                 className="input"
                 type="password"
@@ -359,11 +360,11 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
                 disabled={changingPassword || !currentPassword || !newPassword}
               >
                 <KeyRound size={14} style={{ marginRight: 4 }} />
-                {changingPassword ? 'Changing…' : 'Change Password'}
+                {changingPassword ? t('profile.changing') : t('profile.changePassword')}
               </button>
               <button className="btn btn-danger" onClick={logout} disabled={loggingOut}>
                 <LogOut size={14} style={{ marginRight: 4 }} />
-                {loggingOut ? 'Logging out…' : 'Logout'}
+                {loggingOut ? t('profile.loggingOut') : t('profile.logoutBtn')}
               </button>
             </div>
           </div>

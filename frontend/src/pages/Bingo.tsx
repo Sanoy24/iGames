@@ -1994,9 +1994,16 @@ export function Bingo({ onBack }: BingoProps) {
     // ── Buy-window countdown ─────────────────────────────────────────────────────
     useEffect(() => {
         setTimeRemainingSecs(null);
-        // No scheduledStartAt means the room is IDLE — waiting for the first buyer.
-        // Leave the countdown null so the UI shows the idle state, not a 00:00 timer.
-        if (!room || room.status !== 'open' || !room.scheduledStartAt) return;
+        // A room with zero sold tickets is IDLE — waiting for the first buyer. Show
+        // the idle state, never a countdown, no matter what scheduledStartAt holds
+        // (a legacy DB default could set it to "now" before anyone has played).
+        if (
+            !room ||
+            room.status !== 'open' ||
+            room.soldTickets === 0 ||
+            !room.scheduledStartAt
+        )
+            return;
         const tick = () => {
             const ms = new Date(room.scheduledStartAt as string).getTime() - Date.now();
             setTimeRemainingSecs(Math.max(0, Math.floor(ms / 1000)));
@@ -2004,7 +2011,7 @@ export function Bingo({ onBack }: BingoProps) {
         tick();
         const id = setInterval(tick, 1000);
         return () => clearInterval(id);
-    }, [room?.id, room?.status, room?.scheduledStartAt]);
+    }, [room?.id, room?.status, room?.soldTickets, room?.scheduledStartAt]);
 
     // ── Win detection ────────────────────────────────────────────────────────────
     useEffect(() => {

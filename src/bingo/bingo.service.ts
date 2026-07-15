@@ -7,7 +7,7 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, Not, FindOptionsWhere } from 'typeorm';
+import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, MoreThan, Not, FindOptionsWhere } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BingoRulesService, BUILT_IN_PATTERNS } from './bingo-rules.service';
@@ -274,13 +274,17 @@ export class BingoService implements OnModuleInit {
   }
 
   /**
-   * Kick off the buy-window countdown the moment the first ticket of an idle room
-   * is sold. No-op once already stamped, so later purchases never move the start
-   * time (fixed window). MUST be called while the room row is locked FOR UPDATE
-   * (as in purchaseTickets) so concurrent first sales can't double-stamp.
+   * Kick off the buy-window countdown the moment the FIRST ticket of an idle room
+   * is sold. `wasEmpty` = the room had zero sold tickets before this purchase, so
+   * the countdown is stamped exactly once (fixed window); later purchases pass
+   * false and never move the start time. It OVERWRITES any pre-existing value so a
+   * stale creation-time default (from a legacy DEFAULT CURRENT_TIMESTAMP column)
+   * is corrected to "now + window" from the real first-sale moment. MUST be called
+   * while the room row is locked FOR UPDATE (as in purchaseTickets) so concurrent
+   * first sales can't double-stamp.
    */
-  private startCountdownOnFirstSale(room: BingoRoom, cfg: BingoConfig): void {
-    if (room.scheduledStartAt == null) {
+  private startCountdownOnFirstSale(room: BingoRoom, cfg: BingoConfig, wasEmpty: boolean): void {
+    if (wasEmpty) {
       room.scheduledStartAt = new Date(Date.now() + this.startCountdownDelayMs(cfg));
     }
   }
@@ -294,15 +298,38 @@ export class BingoService implements OnModuleInit {
    */
   async ensureRoomSchema(): Promise<void> {
     try {
-      const rows: Array<{ IS_NULLABLE: string }> = await this.bingoRoomRepository.query(
-        `SELECT IS_NULLABLE FROM information_schema.COLUMNS
-         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bingo_rooms' AND COLUMN_NAME = 'scheduledStartAt'`,
-      );
-      if (rows[0]?.IS_NULLABLE === 'NO') {
+      const rows: Array<{ IS_NULLABLE: string; COLUMN_DEFAULT: string | null; EXTRA: string }> =
+        await this.bingoRoomRepository.query(
+          `SELECT IS_NULLABLE, COLUMN_DEFAULT, EXTRA FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bingo_rooms' AND COLUMN_NAME = 'scheduledStartAt'`,
+        );
+      const col = rows[0];
+      // Re-write the column definition whenever it is NOT NULL, carries a
+      // CURRENT_TIMESTAMP default, or has ON UPDATE CURRENT_TIMESTAMP. The last two
+      // are the real culprits behind "countdown starts on its own": a bare
+      // `timestamp` column silently defaults to NOW() on insert AND resets to NOW()
+      // on every row update, so an idle room's start time appears out of nowhere.
+      const needsFix =
+        !col ||
+        col.IS_NULLABLE === 'NO' ||
+        (col.COLUMN_DEFAULT != null && /current_timestamp/i.test(col.COLUMN_DEFAULT)) ||
+        /on update/i.test(col.EXTRA ?? '');
+      if (needsFix) {
         await this.bingoRoomRepository.query(
           `ALTER TABLE bingo_rooms MODIFY COLUMN scheduledStartAt timestamp NULL DEFAULT NULL`,
         );
-        this.logger.log('Schema self-heal: bingo_rooms.scheduledStartAt is now NULLable (idle rooms)');
+        this.logger.log(
+          'Schema self-heal: bingo_rooms.scheduledStartAt is now NULLable with no auto CURRENT_TIMESTAMP (idle rooms)',
+        );
+      }
+      // Clean up legacy idle rooms: any OPEN room that has sold nothing must have no
+      // countdown. This clears a stale start time left by the old behaviour so the
+      // current idle room stops showing a timer the moment the fix boots.
+      const cleared: { affectedRows?: number } = await this.bingoRoomRepository.query(
+        `UPDATE bingo_rooms SET scheduledStartAt = NULL WHERE status = 'open' AND soldTickets = 0`,
+      );
+      if (cleared?.affectedRows) {
+        this.logger.log(`Schema self-heal: reset ${cleared.affectedRows} idle open Bingo room(s) to no-countdown`);
       }
     } catch (err) {
       this.logger.error(
@@ -583,13 +610,20 @@ export class BingoService implements OnModuleInit {
     const runningCount = await this.bingoRoomRepository.countBy({ status: 'running' });
     if (runningCount > 0) return [];
 
+    // A room is IDLE until its FIRST ticket is sold. Requiring soldTickets > 0 here
+    // is the hard guard that keeps an unplayed room from ever starting — no draws,
+    // no "player win window" — even if scheduledStartAt was populated by a legacy
+    // `DEFAULT CURRENT_TIMESTAMP` column instead of our first-sale stamp.
     const room = await this.bingoRoomRepository.findOne({
-      where: { status: 'open', scheduledStartAt: LessThanOrEqual(new Date()) },
+      where: { status: 'open', soldTickets: MoreThan(0), scheduledStartAt: LessThanOrEqual(new Date()) },
       order: { scheduledStartAt: 'ASC' },
     });
     if (!room) return [];
 
+    // Belt-and-suspenders: trust the authoritative ticket count, not just the
+    // denormalised counter, so a drifted soldTickets can't start an empty game.
     const soldTickets = await this.countSoldTickets(room.id);
+    if (soldTickets <= 0) return [];
     return [this.toRoomResponse(room, soldTickets)];
   }
 
@@ -908,8 +942,9 @@ export class BingoService implements OnModuleInit {
           createdTickets.push(ticket);
         }
 
+        const wasEmpty = room.soldTickets === 0;
         room.soldTickets += cartelaNumbers.length;
-        this.startCountdownOnFirstSale(room, cfg);
+        this.startCountdownOnFirstSale(room, cfg, wasEmpty);
         await manager.save(room);
 
         return createdTickets.map((ticket) => this.toTicketResponse(ticket));
@@ -924,8 +959,9 @@ export class BingoService implements OnModuleInit {
         throw new ConflictException('Bingo room is full for ticket sales');
       }
 
+      const wasEmpty = room.soldTickets === 0;
       room.soldTickets += count;
-      this.startCountdownOnFirstSale(room, cfg);
+      this.startCountdownOnFirstSale(room, cfg, wasEmpty);
       await manager.save(room);
 
       const createdTickets: BingoTicket[] = [];

@@ -276,7 +276,15 @@ export class TelebirrReceiptVerifierService {
   }
 
   private async loadReceipt(receiptNo: string): Promise<string> {
+    // When TELEBIRR_PROXY_URL is configured, fetch the receipt HTML through the
+    // egress proxy (services/telebirr-proxy) instead of hitting Ethiotelecom
+    // directly — for hosts that cannot reach transactioninfo.ethiotelecom.et.
+    // Blank = direct fetch (historical behaviour), so this is an on/off env switch.
+    const proxyUrl = this.configService.get<string>('TELEBIRR_PROXY_URL')?.trim();
     try {
+      if (proxyUrl) {
+        return await this.loadReceiptViaProxy(proxyUrl.replace(/\/+$/, ''), receiptNo);
+      }
       return await telebirrReceipt.utils.loadReceipt({ receiptNo });
     } catch (error) {
       throw new ServiceUnavailableException({
@@ -284,6 +292,30 @@ export class TelebirrReceiptVerifierService {
         detail: error instanceof Error ? error.message : 'Unknown Telebirr receipt error'
       });
     }
+  }
+
+  private async loadReceiptViaProxy(baseUrl: string, receiptNo: string): Promise<string> {
+    const key = this.configService.get<string>('TELEBIRR_PROXY_KEY') ?? '';
+    const timeoutMs = Number(this.configService.get<string>('TELEBIRR_PROXY_TIMEOUT_MS') ?? 15000);
+
+    // GET ${baseUrl}/fetchreceipt?receiptNo=... — the proxy replies { html }.
+    // (An optional x-proxy-key header is sent when TELEBIRR_PROXY_KEY is set; the
+    // proxy may ignore it.)
+    const response = await fetch(
+      `${baseUrl}/fetchreceipt?receiptNo=${encodeURIComponent(receiptNo)}`,
+      {
+        headers: key ? { 'x-proxy-key': key } : {},
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Telebirr proxy returned HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as { html?: string };
+    if (!data?.html) {
+      throw new Error('Telebirr proxy returned no receipt HTML');
+    }
+    return data.html;
   }
 
   private extractReceiptNo(receiptNoOrUrl: string): string {

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   ServiceUnavailableException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -34,6 +35,8 @@ export type VerifiedTelebirrReceipt = {
 
 @Injectable()
 export class TelebirrReceiptVerifierService {
+  private readonly logger = new Logger(TelebirrReceiptVerifierService.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly adminService: AdminService,
@@ -281,12 +284,21 @@ export class TelebirrReceiptVerifierService {
     // directly — for hosts that cannot reach transactioninfo.ethiotelecom.et.
     // Blank = direct fetch (historical behaviour), so this is an on/off env switch.
     const proxyUrl = this.configService.get<string>('TELEBIRR_PROXY_URL')?.trim();
+    const started = Date.now();
     try {
       if (proxyUrl) {
-        return await this.loadReceiptViaProxy(proxyUrl.replace(/\/+$/, ''), receiptNo);
+        const html = await this.loadReceiptViaProxy(proxyUrl.replace(/\/+$/, ''), receiptNo);
+        this.logger.log(`Receipt loaded via PROXY in ${Date.now() - started}ms (${html.length} bytes)`);
+        return html;
       }
-      return await telebirrReceipt.utils.loadReceipt({ receiptNo });
+      this.logger.warn('TELEBIRR_PROXY_URL is not set — fetching Ethiotelecom DIRECTLY');
+      const html = await telebirrReceipt.utils.loadReceipt({ receiptNo });
+      this.logger.log(`Receipt loaded DIRECT in ${Date.now() - started}ms`);
+      return html;
     } catch (error) {
+      this.logger.error(
+        `Receipt load FAILED after ${Date.now() - started}ms (proxy=${proxyUrl ? 'on' : 'off'}): ${error instanceof Error ? error.message : error}`,
+      );
       throw new ServiceUnavailableException({
         message: 'Unable to load Telebirr receipt',
         detail: error instanceof Error ? error.message : 'Unknown Telebirr receipt error'

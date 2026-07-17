@@ -162,11 +162,13 @@ export type ActiveAgent = {
 };
 
 export const paymentsApi = {
+  // Receipt verification fetches an external page (Ethiotelecom, via the proxy),
+  // so it can take longer than the 15s global default — give it 45s.
   previewTelebirrReceipt: (rawText: string) =>
-    api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
+    api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
 
   submitTelebirrReceipt: (rawText: string) =>
-    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
+    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
 
   getActiveAgent: () =>
     api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),

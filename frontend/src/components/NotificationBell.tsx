@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useStore, type AppNotification, type NotificationKind } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
 import { notificationsApi, type ServerNotification } from '../lib/api';
+import { formatDateTimeFull } from '../lib/utils';
 
 const TYPE_ICON: Record<NotificationKind, string> = {
   win: '🏆',
@@ -191,7 +192,7 @@ export function NotificationBell() {
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{message}</div>
                       <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                        {new Date(n.timestamp).toLocaleString()}
+                        {formatDateTimeFull(n.timestamp)}
                       </div>
                     </div>
                   );

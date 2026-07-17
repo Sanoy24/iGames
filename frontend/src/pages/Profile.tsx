@@ -7,7 +7,7 @@ import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import type { User } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
-import { getErrorMessage } from '../lib/utils';
+import { ETHIOPIA_TZ, getErrorMessage } from '../lib/utils';
 
 type TelegramWindow = Window & typeof globalThis & { Telegram?: { WebApp?: { initData?: string } } };
 
@@ -180,7 +180,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
           <span className="profile-stat-label">{t('profile.lastLogin')}</span>
           <span className="profile-stat-value" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
             {user?.lastLoginAt
-              ? new Date(user.lastLoginAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+              ? new Date(user.lastLoginAt).toLocaleDateString('en-GB', { timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
               : t('profile.thisSession')}
           </span>
         </div>

@@ -5,7 +5,7 @@ import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircl
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
-import { formatCreditsFull, getErrorMessage } from '../lib/utils';
+import { formatCreditsFull, formatDateTimeFull, getErrorMessage } from '../lib/utils';
 import { authApi, walletApi, paymentsApi, type TelebirrPreview, type ActiveAgent } from '../lib/api';
 
 // Keys are the backend ledger `entryType` values
@@ -501,7 +501,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                         {preview.date && (
                           <div>
                             <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Date</span>
-                            <strong>{new Date(preview.date).toLocaleString()}</strong>
+                            <strong>{formatDateTimeFull(preview.date)}</strong>
                           </div>
                         )}
                       </div>
@@ -655,8 +655,8 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     </div>
                   </div>
                   <div className="ticket-meta">
-                    <span>Requested: {new Date(w.createdAt).toLocaleString()}</span>
-                    {w.processedAt && <span>Processed: {new Date(w.processedAt).toLocaleString()}</span>}
+                    <span>Requested: {formatDateTimeFull(w.createdAt)}</span>
+                    {w.processedAt && <span>Processed: {formatDateTimeFull(w.processedAt)}</span>}
                   </div>
                 </motion.article>
               ))}
@@ -743,7 +743,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                       <h3>{formatLedgerTitle(entry, t)}</h3>
                       {entry.createdAt && (
                         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                          {new Date(entry.createdAt).toLocaleString()}
+                          {formatDateTimeFull(entry.createdAt)}
                         </p>
                       )}
                     </div>

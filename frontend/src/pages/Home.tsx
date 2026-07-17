@@ -9,13 +9,17 @@ import type { KenoDraw, LedgerEntry, RecentWin } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { soundEngine } from '../lib/audio';
 import { getSocket } from '../hooks/useSocketConnection';
+import { ETHIOPIA_TZ } from '../lib/utils';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function timeGreeting(t: TFunction): string {
-  const h = new Date().getHours();
+  // Greeting follows Ethiopia time, not the device's timezone.
+  const h = Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: ETHIOPIA_TZ, hour: '2-digit', hourCycle: 'h23' }).format(new Date()),
+  );
   if (h < 12) return t('home.morning');
   if (h < 17) return t('home.afternoon');
   return t('home.evening');
@@ -30,7 +34,7 @@ const LEDGER_KEY: Record<string, string> = {
   admin_adjustment: 'adjustment', agent_receipt: 'agentTransfer',
 };
 
-const FAQ_KEYS = ['keno', 'bingo', 'currency', 'deposit', 'withdraw', 'instant'] as const;
+const FAQ_KEYS = ['currency', 'deposit', 'withdraw', 'instant'] as const;
 
 function useCountdownSecs(targetIso: string | null | undefined) {
   const [secs, setSecs] = useState<number | null>(null);
@@ -377,8 +381,8 @@ export function Home({ onNavigate }: Props) {
                   <div className="activity-body">
                     <span className="activity-name">{label}</span>
                     <span className="activity-game">
-                      {new Date(entry.createdAt ?? 0).toLocaleDateString(undefined, {
-                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      {new Date(entry.createdAt ?? 0).toLocaleDateString('en-GB', {
+                        timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
                       })}
                     </span>
                   </div>

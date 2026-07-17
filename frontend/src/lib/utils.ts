@@ -12,7 +12,14 @@ export function formatCreditsFull(minor: number): string {
   return new Intl.NumberFormat().format(minor);
 }
 
-export function formatDateTime(value: string | Date | undefined): string {
+/**
+ * All user-facing dates render in Ethiopia time (EAT, UTC+3) regardless of the
+ * device/webview timezone — timestamps are stored in UTC, so we must pin the zone
+ * here or players in a UTC (or other) locale see the wrong clock.
+ */
+export const ETHIOPIA_TZ = 'Africa/Addis_Ababa';
+
+export function formatDateTime(value: string | number | Date | undefined): string {
   if (!value) {
     return 'TBD';
   }
@@ -22,15 +29,38 @@ export function formatDateTime(value: string | Date | undefined): string {
     return 'TBD';
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: ETHIOPIA_TZ,
     day: 'numeric',
-    hour: 'numeric',
+    month: 'short',
+    hour: '2-digit',
     minute: '2-digit',
+    hourCycle: 'h23',
   }).format(date);
 }
 
-export function formatRelativeTime(value: string | Date | undefined): string {
+/** Full date + time in Ethiopia time (e.g. "17/07/2026, 18:57:30"). */
+export function formatDateTimeFull(value: string | number | Date | undefined): string {
+  if (!value) {
+    return '—';
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: ETHIOPIA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(date);
+}
+
+export function formatRelativeTime(value: string | number | Date | undefined): string {
   if (!value) {
     return 'Unknown time';
   }

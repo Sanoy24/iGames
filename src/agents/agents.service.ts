@@ -253,6 +253,48 @@ export class AgentsService {
       }));
   }
 
+  /**
+   * The requesting agent's own Bingo performance (Approach B): customers brought,
+   * real-player activity in their rooms (bots excluded), GGR, and commission earned.
+   */
+  async getPerformance(agentId: string): Promise<{
+    customersBrought: number;
+    tickets: number;
+    players: number;
+    stakedMinor: number;
+    payoutMinor: number;
+    ggrMinor: number;
+    commissionEarnedMinor: number;
+  }> {
+    const q = (sql: string, params: unknown[]) => this.systemConfigRepository.query(sql, params);
+    const [play] = await q(
+      `SELECT COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
+              COALESCE(SUM(t.stakeMinor),0) staked, COALESCE(SUM(t.payoutMinor),0) payout
+         FROM bingo_tickets t JOIN users pu ON pu.id = t.userId
+        WHERE t.agentId = ? AND t.status <> 'cancelled'
+          AND JSON_EXTRACT(pu.productMetadata, '$.botPolicy') IS NULL`,
+      [agentId],
+    );
+    const [comm] = await q(
+      `SELECT COALESCE(SUM(amountMinor),0) commission FROM ledger_entries
+        WHERE userId = ? AND entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'`,
+      [agentId],
+    );
+    const [cust] = await q(`SELECT COUNT(*) customers FROM users WHERE referredByAgentId = ?`, [agentId]);
+
+    const stakedMinor = Number(play?.staked ?? 0);
+    const payoutMinor = Number(play?.payout ?? 0);
+    return {
+      customersBrought: Number(cust?.customers ?? 0),
+      tickets: Number(play?.tickets ?? 0),
+      players: Number(play?.players ?? 0),
+      stakedMinor,
+      payoutMinor,
+      ggrMinor: stakedMinor - payoutMinor,
+      commissionEarnedMinor: Number(comm?.commission ?? 0),
+    };
+  }
+
   private toShiftResponse(shift: AgentShift) {
     return {
       id: shift.id,

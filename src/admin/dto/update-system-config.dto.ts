@@ -1,4 +1,4 @@
-import { IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -49,4 +49,16 @@ export class UpdateSystemConfigDto {
   @IsInt()
   @Min(0)
   maxPendingWithdrawalsPerUser?: number;
+
+  /** Enable per-agent Bingo rooms (Approach B). */
+  @IsOptional()
+  @IsBoolean()
+  agentRoomsEnabled?: boolean;
+
+  /** % of a room's real-player GGR paid to the owning agent on completion. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  agentRoomCommissionPct?: number;
 }

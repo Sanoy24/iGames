@@ -11,7 +11,7 @@ import {
     MessageSquare,
     RefreshCw,
 } from 'lucide-react';
-import { bingoApi, walletApi } from '../lib/api';
+import { bingoApi, walletApi, type BingoLobbyRoom } from '../lib/api';
 import type { BingoRoomState, BingoTicket } from '../lib/models';
 import {
     createIdempotencyKey,
@@ -1694,6 +1694,85 @@ function RoomResultOverlay({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+// ─── Per-agent room lobby ─────────────────────────────────────────────────────
+function BingoLobby({
+    rooms,
+    onPick,
+    onBack,
+}: {
+    rooms: BingoLobbyRoom[];
+    onPick: (roomId: string) => void;
+    onBack: () => void;
+}) {
+    const { t } = useTranslation();
+    return (
+        <div className='max-w-2xl mx-auto pb-20 space-y-3'>
+            <div className='flex items-center justify-between'>
+                <h2 className='text-lg font-black'>
+                    {t('bingo.chooseRoom', { defaultValue: 'Choose a room' })}
+                </h2>
+                <button
+                    type='button'
+                    onClick={onBack}
+                    className='text-[11px] font-black text-slate-400'
+                >
+                    ← {t('common.back', { defaultValue: 'Back' })}
+                </button>
+            </div>
+            <p className='text-[11px] text-slate-500'>
+                {t('bingo.chooseRoomHint', {
+                    defaultValue: "Each agent hosts their own room — pick one to play.",
+                })}
+            </p>
+            <div className='space-y-2'>
+                {rooms.map((r) => (
+                    <button
+                        key={r.id}
+                        type='button'
+                        onClick={() => onPick(r.id)}
+                        className='w-full card p-3 flex items-center justify-between text-left active:scale-[0.99] transition-transform'
+                    >
+                        <div className='min-w-0'>
+                            <div className='flex items-center gap-2'>
+                                <span className='text-sm font-black truncate'>{r.ownerName}</span>
+                                <span
+                                    className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
+                                        r.status === 'running'
+                                            ? 'bg-red-500/10 text-red-400'
+                                            : 'bg-emerald-500/10 text-emerald-400'
+                                    }`}
+                                >
+                                    {r.status === 'running'
+                                        ? t('bingo.live', { defaultValue: 'LIVE' })
+                                        : t('bingo.open', { defaultValue: 'OPEN' })}
+                                </span>
+                            </div>
+                            <div className='text-[10px] text-slate-500 mt-0.5'>
+                                {t('bingo.playersCount', { count: r.players, defaultValue: `${r.players} players` })}
+                                {' · '}
+                                {t('bingo.stakeEtb', { amount: formatCredits(r.ticketPriceMinor) })}
+                            </div>
+                        </div>
+                        <div className='text-right flex-shrink-0'>
+                            <div className='text-[8px] uppercase tracking-wider text-slate-600'>
+                                {t('bingo.statDerash', { defaultValue: 'Pot' })}
+                            </div>
+                            <div className='text-sm font-black text-amber-400'>
+                                {formatCredits(r.potMinor)}
+                            </div>
+                        </div>
+                    </button>
+                ))}
+                {rooms.length === 0 && (
+                    <div className='card p-6 text-center text-slate-500 text-sm'>
+                        {t('bingo.noRooms', { defaultValue: 'No rooms available right now.' })}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export function Bingo({ onBack }: BingoProps) {
     const { t } = useTranslation();
     const addToast = useStore((s) => s.addToast);
@@ -1708,6 +1787,11 @@ export function Bingo({ onBack }: BingoProps) {
 
     const [room, setRoom] = useState<BingoRoomState | null>(null);
     const [loading, setLoading] = useState(true);
+    // Per-agent room mode (Approach B): the lobby of joinable rooms, and the room
+    // the customer picked. When the lobby is enabled + has >1 room and none is
+    // picked, we show the lobby instead of a game.
+    const [lobby, setLobby] = useState<{ enabled: boolean; rooms: BingoLobbyRoom[] } | null>(null);
+    const [pinnedRoomId, setPinnedRoomId] = useState<string | null>(null);
     const [holdingResult, setHoldingResult] = useState(false);
     const [buying, setBuying] = useState(false);
     const [pendingCartelas, setPendingCartelas] = useState<Set<number>>(
@@ -1829,7 +1913,11 @@ export function Bingo({ onBack }: BingoProps) {
 
     const loadCurrent = useCallback(async () => {
         try {
-            const next = await bingoApi.getCurrentRoom();
+            // In per-agent mode, once the customer picks a room from the lobby we
+            // stay in that specific room; otherwise use the single current room.
+            const next = pinnedRoomId
+                ? await bingoApi.getRoomState(pinnedRoomId)
+                : await bingoApi.getCurrentRoom();
             setRoom((prev) => {
                 // During result hold, don't switch to a different (newer) room —
                 // only allow updating the same room (e.g. to pick up settlement data).
@@ -1849,15 +1937,32 @@ export function Bingo({ onBack }: BingoProps) {
         } finally {
             setLoading(false);
         }
-    }, [addToast]);
+    }, [addToast, pinnedRoomId]);
+
+    // Lobby (per-agent mode): keep the room list fresh so players/pots update.
+    useEffect(() => {
+        const fetchLobby = () => bingoApi.getLobby().then(setLobby).catch(() => undefined);
+        void fetchLobby();
+        const id = setInterval(fetchLobby, 5000);
+        return () => clearInterval(id);
+    }, []);
+
+    // Show the lobby when per-agent mode is on, there is more than one room, and the
+    // customer hasn't picked one yet.
+    const showLobby = !!lobby?.enabled && lobby.rooms.length > 1 && !pinnedRoomId;
 
     useEffect(() => {
+        // Don't load a game while the lobby is showing — the player is choosing.
+        if (showLobby) {
+            setLoading(false);
+            return;
+        }
         void loadCurrent();
         const id = setInterval(() => {
             if (!holdingResultRef.current) void loadCurrent();
         }, POLL_INTERVAL_MS);
         return () => clearInterval(id);
-    }, [loadCurrent]);
+    }, [loadCurrent, showLobby]);
 
     // ── Socket: presence ─────────────────────────────────────────────────────────
     useEffect(() => {
@@ -2455,9 +2560,36 @@ export function Bingo({ onBack }: BingoProps) {
         chatInputRef.current?.focus();
     }, [chatInput, room]);
 
+    // ── Per-agent lobby: choose a room before entering a game ────────────────────
+    if (showLobby && lobby) {
+        return (
+            <BingoLobby
+                rooms={lobby.rooms}
+                onPick={(id) => {
+                    setPinnedRoomId(id);
+                    setRoom(null);
+                    setLoading(true);
+                }}
+                onBack={onBack}
+            />
+        );
+    }
+
     // ── RENDER ───────────────────────────────────────────────────────────────────
     return (
         <div className='max-w-2xl mx-auto pb-20 space-y-3'>
+            {pinnedRoomId && (
+                <button
+                    type='button'
+                    onClick={() => {
+                        setPinnedRoomId(null);
+                        setRoom(null);
+                    }}
+                    className='text-[11px] font-black text-emerald-400 flex items-center gap-1'
+                >
+                    ← {t('bingo.backToRooms', { defaultValue: 'Rooms' })}
+                </button>
+            )}
             {/* Room result overlay — gated on the timed `holdingResult` flag, not the
           derived phase. A completed room's phase stays 'result' until the next
           room loads, so gating on phase left the dialog stuck open after the

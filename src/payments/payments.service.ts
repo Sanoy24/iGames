@@ -5,6 +5,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AdminService } from '../admin/admin.service';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
+import { User } from '../users/entities/user.entity';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
@@ -230,6 +231,16 @@ export class PaymentsService {
       credited = true;
 
       if (deposit.agentId) {
+        // First-deposit agent linking (Approach B): the agent who processed the
+        // customer's FIRST credited deposit becomes their referring agent. Only set
+        // when not already linked — first deposit wins, never reassigned.
+        await manager
+          .createQueryBuilder()
+          .update(User)
+          .set({ referredByAgentId: deposit.agentId })
+          .where('id = :userId AND referredByAgentId IS NULL', { userId })
+          .execute();
+
         const agentActionRepo = manager.getRepository(AgentActionLog);
         await agentActionRepo.save(
           agentActionRepo.create({

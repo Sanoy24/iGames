@@ -117,6 +117,15 @@ export class BingoRoom {
   @Index('UQ_bingo_active_game', { unique: true })
   activeGuard?: number | null;
 
+  /**
+   * Owning agent (user id) when per-agent rooms are enabled (Approach B). NULL =
+   * house room. Settlement and performance stats are credited to this agent for
+   * all games played in the room.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  ownerAgentId?: string | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

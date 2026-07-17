@@ -141,8 +141,8 @@ export class TelebirrReceiptVerifierService {
     if (!parsedReceipt.date) {
       throw new BadRequestException('Telebirr receipt is missing transaction date');
     }
-    const txDate = new Date(parsedReceipt.date);
-    if (isNaN(txDate.getTime())) {
+    const txDate = this.parseTelebirrDate(parsedReceipt.date);
+    if (!txDate) {
       throw new BadRequestException('Telebirr receipt transaction date is invalid');
     }
     const now = new Date();
@@ -208,6 +208,29 @@ export class TelebirrReceiptVerifierService {
       },
       agentId: matchingAgent.id
     };
+  }
+
+  /**
+   * Parse a Telebirr receipt date. Telebirr prints `DD-MM-YYYY HH:mm:ss` (or with
+   * `/`) in Ethiopia local time (EAT, UTC+3) — which native `new Date()` reads as
+   * an invalid month, hence the "date is invalid" errors. We parse the fields
+   * explicitly and convert to the correct absolute UTC instant (subtract the +3
+   * offset) so the freshness window compares real elapsed time regardless of the
+   * server timezone. Falls back to native parsing for ISO/other formats.
+   */
+  private parseTelebirrDate(raw?: string): Date | null {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    const m = trimmed.match(
+      /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
+    );
+    if (m) {
+      const [, dd, mm, yyyy, hh = '0', min = '0', ss = '0'] = m;
+      const utcMs = Date.UTC(+yyyy, +mm - 1, +dd, +hh, +min, +ss) - 3 * 60 * 60 * 1000;
+      if (!Number.isNaN(utcMs)) return new Date(utcMs);
+    }
+    const native = new Date(trimmed);
+    return Number.isNaN(native.getTime()) ? null : native;
   }
 
   /**

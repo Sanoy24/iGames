@@ -415,9 +415,6 @@ export class BingoService implements OnModuleInit {
     const cfg = await this.getBingoConfig();
     if (!cfg.enabled) return null;
 
-    const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
-    const gridSize = cfg.defaultGridSize ?? 75;
-
     // Collapse to a single well-formed active room. If one already exists (open
     // or running) we do not create another — one game at a time.
     const kept = await this.reconcileActiveRooms(cfg);
@@ -432,15 +429,33 @@ export class BingoService implements OnModuleInit {
       `UPDATE bingo_rooms SET activeGuard = NULL WHERE activeGuard IS NOT NULL AND status IN ('completed','cancelled')`,
     );
 
-    // The room is created IDLE: scheduledStartAt stays NULL so it never draws or
-    // completes until someone buys in. The buy-window countdown is stamped later,
-    // on the first ticket sale (see purchaseTickets), using startCountdownDelayMs.
+    const created = await this.createIdleRoom(cfg, null, 1);
+    if (created) {
+      this.logger.log(`Auto-created idle Bingo room "${created.name}" — countdown starts on first ticket sale`);
+    }
+    return created;
+  }
+
+  /**
+   * Build + persist one IDLE room (scheduledStartAt NULL — never draws until the
+   * first ticket is sold). `ownerAgentId` NULL = house room. `activeGuard` = 1
+   * claims the global single-active-game slot (shared-room mode); NULL opts out of
+   * that guard (per-agent mode, where many rooms run concurrently).
+   */
+  private async createIdleRoom(
+    cfg: BingoConfig,
+    ownerAgentId: string | null,
+    activeGuard: number | null,
+    ownerName?: string,
+  ): Promise<BingoRoomResponse | null> {
+    const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
+    const gridSize = cfg.defaultGridSize ?? 75;
     const timestamp = new Date().toLocaleTimeString('en-ET', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,
     });
-    const name = `Bingo ${timestamp}`;
+    const name = ownerName ? `${ownerName} · Bingo` : `Bingo ${timestamp}`;
 
     const room = this.bingoRoomRepository.create({
       name,
@@ -453,39 +468,215 @@ export class BingoService implements OnModuleInit {
         fullHouseMinor: cfg.defaultFullHouseMinor,
       },
       winMode,
-      // Ball pool: derash fixed 75-ball, line 90, pattern configurable.
       numberRange: this.ballPoolFor(winMode, cfg),
       gridSize,
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
       rankingMode: cfg.prefilledRankingMode ?? 'race',
-      scheduledStartAt: null, // idle until the first ticket is sold
+      scheduledStartAt: null,
       drawnNumbers: [],
       rngAuditLogIds: [],
       settledTiers: [],
       winnersByTier: {},
       settlementSummary: {},
-      activeGuard: 1, // claims the single "active game" slot (unique index)
+      activeGuard,
+      ownerAgentId,
     });
 
     try {
-      // Room + its card pool are created atomically, so a room never becomes
-      // visible without its full pre-generated pool of cards.
       await this.dataSource.transaction(async (manager) => {
         await manager.save(room);
         await this.generateCardPoolForRoom(room, manager);
       });
     } catch (err) {
-      // Another creator (concurrent request or separate instance) already holds
-      // the active-game slot. Treat as "a room already exists" and back off.
       if (this.isDuplicateKeyError(err)) {
         this.logger.warn('Active Bingo room already exists (activeGuard conflict) — skipping creation');
         return null;
       }
       throw err;
     }
-    this.logger.log(`Auto-created idle Bingo room "${room.name}" (${winMode}) — countdown starts on first ticket sale`);
     return this.toRoomResponse(room, 0, []);
+  }
+
+  /** Is per-agent room mode (Approach B) enabled by the admin? */
+  async isAgentRoomsEnabled(): Promise<boolean> {
+    try {
+      const rows: Array<{ v: number | boolean | null }> = await this.bingoRoomRepository.query(
+        "SELECT agentRoomsEnabled v FROM system_configs WHERE `key` = 'global' LIMIT 1",
+      );
+      return !!rows[0]?.v;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Per-agent mode: make sure the house AND every active agent each have exactly
+   * one active (open/running) idle room. Creates missing ones and de-dupes extras
+   * (keeps a running room, else the earliest, cancels the rest). Runs each tick
+   * inside the scheduler's Redis lock, so creation is single-writer.
+   */
+  async ensureAgentRooms(cfg?: BingoConfig): Promise<void> {
+    const config = cfg ?? (await this.getBingoConfig());
+    if (!config.enabled) return;
+
+    const agents: Array<{ id: string; displayName: string }> = await this.bingoRoomRepository.query(
+      `SELECT id, displayName FROM users WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"')`,
+    );
+    const owners: Array<{ ownerAgentId: string | null; name?: string }> = [
+      { ownerAgentId: null }, // house room
+      ...agents.map((a) => ({ ownerAgentId: a.id, name: a.displayName })),
+    ];
+
+    for (const owner of owners) {
+      const active = await this.bingoRoomRepository.find({
+        where: { ownerAgentId: owner.ownerAgentId ?? IsNull(), status: In(['open', 'running']) },
+        order: { scheduledStartAt: 'ASC' },
+      });
+      if (active.length === 0) {
+        await this.createIdleRoom(config, owner.ownerAgentId, null, owner.name).catch((err) =>
+          this.logger.error('ensureAgentRooms create failed', err instanceof Error ? err.stack : err),
+        );
+      } else if (active.length > 1) {
+        const keep = active.find((r) => r.status === 'running') ?? active[0];
+        for (const r of active) {
+          if (r.id !== keep.id) await this.cancelRoom(r.id).catch(() => undefined);
+        }
+      }
+    }
+  }
+
+  /**
+   * Per-agent mode version of findRoomsToStart: returns EVERY open room that is due
+   * and has tickets, as long as its owner has no game already running (one live
+   * game per owner, but many owners run concurrently).
+   */
+  async findAgentRoomsToStart(): Promise<BingoRoomResponse[]> {
+    const dueOpen = await this.bingoRoomRepository.find({
+      where: { status: 'open', soldTickets: MoreThan(0), scheduledStartAt: LessThanOrEqual(new Date()) },
+      order: { scheduledStartAt: 'ASC' },
+    });
+    const out: BingoRoomResponse[] = [];
+    for (const room of dueOpen) {
+      const runningForOwner = await this.bingoRoomRepository.countBy({
+        ownerAgentId: room.ownerAgentId ?? IsNull(),
+        status: 'running',
+      });
+      if (runningForOwner > 0) continue;
+      const sold = await this.countSoldTickets(room.id);
+      if (sold <= 0) continue;
+      out.push(this.toRoomResponse(room, sold));
+    }
+    return out;
+  }
+
+  /**
+   * Lobby of joinable rooms (per-agent mode). Every active (open/running) room with
+   * its owner-agent name, price, players and pot — so a customer can pick which
+   * agent's room to play. `enabled` reflects the admin toggle so the client knows
+   * whether to show the lobby at all.
+   */
+  async getLobby(): Promise<{
+    enabled: boolean;
+    rooms: Array<{
+      id: string;
+      name: string;
+      status: string;
+      ownerAgentId: string | null;
+      ownerName: string;
+      ticketPriceMinor: number;
+      players: number;
+      potMinor: number;
+      scheduledStartAt: Date | null;
+    }>;
+  }> {
+    const enabled = await this.isAgentRoomsEnabled();
+    const rows: Array<{
+      id: string;
+      name: string;
+      status: string;
+      ownerAgentId: string | null;
+      ownerName: string | null;
+      ticketPriceMinor: number;
+      soldTickets: number;
+      scheduledStartAt: Date | null;
+    }> = await this.bingoRoomRepository.query(
+      `SELECT r.id, r.name, r.status, r.ownerAgentId, u.displayName ownerName,
+              r.ticketPriceMinor, r.soldTickets, r.scheduledStartAt
+         FROM bingo_rooms r
+         LEFT JOIN users u ON u.id = r.ownerAgentId
+        WHERE r.status IN ('open','running')
+        ORDER BY (r.ownerAgentId IS NULL) DESC, u.displayName ASC, r.scheduledStartAt ASC`,
+    );
+    return {
+      enabled,
+      rooms: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        status: r.status,
+        ownerAgentId: r.ownerAgentId,
+        ownerName: r.ownerAgentId ? (r.ownerName ?? 'Agent') : 'House',
+        ticketPriceMinor: Number(r.ticketPriceMinor),
+        players: Number(r.soldTickets ?? 0),
+        potMinor: Number(r.soldTickets ?? 0) * Number(r.ticketPriceMinor),
+        scheduledStartAt: r.scheduledStartAt,
+      })),
+    };
+  }
+
+  /**
+   * Credit the room-owning agent their commission when an agent room completes
+   * (Approach B). Commission = agentRoomCommissionPct % of the room's REAL-player
+   * GGR (staked − paid out, bots excluded — bot money isn't real revenue). Idempotent
+   * per room (`bingo-room-commission:<roomId>`), so it's safe to call once at
+   * completion. No-op for house rooms (null owner), when the pct is 0, or GGR ≤ 0.
+   */
+  async settleAgentRoomCommission(roomId: string): Promise<void> {
+    try {
+      const room = await this.bingoRoomRepository.findOneBy({ id: roomId });
+      if (!room || !room.ownerAgentId || room.status !== 'completed') return;
+
+      const cfgRows: Array<{ pct: number | string | null }> = await this.bingoRoomRepository.query(
+        "SELECT agentRoomCommissionPct pct FROM system_configs WHERE `key` = 'global' LIMIT 1",
+      );
+      const pct = Number(cfgRows[0]?.pct ?? 0);
+      if (pct <= 0) return;
+
+      const ggrRows: Array<{ staked: number | string; payout: number | string }> =
+        await this.bingoRoomRepository.query(
+          `SELECT COALESCE(SUM(t.stakeMinor),0) staked, COALESCE(SUM(t.payoutMinor),0) payout
+             FROM bingo_tickets t
+             JOIN users u ON u.id = t.userId
+            WHERE t.roomId = ? AND t.status <> 'cancelled'
+              AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL`,
+          [roomId],
+        );
+      const ggrMinor = Number(ggrRows[0]?.staked ?? 0) - Number(ggrRows[0]?.payout ?? 0);
+      if (ggrMinor <= 0) return;
+
+      const commissionMinor = Math.floor((ggrMinor * pct) / 100);
+      if (commissionMinor <= 0) return;
+
+      await this.dataSource.transaction(async (manager) => {
+        await this.walletService.creditInSession(
+          {
+            userId: room.ownerAgentId!,
+            amountMinor: commissionMinor,
+            entryType: 'agent_receipt',
+            sourceType: 'bingo_room_commission',
+            sourceId: room.id,
+            idempotencyKey: `bingo-room-commission:${room.id}`,
+            metadata: { roomId: room.id, ggrMinor, commissionPct: pct, kind: 'bingo_room_commission' },
+          },
+          manager,
+        );
+      });
+      this.logger.log(
+        `Agent room commission: room ${roomId} → agent ${room.ownerAgentId} credited ${commissionMinor} (${pct}% of real GGR ${ggrMinor})`,
+      );
+    } catch (err) {
+      this.logger.error('settleAgentRoomCommission failed', err instanceof Error ? err.stack : err);
+    }
   }
 
   /**
@@ -910,6 +1101,7 @@ export class BingoService implements OnModuleInit {
           const ticket = manager.create(BingoTicket, {
             userId,
             roomId,
+            agentId: room.ownerAgentId ?? null, // per-agent settlement snapshot
             cartelaNumber,
             cardId: card.id,
             // Immutable snapshot of the assigned pool card — settlement/winner
@@ -989,6 +1181,7 @@ export class BingoService implements OnModuleInit {
         const ticket = manager.create(BingoTicket, {
           userId,
           roomId,
+          agentId: room.ownerAgentId ?? null, // per-agent settlement snapshot
           grid,
           markedNumbers: [],
           completedLines: [],

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
-import { agentApi, walletApi } from '../lib/api';
+import { agentApi, walletApi, type AgentSelfPerformance } from '../lib/api';
 import { SupportConsole } from '../components/SupportConsole';
 import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
@@ -42,6 +42,7 @@ export function Agent() {
   const [mine, setMine] = useState<Withdrawal[]>([]);
   const [config, setConfig] = useState<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
+  const [perf, setPerf] = useState<AgentSelfPerformance | null>(null);
   const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [_withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,6 +70,7 @@ export function Agent() {
       setMine(my);
       setConfig(cfg);
       setAgentWallet(wallet);
+      agentApi.getPerformance().then(setPerf).catch(() => undefined);
       const tx = await agentApi.getTransactions();
       setLedger(tx.ledger);
       setWithdrawalHistory(tx.withdrawals);
@@ -210,6 +212,31 @@ export function Agent() {
           </div>
         ))}
       </div>
+
+      {/* My Bingo performance (Approach B) — shows once there's activity */}
+      {perf && (perf.tickets > 0 || perf.customersBrought > 0 || perf.commissionEarnedMinor > 0) && (
+        <div style={{
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: 14, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
+            {t('agent.myBingo', { defaultValue: 'My Bingo Room' })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {[
+              { label: t('agent.customers', { defaultValue: 'Customers' }), value: String(perf.customersBrought) },
+              { label: t('agent.players', { defaultValue: 'Players' }), value: String(perf.players) },
+              { label: t('agent.staked', { defaultValue: 'Staked' }), value: formatCredits(perf.stakedMinor) },
+              { label: t('agent.commission', { defaultValue: 'Commission' }), value: formatCredits(perf.commissionEarnedMinor), accent: true },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Header actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>

@@ -45,6 +45,13 @@ export class BingoController {
     return this.bingoService.getCurrentRoom(maybeUser?.id);
   }
 
+  @Get('lobby')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOkResponse({ description: 'Joinable rooms + whether per-agent room mode is enabled (Approach B)' })
+  getLobby() {
+    return this.bingoService.getLobby();
+  }
+
   @Get('rooms/:id/state')
   @ApiBearerAuth()
   @UseGuards(OptionalJwtAuthGuard)

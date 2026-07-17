@@ -357,6 +357,87 @@ export class AdminService {
     };
   }
 
+  /**
+   * Per-agent Bingo performance (Approach B): for each agent, the customers they
+   * brought (first-deposit link) and the play in their rooms — tickets, distinct
+   * players, total staked, total paid out, and GGR (house take = staked − payout).
+   * Ranked by staked. Money is integer minor units. Bingo tickets carry the room
+   * owner's agentId snapshot, so this is a straight group-by.
+   */
+  async getAgentPerformance(): Promise<
+    Array<{
+      agentId: string;
+      displayName: string;
+      customersBrought: number;
+      tickets: number;
+      players: number;
+      stakedMinor: number;
+      payoutMinor: number;
+      ggrMinor: number;
+      commissionEarnedMinor: number;
+    }>
+  > {
+    // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
+    const rows: Array<{
+      id: string;
+      displayName: string;
+      customers: string | number;
+      tickets: string | number;
+      players: string | number;
+      staked: string | number;
+      payout: string | number;
+      commission: string | number;
+    }> = await this.dataSource.query(
+      `SELECT u.id, u.displayName,
+              COALESCE(c.customers, 0) customers,
+              COALESCE(t.tickets, 0) tickets,
+              COALESCE(t.players, 0) players,
+              COALESCE(t.staked, 0) staked,
+              COALESCE(t.payout, 0) payout,
+              COALESCE(cm.commission, 0) commission
+         FROM users u
+         LEFT JOIN (
+           SELECT t.agentId, COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
+                  SUM(t.stakeMinor) staked, SUM(t.payoutMinor) payout
+             FROM bingo_tickets t
+             JOIN users pu ON pu.id = t.userId
+            WHERE t.agentId IS NOT NULL AND t.status <> 'cancelled'
+              AND JSON_EXTRACT(pu.productMetadata, '$.botPolicy') IS NULL
+            GROUP BY t.agentId
+         ) t ON t.agentId = u.id
+         LEFT JOIN (
+           SELECT referredByAgentId, COUNT(*) customers
+             FROM users
+            WHERE referredByAgentId IS NOT NULL
+            GROUP BY referredByAgentId
+         ) c ON c.referredByAgentId = u.id
+         LEFT JOIN (
+           SELECT userId, SUM(amountMinor) commission
+             FROM ledger_entries
+            WHERE entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'
+            GROUP BY userId
+         ) cm ON cm.userId = u.id
+        WHERE JSON_CONTAINS(u.roles, '"agent"')
+        ORDER BY staked DESC`,
+    );
+
+    return rows.map((r) => {
+      const stakedMinor = Number(r.staked ?? 0);
+      const payoutMinor = Number(r.payout ?? 0);
+      return {
+        agentId: r.id,
+        displayName: r.displayName,
+        customersBrought: Number(r.customers ?? 0),
+        tickets: Number(r.tickets ?? 0),
+        players: Number(r.players ?? 0),
+        stakedMinor,
+        payoutMinor,
+        ggrMinor: stakedMinor - payoutMinor,
+        commissionEarnedMinor: Number(r.commission ?? 0),
+      };
+    });
+  }
+
   async getAgentActions(limit = 100) {
     const safeLimit = Math.min(Math.max(limit || 100, 1), 200);
 

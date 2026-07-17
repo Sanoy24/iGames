@@ -137,6 +137,11 @@ export class AdminController {
     return this.adminService.getAgentActions(parseInt(limit, 10) || 100);
   }
 
+  @Get('agents/performance')
+  getAgentPerformance() {
+    return this.adminService.getAgentPerformance();
+  }
+
   // ── Withdrawals ───────────────────────────────────────────────────
 
   @Get('withdrawals')

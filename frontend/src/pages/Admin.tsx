@@ -18,6 +18,7 @@ import {
   walletApi,
   type AdminGameStat,
   type AdminUserActivity,
+  type AgentPerformance,
   type AgentLedgerAction,
   type AgentWithdrawalAction,
   type BingoRoundDetails,
@@ -1113,8 +1114,10 @@ function ConfigAdmin() {
     minDepositMinor: 0,
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
+    agentRoomsEnabled: false, agentRoomCommissionPct: 0,
   });
   const [admins, setAdmins] = useState<User[]>([]);
+  const [perf, setPerf] = useState<AgentPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -1128,6 +1131,8 @@ function ConfigAdmin() {
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
     withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
+    agentRoomsEnabled: c.agentRoomsEnabled ?? false,
+    agentRoomCommissionPct: c.agentRoomCommissionPct ?? 0,
   });
 
   useEffect(() => {
@@ -1138,6 +1143,9 @@ function ConfigAdmin() {
     // Load admins for the super-admin (service-fee recipient) picker.
     adminUsersApi.listUsers(1, 100, 'admin')
       .then((r) => setAdmins(r.data))
+      .catch(() => undefined);
+    adminApi.getAgentPerformance()
+      .then(setPerf)
       .catch(() => undefined);
   }, [addToast]);
 
@@ -1201,6 +1209,66 @@ function ConfigAdmin() {
         <p className="adm-field-hint" style={{ marginTop: 8 }}>
           Both cuts come out of the gross withdrawal — the user receives gross minus service fee minus commission.
         </p>
+      </div>
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Bingo — Agent-owned Rooms</div>
+        <div style={{ padding: 16 }}>
+          <label className="adm-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!form.agentRoomsEnabled}
+              onClick={() => setForm((f) => ({ ...f, agentRoomsEnabled: !f.agentRoomsEnabled }))}
+              style={{
+                position: 'relative', width: 44, height: 24, borderRadius: 999, flexShrink: 0, cursor: 'pointer',
+                background: form.agentRoomsEnabled ? 'var(--green, #10b981)' : 'var(--border)',
+                border: 'none', transition: 'background .15s',
+              }}
+            >
+              <span style={{
+                position: 'absolute', top: 2, left: form.agentRoomsEnabled ? 22 : 2,
+                width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .15s',
+              }} />
+            </button>
+            <span>
+              <strong>Per-agent rooms</strong>
+              <em className="adm-field-hint"> — OFF = one shared room (current). ON = each agent owns a room; customers pick from a lobby; settlement/stats credit the room owner.</em>
+            </span>
+          </label>
+          <div className="adm-field-grid" style={{ marginTop: 12 }}>
+            {field('agentRoomCommissionPct', 'Agent Commission % of GGR', 'paid to the room owner on completion (of real-player staked − paid out). 0 = stats only')}
+          </div>
+        </div>
+
+        <div className="adm-panel-head" style={{ marginTop: 4 }}>Agent Performance (Bingo)</div>
+        {perf.length === 0 ? (
+          <div className="adm-empty">No agent activity yet.</div>
+        ) : (
+          <table className="adm-table">
+            <thead>
+              <tr className="adm-tr">
+                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Commission</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perf.map((p) => (
+                <tr key={p.agentId} className="adm-tr">
+                  <td><strong>{p.displayName}</strong></td>
+                  <td className="adm-td-muted">{p.customersBrought}</td>
+                  <td>{p.tickets}</td>
+                  <td className="adm-td-muted">{p.players}</td>
+                  <td>{formatCreditsFull(p.stakedMinor)}</td>
+                  <td>{formatCreditsFull(p.payoutMinor)}</td>
+                  <td style={{ color: p.ggrMinor >= 0 ? 'var(--green)' : 'var(--danger)' }}>
+                    {formatCreditsFull(p.ggrMinor)}
+                  </td>
+                  <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.commissionEarnedMinor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <button className="adm-btn adm-btn-primary adm-btn-full" disabled={saving} onClick={save}>

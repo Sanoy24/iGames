@@ -196,9 +196,22 @@ export const kenoApi = {
 };
 
 // ── Bingo ─────────────────────────────────────────────────────────
+export type BingoLobbyRoom = {
+  id: string;
+  name: string;
+  status: string;
+  ownerAgentId: string | null;
+  ownerName: string;
+  ticketPriceMinor: number;
+  players: number;
+  potMinor: number;
+  scheduledStartAt: string | null;
+};
+
 export const bingoApi = {
   listRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
   getCurrentRoom: () => api.get<BingoRoomState | null>('/bingo/current').then((r) => r.data),
+  getLobby: () => api.get<{ enabled: boolean; rooms: BingoLobbyRoom[] }>('/bingo/lobby').then((r) => r.data),
   getRoomState: (roomId: string) => api.get<BingoRoomState>(`/bingo/rooms/${roomId}/state`).then((r) => r.data),
   spectateRoom: (roomId: string) => api.get<SpectatorCard[]>(`/bingo/rooms/${roomId}/spectate`).then((r) => r.data),
   purchaseTickets: (roomId: string, count: number, idempotencyKey: string, selectedNumbers?: number[]) =>
@@ -275,12 +288,39 @@ export type SystemConfig = {
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
   maxPendingWithdrawalsPerUser: number;
+  /** Approach B: per-agent Bingo rooms on/off. */
+  agentRoomsEnabled?: boolean;
+  /** % of a room's real-player GGR paid to the owning agent on completion. */
+  agentRoomCommissionPct?: number;
+};
+
+export type AgentPerformance = {
+  agentId: string;
+  displayName: string;
+  customersBrought: number;
+  tickets: number;
+  players: number;
+  stakedMinor: number;
+  payoutMinor: number;
+  ggrMinor: number;
+  commissionEarnedMinor: number;
+};
+
+export type AgentSelfPerformance = {
+  customersBrought: number;
+  tickets: number;
+  players: number;
+  stakedMinor: number;
+  payoutMinor: number;
+  ggrMinor: number;
+  commissionEarnedMinor: number;
 };
 
 export const adminApi = {
   getOverview: () => api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
   getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
   updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
+  getAgentPerformance: () => api.get<AgentPerformance[]>('/admin/agents/performance').then((r) => r.data),
   topupWallet: (amountMinor: number, idempotencyKey?: string) =>
     api.post<Wallet>('/admin/wallet/topup', { amountMinor, idempotencyKey }).then((r) => r.data),
   transferToAgent: (agentId: string, amountMinor: number, idempotencyKey?: string) =>
@@ -625,6 +665,7 @@ export const adminWithdrawalsApi = {
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
   getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
+  getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
   getTransactions: () => api.get<{ ledger: LedgerEntry[]; withdrawals: Withdrawal[] }>('/agent/transactions').then((r) => r.data),

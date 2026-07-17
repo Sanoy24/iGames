@@ -125,6 +125,15 @@ export class BingoTicket {
   @Column({ type: 'json', nullable: true })
   forfeitedPlaces?: string[] | null;
 
+  /**
+   * Owning agent (user id) of the room this ticket was bought in — snapshotted at
+   * purchase (Approach B). NULL = house room / attribution off. Drives per-agent
+   * settlement and performance stats without a room join.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  agentId?: string | null;
+
   @Column({ type: 'varchar', length: 255 })
   purchaseIdempotencyKey: string;
 

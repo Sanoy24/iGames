@@ -72,6 +72,15 @@ export class User {
   @Column({ type: 'json', nullable: true })
   workDaysOfWeek?: number[];
 
+  /**
+   * Agent (user id) who brought this customer — set to the agent who processed the
+   * customer's FIRST credited Telebirr deposit. Used for "customers brought" stats
+   * and to highlight the customer's home room in the lobby. Null = unattributed.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  referredByAgentId?: string | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

@@ -43,6 +43,22 @@ export class SystemConfig {
   @Column({ type: 'int', default: 1 })
   maxPendingWithdrawalsPerUser: number;
 
+  /**
+   * Per-agent Bingo rooms (Approach B). When true, each active agent owns a Bingo
+   * room, customers pick a room from a lobby, and settlement/stats are credited to
+   * the room's owner. When false, Bingo runs the original single shared-room model.
+   * Toggled from the admin panel.
+   */
+  @Column({ type: 'boolean', default: false })
+  agentRoomsEnabled: boolean;
+
+  /**
+   * % of a room's real-player GGR (staked − paid out, bots excluded) credited to
+   * the room-owning agent when the game completes. 0 = no commission (stats only).
+   */
+  @Column({ type: 'int', default: 0 })
+  agentRoomCommissionPct: number;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

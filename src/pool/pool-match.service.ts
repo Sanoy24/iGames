@@ -2,16 +2,23 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { RngService } from '../rng/rng.service';
+import { WalletService } from '../wallet/wallet.service';
+import { GameEventsGateway } from '../events/game-events.gateway';
 import { PoolMatch } from './entities/pool-match.entity';
 import { PoolShot } from './entities/pool-shot.entity';
+import { PoolConfig } from './entities/pool-config.entity';
 import { PoolMode, PoolService } from './pool.service';
+import { PoolBotService } from './pool-bot.service';
+import { PoolTournamentService } from './pool-tournament.service';
 import { standardTable } from './engine/table';
 import { runShot } from './engine/simulator';
 import { ShotInput } from './engine/types';
@@ -23,15 +30,19 @@ export interface CreateMatchInput {
   seatAUserId: string | null;
   seatBUserId: string | null;
   stakeMinor?: number;
-  /** Which seat breaks. Defaults to A. */
   breaker?: Seat;
+  tournamentId?: string | null;
+  tournamentRound?: number | null;
+  tournamentSlot?: number | null;
 }
+
+const MAX_BOT_SHOTS_PER_TURN = 40;
 
 @Injectable()
 export class PoolMatchService {
   private readonly logger = new Logger(PoolMatchService.name);
-  // Physics geometry is fixed for now; moving felt/cue tuning into DB config is
-  // a later step (see project notes).
+  // Physics geometry is fixed for now; moving felt/cue tuning to DB config is a
+  // documented follow-up.
   private readonly table = standardTable();
 
   constructor(
@@ -42,20 +53,25 @@ export class PoolMatchService {
     private readonly dataSource: DataSource,
     private readonly rngService: RngService,
     private readonly poolService: PoolService,
+    private readonly walletService: WalletService,
+    private readonly gateway: GameEventsGateway,
+    private readonly botService: PoolBotService,
+    @Inject(forwardRef(() => PoolTournamentService))
+    private readonly tournamentService: PoolTournamentService,
   ) {}
 
-  /** Create and rack a new match. Seat B may be null (bot / single player). */
-  async createMatch(input: CreateMatchInput): Promise<PoolMatch> {
+  // ── Creation ────────────────────────────────────────────────────────────────
+
+  /** Create + rack a match. Pass `manager` to enlist in an outer transaction. */
+  async createMatch(input: CreateMatchInput, manager?: EntityManager): Promise<PoolMatch> {
     const cfg = await this.poolService.getConfig();
     const breaker: Seat = input.breaker ?? 'A';
-
-    // Rack seed via the crypto RNG service (never Math.random). Stored on the
-    // match so the game is deterministically replayable.
     const draw = await this.rngService.drawUniqueNumbers({ min: 1, max: 2_000_000_000, count: 1 });
     const seed = draw.numbers[0];
-
     const state = newGame(this.table, seed, breaker);
-    const match = this.matchRepo.create({
+    const repo = manager ? manager.getRepository(PoolMatch) : this.matchRepo;
+
+    const match = repo.create({
       mode: input.mode,
       status: 'active',
       seatAUserId: input.seatAUserId,
@@ -75,9 +91,47 @@ export class PoolMatchService {
       winnerSeat: null,
       board: state.balls,
       shotCount: 0,
+      turnDeadline: this.deadlineFrom(cfg),
+      tournamentId: input.tournamentId ?? null,
+      tournamentRound: input.tournamentRound ?? null,
+      tournamentSlot: input.tournamentSlot ?? null,
     });
-    return this.matchRepo.save(match);
+    const saved = await repo.save(match);
+    if (!manager) this.broadcastMatch(saved);
+    return saved;
   }
+
+  /** Single-player vs the AI, escrowing the configured stake if any. */
+  async createSingleMatch(userId: string): Promise<PoolMatch> {
+    const cfg = await this.poolService.getConfig();
+    const stake = cfg.singlePlayerStakeMinor;
+    if (stake <= 0) {
+      return this.createMatch({ mode: 'single', seatAUserId: userId, seatBUserId: null, stakeMinor: 0 });
+    }
+    const match = await this.dataSource.transaction(async (manager) => {
+      const m = await this.createMatch(
+        { mode: 'single', seatAUserId: userId, seatBUserId: null, stakeMinor: stake },
+        manager,
+      );
+      await this.walletService.debitInSession(
+        {
+          userId,
+          amountMinor: stake,
+          entryType: 'stake',
+          sourceType: 'pool_match',
+          sourceId: m.id,
+          idempotencyKey: `pool-stake:${m.id}:A`,
+          metadata: { mode: 'single' },
+        },
+        manager,
+      );
+      return m;
+    });
+    this.broadcastMatch(match);
+    return match;
+  }
+
+  // ── Reads ─────────────────────────────────────────────────────────────────
 
   async getMatch(id: string): Promise<PoolMatch> {
     const match = await this.matchRepo.findOneBy({ id });
@@ -89,7 +143,6 @@ export class PoolMatchService {
     return this.shotRepo.find({ where: { matchId }, order: { shotIndex: 'ASC' } });
   }
 
-  /** Reconstruct the rules-engine game state from a persisted match row. */
   private toState(m: PoolMatch): GameState {
     return {
       balls: m.board,
@@ -102,11 +155,14 @@ export class PoolMatchService {
     };
   }
 
-  /** Which seat this user occupies, or throw if they aren't in the match. */
   private seatOf(match: PoolMatch, userId: string): Seat {
     if (match.seatAUserId === userId) return 'A';
     if (match.seatBUserId === userId) return 'B';
     throw new ForbiddenException('You are not a player in this match');
+  }
+
+  private deadlineFrom(cfg: PoolConfig): Date | null {
+    return cfg.shotClockSeconds > 0 ? new Date(Date.now() + cfg.shotClockSeconds * 1000) : null;
   }
 
   private validateInput(match: PoolMatch, input: ShotInput): void {
@@ -139,28 +195,39 @@ export class PoolMatchService {
     }
   }
 
-  /**
-   * Server-authoritative shot: validate the shooter and inputs, run the shot
-   * through the deterministic engine, apply the 8-ball rules, and persist the
-   * new board + append the shot log — all in one transaction. The unique
-   * (matchId, shotIndex) index makes a duplicate submission a no-op error rather
-   * than a double-apply.
-   */
+  // ── Shooting ────────────────────────────────────────────────────────────────
+
+  /** A human player submits a shot; bot replies are then auto-played in single. */
   async submitShot(matchId: string, userId: string, input: ShotInput): Promise<ShotOutcome> {
     const match = await this.getMatch(matchId);
-    if (match.status !== 'active') {
-      throw new ConflictException('Match is not active');
-    }
+    if (match.status !== 'active') throw new ConflictException('Match is not active');
     const seat = this.seatOf(match, userId);
-    if (seat !== match.turn) {
-      throw new ConflictException('It is not your turn');
-    }
+    if (seat !== match.turn) throw new ConflictException('It is not your turn');
     this.validateInput(match, input);
 
+    const { outcome, match: after } = await this.applyResolvedShot(matchId, seat, input);
+
+    if (after.mode === 'single' && after.status === 'active') {
+      const botSeat: Seat | null =
+        after.seatBUserId === null ? 'B' : after.seatAUserId === null ? 'A' : null;
+      if (botSeat && after.turn === botSeat) await this.runBotTurns(matchId, botSeat);
+    }
+    return outcome;
+  }
+
+  /** Run, resolve, persist, settle and broadcast one shot in a transaction. */
+  private async applyResolvedShot(
+    matchId: string,
+    seat: Seat,
+    input: ShotInput,
+  ): Promise<{ outcome: ShotOutcome; match: PoolMatch }> {
+    const match = await this.getMatch(matchId);
+    const cfg = await this.poolService.getConfig();
     const pre = this.toState(match);
     const result = runShot(pre.balls, input, this.table);
     const outcome = resolveShot(pre, result, this.table);
     const shotIndex = match.shotCount;
+    const s = outcome.state;
 
     try {
       await this.dataSource.transaction(async (manager) => {
@@ -176,12 +243,17 @@ export class PoolMatchService {
           gameOver: outcome.gameOver,
           winnerSeat: outcome.winner,
           reason: outcome.reason,
-          boardAfter: outcome.state.balls,
+          boardAfter: s.balls,
         });
 
-        const s = outcome.state;
-        await manager.getRepository(PoolMatch).update(
-          { id: match.id, shotCount: shotIndex }, // optimistic guard on shotCount
+        let settledAt: Date | null = null;
+        if (outcome.gameOver && outcome.winner) {
+          const settled = await this.settleWithinTx(manager, match, outcome.winner, cfg);
+          if (settled) settledAt = new Date();
+        }
+
+        const res = await manager.getRepository(PoolMatch).update(
+          { id: match.id, shotCount: shotIndex },
           {
             board: s.balls,
             turn: s.turn,
@@ -194,19 +266,211 @@ export class PoolMatchService {
             shotCount: shotIndex + 1,
             status: outcome.gameOver ? 'completed' : 'active',
             completedAt: outcome.gameOver ? new Date() : null,
+            settledAt,
+            turnDeadline: outcome.gameOver ? null : this.deadlineFrom(cfg),
           },
         );
+        if (!res.affected) throw new ConflictException('Shot already applied');
       });
     } catch (err) {
-      // Unique-index violation on (matchId, shotIndex) ⇒ a concurrent/duplicate
-      // submission already applied this shot.
-      if (isDuplicateKey(err)) {
-        throw new ConflictException('Shot already applied');
-      }
+      if (isDuplicateKey(err)) throw new ConflictException('Shot already applied');
       throw err;
     }
 
-    return outcome;
+    const fresh = await this.getMatch(matchId);
+    this.broadcastShot(matchId, seat, input, outcome);
+    this.broadcastMatch(fresh);
+    if (outcome.gameOver) {
+      this.gateway.emitPoolMatchEnded(matchId, { matchId, winnerSeat: outcome.winner, reason: outcome.reason });
+      if (fresh.tournamentId) {
+        await this.tournamentService
+          .onMatchCompleted(fresh)
+          .catch((e) => this.logger.error(`Tournament advance failed: ${e?.message ?? e}`));
+      }
+    }
+    return { outcome, match: fresh };
+  }
+
+  private async runBotTurns(matchId: string, botSeat: Seat): Promise<void> {
+    const cfg = await this.poolService.getConfig();
+    for (let i = 0; i < MAX_BOT_SHOTS_PER_TURN; i++) {
+      const match = await this.getMatch(matchId);
+      if (match.status !== 'active' || match.turn !== botSeat) break;
+      const input = await this.botService.computeShot(this.toState(match), botSeat, cfg.botDifficulty, this.table);
+      await this.applyResolvedShot(matchId, botSeat, input);
+    }
+  }
+
+  // ── Settlement / lifecycle ──────────────────────────────────────────────────
+
+  /** Credit the winner (minus rake). Tournament matches settle via prize pool. */
+  private async settleWithinTx(
+    manager: EntityManager,
+    match: PoolMatch,
+    winner: Seat,
+    cfg: PoolConfig,
+  ): Promise<boolean> {
+    if (match.settledAt) return false;
+    if (match.mode === 'tournament') return false; // prize handled at tournament end
+    if (match.stakeMinor <= 0) return false;
+
+    const winnerUserId = winner === 'A' ? match.seatAUserId : match.seatBUserId;
+    if (!winnerUserId) return false; // bot won a single-player game — nothing to pay
+
+    const pot = match.stakeMinor * 2;
+    const rake = Math.floor((pot * cfg.rakePct) / 100);
+    const payout = pot - rake;
+    await this.walletService.creditInSession(
+      {
+        userId: winnerUserId,
+        amountMinor: payout,
+        entryType: 'win',
+        sourceType: 'pool_match',
+        sourceId: match.id,
+        idempotencyKey: `pool-payout:${match.id}`,
+        metadata: { mode: match.mode, pot, rake },
+      },
+      manager,
+    );
+    return true;
+  }
+
+  /**
+   * Abort a match and refund both stakes. Idempotent per seat. Used for
+   * cancellations / unrecoverable errors (not normal completion).
+   */
+  async abortMatch(matchId: string, reason: string): Promise<void> {
+    const match = await this.getMatch(matchId);
+    if (match.status !== 'active') return;
+    await this.dataSource.transaction(async (manager) => {
+      if (match.mode !== 'tournament' && match.stakeMinor > 0 && !match.settledAt) {
+        for (const [seat, userId] of [['A', match.seatAUserId], ['B', match.seatBUserId]] as const) {
+          if (!userId) continue;
+          await this.walletService.creditInSession(
+            {
+              userId,
+              amountMinor: match.stakeMinor,
+              entryType: 'refund',
+              sourceType: 'pool_match',
+              sourceId: match.id,
+              idempotencyKey: `pool-refund:${match.id}:${seat}`,
+              metadata: { reason },
+            },
+            manager,
+          );
+        }
+      }
+      await manager.getRepository(PoolMatch).update(
+        { id: match.id, status: 'active' },
+        { status: 'aborted', settledAt: new Date(), turnDeadline: null, completedAt: new Date() },
+      );
+    });
+    this.gateway.emitPoolMatchEnded(matchId, { matchId, aborted: true, reason });
+  }
+
+  /**
+   * Award the match to the opponent because the player on turn ran out their
+   * shot clock (or disconnected). Called by the scheduler; idempotent via the
+   * status guard.
+   */
+  async forfeitOnTimeout(matchId: string): Promise<void> {
+    const match = await this.getMatch(matchId);
+    if (match.status !== 'active') return;
+    if (!match.turnDeadline || match.turnDeadline.getTime() > Date.now()) return;
+
+    const winner = otherSeat(match.turn);
+    const cfg = await this.poolService.getConfig();
+    await this.dataSource.transaction(async (manager) => {
+      let settledAt: Date | null = null;
+      const settled = await this.settleWithinTx(manager, match, winner, cfg);
+      if (settled) settledAt = new Date();
+      const res = await manager.getRepository(PoolMatch).update(
+        { id: match.id, status: 'active', shotCount: match.shotCount },
+        {
+          status: 'completed',
+          phase: 'gameover',
+          winnerSeat: winner,
+          turnDeadline: null,
+          completedAt: new Date(),
+          settledAt,
+        },
+      );
+      if (!res.affected) throw new ConflictException('Match already advanced');
+    });
+
+    const fresh = await this.getMatch(matchId);
+    this.broadcastMatch(fresh);
+    this.gateway.emitPoolMatchEnded(matchId, {
+      matchId,
+      winnerSeat: winner,
+      reason: `${match.turn} ran out of time — ${winner} wins by forfeit`,
+    });
+    if (fresh.tournamentId) {
+      await this.tournamentService
+        .onMatchCompleted(fresh)
+        .catch((e) => this.logger.error(`Tournament advance failed: ${e?.message ?? e}`));
+    }
+  }
+
+  /** Active matches whose shot clock has expired (for the scheduler). */
+  async findTimedOutMatches(now: Date = new Date()): Promise<PoolMatch[]> {
+    return this.matchRepo
+      .createQueryBuilder('m')
+      .where('m.status = :status', { status: 'active' })
+      .andWhere('m.turnDeadline IS NOT NULL')
+      .andWhere('m.turnDeadline < :now', { now })
+      .getMany();
+  }
+
+  // ── Broadcast ───────────────────────────────────────────────────────────────
+
+  buildView(m: PoolMatch) {
+    return {
+      id: m.id,
+      mode: m.mode,
+      status: m.status,
+      seatAUserId: m.seatAUserId,
+      seatBUserId: m.seatBUserId,
+      stakeMinor: m.stakeMinor,
+      turn: m.turn,
+      groups: { A: m.groupA, B: m.groupB },
+      tableOpen: m.tableOpen,
+      ballInHand: m.ballInHand,
+      phase: m.phase,
+      winnerSeat: m.winnerSeat,
+      board: m.board,
+      shotCount: m.shotCount,
+      turnDeadline: m.turnDeadline,
+      tournamentId: m.tournamentId,
+    };
+  }
+
+  private broadcastMatch(m: PoolMatch): void {
+    try {
+      this.gateway.emitPoolMatchUpdated(m.id, this.buildView(m));
+    } catch (e) {
+      this.logger.debug(`match broadcast skipped: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  private broadcastShot(matchId: string, seat: Seat, input: ShotInput, outcome: ShotOutcome): void {
+    try {
+      this.gateway.emitPoolShotResolved(matchId, {
+        matchId,
+        seat,
+        input,
+        pocketed: outcome.pocketed,
+        fouls: outcome.fouls,
+        reason: outcome.reason,
+        turnPassed: outcome.turnPassed,
+        gameOver: outcome.gameOver,
+        winnerSeat: outcome.winner,
+        board: outcome.state.balls,
+        turn: outcome.state.turn,
+      });
+    } catch (e) {
+      this.logger.debug(`shot broadcast skipped: ${e instanceof Error ? e.message : e}`);
+    }
   }
 }
 

@@ -19,6 +19,9 @@ export type PoolMatchStatus = 'active' | 'completed' | 'aborted';
  */
 @Entity({ name: 'pool_matches', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['status', 'createdAt'])
+// One match per bracket slot. Casual matches have all three columns NULL, which
+// MySQL permits to repeat, so only tournament matches are constrained.
+@Index(['tournamentId', 'tournamentRound', 'tournamentSlot'], { unique: true })
 export class PoolMatch {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -86,6 +89,27 @@ export class PoolMatch {
 
   @Column({ type: 'int', default: 0 })
   shotCount: number;
+
+  /** When the current player's shot clock expires (null = untimed). */
+  @Column({ type: 'timestamp', nullable: true })
+  @Index()
+  turnDeadline: Date | null;
+
+  /** Set once winnings/refunds have been settled (idempotency guard). */
+  @Column({ type: 'timestamp', nullable: true })
+  settledAt: Date | null;
+
+  // ── Tournament linkage (null for casual matches) ──
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  tournamentId: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  tournamentRound: number | null;
+
+  /** Slot index within the round; the winner feeds slot ⌊slot/2⌋ of the next round. */
+  @Column({ type: 'int', nullable: true })
+  tournamentSlot: number | null;
 
   @Column({ type: 'timestamp', nullable: true })
   completedAt: Date | null;

@@ -387,4 +387,36 @@ export class GameEventsGateway
       timestamp: new Date().toISOString(),
     });
   }
+
+  // ── Pool ────────────────────────────────────────────────────────────────────
+
+  /** Spectators/players subscribe to a match's room to receive live state. */
+  @SubscribeMessage('pool.join')
+  async handlePoolJoin(client: Socket, payload: { matchId: string }) {
+    if (payload?.matchId) await client.join(`pool_match_${payload.matchId}`);
+  }
+
+  @SubscribeMessage('pool.leave')
+  async handlePoolLeave(client: Socket, payload: { matchId: string }) {
+    if (payload?.matchId) await client.leave(`pool_match_${payload.matchId}`);
+  }
+
+  /** Authoritative board/turn state after any change. */
+  emitPoolMatchUpdated(matchId: string, payload: unknown): void {
+    this.server.to(`pool_match_${matchId}`).emit('pool.match.updated', payload);
+  }
+
+  /** A resolved shot (for animation + the shot feed). */
+  emitPoolShotResolved(matchId: string, payload: unknown): void {
+    this.server.to(`pool_match_${matchId}`).emit('pool.shot.resolved', payload);
+  }
+
+  emitPoolMatchEnded(matchId: string, payload: unknown): void {
+    this.server.to(`pool_match_${matchId}`).emit('pool.match.ended', payload);
+  }
+
+  /** Direct notification to a user that matchmaking paired them. */
+  emitPoolMatchFound(userId: string, payload: unknown): void {
+    this.server.to(`user_${userId}`).emit('pool.match.found', payload);
+  }
 }

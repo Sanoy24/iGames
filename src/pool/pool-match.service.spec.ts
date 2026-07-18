@@ -38,8 +38,10 @@ function harness() {
   };
   const updateMatch = (criteria: any, patch: any) => {
     const m = matches.get(criteria.id);
-    if (m && m.shotCount === criteria.shotCount) Object.assign(m, patch);
-    return { affected: m ? 1 : 0 };
+    const ok = !!m && (criteria.shotCount === undefined || m.shotCount === criteria.shotCount) &&
+      (criteria.status === undefined || m.status === criteria.status);
+    if (ok) Object.assign(m, patch);
+    return { affected: ok ? 1 : 0 };
   };
 
   const dataSource = {
@@ -59,10 +61,38 @@ function harness() {
   } as unknown as RngService;
 
   const pool = {
-    getConfig: jest.fn().mockResolvedValue({ engineVersion: 1, rulesetVersion: 1 }),
+    getConfig: jest.fn().mockResolvedValue({
+      engineVersion: 1,
+      rulesetVersion: 1,
+      shotClockSeconds: 0,
+      rakePct: 5,
+      botDifficulty: 'medium',
+      singlePlayerStakeMinor: 0,
+    }),
   } as unknown as PoolService;
 
-  const service = new PoolMatchService(matchRepo, shotRepo, dataSource, rng, pool);
+  const wallet = {
+    debitInSession: jest.fn().mockResolvedValue({}),
+    creditInSession: jest.fn().mockResolvedValue({}),
+    ensureDefaultWallet: jest.fn().mockResolvedValue({}),
+  } as unknown as import('../wallet/wallet.service').WalletService;
+
+  const gateway = {
+    emitPoolMatchUpdated: jest.fn(),
+    emitPoolShotResolved: jest.fn(),
+    emitPoolMatchEnded: jest.fn(),
+    emitPoolMatchFound: jest.fn(),
+  } as unknown as import('../events/game-events.gateway').GameEventsGateway;
+
+  const bot = {
+    computeShot: jest.fn().mockResolvedValue({ angle: 0, power: 0.5, spin: { side: 0, vertical: 0 } }),
+  } as unknown as import('./pool-bot.service').PoolBotService;
+
+  const tournament = {
+    onMatchCompleted: jest.fn().mockResolvedValue(undefined),
+  } as unknown as import('./pool-tournament.service').PoolTournamentService;
+
+  const service = new PoolMatchService(matchRepo, shotRepo, dataSource, rng, pool, wallet, gateway, bot, tournament);
   return { service, matches, shots, insertShot };
 }
 

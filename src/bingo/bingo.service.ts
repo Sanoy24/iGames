@@ -2140,18 +2140,6 @@ export class BingoService implements OnModuleInit {
       });
       if (!ticket) throw new NotFoundException('Cartela not found for this player in this room');
 
-      // Leaderboard mode has no per-place claiming — ranks are resolved once, at
-      // round end, by final achievement. A manual "Bingo" tap is a harmless no-op.
-      if (room.rankingMode === 'leaderboard') {
-        const soldTickets = await this.countSoldTickets(roomId, manager);
-        const takenSpots = await this.getTakenSpots(roomId);
-        return {
-          result: 'ignored',
-          ticket: this.toTicketResponse(ticket),
-          room: this.toRoomResponse(room, soldTickets, takenSpots),
-        };
-      }
-
       const finish = async (result: 'won' | 'disqualified' | 'ignored') => {
         const soldTickets = await this.countSoldTickets(roomId, manager);
         const takenSpots = await this.getTakenSpots(roomId);
@@ -2178,6 +2166,33 @@ export class BingoService implements OnModuleInit {
         this.bingoRulesService
           .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
           .completedPatternIds.includes(pattern.id);
+
+      // Does the card complete ANY enabled winning pattern right now?
+      const cardHasBingo = async (): Promise<boolean> => {
+        for (const place of this.openPrefilledPlaces(room, cfg)) {
+          const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+          if (completesPattern(pattern)) return true;
+        }
+        return false;
+      };
+
+      // Leaderboard mode has no per-place claiming — ranks resolve once at round
+      // end by final achievement, so a VALID "Bingo" tap is a harmless no-op. But a
+      // PREMATURE tap (no bingo on the card yet) is still DISQUALIFIED, exactly like
+      // race mode — tapping early must be penalised. A disqualified card is excluded
+      // from the end-of-round ranking (settlement queries only active/won cards).
+      if (room.rankingMode === 'leaderboard') {
+        if ((ticket.wonTiers ?? []).length > 0 || (await cardHasBingo())) {
+          return finish('ignored');
+        }
+        ticket.status = 'disqualified';
+        ticket.disqualifiedReason = 'premature_claim';
+        ticket.disqualifiedAt = new Date();
+        ticket.settlementStatus = 'settled';
+        await manager.save(ticket);
+        this.logger.log(`Bingo (leaderboard): disqualified premature claim on cartela ${ticket.id}`);
+        return finish('disqualified');
+      }
 
       // Claim EVERY still-open place this card qualifies for (best/hardest first).
       // Non-exclusive: one tap grabs all the tiers the card currently completes and

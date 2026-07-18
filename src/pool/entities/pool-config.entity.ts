@@ -65,6 +65,41 @@ export class PoolConfig {
   @Column({ type: 'int', default: 10 })
   tournamentRakePct: number;
 
+  // ── Physics tuning (snapshotted onto each match at creation) ───────────────
+  // Stored as integers so admins can tune felt/cue feel without a redeploy; see
+  // pool-physics.ts for how these map to the engine's TableSpec / ShotTuning.
+  /** Sliding (skid) friction ×100. 0.20 → 20. */
+  @Column({ type: 'int', default: 20 })
+  slidingFrictionX100: number;
+
+  /** Rolling resistance ×1000. 0.012 → 12. Higher = balls settle sooner. */
+  @Column({ type: 'int', default: 12 })
+  rollingFrictionX1000: number;
+
+  /** Cushion rebound (restitution) as a percentage. 0.82 → 82. */
+  @Column({ type: 'int', default: 82 })
+  cushionReboundPct: number;
+
+  /** Ball-to-ball rebound (restitution) as a percentage. 0.94 → 94. */
+  @Column({ type: 'int', default: 94 })
+  ballReboundPct: number;
+
+  /** Pocket capture radius as a percentage of ball radius. 1.90× → 190. */
+  @Column({ type: 'int', default: 190 })
+  pocketSizePct: number;
+
+  /** Cue-ball speed at full power ×100 (m/s). 6.0 → 600. */
+  @Column({ type: 'int', default: 600 })
+  cueMaxSpeedX100: number;
+
+  /** Vertical-axis english at full side (rad/s). */
+  @Column({ type: 'int', default: 60 })
+  maxSideSpin: number;
+
+  /** Follow/draw spin at full vertical (rad/s). */
+  @Column({ type: 'int', default: 120 })
+  maxRollSpin: number;
+
   // ── Global ────────────────────────────────────────────────────────────────
   /** Rules variant the engine enforces; bumped when the ruleset changes. */
   @Column({ type: 'int', default: 1 })

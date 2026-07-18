@@ -93,7 +93,7 @@ function harness() {
   } as unknown as import('./pool-tournament.service').PoolTournamentService;
 
   const service = new PoolMatchService(matchRepo, shotRepo, dataSource, rng, pool, wallet, gateway, bot, tournament);
-  return { service, matches, shots, insertShot };
+  return { service, matches, shots, insertShot, rng };
 }
 
 const BREAK: ShotInput = { angle: 0, power: 1, spin: { side: 0, vertical: 0 } };
@@ -109,6 +109,17 @@ describe('PoolMatchService', () => {
     expect(m.seedHash).toBe('hash');
     expect(m.board).toHaveLength(16);
     expect(m.shotCount).toBe(0);
+    // physics is snapshotted onto the match so replays stay deterministic
+    expect(m.physics).toBeDefined();
+    expect(m.physics?.cushionReboundPct).toBe(82);
+  });
+
+  it('audits the rack draw against the created match (RngGameType pool)', async () => {
+    const { service, rng } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    expect(rng.drawUniqueNumbers).toHaveBeenCalledWith(
+      expect.objectContaining({ gameType: 'pool', gameReference: m.id }),
+    );
   });
 
   it('rejects a shot from a non-participant', async () => {

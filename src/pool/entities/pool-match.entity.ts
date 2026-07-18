@@ -9,6 +9,7 @@ import {
 import { Ball } from '../engine/types';
 import { Group, Seat, GamePhase } from '../rules/rules-types';
 import { PoolMode } from '../pool.service';
+import { PoolPhysicsSnapshot } from '../pool-physics';
 
 export type PoolMatchStatus = 'active' | 'completed' | 'aborted';
 
@@ -57,6 +58,15 @@ export class PoolMatch {
 
   @Column({ type: 'int', default: 1 })
   rulesetVersion: number;
+
+  /**
+   * Physics tuning captured at creation. Every shot and every replay of this
+   * match uses this snapshot, so later admin config edits can't alter an
+   * in-flight game or break a finished game's deterministic replay. Null on
+   * legacy rows → engine defaults.
+   */
+  @Column({ type: 'json', nullable: true })
+  physics: PoolPhysicsSnapshot | null;
 
   @Column({ type: 'varchar', length: 1 })
   breakerSeat: Seat;

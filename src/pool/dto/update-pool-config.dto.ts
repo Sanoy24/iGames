@@ -70,6 +70,55 @@ export class UpdatePoolConfigDto {
   @Max(100)
   tournamentRakePct?: number;
 
+  // ── Physics tuning ────────────────────────────────────────────────────────
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  slidingFrictionX100?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  rollingFrictionX1000?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  cushionReboundPct?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  ballReboundPct?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(100)
+  @Max(300)
+  pocketSizePct?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(100)
+  @Max(1200)
+  cueMaxSpeedX100?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(200)
+  maxSideSpin?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(400)
+  maxRollSpin?: number;
+
   // ── Global ────────────────────────────────────────────────────────────────
   @IsOptional()
   @IsInt()

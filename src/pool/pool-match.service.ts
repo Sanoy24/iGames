@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
@@ -19,9 +20,9 @@ import { PoolConfig } from './entities/pool-config.entity';
 import { PoolMode, PoolService } from './pool.service';
 import { PoolBotService } from './pool-bot.service';
 import { PoolTournamentService } from './pool-tournament.service';
-import { standardTable } from './engine/table';
-import { runShot } from './engine/simulator';
-import { ShotInput } from './engine/types';
+import { runShot, ShotTuning } from './engine/simulator';
+import { ShotInput, TableSpec } from './engine/types';
+import { snapshotFromConfig, buildTable, buildTuning, PoolPhysicsSnapshot } from './pool-physics';
 import { GameState, Seat, ShotOutcome } from './rules/rules-types';
 import { newGame, otherSeat, resolveShot } from './rules/rules';
 
@@ -41,9 +42,12 @@ const MAX_BOT_SHOTS_PER_TURN = 40;
 @Injectable()
 export class PoolMatchService {
   private readonly logger = new Logger(PoolMatchService.name);
-  // Physics geometry is fixed for now; moving felt/cue tuning to DB config is a
-  // documented follow-up.
-  private readonly table = standardTable();
+
+  /** Build the engine table + cue tuning from a match's snapshotted physics. */
+  private physicsFor(match: PoolMatch): { table: TableSpec; tuning: ShotTuning } {
+    const snap = snapshotFromConfig((match.physics ?? {}) as Partial<PoolPhysicsSnapshot>);
+    return { table: buildTable(snap), tuning: buildTuning(snap) };
+  }
 
   constructor(
     @InjectRepository(PoolMatch)
@@ -66,13 +70,26 @@ export class PoolMatchService {
   async createMatch(input: CreateMatchInput, manager?: EntityManager): Promise<PoolMatch> {
     const cfg = await this.poolService.getConfig();
     const breaker: Seat = input.breaker ?? 'A';
-    const draw = await this.rngService.drawUniqueNumbers({ min: 1, max: 2_000_000_000, count: 1 });
+    // Pre-generate the id so the RNG audit row can reference this exact match.
+    const matchId = randomUUID();
+    const draw = await this.rngService.drawUniqueNumbers({
+      min: 1,
+      max: 2_000_000_000,
+      count: 1,
+      gameType: 'pool',
+      gameReference: matchId,
+      metadata: { purpose: 'rack', mode: input.mode, tournamentId: input.tournamentId ?? null },
+      manager,
+    });
     const seed = draw.numbers[0];
-    const state = newGame(this.table, seed, breaker);
+    const physics = snapshotFromConfig(cfg as Partial<PoolPhysicsSnapshot>);
+    const state = newGame(buildTable(physics), seed, breaker);
     const repo = manager ? manager.getRepository(PoolMatch) : this.matchRepo;
 
     const match = repo.create({
+      id: matchId,
       mode: input.mode,
+      physics,
       status: 'active',
       seatAUserId: input.seatAUserId,
       seatBUserId: input.seatBUserId,
@@ -183,9 +200,10 @@ export class PoolMatchService {
       if (!match.ballInHand) {
         throw new BadRequestException('Cue placement is only allowed with ball in hand');
       }
-      const R = this.table.ballRadius;
+      const { table } = this.physicsFor(match);
+      const R = table.ballRadius;
       const { x, y } = input.cuePos;
-      if (!finite(x) || !finite(y) || x < R || x > this.table.width - R || y < R || y > this.table.height - R) {
+      if (!finite(x) || !finite(y) || x < R || x > table.width - R || y < R || y > table.height - R) {
         throw new BadRequestException('Cue placement is outside the table');
       }
       const clash = match.board.some(
@@ -223,9 +241,10 @@ export class PoolMatchService {
   ): Promise<{ outcome: ShotOutcome; match: PoolMatch }> {
     const match = await this.getMatch(matchId);
     const cfg = await this.poolService.getConfig();
+    const { table, tuning } = this.physicsFor(match);
     const pre = this.toState(match);
-    const result = runShot(pre.balls, input, this.table);
-    const outcome = resolveShot(pre, result, this.table);
+    const result = runShot(pre.balls, input, table, { tuning });
+    const outcome = resolveShot(pre, result, table);
     const shotIndex = match.shotCount;
     const s = outcome.state;
 
@@ -296,7 +315,8 @@ export class PoolMatchService {
     for (let i = 0; i < MAX_BOT_SHOTS_PER_TURN; i++) {
       const match = await this.getMatch(matchId);
       if (match.status !== 'active' || match.turn !== botSeat) break;
-      const input = await this.botService.computeShot(this.toState(match), botSeat, cfg.botDifficulty, this.table);
+      const { table } = this.physicsFor(match);
+      const input = await this.botService.computeShot(this.toState(match), botSeat, cfg.botDifficulty, table);
       await this.applyResolvedShot(matchId, botSeat, input);
     }
   }

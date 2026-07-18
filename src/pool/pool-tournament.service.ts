@@ -132,7 +132,14 @@ export class PoolTournamentService {
     }
 
     // Randomised seeding via the RNG service (auditable, no Math.random).
-    const draw = await this.rngService.drawUniqueNumbers({ min: 1, max: 2_000_000_000, count: 1 });
+    const draw = await this.rngService.drawUniqueNumbers({
+      min: 1,
+      max: 2_000_000_000,
+      count: 1,
+      gameType: 'pool',
+      gameReference: t.id,
+      metadata: { purpose: 'bracket-seed', size: t.size },
+    });
     const rng = mulberry32(draw.numbers[0]);
     const order = players.slice();
     for (let i = order.length - 1; i > 0; i--) {

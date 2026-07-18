@@ -180,7 +180,7 @@ export function Profile({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) 
           <span className="profile-stat-label">{t('profile.lastLogin')}</span>
           <span className="profile-stat-value" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
             {user?.lastLoginAt
-              ? new Date(user.lastLoginAt).toLocaleDateString('en-GB', { timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+              ? new Date(user.lastLoginAt).toLocaleDateString('en-GB', { timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
               : t('profile.thisSession')}
           </span>
         </div>

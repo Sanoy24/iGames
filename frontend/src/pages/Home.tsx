@@ -382,7 +382,7 @@ export function Home({ onNavigate }: Props) {
                     <span className="activity-name">{label}</span>
                     <span className="activity-game">
                       {new Date(entry.createdAt ?? 0).toLocaleDateString('en-GB', {
-                        timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+                        timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
                       })}
                     </span>
                   </div>

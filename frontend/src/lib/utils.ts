@@ -33,13 +33,13 @@ export function formatDateTime(value: string | number | Date | undefined): strin
     timeZone: ETHIOPIA_TZ,
     day: 'numeric',
     month: 'short',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
-    hourCycle: 'h23',
+    hour12: true,
   }).format(date);
 }
 
-/** Full date + time in Ethiopia time (e.g. "17/07/2026, 18:57:30"). */
+/** Full date + time in Ethiopia time, 12-hour (e.g. "17/07/2026, 6:57:30 pm"). */
 export function formatDateTimeFull(value: string | number | Date | undefined): string {
   if (!value) {
     return '—';
@@ -53,10 +53,10 @@ export function formatDateTimeFull(value: string | number | Date | undefined): s
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
     second: '2-digit',
-    hourCycle: 'h23',
+    hour12: true,
   }).format(date);
 }
 

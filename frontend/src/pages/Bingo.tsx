@@ -745,7 +745,7 @@ const PatternTicketCard = memo(
                 layout
                 initial={{ opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className={`rounded-xl border p-3 flex flex-col gap-2 ${
+                className={`rounded-xl border p-2 flex flex-col gap-1.5 ${
                     won
                         ? 'bg-gradient-to-br from-amber-950/30 to-black/40 border-amber-500/30 shadow-[0_0_16px_rgba(245,158,11,0.1)]'
                         : 'bg-white/[0.025] border-white/[0.06]'
@@ -759,6 +759,7 @@ const PatternTicketCard = memo(
                     </span>
                     <span
                         className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
+                        style={won ? undefined : { fontSize: 7, padding: '1px 5px', letterSpacing: 0 }}
                     >
                         {won
                             ? `+${formatCredits(ticket.payoutMinor)} ETB`
@@ -848,7 +849,7 @@ const BingoTicketCard = memo(
                 layout
                 initial={{ opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className={`rounded-xl border p-3 flex flex-col gap-2 ${
+                className={`rounded-xl border p-2 flex flex-col gap-1.5 ${
                     won
                         ? 'bg-gradient-to-br from-amber-950/30 to-black/40 border-amber-500/30'
                         : 'bg-white/[0.025] border-white/[0.06]'
@@ -860,6 +861,7 @@ const BingoTicketCard = memo(
                     </span>
                     <span
                         className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
+                        style={won ? undefined : { fontSize: 7, padding: '1px 5px', letterSpacing: 0 }}
                     >
                         {won
                             ? `+${formatCredits(ticket.payoutMinor)} ETB`
@@ -1706,7 +1708,7 @@ function BingoLobby({
 }) {
     const { t } = useTranslation();
     return (
-        <div className='max-w-2xl mx-auto pb-20 space-y-3'>
+        <div className='max-w-2xl mx-auto pb-20 space-y-2'>
             <div className='flex items-center justify-between'>
                 <h2 className='text-lg font-black'>
                     {t('bingo.chooseRoom', { defaultValue: 'Choose a room' })}
@@ -2577,7 +2579,7 @@ export function Bingo({ onBack }: BingoProps) {
 
     // ── RENDER ───────────────────────────────────────────────────────────────────
     return (
-        <div className='max-w-2xl mx-auto pb-20 space-y-3'>
+        <div className='max-w-2xl mx-auto pb-20 space-y-2'>
             {pinnedRoomId && (
                 <button
                     type='button'
@@ -2702,10 +2704,10 @@ export function Bingo({ onBack }: BingoProps) {
                     initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-                    className='space-y-3'
+                    className='space-y-2'
                 >
                     {/* ── Stats bar ── */}
-                    <div className='grid grid-cols-4 gap-2'>
+                    <div className='grid grid-cols-4 gap-1.5'>
                         {[
                             {
                                 key: 'derash',
@@ -2734,13 +2736,13 @@ export function Bingo({ onBack }: BingoProps) {
                         ].map((stat) => (
                             <div
                                 key={stat.key}
-                                className='rounded-xl bg-white/[0.03] border border-white/[0.06] p-2 text-center'
+                                className='rounded-lg bg-white/[0.03] border border-white/[0.06] px-1.5 py-1 text-center'
                             >
-                                <span className='block text-[8px] font-bold uppercase tracking-wider text-slate-300 mb-0.5'>
+                                <span className='block text-[8px] font-bold uppercase tracking-wider text-slate-300'>
                                     {stat.label}
                                 </span>
                                 <span
-                                    className={`text-[10px] font-black leading-tight ${stat.color}`}
+                                    className={`text-[11px] font-black leading-tight ${stat.color}`}
                                 >
                                     {stat.value}
                                 </span>
@@ -2757,7 +2759,7 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
 
                     {/* ── Cartela picker (derash buy phase) / Number board ── */}
-                    <div className='card p-3 scroll-mt-2' ref={callingCardRef}>
+                    <div className='card p-2.5 scroll-mt-2' ref={callingCardRef}>
                         {isPrefilledMode && phase === 'buy' ? (
                             <div className='space-y-2'>
                                 <div className='flex items-center justify-between'>
@@ -2981,13 +2983,13 @@ export function Bingo({ onBack }: BingoProps) {
                                                         </p>
                                                     )}
                                                 <div
-                                                    className='w-full flex flex-col gap-2 overflow-y-auto pr-1 scrollbar-hide'
-                                                    style={{ maxHeight: 'min(430px, 62vh)' }}
+                                                    className='w-full flex flex-col gap-1.5 overflow-y-auto pr-1 scrollbar-hide'
+                                                    style={{ maxHeight: 'min(470px, 70vh)' }}
                                                 >
                                                     {myTickets.map((ticket) => (
                                                         <div
                                                             key={ticket.id}
-                                                            className='w-full flex flex-col gap-1'
+                                                            className='w-full flex flex-col gap-0.5'
                                                         >
                                                             <PatternTicketCard
                                                                 ticket={ticket}
@@ -3014,7 +3016,7 @@ export function Bingo({ onBack }: BingoProps) {
                                                                             claimingId ===
                                                                             ticket.id
                                                                         }
-                                                                        className='w-full py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-red-500 text-black text-[11px] font-black uppercase tracking-wide disabled:opacity-50 active:scale-95 transition-transform'
+                                                                        className='w-full py-1 rounded-lg bg-gradient-to-r from-amber-500 to-red-500 text-black text-[10px] font-black uppercase tracking-wide disabled:opacity-50 active:scale-95 transition-transform'
                                                                     >
                                                                         {claimingId ===
                                                                         ticket.id

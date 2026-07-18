@@ -450,11 +450,11 @@ export class BingoService implements OnModuleInit {
   ): Promise<BingoRoomResponse | null> {
     const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
     const gridSize = cfg.defaultGridSize ?? 75;
-    const timestamp = new Date().toLocaleTimeString('en-GB', {
-      timeZone: 'Africa/Addis_Ababa', // room name shows Ethiopia time regardless of server TZ
-      hour: '2-digit',
+    const timestamp = new Date().toLocaleTimeString('en-US', {
+      timeZone: 'Africa/Addis_Ababa', // room name shows Ethiopia time (12h) regardless of server TZ
+      hour: 'numeric',
       minute: '2-digit',
-      hour12: false,
+      hour12: true,
     });
     const name = ownerName ? `${ownerName} · Bingo` : `Bingo ${timestamp}`;
 

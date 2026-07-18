@@ -1,8 +1,8 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy } from 'lucide-react';
+import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy, Circle } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoDraw, LedgerEntry, RecentWin } from '../lib/models';
@@ -12,6 +12,11 @@ import { getSocket } from '../hooks/useSocketConnection';
 import { ETHIOPIA_TZ } from '../lib/utils';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
+
+type GameCode = 'keno' | 'bingo' | 'crash' | 'pool';
+// Fixed priority order for the Home "Play Now" strip. The rotating window walks
+// this list, so all enabled games get a turn in the featured pair over reloads.
+const HOME_GAME_ORDER: GameCode[] = ['bingo', 'keno', 'crash', 'pool'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -185,15 +190,13 @@ export function Home({ onNavigate }: Props) {
   const liveCounts = useStore(s => s.liveCounts);
   const gameCatalog = useStore(s => s.gameCatalog);
   const addToast = useStore(s => s.addToast);
-  const gameInfo = (code: 'keno' | 'bingo' | 'crash') => {
+  const gameInfo = (code: GameCode) => {
     if (!gameCatalog) return { hidden: false, maint: false, msg: '' };
     const e = gameCatalog.find(g => g.code === code);
     if (!e) return { hidden: true, maint: false, msg: '' };
     return { hidden: e.state === 'hidden', maint: e.state === 'maintenance', msg: e.maintenanceMessage || `${e.name} is under maintenance.` };
   };
-  const kenoInfo = gameInfo('keno');
-  const bingoInfo = gameInfo('bingo');
-  const openGame = (code: 'keno' | 'bingo', info: { maint: boolean; msg: string }) => {
+  const openGame = (code: GameCode, info: { maint: boolean; msg: string }) => {
     soundEngine.click();
     if (info.maint) { addToast('info', info.msg); return; }
     onNavigate(code);
@@ -241,6 +244,62 @@ export function Home({ onNavigate }: Props) {
       prevBalanceRef.current = balance;
     }
   }, [balance]);
+
+  // ── Featured "Play Now" pair ───────────────────────────────────────────────
+  // Catalog-driven (not hardcoded to Keno+Bingo): take every enabled game, then
+  // show a rotating window of two so all enabled games get exposure across loads.
+  // One random start per mount; with ≤2 enabled we just show what's enabled.
+  const rotateSeed = useRef(Math.floor(Math.random() * 997));
+  const featuredGames = useMemo(() => {
+    const enabled = HOME_GAME_ORDER
+      .map((code) => ({ code, info: gameInfo(code) }))
+      .filter((x) => !x.info.hidden);
+    if (enabled.length <= 2) return enabled;
+    const start = rotateSeed.current % enabled.length;
+    return [enabled[start], enabled[(start + 1) % enabled.length]];
+    // gameInfo derives purely from gameCatalog, so that's the only real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameCatalog]);
+
+  const cardFor = (code: GameCode, info: { hidden: boolean; maint: boolean; msg: string }) => {
+    const onClick = () => openGame(code, info);
+    const maint = info.maint;
+    const paused = t('gameCard.paused');
+    switch (code) {
+      case 'keno':
+        return (
+          <GameCard key="keno" onClick={onClick}
+            gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(139,92,246,0.25)"
+            icon={<Zap style={{ color: '#a78bfa' }} />} tag={t('gameCard.fastDraw')} name="Keno"
+            sub={maint ? t('gameCard.underMaintenance') : (countdown && activeDraw?.status === 'open' ? t('gameCard.drawIn', { time: countdown }) : t('gameCard.pickNumbers'))}
+            badge={maint ? paused : t('gameCard.live')} badgeColor="rgba(139,92,246,0.25)" />
+        );
+      case 'bingo':
+        return (
+          <GameCard key="bingo" onClick={onClick}
+            gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(239,68,68,0.2)"
+            icon={<Target style={{ color: '#f87171' }} />} tag={t('gameCard.liveRooms')} name="Bingo"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.nextBingo')}
+            badge={maint ? paused : t('gameCard.hot')} badgeColor="rgba(239,68,68,0.2)" />
+        );
+      case 'crash':
+        return (
+          <GameCard key="crash" onClick={onClick}
+            gradientFrom="rgba(16,185,129,0.15)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(16,185,129,0.2)"
+            icon={<TrendingUp style={{ color: '#10b981' }} />} tag={t('gameCard.crashTag')} name="Crash"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.crashSub')}
+            badge={maint ? paused : t('gameCard.live')} badgeColor="rgba(16,185,129,0.2)" />
+        );
+      case 'pool':
+        return (
+          <GameCard key="pool" onClick={onClick}
+            gradientFrom="rgba(234,179,8,0.15)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(234,179,8,0.2)"
+            icon={<Circle style={{ color: '#eab308' }} />} tag={t('gameCard.poolTag')} name="Pool"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.poolSub')}
+            badge={maint ? paused : t('gameCard.new')} badgeColor="rgba(234,179,8,0.2)" />
+        );
+    }
+  };
 
   return (
     <div className="stack-lg">
@@ -331,28 +390,7 @@ export function Home({ onNavigate }: Props) {
           <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('games')}>{t('home.allGames')}</button>
         </div>
         <div className="lobby-grid">
-          {!kenoInfo.hidden && (
-            <GameCard
-              onClick={() => openGame('keno', kenoInfo)}
-              gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)"
-              glowColor="rgba(139,92,246,0.25)"
-              icon={<Zap style={{ color: '#a78bfa' }} />}
-              tag={t('gameCard.fastDraw')} name="Keno"
-              sub={kenoInfo.maint ? t('gameCard.underMaintenance') : (countdown && activeDraw?.status === 'open' ? t('gameCard.drawIn', { time: countdown }) : t('gameCard.pickNumbers'))}
-              badge={kenoInfo.maint ? t('gameCard.paused') : t('gameCard.live')} badgeColor="rgba(139,92,246,0.25)"
-            />
-          )}
-          {!bingoInfo.hidden && (
-            <GameCard
-              onClick={() => openGame('bingo', bingoInfo)}
-              gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)"
-              glowColor="rgba(239,68,68,0.2)"
-              icon={<Target style={{ color: '#f87171' }} />}
-              tag={t('gameCard.liveRooms')} name="Bingo"
-              sub={bingoInfo.maint ? t('gameCard.underMaintenance') : t('gameCard.nextBingo')}
-              badge={bingoInfo.maint ? t('gameCard.paused') : t('gameCard.hot')} badgeColor="rgba(239,68,68,0.2)"
-            />
-          )}
+          {featuredGames.map((f) => cardFor(f.code, f.info))}
         </div>
       </div>
 

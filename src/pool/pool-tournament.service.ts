@@ -132,10 +132,7 @@ export class PoolTournamentService {
     }
 
     // Randomised seeding via the RNG service (auditable, no Math.random).
-    const draw = await this.rngService.drawUniqueNumbers({
-      min: 1,
-      max: 2_000_000_000,
-      count: 1,
+    const draw = await this.rngService.drawSeed({
       gameType: 'pool',
       gameReference: t.id,
       metadata: { purpose: 'bracket-seed', size: t.size },

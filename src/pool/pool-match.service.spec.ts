@@ -52,7 +52,7 @@ function harness() {
   } as unknown as DataSource;
 
   const rng = {
-    drawUniqueNumbers: jest.fn().mockResolvedValue({
+    drawSeed: jest.fn().mockResolvedValue({
       numbers: [777],
       randomnessMaterialHash: 'hash',
       algorithmVersion: 'v1',
@@ -117,7 +117,7 @@ describe('PoolMatchService', () => {
   it('audits the rack draw against the created match (RngGameType pool)', async () => {
     const { service, rng } = harness();
     const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
-    expect(rng.drawUniqueNumbers).toHaveBeenCalledWith(
+    expect(rng.drawSeed).toHaveBeenCalledWith(
       expect.objectContaining({ gameType: 'pool', gameReference: m.id }),
     );
   });

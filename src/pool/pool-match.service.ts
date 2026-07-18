@@ -72,10 +72,7 @@ export class PoolMatchService {
     const breaker: Seat = input.breaker ?? 'A';
     // Pre-generate the id so the RNG audit row can reference this exact match.
     const matchId = randomUUID();
-    const draw = await this.rngService.drawUniqueNumbers({
-      min: 1,
-      max: 2_000_000_000,
-      count: 1,
+    const draw = await this.rngService.drawSeed({
       gameType: 'pool',
       gameReference: matchId,
       metadata: { purpose: 'rack', mode: input.mode, tournamentId: input.tournamentId ?? null },

@@ -78,6 +78,67 @@ export class RngService {
     return result;
   }
 
+  /**
+   * Draw a single uniform integer in `[1, max]` for use as a PRNG seed (e.g. a
+   * pool rack or tournament bracket shuffle). Unlike `drawUniqueNumbers`, this
+   * never materialises the range as an array, so it is safe for very large `max`
+   * (that method is only for small draws like Keno 1–80 / Bingo 1–90). Writes the
+   * same audit row when `gameType` + `gameReference` are supplied. The result is
+   * returned as `numbers: [seed]` so callers can treat it like a 1-count draw.
+   */
+  async drawSeed(input: {
+    max?: number;
+    gameType?: RngGameType;
+    gameReference?: string;
+    metadata?: Record<string, unknown>;
+    manager?: EntityManager;
+  }): Promise<DrawUniqueNumbersResult> {
+    const max = input.max ?? 2_000_000_000;
+    if (!Number.isSafeInteger(max) || max < 1) {
+      throw new BadRequestException('RNG seed max must be a positive safe integer');
+    }
+    if ((input.gameType && !input.gameReference) || (!input.gameType && input.gameReference)) {
+      throw new BadRequestException('RNG audit requires both gameType and gameReference');
+    }
+
+    const randomnessMaterial = randomBytes(32);
+    // Uniform-enough seed derived from the crypto material (no array allocation).
+    const seed = 1 + (randomnessMaterial.readUInt32LE(0) % max);
+    const inputHash = this.hashJson({
+      kind: 'seed',
+      max,
+      gameType: input.gameType,
+      gameReference: input.gameReference,
+      metadata: input.metadata ?? {},
+    });
+    const randomnessMaterialHash = createHash('sha256').update(randomnessMaterial).digest('hex');
+
+    const result: DrawUniqueNumbersResult = {
+      numbers: [seed],
+      algorithmVersion: RNG_ALGORITHM_VERSION,
+      inputHash,
+      randomnessMaterialHash,
+    };
+
+    if (input.gameType && input.gameReference) {
+      const auditLog = await this.createAuditLog({
+        gameType: input.gameType,
+        gameReference: input.gameReference,
+        min: 1,
+        max,
+        count: 1,
+        numbers: [seed],
+        inputHash,
+        randomnessMaterialHash,
+        metadata: input.metadata ?? {},
+        manager: input.manager,
+      });
+      result.auditLogId = auditLog.id;
+    }
+
+    return result;
+  }
+
   private async createAuditLog(input: {
     gameType: RngGameType;
     gameReference: string;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import confetti from 'canvas-confetti';
 import { ArrowLeft, Bot, Swords, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
@@ -10,11 +11,11 @@ import type { ShotInput } from '@pool-engine';
 
 type EndState = { winnerSeat?: Seat | null; reason?: string; aborted?: boolean } | null;
 
-const seatLabel = (seat: Seat) => (seat === 'A' ? 'Player 1' : 'Player 2');
-
 export function Pool({ onBack }: { onBack: () => void }) {
+  const { t } = useTranslation();
   const user = useStore((s) => s.user);
   const addToast = useStore((s) => s.addToast);
+  const seatLabel = (seat: Seat) => (seat === 'A' ? t('pool.player1') : t('pool.player2'));
 
   const [config, setConfig] = useState<PoolConfig | null>(null);
   const [match, setMatch] = useState<PoolMatchView | null>(null);
@@ -49,7 +50,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
   };
 
   usePoolMatchFound((view) => {
-    addToast('success', 'Match found!');
+    addToast('success', t('pool.matchFound'));
     enterMatch(view);
   });
 
@@ -81,7 +82,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
     try {
       enterMatch(await poolApi.startSingle());
     } catch (e) {
-      err(e, 'Could not start a single-player game');
+      err(e, t('pool.errStartSingle'));
     } finally {
       setBusy(false);
     }
@@ -94,7 +95,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
       if (res.matched) enterMatch(res.match);
       else setQueuedStake(res.stakeMinor);
     } catch (e) {
-      err(e, 'Could not join the queue');
+      err(e, t('pool.errJoinQueue'));
     } finally {
       setBusy(false);
     }
@@ -111,7 +112,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
   const submitShot = (input: ShotInput) => {
     if (!match) return;
     poolApi.submitShot(match.id, input).catch((e) => {
-      err(e, 'Shot rejected');
+      err(e, t('pool.errShotRejected'));
       // Resync to the authoritative board if our optimistic shot was refused.
       poolApi.getMatch(match.id).then(setMatch).catch(() => {});
     });
@@ -130,16 +131,17 @@ export function Pool({ onBack }: { onBack: () => void }) {
     const myGroup = mySeat ? match.groups[mySeat] : null;
     const deadlineMs = match.turnDeadline ? new Date(match.turnDeadline).getTime() : null;
     const remaining = deadlineMs ? Math.max(0, Math.ceil((deadlineMs - now) / 1000)) : null;
-    const opponentName = match.mode === 'single' ? 'AI' : 'Opponent';
+    const opponentName = match.mode === 'single' ? t('pool.opponentAI') : t('pool.opponent');
+    const modeLabel = match.mode === 'single' ? t('pool.modePractice') : match.mode === 'tournament' ? t('pool.modeTournament') : t('pool.modeRanked');
 
     return (
       <div style={{ padding: '12px 14px 28px', maxWidth: 640, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <button className="btn" onClick={backToLobby} style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <ArrowLeft size={16} /> Lobby
+            <ArrowLeft size={16} /> {t('pool.lobby')}
           </button>
           <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--text-muted)' }}>
-            {match.mode === 'single' ? 'Practice vs AI' : match.mode === 'tournament' ? 'Tournament' : 'Ranked'} · stake {match.stakeMinor}
+            {modeLabel} · {t('pool.stakeLabel', { amount: match.stakeMinor })}
           </div>
         </div>
 
@@ -154,13 +156,13 @@ export function Pool({ onBack }: { onBack: () => void }) {
         >
           <div style={{ fontWeight: 700, fontSize: 15 }}>
             {match.status !== 'active'
-              ? 'Game over'
+              ? t('pool.gameOver')
               : isMyTurn
-                ? (match.ballInHand ? 'Your turn — ball in hand' : 'Your turn')
-                : `${opponentName} is shooting…`}
+                ? (match.ballInHand ? t('pool.yourTurnBallInHand') : t('pool.yourTurn'))
+                : t('pool.opponentShooting', { name: opponentName })}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>
-            <span>You: <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? 'open' : '—')}</strong></span>
+            <span>{t('pool.youLabel')} <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
             {isMyTurn && remaining != null && (
               <span style={{ fontFamily: 'ui-monospace, monospace', color: remaining <= 5 ? 'var(--danger,#e0653c)' : 'inherit' }}>⏱ {remaining}s</span>
             )}
@@ -172,7 +174,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
         {/* Shot feed */}
         {feed.length > 0 && (
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>Shot log</div>
+            <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>{t('pool.shotLog')}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {feed.map((line, i) => (
                 <div key={i} style={{ fontSize: 12.5, color: i === 0 ? 'var(--text)' : 'var(--text-muted)' }}>{line}</div>
@@ -188,12 +190,12 @@ export function Pool({ onBack }: { onBack: () => void }) {
               {ended.aborted ? '↩️' : ended.winnerSeat === mySeat ? '🏆' : '💔'}
             </div>
             <h3 style={{ margin: '0 0 6px', fontSize: 19, fontWeight: 800 }}>
-              {ended.aborted ? 'Match aborted' : ended.winnerSeat === mySeat ? 'You win!' : 'You lost'}
+              {ended.aborted ? t('pool.matchAborted') : ended.winnerSeat === mySeat ? t('pool.youWin') : t('pool.youLost')}
             </h3>
             <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-muted)' }}>
-              {ended.aborted ? 'Your stake was refunded.' : ended.reason ?? ''}
+              {ended.aborted ? t('pool.stakeRefunded') : ended.reason ?? ''}
             </p>
-            <button className="btn btn-primary" onClick={backToLobby} style={{ width: '100%' }}>Back to lobby</button>
+            <button className="btn btn-primary" onClick={backToLobby} style={{ width: '100%' }}>{t('pool.backToLobby')}</button>
           </div>
         )}
       </div>
@@ -205,36 +207,36 @@ export function Pool({ onBack }: { onBack: () => void }) {
     <div style={{ padding: '12px 14px 28px', maxWidth: 640, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
         <button className="btn" onClick={onBack} style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <ArrowLeft size={16} /> Games
+          <ArrowLeft size={16} /> {t('nav.games')}
         </button>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>🎱 8-Ball Pool</h2>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>🎱 {t('pool.title')}</h2>
       </div>
 
       {/* Single player */}
       {config?.singlePlayerEnabled !== false && (
         <LobbyCard
           icon={<Bot size={22} />}
-          title="Play vs AI"
-          subtitle={config && config.singlePlayerStakeMinor > 0 ? `Stake ${config.singlePlayerStakeMinor}` : 'Free practice'}
+          title={t('pool.playVsAI')}
+          subtitle={config && config.singlePlayerStakeMinor > 0 ? t('pool.stakeAmount', { amount: config.singlePlayerStakeMinor }) : t('pool.freePractice')}
         >
           <button className="btn btn-primary" disabled={busy} onClick={startSingle} style={{ width: '100%' }}>
-            Start game
+            {t('pool.startGame')}
           </button>
         </LobbyCard>
       )}
 
       {/* Two player */}
       {config?.twoPlayerEnabled !== false && (
-        <LobbyCard icon={<Swords size={22} />} title="Ranked (2 players)" subtitle="Winner takes the pot, minus rake">
+        <LobbyCard icon={<Swords size={22} />} title={t('pool.ranked2p')} subtitle={t('pool.rankedSubtitle')}>
           {queuedStake != null ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div className="spinner" style={{ width: 18, height: 18 }} />
-              <span style={{ fontSize: 13 }}>Searching for an opponent at stake {queuedStake}…</span>
-              <button className="btn" onClick={leaveQueue} style={{ marginLeft: 'auto', padding: '6px 10px' }}>Cancel</button>
+              <span style={{ fontSize: 13 }}>{t('pool.searchingStake', { amount: queuedStake })}</span>
+              <button className="btn" onClick={leaveQueue} style={{ marginLeft: 'auto', padding: '6px 10px' }}>{t('common.cancel')}</button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Stake</label>
+              <label style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{t('pool.stake')}</label>
               <input
                 type="number"
                 value={stake}
@@ -243,12 +245,12 @@ export function Pool({ onBack }: { onBack: () => void }) {
                 onChange={(e) => setStake(parseInt(e.target.value, 10) || 0)}
                 style={{ width: 90, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--surface,#0c0a08)', color: 'inherit', fontFamily: 'ui-monospace, monospace' }}
               />
-              <button className="btn btn-primary" disabled={busy} onClick={joinQueue} style={{ marginLeft: 'auto' }}>Find match</button>
+              <button className="btn btn-primary" disabled={busy} onClick={joinQueue} style={{ marginLeft: 'auto' }}>{t('pool.findMatch')}</button>
             </div>
           )}
           {config && (
             <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 8 }}>
-              Stakes {config.minStakeMinor}–{config.maxStakeMinor} · {config.rakePct}% rake
+              {t('pool.stakesRange', { min: config.minStakeMinor, max: config.maxStakeMinor, rake: config.rakePct })}
             </div>
           )}
         </LobbyCard>
@@ -278,6 +280,7 @@ function LobbyCard({ icon, title, subtitle, children }: { icon: React.ReactNode;
 }
 
 function TournamentPanel({ onPlay, myUserId, onError }: { onPlay: (v: PoolMatchView) => void; myUserId: string | null; onError: (e: unknown, msg: string) => void }) {
+  const { t } = useTranslation();
   const [id, setId] = useState('');
   const [tournament, setTournament] = useState<PoolTournament | null>(null);
   const [matches, setMatches] = useState<PoolMatchView[]>([]);
@@ -287,17 +290,17 @@ function TournamentPanel({ onPlay, myUserId, onError }: { onPlay: (v: PoolMatchV
       setTournament(await poolApi.getTournament(tid));
       setMatches(await poolApi.getTournamentMatches(tid));
     } catch (e) {
-      onError(e, 'Tournament not found');
+      onError(e, t('pool.errTournamentNotFound'));
     }
   };
 
   const register = async () => {
     try {
-      const t = await poolApi.registerTournament(id.trim());
-      setTournament(t);
-      setMatches(await poolApi.getTournamentMatches(t.id));
+      const tourney = await poolApi.registerTournament(id.trim());
+      setTournament(tourney);
+      setMatches(await poolApi.getTournamentMatches(tourney.id));
     } catch (e) {
-      onError(e, 'Could not register');
+      onError(e, t('pool.errRegister'));
     }
   };
 
@@ -305,27 +308,30 @@ function TournamentPanel({ onPlay, myUserId, onError }: { onPlay: (v: PoolMatchV
     (m) => m.status === 'active' && (m.seatAUserId === myUserId || m.seatBUserId === myUserId),
   );
 
+  // Localised tournament status (falls back to the raw value if unmapped).
+  const statusLabel = (status: string) => t(`pool.tStatus.${status}`, { defaultValue: status });
+
   return (
-    <LobbyCard icon={<Trophy size={22} />} title="Tournaments" subtitle="Single-elimination brackets">
+    <LobbyCard icon={<Trophy size={22} />} title={t('pool.tournaments')} subtitle={t('pool.tournamentsSubtitle')}>
       <div style={{ display: 'flex', gap: 8 }}>
         <input
-          placeholder="Tournament ID"
+          placeholder={t('pool.tournamentIdPlaceholder')}
           value={id}
           onChange={(e) => setId(e.target.value)}
           style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--surface,#0c0a08)', color: 'inherit', fontSize: 12.5 }}
         />
-        <button className="btn" onClick={() => load(id.trim())} disabled={!id.trim()}>View</button>
-        <button className="btn btn-primary" onClick={register} disabled={!id.trim()}>Join</button>
+        <button className="btn" onClick={() => load(id.trim())} disabled={!id.trim()}>{t('pool.view')}</button>
+        <button className="btn btn-primary" onClick={register} disabled={!id.trim()}>{t('pool.join')}</button>
       </div>
       {tournament && (
         <div style={{ marginTop: 12, fontSize: 12.5 }}>
           <div style={{ fontWeight: 700 }}>{tournament.name}</div>
           <div style={{ color: 'var(--text-muted)' }}>
-            {tournament.status} · {tournament.size} players · prize {tournament.prizePoolMinor}
+            {statusLabel(tournament.status)} · {t('pool.tournamentPlayers', { count: tournament.size })} · {t('pool.tournamentPrize', { amount: tournament.prizePoolMinor })}
           </div>
           {myActive && (
             <button className="btn btn-primary" onClick={() => onPlay(myActive)} style={{ width: '100%', marginTop: 10 }}>
-              Play your match
+              {t('pool.playYourMatch')}
             </button>
           )}
         </div>

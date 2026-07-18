@@ -72,6 +72,25 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
 
 const DIFFICULTIES: PoolBotDifficulty[] = ['easy', 'medium', 'hard'];
 
+// Only these fields are accepted by UpdatePoolConfigDto. The GET returns the full
+// entity (with key/updatedBy/createdAt/updatedAt), and the backend validation pipe
+// rejects any non-whitelisted property — so we PATCH just the editable subset.
+const EDITABLE_KEYS: (keyof AdminPoolConfig)[] = [
+  'singlePlayerEnabled', 'singlePlayerStakeMinor', 'botDifficulty',
+  'twoPlayerEnabled', 'minStakeMinor', 'maxStakeMinor', 'rakePct', 'shotClockSeconds', 'maxTimeoutFouls',
+  'tournamentEnabled', 'tournamentEntryFeeMinor', 'tournamentSize', 'tournamentRakePct',
+  'tournamentPrize1Weight', 'tournamentPrize2Weight', 'tournamentPrize34Weight',
+  'slidingFrictionX100', 'rollingFrictionX1000', 'cushionReboundPct', 'ballReboundPct',
+  'pocketSizePct', 'cueMaxSpeedX100', 'maxSideSpin', 'maxRollSpin',
+  'rulesetVersion', 'engineVersion',
+];
+
+const toUpdateDto = (cfg: AdminPoolConfig): Partial<AdminPoolConfig> => {
+  const dto: Record<string, unknown> = {};
+  for (const k of EDITABLE_KEYS) dto[k] = cfg[k];
+  return dto as Partial<AdminPoolConfig>;
+};
+
 export function PoolAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [cfg, setCfg] = useState<AdminPoolConfig | null>(null);
@@ -118,7 +137,7 @@ export function PoolAdmin() {
     }
     setSaving(true);
     try {
-      const saved = await adminPoolApi.updateConfig(draft);
+      const saved = await adminPoolApi.updateConfig(toUpdateDto(draft));
       setCfg(saved);
       setDraft(saved);
       addToast('success', 'Pool config saved.');

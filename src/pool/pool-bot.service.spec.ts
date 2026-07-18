@@ -18,7 +18,7 @@ function state(balls: Ball[], over: Partial<GameState> = {}): GameState {
 }
 
 function makeBot(): PoolBotService {
-  const rng = { drawUniqueNumbers: jest.fn().mockResolvedValue({ numbers: [12345] }) } as unknown as RngService;
+  const rng = { drawSeed: jest.fn().mockResolvedValue({ numbers: [12345] }) } as unknown as RngService;
   return new PoolBotService(rng);
 }
 

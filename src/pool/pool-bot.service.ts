@@ -59,7 +59,7 @@ export class PoolBotService {
 
   /** A fresh deterministic PRNG seeded from crypto randomness via the RNG service. */
   private async seededRng(): Promise<() => number> {
-    const draw = await this.rngService.drawUniqueNumbers({ min: 1, max: 2_000_000_000, count: 1 });
+    const draw = await this.rngService.drawSeed({});
     return mulberry32(draw.numbers[0]);
   }
 

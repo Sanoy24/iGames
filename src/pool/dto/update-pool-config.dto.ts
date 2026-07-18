@@ -48,6 +48,12 @@ export class UpdatePoolConfigDto {
   @Max(300)
   shotClockSeconds?: number;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  maxTimeoutFouls?: number;
+
   // ── Tournament ────────────────────────────────────────────────────────────
   @IsOptional()
   @IsBoolean()
@@ -69,6 +75,24 @@ export class UpdatePoolConfigDto {
   @Min(0)
   @Max(100)
   tournamentRakePct?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(1000)
+  tournamentPrize1Weight?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000)
+  tournamentPrize2Weight?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000)
+  tournamentPrize34Weight?: number;
 
   // ── Physics tuning ────────────────────────────────────────────────────────
   @IsOptional()

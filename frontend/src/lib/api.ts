@@ -834,11 +834,15 @@ export type AdminPoolConfig = {
   maxStakeMinor: number;
   rakePct: number;
   shotClockSeconds: number;
+  maxTimeoutFouls: number;
   // Tournament
   tournamentEnabled: boolean;
   tournamentEntryFeeMinor: number;
   tournamentSize: number;
   tournamentRakePct: number;
+  tournamentPrize1Weight: number;
+  tournamentPrize2Weight: number;
+  tournamentPrize34Weight: number;
   // Physics tuning (integers)
   slidingFrictionX100: number;
   rollingFrictionX1000: number;

@@ -100,6 +100,19 @@ export class PoolMatch {
   @Column({ type: 'int', default: 0 })
   shotCount: number;
 
+  /**
+   * Consecutive shot-clock timeouts per seat, reset to 0 when that seat takes a
+   * real shot. A timeout is a foul (turn passes, opponent gets ball in hand);
+   * only once a seat reaches `maxTimeoutFouls` does it forfeit the match. This
+   * prevents one accidental clock overrun from losing a whole staked game while
+   * still ending games abandoned by a disconnected player.
+   */
+  @Column({ type: 'int', default: 0 })
+  timeoutsA: number;
+
+  @Column({ type: 'int', default: 0 })
+  timeoutsB: number;
+
   /** When the current player's shot clock expires (null = untimed). */
   @Column({ type: 'timestamp', nullable: true })
   @Index()

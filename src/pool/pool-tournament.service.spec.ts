@@ -20,6 +20,7 @@ function harness(opts: {
 
   const matchRepo = {
     findOne: jest.fn().mockResolvedValue(opts.sibling ?? null),
+    find: jest.fn().mockResolvedValue([]),
   } as unknown as Repository<PoolMatch>;
 
   const tRepoTx = {
@@ -31,7 +32,14 @@ function harness(opts: {
       cb({ getRepository: (E: any) => (E === PoolTournament ? tRepoTx : {}) }),
   } as unknown as DataSource;
 
-  const poolService = { assertModePlayable: jest.fn(), getConfig: jest.fn() } as unknown as PoolService;
+  const poolService = {
+    assertModePlayable: jest.fn(),
+    getConfig: jest.fn().mockResolvedValue({
+      tournamentPrize1Weight: 100,
+      tournamentPrize2Weight: 0,
+      tournamentPrize34Weight: 0,
+    }),
+  } as unknown as PoolService;
   const walletService = {
     ensureDefaultWallet: jest.fn().mockResolvedValue({}),
     creditInSession: jest.fn().mockResolvedValue({}),
@@ -73,9 +81,9 @@ describe('PoolTournamentService.onMatchCompleted', () => {
     expect(walletService.creditInSession).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'champ',
-        amountMinor: 180, // 200 - 10%
+        amountMinor: 180, // 200 - 10%, winner-take-all (100/0/0)
         entryType: 'win',
-        idempotencyKey: 'pool-tourney-prize:t1',
+        idempotencyKey: 'pool-tourney-prize:t1:champ',
       }),
       expect.anything(),
     );

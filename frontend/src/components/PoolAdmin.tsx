@@ -216,8 +216,9 @@ export function PoolAdmin() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <NumField label="House rake" suffix="%" value={draft.rakePct} onChange={(v) => set('rakePct', v)} min={0} max={100} />
-          <NumField label="Shot clock" suffix="seconds" value={draft.shotClockSeconds} onChange={(v) => set('shotClockSeconds', v)} min={5} max={300} hint="0 disabled; per-shot forfeit timer" />
+          <NumField label="Shot clock" suffix="seconds" value={draft.shotClockSeconds} onChange={(v) => set('shotClockSeconds', v)} min={5} max={300} hint="Per-shot timer" />
         </div>
+        <NumField label="Timeouts before forfeit" suffix="count" value={draft.maxTimeoutFouls} onChange={(v) => set('maxTimeoutFouls', v)} min={1} max={10} hint="1 = a single timeout loses the match; higher gives grace fouls (opponent ball-in-hand) before forfeit" />
       </Section>
 
       {/* ── Tournament ── */}
@@ -228,6 +229,18 @@ export function PoolAdmin() {
           <NumField label="Bracket size" suffix="seats" value={draft.tournamentSize} onChange={(v) => set('tournamentSize', v)} min={2} max={128} hint="Power of two (8, 16, 32…)" />
         </div>
         <NumField label="House rake" suffix="%" value={draft.tournamentRakePct} onChange={(v) => set('tournamentRakePct', v)} min={0} max={100} />
+
+        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 4, paddingTop: 12, display: 'grid', gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600 }}>Prize split (relative weights)</span>
+          <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: 0 }}>
+            After-rake pool splits across the tiers that have finishers, each taking weight ÷ (sum of active weights). 3rd–4th share their tier equally. 100/0/0 = winner-take-all.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <NumField label="1st" value={draft.tournamentPrize1Weight} onChange={(v) => set('tournamentPrize1Weight', v)} min={1} max={1000} />
+            <NumField label="2nd" value={draft.tournamentPrize2Weight} onChange={(v) => set('tournamentPrize2Weight', v)} min={0} max={1000} />
+            <NumField label="3rd–4th" value={draft.tournamentPrize34Weight} onChange={(v) => set('tournamentPrize34Weight', v)} min={0} max={1000} />
+          </div>
+        </div>
 
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 4, paddingTop: 12, display: 'grid', gap: 8 }}>
           <span style={{ fontSize: 12, fontWeight: 600 }}>Run a tournament</span>

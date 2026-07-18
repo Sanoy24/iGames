@@ -93,7 +93,7 @@ function harness() {
   } as unknown as import('./pool-tournament.service').PoolTournamentService;
 
   const service = new PoolMatchService(matchRepo, shotRepo, dataSource, rng, pool, wallet, gateway, bot, tournament);
-  return { service, matches, shots, insertShot, rng };
+  return { service, matches, shots, insertShot, rng, pool, wallet, gateway };
 }
 
 const BREAK: ShotInput = { angle: 0, power: 1, spin: { side: 0, vertical: 0 } };
@@ -167,5 +167,73 @@ describe('PoolMatchService', () => {
     await expect(service.submitShot(m.id, 'ua', BREAK)).rejects.toBeInstanceOf(ConflictException);
     // The match state was not advanced.
     expect(matches.get(m.id)!.shotCount).toBe(0);
+  });
+
+  // ── Shot-clock timeout handling ─────────────────────────────────────────────
+  const expireTurn = (m: PoolMatch) => { m.turnDeadline = new Date(Date.now() - 1000); };
+
+  it('a timeout below the limit is a foul: turn passes, opponent gets ball in hand, no loss', async () => {
+    const { service, matches, pool, gateway } = harness();
+    (pool.getConfig as jest.Mock).mockResolvedValue({
+      engineVersion: 1, rulesetVersion: 1, shotClockSeconds: 30, rakePct: 5, maxTimeoutFouls: 3,
+    });
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub', stakeMinor: 100 });
+    expireTurn(matches.get(m.id)!);
+
+    await service.handleShotTimeout(m.id);
+
+    const after = matches.get(m.id)!;
+    expect(after.status).toBe('active');
+    expect(after.turn).toBe('B');
+    expect(after.ballInHand).toBe(true);
+    expect(after.timeoutsA).toBe(1);
+    expect(after.timeoutsB).toBe(0);
+    expect(after.turnDeadline!.getTime()).toBeGreaterThan(Date.now());
+    expect(gateway.emitPoolMatchEnded).not.toHaveBeenCalled();
+  });
+
+  it('reaching maxTimeoutFouls forfeits the match to the opponent and settles', async () => {
+    const { service, matches, pool, wallet, gateway } = harness();
+    (pool.getConfig as jest.Mock).mockResolvedValue({
+      engineVersion: 1, rulesetVersion: 1, shotClockSeconds: 30, rakePct: 5, maxTimeoutFouls: 2,
+    });
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub', stakeMinor: 100 });
+    const stored = matches.get(m.id)!;
+    stored.timeoutsA = 1; // one prior foul; this timeout is the 2nd → forfeit
+    expireTurn(stored);
+
+    await service.handleShotTimeout(m.id);
+
+    const after = matches.get(m.id)!;
+    expect(after.status).toBe('completed');
+    expect(after.winnerSeat).toBe('B');
+    expect(after.turnDeadline).toBeNull();
+    expect(wallet.creditInSession).toHaveBeenCalled(); // winner paid
+    expect(gateway.emitPoolMatchEnded).toHaveBeenCalledWith(
+      m.id,
+      expect.objectContaining({ winnerSeat: 'B' }),
+    );
+  });
+
+  it('does nothing when the deadline has not passed', async () => {
+    const { service, matches, pool, gateway } = harness();
+    (pool.getConfig as jest.Mock).mockResolvedValue({
+      engineVersion: 1, rulesetVersion: 1, shotClockSeconds: 30, rakePct: 5, maxTimeoutFouls: 3,
+    });
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    matches.get(m.id)!.turnDeadline = new Date(Date.now() + 60_000);
+
+    await service.handleShotTimeout(m.id);
+
+    expect(matches.get(m.id)!.timeoutsA).toBe(0);
+    expect(gateway.emitPoolMatchEnded).not.toHaveBeenCalled();
+  });
+
+  it('taking a real shot clears the shooter timeout streak', async () => {
+    const { service, matches } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    matches.get(m.id)!.timeoutsA = 2;
+    await service.submitShot(m.id, 'ua', BREAK);
+    expect(matches.get(m.id)!.timeoutsA).toBe(0);
   });
 });

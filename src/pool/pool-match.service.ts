@@ -108,6 +108,8 @@ export class PoolMatchService {
       winnerSeat: null,
       board: state.balls,
       shotCount: 0,
+      timeoutsA: 0,
+      timeoutsB: 0,
       turnDeadline: this.deadlineFrom(cfg),
       tournamentId: input.tournamentId ?? null,
       tournamentRound: input.tournamentRound ?? null,
@@ -283,6 +285,8 @@ export class PoolMatchService {
             phase: s.phase,
             winnerSeat: s.winner,
             shotCount: shotIndex + 1,
+            // Taking a real shot clears this seat's timeout streak.
+            ...(seat === 'A' ? { timeoutsA: 0 } : { timeoutsB: 0 }),
             status: outcome.gameOver ? 'completed' : 'active',
             completedAt: outcome.gameOver ? new Date() : null,
             settledAt,
@@ -389,46 +393,76 @@ export class PoolMatchService {
   }
 
   /**
-   * Award the match to the opponent because the player on turn ran out their
-   * shot clock (or disconnected). Called by the scheduler; idempotent via the
-   * status guard.
+   * The player on turn ran out their shot clock (or disconnected). Below
+   * `maxTimeoutFouls` this is a foul — the turn passes to the opponent with ball
+   * in hand and the offender's timeout streak grows. On reaching the limit the
+   * match is forfeited to the opponent. Called by the scheduler; idempotent via
+   * the status + shotCount + timeout-count guards.
    */
-  async forfeitOnTimeout(matchId: string): Promise<void> {
+  async handleShotTimeout(matchId: string): Promise<void> {
     const match = await this.getMatch(matchId);
     if (match.status !== 'active') return;
     if (!match.turnDeadline || match.turnDeadline.getTime() > Date.now()) return;
 
-    const winner = otherSeat(match.turn);
+    const offender = match.turn;
+    const opponent = otherSeat(offender);
     const cfg = await this.poolService.getConfig();
+    const prior = (offender === 'A' ? match.timeoutsA : match.timeoutsB) ?? 0;
+    const streak = prior + 1;
+    const limit = Math.max(1, cfg.maxTimeoutFouls ?? 1);
+    const forfeit = streak >= limit;
+
     await this.dataSource.transaction(async (manager) => {
-      let settledAt: Date | null = null;
-      const settled = await this.settleWithinTx(manager, match, winner, cfg);
-      if (settled) settledAt = new Date();
-      const res = await manager.getRepository(PoolMatch).update(
-        { id: match.id, status: 'active', shotCount: match.shotCount },
-        {
-          status: 'completed',
-          phase: 'gameover',
-          winnerSeat: winner,
-          turnDeadline: null,
-          completedAt: new Date(),
-          settledAt,
-        },
-      );
-      if (!res.affected) throw new ConflictException('Match already advanced');
+      // Guard on the offender's own timeout count so two scheduler ticks can't
+      // both apply the same timeout (compare-and-set on the pre-increment value).
+      const guard = { id: match.id, status: 'active' as const, shotCount: match.shotCount };
+      const countGuard = offender === 'A' ? { timeoutsA: prior } : { timeoutsB: prior };
+
+      if (forfeit) {
+        let settledAt: Date | null = null;
+        const settled = await this.settleWithinTx(manager, match, opponent, cfg);
+        if (settled) settledAt = new Date();
+        const res = await manager.getRepository(PoolMatch).update(
+          { ...guard, ...countGuard },
+          {
+            status: 'completed',
+            phase: 'gameover',
+            winnerSeat: opponent,
+            turnDeadline: null,
+            completedAt: new Date(),
+            settledAt,
+            ...(offender === 'A' ? { timeoutsA: streak } : { timeoutsB: streak }),
+          },
+        );
+        if (!res.affected) throw new ConflictException('Match already advanced');
+      } else {
+        // Foul: pass the turn, opponent gets ball in hand, reset the shot clock.
+        const res = await manager.getRepository(PoolMatch).update(
+          { ...guard, ...countGuard },
+          {
+            turn: opponent,
+            ballInHand: true,
+            turnDeadline: this.deadlineFrom(cfg),
+            ...(offender === 'A' ? { timeoutsA: streak } : { timeoutsB: streak }),
+          },
+        );
+        if (!res.affected) throw new ConflictException('Timeout already applied');
+      }
     });
 
     const fresh = await this.getMatch(matchId);
     this.broadcastMatch(fresh);
-    this.gateway.emitPoolMatchEnded(matchId, {
-      matchId,
-      winnerSeat: winner,
-      reason: `${match.turn} ran out of time — ${winner} wins by forfeit`,
-    });
-    if (fresh.tournamentId) {
-      await this.tournamentService
-        .onMatchCompleted(fresh)
-        .catch((e) => this.logger.error(`Tournament advance failed: ${e?.message ?? e}`));
+    if (forfeit) {
+      this.gateway.emitPoolMatchEnded(matchId, {
+        matchId,
+        winnerSeat: opponent,
+        reason: `${offender} ran out of time (${streak} timeouts) — ${opponent} wins by forfeit`,
+      });
+      if (fresh.tournamentId) {
+        await this.tournamentService
+          .onMatchCompleted(fresh)
+          .catch((e) => this.logger.error(`Tournament advance failed: ${e?.message ?? e}`));
+      }
     }
   }
 

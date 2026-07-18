@@ -15,6 +15,14 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Shared 8-ball engine imported from the backend (../src/pool). */
+    "paths": {
+      "@pool-engine": ["../src/pool/engine/index.ts"],
+      "@pool-rules": ["../src/pool/rules/rules.ts"],
+      "@pool-rules/types": ["../src/pool/rules/rules-types.ts"],
+      "@pool-physics": ["../src/pool/pool-physics.ts"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

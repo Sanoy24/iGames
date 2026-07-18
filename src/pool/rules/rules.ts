@@ -1,7 +1,7 @@
-import { Ball, ShotEvent, ShotResult, TableSpec } from '../engine/types';
+import type { Ball, ShotEvent, ShotResult, TableSpec } from '../engine/types';
 import { rackEightBall } from '../engine/rack';
 import { footSpot, headSpot } from '../engine/table';
-import {
+import type {
   BallFamily,
   GameState,
   Group,

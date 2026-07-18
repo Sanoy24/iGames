@@ -1,5 +1,5 @@
-import { TableSpec } from './types';
-import { Vec2 } from './vec';
+import type { TableSpec } from './types';
+import type { Vec2 } from './vec';
 
 /**
  * Standard regulation 9-foot table in SI units. Values are physically plausible

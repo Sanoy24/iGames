@@ -1,4 +1,4 @@
-import { Ball } from '../engine/types';
+import type { Ball } from '../engine/types';
 
 /** The two seats in a head-to-head match. */
 export type Seat = 'A' | 'B';

@@ -1,6 +1,6 @@
 import { standardTable } from './engine/table';
-import { TableSpec } from './engine/types';
-import { ShotTuning } from './engine/simulator';
+import type { TableSpec } from './engine/types';
+import type { ShotTuning } from './engine/simulator';
 
 /**
  * Physics tuning captured onto a match at creation time. Stored as plain

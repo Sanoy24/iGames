@@ -1,10 +1,27 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { fileURLToPath, URL } from 'node:url';
+
+// The 8-ball physics/rules engine lives in the backend (../src/pool) and is
+// imported here verbatim so the browser and server run the *same* deterministic
+// engine — no hand-ported copy to drift.
+const poolEngine = fileURLToPath(new URL('../src/pool/engine/index.ts', import.meta.url));
+const poolRules = fileURLToPath(new URL('../src/pool/rules/rules.ts', import.meta.url));
+const poolRulesTypes = fileURLToPath(new URL('../src/pool/rules/rules-types.ts', import.meta.url));
+const poolPhysics = fileURLToPath(new URL('../src/pool/pool-physics.ts', import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig({
     plugins: [react(), tailwindcss()],
+    resolve: {
+        alias: {
+            '@pool-engine': poolEngine,
+            '@pool-rules/types': poolRulesTypes,
+            '@pool-rules': poolRules,
+            '@pool-physics': poolPhysics,
+        },
+    },
     build: {
         rollupOptions: {
             output: {
@@ -23,6 +40,8 @@ export default defineConfig({
         },
     },
     server: {
+        // Allow Vite to serve the shared engine files from the repo root (one dir up).
+        fs: { allow: ['..'] },
         allowedHosts: [
             '261e-196-190-62-169.ngrok-free.app',
             '.ngrok-free.app',

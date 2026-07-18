@@ -1,4 +1,4 @@
-import { Vec2, Vec3 } from './vec';
+import type { Vec2, Vec3 } from './vec';
 
 /**
  * A ball's kind in 8-ball. `cue` is the white; `eight` is the black; the rest

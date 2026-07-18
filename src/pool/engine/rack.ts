@@ -1,4 +1,4 @@
-import { Ball, BallKind, TableSpec } from './types';
+import type { Ball, BallKind, TableSpec } from './types';
 import { footSpot, headSpot } from './table';
 
 /** Deterministic PRNG (mulberry32) — same seed ⇒ same rack, on any platform. */

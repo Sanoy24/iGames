@@ -1,4 +1,4 @@
-import { Ball, ShotEvent, ShotInput, ShotResult, TableSpec } from './types';
+import type { Ball, ShotEvent, ShotInput, ShotResult, TableSpec } from './types';
 import { zCross } from './vec';
 
 /**
@@ -290,5 +290,79 @@ export function runShot(
     firstContactNumber,
     steps,
     duration: t,
+  };
+}
+
+/** Per-ball position + pocketed flag at one animation frame (same order as `balls`). */
+export type ShotFrame = Array<{ x: number; y: number; pocketed: boolean }>;
+
+export interface RecordedShot {
+  result: ShotResult;
+  /** Downsampled position track for smooth playback. */
+  frames: ShotFrame[];
+  /** Seconds of simulated time between frames. */
+  frameDt: number;
+}
+
+/**
+ * Same deterministic simulation as {@link runShot}, but additionally records a
+ * downsampled position track so a client can animate the shot with byte-identical
+ * physics to the authoritative server result. Backend does not need this; it
+ * exists for shared client rendering.
+ */
+export function recordShot(
+  balls: Ball[],
+  input: ShotInput,
+  table: TableSpec,
+  opts: SimOptions & { frameEvery?: number } = {},
+): RecordedShot {
+  const dt = opts.timestep ?? 0.001;
+  const maxSteps = opts.maxSteps ?? 60_000;
+  const tuning = opts.tuning ?? DEFAULT_TUNING;
+  const frameEvery = opts.frameEvery ?? 6;
+
+  const world: Ball[] = balls.map((b) => ({
+    ...b,
+    pos: { ...b.pos },
+    vel: { ...b.vel },
+    spin: { ...b.spin },
+  }));
+
+  applyShot(world, input, tuning);
+
+  const events: ShotEvent[] = [];
+  const pocketedOrder: number[] = [];
+  const frames: ShotFrame[] = [];
+  const snapshot = () => frames.push(world.map((b) => ({ x: b.pos.x, y: b.pos.y, pocketed: b.pocketed })));
+
+  let t = 0;
+  let steps = 0;
+  snapshot();
+  while (steps < maxSteps && !allAtRest(world)) {
+    step(world, table, dt, t, events, pocketedOrder);
+    t += dt;
+    steps++;
+    if (steps % frameEvery === 0) snapshot();
+  }
+  snapshot();
+
+  const scratch = pocketedOrder.includes(0);
+  let firstContactNumber: number | null = null;
+  for (const ev of events) {
+    if (ev.type !== 'ball-ball') continue;
+    if (ev.ballNumber === 0) {
+      firstContactNumber = ev.otherNumber ?? null;
+      break;
+    }
+    if (ev.otherNumber === 0) {
+      firstContactNumber = ev.ballNumber ?? null;
+      break;
+    }
+  }
+
+  return {
+    result: { events, balls: world, pocketed: pocketedOrder, scratch, firstContactNumber, steps, duration: t },
+    frames,
+    frameDt: dt * frameEvery,
   };
 }

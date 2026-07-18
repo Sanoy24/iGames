@@ -462,6 +462,9 @@ export class PoolMatchService {
       shotCount: m.shotCount,
       turnDeadline: m.turnDeadline,
       tournamentId: m.tournamentId,
+      // Physics snapshot so the client builds the identical table for local
+      // shot animation (falls back to engine defaults if null).
+      physics: m.physics,
     };
   }
 

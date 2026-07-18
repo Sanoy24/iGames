@@ -28,12 +28,24 @@ export function Pool({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const tableRef = useRef<PoolTableHandle>(null);
 
+  // Orientation drives the whole play layout: portrait = tall vertical table in
+  // the page; landscape = immersive fullscreen with a wide table.
+  const [landscape, setLandscape] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia?.('(orientation: landscape)').matches,
+  );
+
   useEffect(() => {
     poolApi.getConfig().then(setConfig).catch(() => {});
   }, []);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(id);
+  }, []);
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: landscape)');
+    const onChange = () => setLandscape(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
   }, []);
 
   const mySeat: Seat | null = useMemo(() => {
@@ -136,7 +148,57 @@ export function Pool({ onBack }: { onBack: () => void }) {
     const remaining = deadlineMs ? Math.max(0, Math.ceil((deadlineMs - now) / 1000)) : null;
     const opponentName = match.mode === 'single' ? t('pool.opponentAI') : t('pool.opponent');
     const modeLabel = match.mode === 'single' ? t('pool.modePractice') : match.mode === 'tournament' ? t('pool.modeTournament') : t('pool.modeRanked');
+    const turnText = match.status !== 'active'
+      ? t('pool.gameOver')
+      : isMyTurn
+        ? (match.ballInHand ? t('pool.yourTurnBallInHand') : t('pool.yourTurn'))
+        : t('pool.opponentShooting', { name: opponentName });
 
+    const resultCard = ended && (
+      <div style={{ padding: 18, borderRadius: 14, textAlign: 'center', background: 'rgba(18,22,28,0.97)', border: '1px solid var(--border, rgba(255,255,255,0.12))', maxWidth: 340, boxShadow: '0 24px 60px -20px rgba(0,0,0,0.8)' }}>
+        <div style={{ fontSize: 40, marginBottom: 6 }}>
+          {ended.aborted ? '↩️' : ended.winnerSeat === mySeat ? '🏆' : '💔'}
+        </div>
+        <h3 style={{ margin: '0 0 6px', fontSize: 19, fontWeight: 800 }}>
+          {ended.aborted ? t('pool.matchAborted') : ended.winnerSeat === mySeat ? t('pool.youWin') : t('pool.youLost')}
+        </h3>
+        <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-muted)' }}>
+          {ended.aborted ? t('pool.stakeRefunded') : ended.reason ?? ''}
+        </p>
+        <button className="btn btn-primary" onClick={backToLobby} style={{ width: '100%' }}>{t('pool.backToLobby')}</button>
+      </div>
+    );
+
+    // ── Landscape: immersive fullscreen (covers the app chrome) ────────────────
+    if (landscape) {
+      return (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0b0f14', display: 'flex', flexDirection: 'column', padding: '8px 12px 10px', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button className="btn" onClick={backToLobby} style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ArrowLeft size={16} /> {t('pool.lobby')}
+            </button>
+            <div style={{ fontWeight: 700, fontSize: 15, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>{turnText}</div>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, fontSize: 12.5, color: 'var(--text-muted)' }}>
+              <span>{t('pool.youLabel')} <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
+              {isMyTurn && remaining != null && (
+                <span style={{ fontFamily: 'ui-monospace, monospace', color: remaining <= 5 ? 'var(--danger,#e0653c)' : 'inherit' }}>⏱ {remaining}s</span>
+              )}
+              <span>{modeLabel} · {t('pool.stakeLabel', { amount: match.stakeMinor })}</span>
+            </div>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+            <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" />
+          </div>
+          {ended && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)' }}>
+              {resultCard}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Portrait: in-page, tall vertical table ─────────────────────────────────
     return (
       <div style={{ padding: '12px 14px 28px', maxWidth: 640, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -157,13 +219,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
             border: `1px solid ${isMyTurn ? 'rgba(111,206,154,0.4)' : 'var(--border, rgba(255,255,255,0.1))'}`,
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: 15 }}>
-            {match.status !== 'active'
-              ? t('pool.gameOver')
-              : isMyTurn
-                ? (match.ballInHand ? t('pool.yourTurnBallInHand') : t('pool.yourTurn'))
-                : t('pool.opponentShooting', { name: opponentName })}
-          </div>
+          <div style={{ fontWeight: 700, fontSize: 15 }}>{turnText}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>
             <span>{t('pool.youLabel')} <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
             {isMyTurn && remaining != null && (
@@ -172,7 +228,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
-        <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} />
+        <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="portrait" />
 
         {/* Shot feed */}
         {feed.length > 0 && (
@@ -188,17 +244,8 @@ export function Pool({ onBack }: { onBack: () => void }) {
 
         {/* Result overlay */}
         {ended && (
-          <div style={{ marginTop: 16, padding: 16, borderRadius: 14, textAlign: 'center', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border, rgba(255,255,255,0.1))' }}>
-            <div style={{ fontSize: 40, marginBottom: 6 }}>
-              {ended.aborted ? '↩️' : ended.winnerSeat === mySeat ? '🏆' : '💔'}
-            </div>
-            <h3 style={{ margin: '0 0 6px', fontSize: 19, fontWeight: 800 }}>
-              {ended.aborted ? t('pool.matchAborted') : ended.winnerSeat === mySeat ? t('pool.youWin') : t('pool.youLost')}
-            </h3>
-            <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-muted)' }}>
-              {ended.aborted ? t('pool.stakeRefunded') : ended.reason ?? ''}
-            </p>
-            <button className="btn btn-primary" onClick={backToLobby} style={{ width: '100%' }}>{t('pool.backToLobby')}</button>
+          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
+            {resultCard}
           </div>
         )}
       </div>

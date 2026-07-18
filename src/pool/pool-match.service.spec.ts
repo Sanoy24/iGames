@@ -1,0 +1,130 @@
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { DataSource, Repository } from 'typeorm';
+import { PoolMatchService } from './pool-match.service';
+import { PoolMatch } from './entities/pool-match.entity';
+import { PoolShot } from './entities/pool-shot.entity';
+import { PoolService } from './pool.service';
+import { RngService } from '../rng/rng.service';
+import { ShotInput } from './engine/types';
+
+function harness() {
+  const matches = new Map<string, PoolMatch>();
+  const shots: PoolShot[] = [];
+  let midc = 0;
+  let sidc = 0;
+
+  const matchRepo = {
+    create: (dto: Partial<PoolMatch>) => ({ ...dto }) as PoolMatch,
+    save: (m: PoolMatch) => {
+      if (!m.id) m.id = 'm' + ++midc;
+      matches.set(m.id, m);
+      return Promise.resolve(m);
+    },
+    findOneBy: ({ id }: { id: string }) => Promise.resolve(matches.get(id) ?? null),
+  } as unknown as Repository<PoolMatch>;
+
+  const shotRepo = {
+    find: ({ where }: any) => Promise.resolve(shots.filter((s) => s.matchId === where.matchId)),
+  } as unknown as Repository<PoolShot>;
+
+  const insertShot = (row: any) => {
+    if (shots.some((s) => s.matchId === row.matchId && s.shotIndex === row.shotIndex)) {
+      const err: any = new Error('dup');
+      err.code = 'ER_DUP_ENTRY';
+      throw err;
+    }
+    shots.push({ ...row, id: 's' + ++sidc, createdAt: new Date() });
+    return { identifiers: [] };
+  };
+  const updateMatch = (criteria: any, patch: any) => {
+    const m = matches.get(criteria.id);
+    if (m && m.shotCount === criteria.shotCount) Object.assign(m, patch);
+    return { affected: m ? 1 : 0 };
+  };
+
+  const dataSource = {
+    transaction: async (cb: (m: any) => unknown) =>
+      cb({
+        getRepository: (E: any) => (E === PoolShot ? { insert: insertShot } : { update: updateMatch }),
+      }),
+  } as unknown as DataSource;
+
+  const rng = {
+    drawUniqueNumbers: jest.fn().mockResolvedValue({
+      numbers: [777],
+      randomnessMaterialHash: 'hash',
+      algorithmVersion: 'v1',
+      inputHash: 'ih',
+    }),
+  } as unknown as RngService;
+
+  const pool = {
+    getConfig: jest.fn().mockResolvedValue({ engineVersion: 1, rulesetVersion: 1 }),
+  } as unknown as PoolService;
+
+  const service = new PoolMatchService(matchRepo, shotRepo, dataSource, rng, pool);
+  return { service, matches, shots, insertShot };
+}
+
+const BREAK: ShotInput = { angle: 0, power: 1, spin: { side: 0, vertical: 0 } };
+
+describe('PoolMatchService', () => {
+  it('creates an active, racked match on the break', async () => {
+    const { service } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub', stakeMinor: 100 });
+    expect(m.status).toBe('active');
+    expect(m.phase).toBe('break');
+    expect(m.turn).toBe('A');
+    expect(m.rackSeed).toBe(777);
+    expect(m.seedHash).toBe('hash');
+    expect(m.board).toHaveLength(16);
+    expect(m.shotCount).toBe(0);
+  });
+
+  it('rejects a shot from a non-participant', async () => {
+    const { service } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    await expect(service.submitShot(m.id, 'stranger', BREAK)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("rejects a shot when it is not the player's turn", async () => {
+    const { service } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    await expect(service.submitShot(m.id, 'ub', BREAK)).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('applies a break: persists the shot, advances state, logs the shot', async () => {
+    const { service, matches, shots } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    const outcome = await service.submitShot(m.id, 'ua', BREAK);
+
+    const updated = matches.get(m.id)!;
+    expect(updated.phase).toBe('play');
+    expect(updated.shotCount).toBe(1);
+    expect(shots).toHaveLength(1);
+    expect(shots[0].seat).toBe('A');
+    expect(shots[0].shotIndex).toBe(0);
+    expect(outcome.state.phase).toBe('play');
+  });
+
+  it('validates shot inputs', async () => {
+    const { service } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    await expect(service.submitShot(m.id, 'ua', { angle: 0, power: 2, spin: { side: 0, vertical: 0 } })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.submitShot(m.id, 'ua', { angle: 0, power: 0.5, spin: { side: 3, vertical: 0 } })).rejects.toBeInstanceOf(BadRequestException);
+    // cue placement without ball in hand
+    await expect(
+      service.submitShot(m.id, 'ua', { angle: 0, power: 0.5, spin: { side: 0, vertical: 0 }, cuePos: { x: 0.6, y: 0.6 } }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('is idempotent: a duplicate shot index cannot double-apply', async () => {
+    const { service, matches, shots } = harness();
+    const m = await service.createMatch({ mode: 'two_player', seatAUserId: 'ua', seatBUserId: 'ub' });
+    // Pre-seed a shot at index 0 as if it were already applied.
+    shots.push({ matchId: m.id, shotIndex: 0 } as PoolShot);
+    await expect(service.submitShot(m.id, 'ua', BREAK)).rejects.toBeInstanceOf(ConflictException);
+    // The match state was not advanced.
+    expect(matches.get(m.id)!.shotCount).toBe(0);
+  });
+});

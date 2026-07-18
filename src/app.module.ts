@@ -27,6 +27,7 @@ import { CrashModule } from "./crash/crash.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { SupportModule } from "./support/support.module";
 import { GamesModule } from "./games/games.module";
+import { PoolModule } from "./pool/pool.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -93,6 +94,7 @@ const isDev = process.env.NODE_ENV !== "production";
         NotificationsModule,
         SupportModule,
         GamesModule,
+        PoolModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

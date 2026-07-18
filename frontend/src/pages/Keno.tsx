@@ -12,7 +12,7 @@ import { createIdempotencyKey, formatCreditsFull, formatDateTime, getErrorMessag
 import { formatCredits, useStore } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
 import { soundEngine } from '../lib/audio';
-import confetti from 'canvas-confetti';
+import { fireConfetti } from '../lib/confetti';
 
 // ─── Countdown ────────────────────────────────────────────────────────────────
 
@@ -419,7 +419,7 @@ export function Keno({ onBack }: KenoProps) {
     const timer = setTimeout(() => {
       if (totalPayout > 0) {
         soundEngine.win();
-        confetti({ particleCount: 180, spread: 80, origin: { y: 0.65 }, colors: ['#FFE600', '#10B981', '#F59E0B', '#8B5CF6'] });
+        void fireConfetti({ particleCount: 180, spread: 80, origin: { y: 0.65 }, colors: ['#FFE600', '#10B981', '#F59E0B', '#8B5CF6'] });
         // Win bell notification is created + pushed by the server at settlement.
       }
       setDrawResult({ drawId: animatingDrawId, drawnNumbers: resultDraw.drawnNumbers, userTickets: relevant, totalPayout });

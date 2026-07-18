@@ -9,9 +9,10 @@ const GAME_DEFAULTS: Array<{ code: GameCode; name: string; displayOrder: number 
   { code: 'bingo', name: 'Bingo', displayOrder: 0 },
   { code: 'keno', name: 'Keno', displayOrder: 1 },
   { code: 'crash', name: 'Crash', displayOrder: 2 },
+  { code: 'pool', name: 'Pool', displayOrder: 3 },
 ];
 
-const GAME_NAME: Record<GameCode, string> = { keno: 'Keno', bingo: 'Bingo', crash: 'Crash' };
+const GAME_NAME: Record<GameCode, string> = { keno: 'Keno', bingo: 'Bingo', crash: 'Crash', pool: 'Pool' };
 
 export type GameCatalogEntry = {
   code: GameCode;

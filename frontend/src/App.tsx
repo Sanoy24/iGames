@@ -1,18 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useSocketConnection } from './hooks/useSocketConnection';
 import { useStore } from './store/useStore';
 import { authApi, walletApi } from './lib/api';
+// Home is the default landing tab for players, so keep it in the main chunk for
+// instant first paint. Every other page is code-split and loaded on demand — this
+// keeps the initial bundle small (Admin/Bingo/etc. are large and rarely the first
+// thing a given user opens). Named-export pages are re-mapped to default here.
 import { Home } from './pages/Home';
-import { Games } from './pages/Games';
-import { Keno } from './pages/Keno';
-import { Bingo } from './pages/Bingo';
-import { Admin } from './pages/Admin';
-import { Wallet } from './pages/Wallet';
-import { Profile } from './pages/Profile';
-import { Agent } from './pages/Agent';
-import { Crash } from './pages/Crash';
-import { Leaderboard } from './pages/Leaderboard';
-import { Support } from './pages/Support';
+const Games = lazy(() => import('./pages/Games').then((m) => ({ default: m.Games })));
+const Keno = lazy(() => import('./pages/Keno').then((m) => ({ default: m.Keno })));
+const Bingo = lazy(() => import('./pages/Bingo').then((m) => ({ default: m.Bingo })));
+const Admin = lazy(() => import('./pages/Admin').then((m) => ({ default: m.Admin })));
+const Wallet = lazy(() => import('./pages/Wallet').then((m) => ({ default: m.Wallet })));
+const Profile = lazy(() => import('./pages/Profile').then((m) => ({ default: m.Profile })));
+const Agent = lazy(() => import('./pages/Agent').then((m) => ({ default: m.Agent })));
+const Crash = lazy(() => import('./pages/Crash').then((m) => ({ default: m.Crash })));
+const Leaderboard = lazy(() => import('./pages/Leaderboard').then((m) => ({ default: m.Leaderboard })));
+const Support = lazy(() => import('./pages/Support').then((m) => ({ default: m.Support })));
 import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
@@ -31,7 +35,18 @@ type TelegramWindow = Window &
   };
 
 export function App() {
-  const { authStatus, isAuthenticated, setAuth, setAuthLoading, setWallet, clearAuth, user, wallet } = useStore();
+  // Narrow, per-field subscriptions: App drives the whole shell, so subscribing to
+  // the entire store would re-render every page + nav on unrelated churn (live
+  // counts ticking, toasts, notifications, sound settings). Select only what App
+  // actually reads. Action refs (setAuth, …) are stable, so they never re-render.
+  const authStatus = useStore((s) => s.authStatus);
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const user = useStore((s) => s.user);
+  const wallet = useStore((s) => s.wallet);
+  const setAuth = useStore((s) => s.setAuth);
+  const setAuthLoading = useStore((s) => s.setAuthLoading);
+  const setWallet = useStore((s) => s.setWallet);
+  const clearAuth = useStore((s) => s.clearAuth);
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [showCredLogin, setShowCredLogin] = useState(false);
   const [phoneRequired, setPhoneRequired] = useState(false);
@@ -174,17 +189,19 @@ export function App() {
     <div className="app-container">
       <WalletBar onNavigate={setActiveTab} />
       <main className="main-content">
-        {activeTab === 'home' && <Home onNavigate={setActiveTab} />}
-        {activeTab === 'games' && <Games onNavigate={setActiveTab} />}
-        {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
-        {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
-        {activeTab === 'crash' && <Crash onBack={() => setActiveTab('games')} />}
-        {activeTab === 'wallet' && <Wallet onNavigate={setActiveTab} />}
-        {activeTab === 'leaderboard' && <Leaderboard />}
-        {activeTab === 'admin' && <Admin />}
-        {activeTab === 'profile' && <Profile onNavigate={setActiveTab} />}
-        {activeTab === 'agent' && <Agent />}
-        {activeTab === 'support' && <Support onBack={() => setActiveTab('profile')} />}
+        <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" /></div>}>
+          {activeTab === 'home' && <Home onNavigate={setActiveTab} />}
+          {activeTab === 'games' && <Games onNavigate={setActiveTab} />}
+          {activeTab === 'keno' && <Keno onBack={() => setActiveTab('games')} />}
+          {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
+          {activeTab === 'crash' && <Crash onBack={() => setActiveTab('games')} />}
+          {activeTab === 'wallet' && <Wallet onNavigate={setActiveTab} />}
+          {activeTab === 'leaderboard' && <Leaderboard />}
+          {activeTab === 'admin' && <Admin />}
+          {activeTab === 'profile' && <Profile onNavigate={setActiveTab} />}
+          {activeTab === 'agent' && <Agent />}
+          {activeTab === 'support' && <Support onBack={() => setActiveTab('profile')} />}
+        </Suspense>
       </main>
       <BottomNav active={activeTab} onChange={setActiveTab} />
       <Toasts />

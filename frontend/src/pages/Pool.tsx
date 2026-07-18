@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import confetti from 'canvas-confetti';
 import { ArrowLeft, Bot, Swords, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
+import { getErrorMessage } from '../lib/utils';
 import { poolApi } from '../lib/poolApi';
 import type { PoolConfig, PoolMatchView, PoolTournament, Seat } from '../lib/poolApi';
 import { usePoolMatchFound, usePoolMatchSocket, type PoolShotResolvedEvent } from '../hooks/usePoolSocket';
@@ -72,9 +73,11 @@ export function Pool({ onBack }: { onBack: () => void }) {
     }
   }, [ended, mySeat]);
 
-  const err = (e: unknown, fallback: string) => {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? fallback;
-    addToast('error', Array.isArray(msg) ? msg[0] : msg);
+  const err = (e: unknown, context: string) => {
+    // Log the raw error (status, server payload, or network/timeout) so failures
+    // are diagnosable from the browser console, not just a toast.
+    console.error(`[pool] ${context}`, e);
+    addToast('error', getErrorMessage(e) || context);
   };
 
   const startSingle = async () => {

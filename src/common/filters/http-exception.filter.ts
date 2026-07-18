@@ -3,12 +3,15 @@ import {
   Catch,
   ExceptionFilter,
   HttpException,
-  HttpStatus
+  HttpStatus,
+  Logger
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger('HttpException');
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -21,6 +24,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     const exceptionResponse =
       exception instanceof HttpException ? exception.getResponse() : undefined;
+
+    // Log server-side so failures are never invisible. 5xx get the full stack
+    // (these are bugs); 4xx get a one-line warning (usually bad client input).
+    // The full, un-sanitized detail stays in the logs — only the client response
+    // is scrubbed by getMessage/sanitize below.
+    const where = `${request.method} ${request.url}`;
+    const rid = request.requestId ? ` [req ${request.requestId}]` : '';
+    if (status >= 500) {
+      const stack = exception instanceof Error ? exception.stack : undefined;
+      const detail = exception instanceof Error ? exception.message : String(exception);
+      this.logger.error(`${status} ${where}${rid} — ${detail}`, stack);
+    } else if (status >= 400) {
+      this.logger.warn(`${status} ${where}${rid} — ${JSON.stringify(this.getMessage(exceptionResponse))}`);
+    }
 
     response.status(status).json({
       statusCode: status,

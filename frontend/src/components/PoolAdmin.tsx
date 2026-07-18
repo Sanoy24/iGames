@@ -113,6 +113,7 @@ export function PoolAdmin() {
       setCfg(c);
       setDraft(c);
     } catch (e) {
+      console.error('[pool-admin] load config failed', e);
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
@@ -142,6 +143,7 @@ export function PoolAdmin() {
       setDraft(saved);
       addToast('success', 'Pool config saved.');
     } catch (e) {
+      console.error('[pool-admin] save config failed', e);
       addToast('error', getErrorMessage(e));
     } finally {
       setSaving(false);
@@ -156,6 +158,7 @@ export function PoolAdmin() {
       setTName('');
       addToast('success', `Tournament "${t.name}" created — registration open.`);
     } catch (e) {
+      console.error('[pool-admin] create tournament failed', e);
       addToast('error', getErrorMessage(e));
     } finally {
       setCreating(false);
@@ -170,6 +173,7 @@ export function PoolAdmin() {
       setLastTournament(t);
       addToast('success', `Tournament started (${t.size} seats, ${t.rounds} rounds).`);
     } catch (e) {
+      console.error('[pool-admin] start tournament failed', e);
       addToast('error', getErrorMessage(e));
     } finally {
       setStartingId(false);

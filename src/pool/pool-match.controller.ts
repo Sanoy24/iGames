@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   Post,
   UseGuards,
@@ -26,6 +27,8 @@ import { JoinQueueDto } from './dto/join-queue.dto';
 @UseGuards(JwtAuthGuard)
 @Controller('pool')
 export class PoolMatchController {
+  private readonly logger = new Logger(PoolMatchController.name);
+
   constructor(
     private readonly poolService: PoolService,
     private readonly matchService: PoolMatchService,
@@ -38,9 +41,17 @@ export class PoolMatchController {
   @Post('single')
   @ApiOkResponse({ description: 'Start a single-player game vs the AI' })
   async startSingle(@CurrentUser() user: AuthenticatedUser) {
-    await this.poolService.assertModePlayable('single');
-    const match = await this.matchService.createSingleMatch(user.id);
-    return this.matchService.buildView(match);
+    try {
+      await this.poolService.assertModePlayable('single');
+      const match = await this.matchService.createSingleMatch(user.id);
+      return this.matchService.buildView(match);
+    } catch (err) {
+      this.logger.error(
+        `startSingle failed for user ${user.id}: ${err instanceof Error ? err.message : err}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      throw err;
+    }
   }
 
   // ── Matchmaking ───────────────────────────────────────────────────────────

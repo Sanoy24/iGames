@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,6 +19,8 @@ import { CreateTournamentDto } from './dto/create-tournament.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
 export class PoolAdminController {
+  private readonly logger = new Logger(PoolAdminController.name);
+
   constructor(
     private readonly poolService: PoolService,
     private readonly tournaments: PoolTournamentService,
@@ -30,11 +32,19 @@ export class PoolAdminController {
   }
 
   @Patch('config')
-  updateConfig(
+  async updateConfig(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdatePoolConfigDto,
   ) {
-    return this.poolService.updateConfig(dto, user.id);
+    try {
+      return await this.poolService.updateConfig(dto, user.id);
+    } catch (err) {
+      this.logger.error(
+        `updateConfig failed for admin ${user.id} (fields: ${Object.keys(dto).join(', ') || 'none'}): ${err instanceof Error ? err.message : err}`,
+        err instanceof Error ? err.stack : undefined,
+      );
+      throw err;
+    }
   }
 
   // ── Tournaments ──────────────────────────────────────────────────────────

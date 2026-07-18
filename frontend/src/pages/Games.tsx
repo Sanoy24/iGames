@@ -1,13 +1,13 @@
 import { useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, Users, Clock, Trophy, Star, TrendingUp } from 'lucide-react';
+import { Zap, Users, Clock, Trophy, Star, TrendingUp, Target } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
-type Filter = 'all' | 'keno' | 'bingo' | 'crash';
+type Filter = 'all' | 'keno' | 'bingo' | 'crash' | 'pool';
 
 const BINGO_LETTERS = ['B', 'I', 'N', 'G', 'O'];
 const BINGO_COLORS = ['#4ade80', '#facc15', '#60a5fa', '#f87171', '#c084fc'];
@@ -20,6 +20,7 @@ const FILTER_CHIPS: { id: Filter; labelKey: string; icon: string }[] = [
   { id: 'keno',  labelKey: 'games.filterKeno',  icon: '⚡' },
   { id: 'bingo', labelKey: 'games.filterBingo', icon: '🎯' },
   { id: 'crash', labelKey: 'games.filterCrash', icon: '🚀' },
+  { id: 'pool',  labelKey: 'games.filterPool',  icon: '🎱' },
 ];
 
 const containerVariants = {
@@ -41,7 +42,7 @@ export function Games({ onNavigate }: Props) {
 
   // Availability: while the catalog is loading (null) default to visible+playable.
   // Once loaded, a game missing from the catalog is hidden by the backend.
-  const gameInfo = (code: 'keno' | 'bingo' | 'crash') => {
+  const gameInfo = (code: 'keno' | 'bingo' | 'crash' | 'pool') => {
     if (!gameCatalog) return { hidden: false, maint: false, msg: '' };
     const entry = gameCatalog.find((g) => g.code === code);
     if (!entry) return { hidden: true, maint: false, msg: '' };
@@ -54,13 +55,15 @@ export function Games({ onNavigate }: Props) {
   const keno = gameInfo('keno');
   const bingo = gameInfo('bingo');
   const crash = gameInfo('crash');
+  const pool = gameInfo('pool');
 
-  const open = (code: 'keno' | 'bingo' | 'crash', info: { maint: boolean; msg: string }) =>
+  const open = (code: 'keno' | 'bingo' | 'crash' | 'pool', info: { maint: boolean; msg: string }) =>
     info.maint ? addToast('info', info.msg) : onNavigate(code);
 
   const showKeno  = (filter === 'all' || filter === 'keno')  && !keno.hidden;
   const showBingo = (filter === 'all' || filter === 'bingo') && !bingo.hidden;
   const showCrash = (filter === 'all' || filter === 'crash') && !crash.hidden;
+  const showPool  = (filter === 'all' || filter === 'pool')  && !pool.hidden;
 
   return (
     <motion.div
@@ -298,6 +301,56 @@ export function Games({ onNavigate }: Props) {
                     transition={{ duration: 1.8 + i * 0.3, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
                   >
                     {m}
+                  </motion.span>
+                ))}
+              </div>
+            </motion.button>
+          )}
+          {/* ── Pool ── */}
+          {showPool && (
+            <motion.button
+              layout
+              key="pool"
+              variants={itemVariants}
+              className="game-banner game-banner-pool"
+              onClick={() => open('pool', pool)}
+              exit={{ opacity: 0, y: -12, scale: 0.97 }}
+              whileHover={{ scale: 1.015, y: -3 }}
+              whileTap={{ scale: 0.975 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+              style={{ opacity: pool.maint ? 0.6 : 1 }}
+            >
+              <div className="game-banner-content">
+                <span className="game-banner-tag">
+                  {pool.maint ? t('games.maintenance') : t('games.poolTag')}
+                </span>
+                <h2 className="game-banner-title">Pool</h2>
+                <p className="game-banner-desc">
+                  {t('games.poolDesc')}
+                </p>
+                <div className="game-banner-stats">
+                  <span className="game-stat-pill"><Target size={10} style={{ display:'inline', marginRight:3 }} />{t('games.poolStat1')}</span>
+                  <span className="game-stat-pill"><Users size={10} style={{ display:'inline', marginRight:3 }} />{t('games.poolStat2')}</span>
+                  <span className="game-stat-pill"><Trophy size={10} style={{ display:'inline', marginRight:3 }} />{t('games.poolStat3')}</span>
+                </div>
+                <span className="game-banner-cta">{t('common.playNow')} →</span>
+              </div>
+              <div className="game-banner-deco" style={{ gap: 8 }}>
+                {['8', '9', '3', '11'].map((n, i) => (
+                  <motion.span
+                    key={n}
+                    style={{
+                      width: 34, height: 34, borderRadius: '50%',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 13, fontWeight: 800, color: '#fff',
+                      background: n === '8' ? '#1a1a1a' : ['#eab308', '#ef4444', '#a855f7'][i % 3],
+                      border: '2px solid rgba(255,255,255,0.25)',
+                      fontFamily: 'var(--font-display)',
+                    }}
+                    animate={{ y: [0, -6, 0] }}
+                    transition={{ duration: 2 + i * 0.3, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    {n}
                   </motion.span>
                 ))}
               </div>

@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
+  Activity, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
   Image as ImageIcon, LifeBuoy, Megaphone, Play, Plus, RefreshCw, Send, Settings,
   Shield, Trash2, Users, Wallet, X,
 } from 'lucide-react';
@@ -35,8 +35,9 @@ import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelative
 import { formatCredits, useStore } from '../store/useStore';
 import { SupportConsole } from '../components/SupportConsole';
 import { GamesAdmin } from '../components/GamesAdmin';
+import { PoolAdmin } from '../components/PoolAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -45,6 +46,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'agent-actions', label: 'Agent Actions', icon: <Activity size={15} /> },
   { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
   { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
+  { id: 'pool',        label: 'Pool',        icon: <Circle size={15} /> },
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
   { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
@@ -3821,6 +3823,7 @@ export function Admin() {
           {tab === 'agent-actions' && <AgentActionsAdmin />}
           {tab === 'keno'          && <KenoAdmin />}
           {tab === 'bingo'         && <BingoAdmin />}
+          {tab === 'pool'          && <PoolAdmin />}
           {tab === 'bots'          && <BotsAdmin />}
           {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}

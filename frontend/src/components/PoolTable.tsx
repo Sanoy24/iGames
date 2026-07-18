@@ -29,7 +29,7 @@ const darken = (h: string, a: number) => { const [r, g, b] = hexToRgb(h); return
 interface Anim { frames: Array<Array<{ x: number; y: number; pocketed: boolean }>>; frameDt: number; i: number; acc: number; last: number; }
 
 export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
-  { view, mySeat, canShoot, onSubmit },
+  { view, canShoot, onSubmit },
   ref,
 ) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -47,6 +47,11 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   const dragging = useRef(false);
   const viewRef = useRef(view);
   const canShootRef = useRef(canShoot);
+  // Ball-in-hand: when true the player may drag the cue ball to a legal spot; the
+  // chosen position rides along with the next shot as `cuePos`.
+  const bihActive = useRef(false);
+  const placing = useRef(false);
+  const placedCue = useRef<{ x: number; y: number } | null>(null);
 
   const geom = useRef({ rail: 16, scale: 340 });
 
@@ -54,10 +59,12 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   useEffect(() => {
     viewRef.current = view;
     canShootRef.current = canShoot;
+    bihActive.current = canShoot && view.ballInHand;
     table.current = buildTable(view.physics ?? DEFAULT_PHYSICS);
     tuning.current = buildTuning(view.physics ?? DEFAULT_PHYSICS);
     if (!anim.current && queue.current.length === 0) {
       balls.current = view.board.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }));
+      placedCue.current = null; // fresh authoritative board — drop any local placement
     }
   }, [view, canShoot]);
 
@@ -204,6 +211,18 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(ex, ey); ctx.stroke();
     };
 
+    // Pulsing dashed ring around the cue ball to signal it can be dragged.
+    const drawPlacementHint = (cue: Ball) => {
+      const cx = wx(cue.pos.x), cy = wy(cue.pos.y), r = br();
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 400);
+      ctx.save();
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = `rgba(110,231,183,${0.45 + 0.4 * pulse})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, r + 5 + pulse * 2, 0, 7); ctx.stroke();
+      ctx.restore();
+    };
+
     const startNextAnim = () => {
       const input = queue.current.shift();
       if (!input) return;
@@ -241,7 +260,10 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       const r = br();
       const idle = !anim.current && queue.current.length === 0;
       const cue = balls.current.find((b) => b.number === 0);
-      if (idle && canShootRef.current && cue && !cue.pocketed) drawAim(cue);
+      if (idle && canShootRef.current && cue && !cue.pocketed) {
+        if (bihActive.current) drawPlacementHint(cue);
+        drawAim(cue);
+      }
       for (const b of balls.current) { if (!b.pocketed) drawBall(b, r); }
       raf = requestAnimationFrame(render);
     };
@@ -254,14 +276,42 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     const toWorld = (px: number, py: number) => ({ x: (px - geom.current.rail) / geom.current.scale, y: (py - geom.current.rail) / geom.current.scale });
     const cueBall = () => balls.current.find((b) => b.number === 0);
 
+    // Move the cue ball to a legal spot under the pointer (clamped inside the
+    // cushions; overlapping another ball is rejected, keeping the last valid spot).
+    const updatePlace = (e: PointerEvent) => {
+      const cue = cueBall(); if (!cue || cue.pocketed) return;
+      const t = table.current, R = t.ballRadius;
+      const p = toCanvas(e); const w = toWorld(p.x, p.y);
+      const cx = clamp(w.x, R, t.width - R);
+      const cy = clamp(w.y, R, t.height - R);
+      const clash = balls.current.some(
+        (b) => b.number !== 0 && !b.pocketed && Math.hypot(b.pos.x - cx, b.pos.y - cy) < 2 * R,
+      );
+      if (clash) return;
+      cue.pos.x = cx; cue.pos.y = cy;
+      placedCue.current = { x: cx, y: cy };
+    };
+
     const onDown = (e: PointerEvent) => {
       if (!canShootRef.current || anim.current) return;
+      // Ball-in-hand: grabbing on/near the cue ball starts a placement drag.
+      const cue = cueBall();
+      if (bihActive.current && cue && !cue.pocketed) {
+        const p = toCanvas(e); const w = toWorld(p.x, p.y);
+        if (Math.hypot(w.x - cue.pos.x, w.y - cue.pos.y) <= 2.4 * table.current.ballRadius) {
+          canvas.setPointerCapture(e.pointerId);
+          placing.current = true;
+          updatePlace(e);
+          return;
+        }
+      }
       canvas.setPointerCapture(e.pointerId);
       dragging.current = true;
       updateDrag(e);
     };
     const onMove = (e: PointerEvent) => {
       if (anim.current) return;
+      if (placing.current) { updatePlace(e); return; }
       const cue = cueBall();
       if (!cue || cue.pocketed) return;
       if (dragging.current) { updateDrag(e); return; }
@@ -277,13 +327,16 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       power.current = clamp(Math.hypot(dx, dy) / (table.current.width * 0.28), 0, 1);
     };
     const onUp = () => {
+      if (placing.current) { placing.current = false; return; }
       if (!dragging.current) return;
       dragging.current = false;
       if (!canShootRef.current || anim.current) { power.current = 0; return; }
       if (power.current > 0.04) {
         const input: ShotInput = { angle: aim.current, power: power.current, spin: { ...spin.current } };
+        if (placedCue.current) input.cuePos = { ...placedCue.current };
         queue.current.push(input); // animate immediately (optimistic)
         onSubmit(input);
+        placedCue.current = null;
       }
       power.current = 0;
     };
@@ -351,9 +404,11 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
           <span style={{ fontSize: 10, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Spin</span>
         </div>
         <p style={{ fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
-          {canShoot
-            ? 'Drag back from the cue ball to aim and set power, then release. Move the spin dot for follow / draw / english.'
-            : 'Waiting for your turn…'}
+          {!canShoot
+            ? 'Waiting for your turn…'
+            : view.ballInHand
+              ? 'Ball in hand — drag the cue ball to reposition it, then drag back from it to aim and release.'
+              : 'Drag back from the cue ball to aim and set power, then release. Move the spin dot for follow / draw / english.'}
         </p>
       </div>
     </div>

@@ -797,7 +797,7 @@ export const supportAgentApi = {
 };
 
 // ── Games catalog + admin availability control ───────────────────
-export type GameCode = 'keno' | 'bingo' | 'crash';
+export type GameCode = 'keno' | 'bingo' | 'crash' | 'pool';
 export type GameState = 'enabled' | 'maintenance' | 'hidden';
 
 export type GameCatalogEntry = {
@@ -817,6 +817,62 @@ export const adminGamesApi = {
   list: () => api.get<GameCatalogEntry[]>('/admin/games').then((r) => r.data),
   update: (code: GameCode, dto: { state?: GameState; maintenanceMessage?: string | null; displayOrder?: number }) =>
     api.patch<GameCatalogEntry>(`/admin/games/${code}`, dto).then((r) => r.data),
+};
+
+// ── Pool admin ───────────────────────────────────────────────────────────────
+export type PoolBotDifficulty = 'easy' | 'medium' | 'hard';
+
+/** Full editable Pool config (admin view) — mirrors PoolConfig entity + DTO. */
+export type AdminPoolConfig = {
+  // Single player
+  singlePlayerEnabled: boolean;
+  singlePlayerStakeMinor: number;
+  botDifficulty: PoolBotDifficulty;
+  // Two player
+  twoPlayerEnabled: boolean;
+  minStakeMinor: number;
+  maxStakeMinor: number;
+  rakePct: number;
+  shotClockSeconds: number;
+  // Tournament
+  tournamentEnabled: boolean;
+  tournamentEntryFeeMinor: number;
+  tournamentSize: number;
+  tournamentRakePct: number;
+  // Physics tuning (integers)
+  slidingFrictionX100: number;
+  rollingFrictionX1000: number;
+  cushionReboundPct: number;
+  ballReboundPct: number;
+  pocketSizePct: number;
+  cueMaxSpeedX100: number;
+  maxSideSpin: number;
+  maxRollSpin: number;
+  // Global
+  rulesetVersion: number;
+  engineVersion: number;
+};
+
+export type AdminPoolTournament = {
+  id: string;
+  name: string;
+  status: 'registering' | 'active' | 'completed' | 'cancelled';
+  size: number;
+  rounds: number;
+  entryFeeMinor: number;
+  rakePct: number;
+  prizePoolMinor: number;
+  winnerUserId: string | null;
+};
+
+export const adminPoolApi = {
+  getConfig: () => api.get<AdminPoolConfig>('/admin/pool/config').then((r) => r.data),
+  updateConfig: (dto: Partial<AdminPoolConfig>) =>
+    api.patch<AdminPoolConfig>('/admin/pool/config', dto).then((r) => r.data),
+  createTournament: (name?: string) =>
+    api.post<AdminPoolTournament>('/admin/pool/tournaments', { name }).then((r) => r.data),
+  startTournament: (id: string) =>
+    api.post<AdminPoolTournament>(`/admin/pool/tournaments/${id}/start`, {}).then((r) => r.data),
 };
 
 export default api;

@@ -200,28 +200,22 @@ export function Pool({ onBack }: { onBack: () => void }) {
 
     // ── Portrait: in-page, tall vertical table ─────────────────────────────────
     return (
-      <div style={{ padding: '12px 14px 28px', maxWidth: 640, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-          <button className="btn" onClick={backToLobby} style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <ArrowLeft size={16} /> {t('pool.lobby')}
-          </button>
-          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--text-muted)' }}>
-            {modeLabel} · {t('pool.stakeLabel', { amount: match.stakeMinor })}
-          </div>
-        </div>
-
-        {/* Turn banner */}
+      <div style={{ padding: '4px 10px 14px', maxWidth: 640, margin: '0 auto' }}>
+        {/* Compact single-row header: back + turn + group + timer */}
         <div
           style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 14px', borderRadius: 12, marginBottom: 12,
-            background: isMyTurn ? 'rgba(111,206,154,0.14)' : 'rgba(255,255,255,0.05)',
-            border: `1px solid ${isMyTurn ? 'rgba(111,206,154,0.4)' : 'var(--border, rgba(255,255,255,0.1))'}`,
+            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+            padding: '5px 8px 5px 6px', borderRadius: 10,
+            background: isMyTurn ? 'rgba(111,206,154,0.12)' : 'rgba(255,255,255,0.04)',
+            border: `1px solid ${isMyTurn ? 'rgba(111,206,154,0.35)' : 'var(--border, rgba(255,255,255,0.08))'}`,
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: 15 }}>{turnText}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>
-            <span>{t('pool.youLabel')} <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
+          <button className="btn" onClick={backToLobby} style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <ArrowLeft size={15} />
+          </button>
+          <span style={{ fontWeight: 700, fontSize: 13, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>{turnText}</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5, color: 'var(--text-muted)' }}>
+            <span><strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
             {isMyTurn && remaining != null && (
               <span style={{ fontFamily: 'ui-monospace, monospace', color: remaining <= 5 ? 'var(--danger,#e0653c)' : 'inherit' }}>⏱ {remaining}s</span>
             )}

@@ -454,7 +454,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   useEffect(() => () => stopNudge(), []);
 
   const isLandscape = orientation === 'landscape';
-  const tableHeight = isLandscape ? '86vh' : '62vh';
+  const tableHeight = isLandscape ? '88vh' : '72vh';
 
   return (
     <div style={{ display: 'flex', gap: isLandscape ? 12 : 8, alignItems: 'stretch', width: '100%' }}>

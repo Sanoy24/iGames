@@ -1,6 +1,6 @@
 import { makeRng } from './rng';
 import {
-  bfs, cellCenter, COLLECT_RADIUS, HUMAN_SPEED, Layout, moveWithSlide, PLAYER_RADIUS, toCell, WinMode,
+  cellCenter, COLLECT_RADIUS, HUMAN_SPEED, type Layout, moveWithSlide, PLAYER_RADIUS, toCell, type WinMode,
 } from './layout';
 
 export type BotPersonality = 'gatherer' | 'sniper' | 'strategist' | 'explorer' | 'chaotic';
@@ -56,6 +56,13 @@ export class BotSim {
   readonly bots: BotRuntime[];
   /** Coin index → taken by some bot. */
   readonly botTaken: Uint8Array;
+  /** cellIndex (cy*size+cx) → coin index. Coins are one-per-cell. */
+  private readonly coinAtCell: Map<number, number>;
+  // Reusable BFS scratch (generation-tagged `seen` avoids clearing each call).
+  private readonly bfsSeen: Int32Array;
+  private readonly bfsPrev: Int32Array;
+  private readonly bfsQueue: Int32Array;
+  private bfsGen = 0;
   private rng: () => number;
   t = 0;
   finished = false;
@@ -65,6 +72,12 @@ export class BotSim {
     this.cfg = cfg;
     this.rng = makeRng((layout.seed ^ 0x5f356495) >>> 0);
     this.botTaken = new Uint8Array(layout.coins.length);
+    this.coinAtCell = new Map();
+    for (const c of layout.coins) this.coinAtCell.set(c.cy * layout.size + c.cx, c.index);
+    const cells = layout.size * layout.size;
+    this.bfsSeen = new Int32Array(cells);
+    this.bfsPrev = new Int32Array(cells);
+    this.bfsQueue = new Int32Array(cells);
     this.bots = roster.map((r, i) => {
       const [x, y] = layout.botSpawns[i] ?? layout.humanSpawn;
       return {
@@ -80,6 +93,37 @@ export class BotSim {
     return Math.max(0, this.cfg.durationSec - this.t);
   }
 
+  /**
+   * BFS shortest cell path using reusable, generation-tagged buffers (no per-call
+   * allocation or O(n²) clear). Outer maze walls are always intact, so a missing
+   * wall guarantees the neighbour is in-bounds. Equivalent to `layout.bfs`.
+   */
+  private pathTo(sx: number, sy: number, tx: number, ty: number): Array<[number, number]> {
+    if (sx === tx && sy === ty) return [];
+    const n = this.layout.size, grid = this.layout.grid;
+    const gen = ++this.bfsGen;
+    const seen = this.bfsSeen, prev = this.bfsPrev, q = this.bfsQueue;
+    const start = sy * n + sx, goal = ty * n + tx;
+    let head = 0, tail = 0, found = false;
+    q[tail++] = start; seen[start] = gen; prev[start] = -1;
+    while (head < tail) {
+      const cur = q[head++];
+      if (cur === goal) { found = true; break; }
+      const cx = cur % n, cy = (cur / n) | 0;
+      const cell = grid[cy][cx];
+      if (!cell.top) { const id = cur - n; if (seen[id] !== gen) { seen[id] = gen; prev[id] = cur; q[tail++] = id; } }
+      if (!cell.right) { const id = cur + 1; if (seen[id] !== gen) { seen[id] = gen; prev[id] = cur; q[tail++] = id; } }
+      if (!cell.bottom) { const id = cur + n; if (seen[id] !== gen) { seen[id] = gen; prev[id] = cur; q[tail++] = id; } }
+      if (!cell.left) { const id = cur - 1; if (seen[id] !== gen) { seen[id] = gen; prev[id] = cur; q[tail++] = id; } }
+    }
+    if (!found) return [];
+    const path: Array<[number, number]> = [];
+    let cur = goal;
+    while (cur !== start) { path.push([cur % n, (cur / n) | 0]); cur = prev[cur]; }
+    path.reverse();
+    return path;
+  }
+
   private decide(b: BotRuntime) {
     const [bcx, bcy] = toCell(b.x, b.y);
     const [ccx, ccy] = this.layout.center;
@@ -89,7 +133,7 @@ export class BotSim {
       ((b.personality === 'strategist' && this.timeLeft < 30) || this.timeLeft <= this.cfg.finalSprintWarningSec + 3);
     if (headHome) {
       b.headingHome = true;
-      b.path = bfs(this.layout.grid, this.layout.size, bcx, bcy, ccx, ccy);
+      b.path = this.pathTo(bcx, bcy, ccx, ccy);
       b.pathIndex = 0;
       return;
     }
@@ -122,16 +166,27 @@ export class BotSim {
     if (pool.length && this.rng() > 0.35 + b.skill * 0.6) best = pool[Math.floor(this.rng() * pool.length)].idx;
     if (best < 0) return;
     const target = coins[best];
-    b.path = bfs(this.layout.grid, this.layout.size, bcx, bcy, target.cx, target.cy);
+    b.path = this.pathTo(bcx, bcy, target.cx, target.cy);
     b.pathIndex = 0;
   }
 
   private collect(b: BotRuntime) {
-    for (const c of this.layout.coins) {
-      if (this.botTaken[c.index]) continue;
-      if (Math.hypot(c.x - b.x, c.y - b.y) < COLLECT_RADIUS) {
-        this.botTaken[c.index] = 1;
-        b.coinValue += c.value;
+    // Only the bot's own cell + neighbours can hold a coin within collect range
+    // (coins sit at cell centres and COLLECT_RADIUS < CELL), so this is O(9) per
+    // bot per step instead of O(coins) — identical result, far cheaper.
+    const size = this.layout.size;
+    const [bcx, bcy] = toCell(b.x, b.y);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const cx = bcx + dx, cy = bcy + dy;
+        if (cx < 0 || cy < 0 || cx >= size || cy >= size) continue;
+        const ci = this.coinAtCell.get(cy * size + cx);
+        if (ci === undefined || this.botTaken[ci]) continue;
+        const c = this.layout.coins[ci];
+        if (Math.hypot(c.x - b.x, c.y - b.y) < COLLECT_RADIUS) {
+          this.botTaken[ci] = 1;
+          b.coinValue += c.value;
+        }
       }
     }
   }

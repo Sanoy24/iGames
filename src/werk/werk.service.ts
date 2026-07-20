@@ -306,49 +306,58 @@ export class WerkService implements OnApplicationBootstrap {
    * for money beyond "which coins did I touch" (bounded) and Mode-B centre arrival.
    */
   async settle(userId: string, id: string, dto: SettleWerkGameDto): Promise<WerkSessionView> {
+    // Fast pre-check: bail cheaply on unknown / already-resolved games before the
+    // (heavier) authoritative simulation, and without taking any lock.
+    const pre = await this.sessionRepo.findOneBy({ id });
+    if (!pre || pre.userId !== userId) throw new NotFoundException('Game not found');
+    if (pre.status === 'aborted') throw new BadRequestException('Game was aborted');
+    if (pre.status === 'settled') return this.toSessionView(pre, await this.getConfig());
+
+    // ── Heavy, deterministic work runs OUTSIDE any lock ──────────────────────
+    // The session's seed/roster/params are immutable once created, so rebuilding
+    // the layout and simulating the bots here holds no DB lock. Only the fast
+    // finalisation below touches the (contended) config counter row.
+    const roster = (pre.botRoster as BotConfig[] | null) ?? [];
+    const layout = buildLayout(Number(pre.seed), {
+      totalPlayers: pre.totalPlayers, coinDensityX100: pre.coinDensityX100,
+      powerupsEnabled: pre.powerupsEnabled, botCount: pre.botCount,
+    });
+
+    const coinCount = layout.coins.length;
+    const seen = new Set<number>();
+    for (const idx of dto.collectedCoinIndices) {
+      if (Number.isInteger(idx) && idx >= 0 && idx < coinCount) seen.add(idx);
+    }
+    let humanValue = 0;
+    for (const idx of seen) humanValue += layout.coins[idx].value;
+    const maxReach = Math.min(coinCount, Math.ceil((pre.durationSec * HUMAN_SPEED) / CELL * 1.2));
+    if (seen.size > maxReach) {
+      humanValue = [...seen]
+        .map((i) => layout.coins[i].value)
+        .sort((a, b) => b - a)
+        .slice(0, maxReach)
+        .reduce((a, b) => a + b, 0);
+    }
+    const reachedCenter = pre.mode === 'B' ? !!dto.reachedCenter : true;
+    const bots0 = simulateBots(layout, roster, {
+      mode: pre.mode, durationSec: pre.durationSec, finalSprintWarningSec: pre.finalSprintWarningSec,
+    }, SIM_DT);
+    const poolTotal = layout.coins.reduce((a, c) => a + c.value, 0);
+
+    // ── Fast finalisation inside the transaction ─────────────────────────────
     const settled = await this.dataSource.transaction(async (manager) => {
       const s = await manager.findOne(WerkSession, { where: { id }, lock: { mode: 'pessimistic_write' } });
       if (!s || s.userId !== userId) throw new NotFoundException('Game not found');
       if (s.status === 'aborted') throw new BadRequestException('Game was aborted');
-      if (s.status === 'settled') return s; // idempotent
+      if (s.status === 'settled') return s; // idempotent (won a concurrent race)
 
-      // Lock the config row too — the win controller mutates its rolling counter.
+      // Lock the config row only for the brief counter read/increment.
       const cfg = await manager.findOne(WerkConfig, { where: { key: 'default' }, lock: { mode: 'pessimistic_write' } });
       if (!cfg) throw new BadRequestException('Config unavailable');
 
-      const roster = (s.botRoster as BotConfig[] | null) ?? [];
-      const layout = buildLayout(Number(s.seed), {
-        totalPlayers: s.totalPlayers, coinDensityX100: s.coinDensityX100,
-        powerupsEnabled: s.powerupsEnabled, botCount: s.botCount,
-      });
-
-      // ── Validate the human's collected coins against the server's own layout ──
-      const coinCount = layout.coins.length;
-      const seen = new Set<number>();
-      for (const idx of dto.collectedCoinIndices) {
-        if (Number.isInteger(idx) && idx >= 0 && idx < coinCount) seen.add(idx);
-      }
-      let humanValue = 0;
-      for (const idx of seen) humanValue += layout.coins[idx].value;
-      // Plausibility: a human can't visit more cells than max speed allows.
-      const maxReach = Math.min(coinCount, Math.ceil((s.durationSec * HUMAN_SPEED) / CELL * 1.2));
-      if (seen.size > maxReach) {
-        humanValue = [...seen]
-          .map((i) => layout.coins[i].value)
-          .sort((a, b) => b - a)
-          .slice(0, maxReach)
-          .reduce((a, b) => a + b, 0);
-      }
-      const reachedCenter = s.mode === 'B' ? !!dto.reachedCenter : true;
-
-      // ── Authoritative bot field ──────────────────────────────────────────────
-      let bots = simulateBots(layout, roster, {
-        mode: s.mode, durationSec: s.durationSec, finalSprintWarningSec: s.finalSprintWarningSec,
-      }, SIM_DT);
-
-      // ── House-edge win control (RNG-audited) ─────────────────────────────────
-      const wc = await this.applyWinControl(manager, cfg, s, humanValue, bots, layout);
-      bots = wc.bots;
+      // ── House-edge win control (RNG-audited) on the pre-simulated bots ────────
+      const wc = await this.applyWinControl(manager, cfg, s, humanValue, bots0, poolTotal);
+      const bots = wc.bots;
 
       const std = computeStandings(
         s.mode,
@@ -405,7 +414,7 @@ export class WerkService implements OnApplicationBootstrap {
     s: WerkSession,
     humanValue: number,
     bots: BotResult[],
-    layout: { coins: Array<{ value: number }> },
+    poolTotal: number,
   ): Promise<{ bots: BotResult[]; info: Record<string, unknown>; auditLogId: string | null }> {
     const info: Record<string, unknown> = { forced: false, mode: 'none' };
     if (!cfg.winControlEnabled || bots.length === 0) {
@@ -434,7 +443,6 @@ export class WerkService implements OnApplicationBootstrap {
       gameType: 'werk', gameReference: s.id, metadata: { winControl: true, forceAll }, manager,
     });
     const rng = makeRng(draw.numbers[0]);
-    const poolTotal = layout.coins.reduce((a, c) => a + c.value, 0);
     const out = bots.map((b) => ({ ...b }));
 
     if (forceAll) {

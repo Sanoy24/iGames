@@ -3,7 +3,6 @@ import api from './api';
 export type WerkMode = 'A' | 'B';
 export type WerkMazeTheme = 'adwa' | 'highland' | 'desert';
 export type WerkBotSeedMode = 'auto' | 'zero' | 'custom';
-export type WerkBotDifficulty = 'easy' | 'medium' | 'hard';
 export type WerkBotPersonality = 'gatherer' | 'sniper' | 'strategist' | 'explorer' | 'chaotic';
 
 /** A server-generated bot the client renders + animates verbatim. */
@@ -14,6 +13,17 @@ export interface WerkBot {
   personality: WerkBotPersonality;
   speedPct: number;
   skill: number;
+}
+
+/** One row of the authoritative final standings returned on settle. */
+export interface WerkStanding {
+  id: number; // 0 = human
+  name: string;
+  isHuman: boolean;
+  color: string;
+  coinValue: number;
+  eligible: boolean;
+  rank: number;
 }
 
 /** Public config the client reads to render the lobby + build a game. */
@@ -51,13 +61,12 @@ export interface WerkSessionView {
   bots: WerkBot[];
   humanRank: number | null;
   prizeMinor: number;
+  standings: WerkStanding[];
 }
 
 export interface WerkSettleInput {
-  rank: number;
-  tieCount: number;
-  coinValue: number;
-  eliminated?: boolean;
+  collectedCoinIndices: number[];
+  reachedCenter?: boolean;
 }
 
 /** Full admin config row (all editable fields). */
@@ -70,7 +79,8 @@ export interface AdminWerkConfig {
   totalPlayers: number;
   botCount: number;
   botSeedMode: WerkBotSeedMode;
-  botDifficulty: WerkBotDifficulty;
+  botSpeedPct: number;
+  botSkillPct: number;
   botPersonalities: WerkBotPersonality[] | null;
   gameDurationSec: number;
   winningMode: WerkMode;
@@ -83,6 +93,10 @@ export interface AdminWerkConfig {
   payoutRank3MultX100: number;
   payoutRank4MultX100: number;
   payoutRank5MultX100: number;
+  winControlEnabled: boolean;
+  houseGuaranteedBelowPlayers: number;
+  botForcedWinEveryNRounds: number;
+  winControlCounter: number;
 }
 
 export const adminWerkApi = {

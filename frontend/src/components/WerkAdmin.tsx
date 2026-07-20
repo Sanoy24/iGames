@@ -74,8 +74,9 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
     if (!cfg) return;
     setSaving(true);
     try {
-      const { key, ...dto } = cfg;
-      void key;
+      // Strip server-owned fields the update DTO doesn't accept.
+      const { key, winControlCounter, ...dto } = cfg;
+      void key; void winControlCounter;
       const updated = await adminWerkApi.updateConfig(dto);
       setCfg(updated);
       addToast('success', 'Werk Flega config saved');
@@ -124,15 +125,22 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
                   <option value="zero">Zero (no bots)</option>
                 </select>
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>Difficulty</span>
-                <select value={cfg.botDifficulty} onChange={(e) => set('botDifficulty', e.target.value as AdminWerkConfig['botDifficulty'])}
-                  style={{ padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--surface,#0c0a08)', color: 'inherit' }}>
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                </select>
-              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>Difficulty presets</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([['Easy', 74, 30], ['Medium', 88, 60], ['Hard', 96, 85]] as const).map(([label, sp, sk]) => {
+                    const active = cfg.botSpeedPct === sp && cfg.botSkillPct === sk;
+                    return (
+                      <button key={label} type="button" onClick={() => setCfg((c) => (c ? { ...c, botSpeedPct: sp, botSkillPct: sk } : c))}
+                        className={`btn btn-sm ${active ? 'btn-primary' : ''}`} style={{ flex: 1 }}>{label}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <NumField label="Bot speed % (of human)" value={cfg.botSpeedPct} onChange={(v) => set('botSpeedPct', v)} min={30} max={100} hint="± small jitter per bot" />
+              <NumField label="Bot skill % (0–100)" value={cfg.botSkillPct} onChange={(v) => set('botSkillPct', v)} min={0} max={100} hint="target choice + reaction" />
             </div>
             <div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
@@ -183,6 +191,17 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
               <NumField label="#3" value={cfg.payoutRank3MultX100} onChange={(v) => set('payoutRank3MultX100', v)} min={0} />
               <NumField label="#4" value={cfg.payoutRank4MultX100} onChange={(v) => set('payoutRank4MultX100', v)} min={0} />
               <NumField label="#5" value={cfg.payoutRank5MultX100} onChange={(v) => set('payoutRank5MultX100', v)} min={0} />
+            </div>
+
+            {/* House-edge win control */}
+            <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>House edge / win control</div>
+            <Toggle label="Win control enabled" value={cfg.winControlEnabled} onChange={(v) => set('winControlEnabled', v)} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, opacity: cfg.winControlEnabled ? 1 : 0.5 }}>
+              <NumField label="House always wins below N players" value={cfg.houseGuaranteedBelowPlayers} onChange={(v) => set('houseGuaranteedBelowPlayers', v)} min={0} max={100} hint="participants incl. human" />
+              <NumField label="Force bot win every N rounds" value={cfg.botForcedWinEveryNRounds} onChange={(v) => set('botForcedWinEveryNRounds', v)} min={0} max={1000} hint="0 = off (large games)" />
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+              Below the threshold the human is forced under every bot (no top prize). Above it, a random bot is pushed above the human every N settled rounds. Rolling counter: {cfg.winControlCounter}.
             </div>
 
             <button className="btn btn-primary" disabled={saving} onClick={save} style={{ width: '100%', marginTop: 6 }}>

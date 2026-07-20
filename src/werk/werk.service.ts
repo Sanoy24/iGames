@@ -267,7 +267,8 @@ export class WerkService implements OnApplicationBootstrap {
       // Deterministically generate the bot roster from the audited seed + config.
       created.botRoster = buildBotRoster(created.seed, botCount, {
         botSeedMode: cfg.botSeedMode,
-        botDifficulty: cfg.botDifficulty,
+        botSpeedPct: cfg.botSpeedPct,
+        botSkillPct: cfg.botSkillPct,
         botPersonalities: cfg.botPersonalities,
       });
       await manager.save(created);

@@ -9,9 +9,6 @@ export type WerkMazeTheme = 'adwa' | 'highland' | 'desert';
 /** How the bot roster fills the non-human slots (spec §5.2). */
 export type WerkBotSeedMode = 'auto' | 'zero' | 'custom';
 
-/** Overall bot skill — scales speed, decision quality, and reaction cadence. */
-export type WerkBotDifficulty = 'easy' | 'medium' | 'hard';
-
 /** Bot AI archetypes (spec §5.2). */
 export type WerkBotPersonality = 'gatherer' | 'sniper' | 'strategist' | 'explorer' | 'chaotic';
 
@@ -64,9 +61,13 @@ export class WerkConfig {
   @Column({ type: 'enum', enum: ['auto', 'zero', 'custom'], default: 'auto' })
   botSeedMode: WerkBotSeedMode;
 
-  /** Skill band: scales bot speed, target choice, and reaction time (house edge). */
-  @Column({ type: 'enum', enum: ['easy', 'medium', 'hard'], default: 'medium' })
-  botDifficulty: WerkBotDifficulty;
+  /** Base bot speed as a % of the human's speed (± small deterministic jitter). */
+  @Column({ type: 'int', default: 88 })
+  botSpeedPct: number;
+
+  /** Bot decision quality 0–100 (± small jitter): target choice + reaction time. */
+  @Column({ type: 'int', default: 60 })
+  botSkillPct: number;
 
   /**
    * Personality pool the roster draws from. In `auto` mode bots are picked

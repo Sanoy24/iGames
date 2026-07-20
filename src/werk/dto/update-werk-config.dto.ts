@@ -1,7 +1,6 @@
 import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import {
   ALL_WERK_PERSONALITIES,
-  type WerkBotDifficulty,
   type WerkBotPersonality,
   type WerkBotSeedMode,
   type WerkMazeTheme,
@@ -50,8 +49,16 @@ export class UpdateWerkConfigDto {
   botSeedMode?: WerkBotSeedMode;
 
   @IsOptional()
-  @IsIn(['easy', 'medium', 'hard'])
-  botDifficulty?: WerkBotDifficulty;
+  @IsInt()
+  @Min(30)
+  @Max(100)
+  botSpeedPct?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  botSkillPct?: number;
 
   @IsOptional()
   @IsArray()

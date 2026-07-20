@@ -1,6 +1,5 @@
 import {
   ALL_WERK_PERSONALITIES,
-  WerkBotDifficulty,
   WerkBotPersonality,
   WerkBotSeedMode,
 } from './entities/werk-config.entity';
@@ -37,12 +36,7 @@ const COLORS = [
   '#f472b6', '#a3e635', '#22d3ee', '#facc15', '#818cf8', '#fb7185', '#2dd4bf',
 ];
 
-/** Difficulty → [minSpeedPct, maxSpeedPct, minSkill, maxSkill]. */
-const DIFFICULTY: Record<WerkBotDifficulty, [number, number, number, number]> = {
-  easy: [66, 80, 0.15, 0.45],
-  medium: [78, 90, 0.4, 0.7],
-  hard: [86, 98, 0.7, 0.95],
-};
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** Deterministic PRNG (mulberry32) — identical algorithm to the client engine. */
 function mulberry32(seed: number): () => number {
@@ -64,13 +58,21 @@ function mulberry32(seed: number): () => number {
 export function buildBotRoster(
   seed: number,
   count: number,
-  cfg: { botSeedMode: WerkBotSeedMode; botDifficulty: WerkBotDifficulty; botPersonalities: WerkBotPersonality[] | null },
+  cfg: {
+    botSeedMode: WerkBotSeedMode;
+    botSpeedPct: number;
+    botSkillPct: number;
+    botPersonalities: WerkBotPersonality[] | null;
+  },
 ): WerkBotDescriptor[] {
   if (cfg.botSeedMode === 'zero' || count <= 0) return [];
 
   const rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   const pool = (cfg.botPersonalities && cfg.botPersonalities.length ? cfg.botPersonalities : ALL_WERK_PERSONALITIES);
-  const [smin, smax, kmin, kmax] = DIFFICULTY[cfg.botDifficulty] ?? DIFFICULTY.medium;
+  // Admin-set base speed/skill with a small deterministic per-bot jitter so a
+  // roster feels varied without any hardcoded difficulty bands.
+  const baseSpeed = clamp(cfg.botSpeedPct, 30, 100);
+  const baseSkill = clamp(cfg.botSkillPct, 0, 100) / 100;
 
   // Deterministic shuffle of names + colours so rosters vary between games.
   const names = [...NAMES];
@@ -84,8 +86,8 @@ export function buildBotRoster(
     const [name, nameEn] = names[i % names.length];
     const personality: WerkBotPersonality =
       cfg.botSeedMode === 'custom' ? pool[i % pool.length] : pool[Math.floor(rng() * pool.length)];
-    const speedPct = Math.round(smin + rng() * (smax - smin));
-    const skill = +(kmin + rng() * (kmax - kmin)).toFixed(3);
+    const speedPct = Math.round(clamp(baseSpeed + (rng() - 0.5) * 10, 30, 100));
+    const skill = +clamp(baseSkill + (rng() - 0.5) * 0.2, 0, 1).toFixed(3);
     roster.push({
       name, nameEn,
       color: COLORS[(i + 1) % COLORS.length],

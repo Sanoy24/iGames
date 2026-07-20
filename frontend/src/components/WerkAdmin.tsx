@@ -1,8 +1,24 @@
-import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
-import { adminWerkApi, type AdminWerkConfig, type WerkBotPersonality } from '../lib/werkApi';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { Plus, Trash2, X } from 'lucide-react';
+import {
+  adminWerkApi,
+  type AdminWerkBot,
+  type AdminWerkConfig,
+  type CreateWerkBotInput,
+  type WerkBotPersonality,
+} from '../lib/werkApi';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
+
+/** The 5 bot AI archetypes, with bilingual labels. */
+const PERSONALITIES: Array<{ id: WerkBotPersonality; label: string }> = [
+  { id: 'gatherer', label: 'ሰብሳቢ Gatherer' },
+  { id: 'sniper', label: 'ተኳሽ Sniper' },
+  { id: 'strategist', label: 'ስትራቴጂስት Strategist' },
+  { id: 'explorer', label: 'ፈላጊ Explorer' },
+  { id: 'chaotic', label: 'ዘፈቀደ Chaotic' },
+];
+const DEFAULT_BOT_COLORS = ['#e6b422', '#4ade80', '#60a5fa', '#f87171', '#c084fc', '#fb923c', '#22d3ee'];
 
 /** One labelled numeric field, clamped on blur. */
 function NumField({ label, value, onChange, min, max, hint }: {
@@ -54,21 +70,6 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
 
   const set = <K extends keyof AdminWerkConfig>(k: K, v: AdminWerkConfig[K]) =>
     setCfg((c) => (c ? { ...c, [k]: v } : c));
-
-  const ALL_PERSONALITIES: Array<{ id: WerkBotPersonality; label: string }> = [
-    { id: 'gatherer', label: 'ሰብሳቢ Gatherer' },
-    { id: 'sniper', label: 'ተወዳዳሪ Sniper' },
-    { id: 'strategist', label: 'ስትራቴጂስት Strategist' },
-    { id: 'explorer', label: 'ፈላጊ Explorer' },
-    { id: 'chaotic', label: 'ዘፈቀደ Chaotic' },
-  ];
-  const activePersonalities = cfg?.botPersonalities ?? ALL_PERSONALITIES.map((p) => p.id);
-  const togglePersonality = (id: WerkBotPersonality) => {
-    const next = activePersonalities.includes(id)
-      ? activePersonalities.filter((p) => p !== id)
-      : [...activePersonalities, id];
-    if (next.length) set('botPersonalities', next); // never allow an empty pool
-  };
 
   const save = async () => {
     if (!cfg) return;
@@ -142,25 +143,14 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
               <NumField label="Bot speed % (of human)" value={cfg.botSpeedPct} onChange={(v) => set('botSpeedPct', v)} min={30} max={100} hint="± small jitter per bot" />
               <NumField label="Bot skill % (0–100)" value={cfg.botSkillPct} onChange={(v) => set('botSkillPct', v)} min={0} max={100} hint="target choice + reaction" />
             </div>
-            <div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
-                Personality pool {cfg.botSeedMode === 'zero' ? '(bots disabled)' : cfg.botSeedMode === 'custom' ? '(cycled in order)' : '(picked at random)'}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, opacity: cfg.botSeedMode === 'zero' ? 0.5 : 1 }}>
-                {ALL_PERSONALITIES.map((p) => {
-                  const on = activePersonalities.includes(p.id);
-                  return (
-                    <button key={p.id} type="button" onClick={() => togglePersonality(p.id)} disabled={cfg.botSeedMode === 'zero'}
-                      style={{ fontSize: 11.5, padding: '5px 9px', borderRadius: 999, cursor: 'pointer',
-                        background: on ? 'rgba(252,221,9,0.16)' : 'rgba(255,255,255,0.05)',
-                        border: `1px solid ${on ? 'rgba(252,221,9,0.5)' : 'var(--border, rgba(255,255,255,0.15))'}`,
-                        color: on ? '#FCDD09' : 'var(--text-muted)' }}>
-                      {p.label}
-                    </button>
-                  );
-                })}
-              </div>
+            <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+              {cfg.botSeedMode === 'zero'
+                ? 'Bots are disabled — games run with the human only.'
+                : `Each game draws ${cfg.botCount} bot(s) at random from the enabled pool below. Speed/skill above are the base; a bot with its own override ignores them.`}
             </div>
+
+            {/* Bot pool manager */}
+            {cfg.botSeedMode !== 'zero' && <WerkBotManager />}
 
             {/* Winning mode */}
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -209,6 +199,146 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+const cellStyle: CSSProperties = {
+  padding: '6px 8px', borderRadius: 7, border: '1px solid var(--border, rgba(255,255,255,0.15))',
+  background: 'var(--surface,#0c0a08)', color: 'inherit', fontSize: 12, width: '100%',
+};
+
+/**
+ * Admin CRUD over the DB-backed house-bot pool. Rosters are drawn from the
+ * `enabled` rows here — this is where bots actually come from. Changes autosave:
+ * text/number fields on blur, toggles/selects immediately.
+ */
+function WerkBotManager() {
+  const addToast = useStore((s) => s.addToast);
+  const [bots, setBots] = useState<AdminWerkBot[] | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    adminWerkApi.listBots().then(setBots).catch((e) => addToast('error', getErrorMessage(e)));
+  }, [addToast]);
+
+  const patch = async (id: number, dto: Partial<CreateWerkBotInput>) => {
+    try {
+      const updated = await adminWerkApi.updateBot(id, dto);
+      setBots((bs) => bs?.map((b) => (b.id === id ? updated : b)) ?? bs);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    }
+  };
+
+  const addBot = async () => {
+    setAdding(true);
+    try {
+      const n = (bots?.length ?? 0) + 1;
+      const created = await adminWerkApi.createBot({
+        name: `ቦት ${n}`,
+        nameEn: `Bot ${n}`,
+        color: DEFAULT_BOT_COLORS[n % DEFAULT_BOT_COLORS.length],
+        personality: PERSONALITIES[n % PERSONALITIES.length].id,
+        sortOrder: n * 10,
+      });
+      setBots((bs) => [...(bs ?? []), created]);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const remove = async (id: number) => {
+    if (!window.confirm('Delete this bot from the pool?')) return;
+    try {
+      await adminWerkApi.deleteBot(id);
+      setBots((bs) => bs?.filter((b) => b.id !== id) ?? bs);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    }
+  };
+
+  const enabledCount = bots?.filter((b) => b.enabled).length ?? 0;
+
+  return (
+    <div style={{ border: '1px solid var(--border, rgba(255,255,255,0.12))', borderRadius: 12, padding: 10, display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700 }}>Bot pool</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {bots ? `${enabledCount} enabled / ${bots.length} total` : 'loading…'}
+        </span>
+        <button type="button" className="btn btn-sm" disabled={adding} onClick={addBot}
+          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Plus size={13} /> Add bot
+        </button>
+      </div>
+
+      {!bots ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}><div className="spinner" /></div>
+      ) : bots.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 2px' }}>
+          No bots yet — add one, or games will run with the human only.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 8, maxHeight: 260, overflowY: 'auto', paddingRight: 2 }}>
+          {bots.map((b) => (
+            <BotRow key={b.id} bot={b} onPatch={(dto) => patch(b.id, dto)} onRemove={() => remove(b.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One editable bot row. Local draft; commits changed fields to the API. */
+function BotRow({ bot, onPatch, onRemove }: {
+  bot: AdminWerkBot;
+  onPatch: (dto: Partial<CreateWerkBotInput>) => void;
+  onRemove: () => void;
+}) {
+  const [d, setD] = useState(bot);
+  useEffect(() => setD(bot), [bot]);
+  const numOrNull = (v: string) => (v === '' ? null : Math.round(Number(v)));
+
+  return (
+    <div style={{ display: 'grid', gap: 6, padding: 8, borderRadius: 9, opacity: d.enabled ? 1 : 0.5,
+      background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border, rgba(255,255,255,0.1))' }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input type="color" value={d.color} title="Colour"
+          onChange={(e) => { setD({ ...d, color: e.target.value }); onPatch({ color: e.target.value }); }}
+          style={{ width: 30, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+        <input value={d.name} placeholder="ስም (Amharic)"
+          onChange={(e) => setD({ ...d, name: e.target.value })}
+          onBlur={() => d.name.trim() && d.name !== bot.name && onPatch({ name: d.name.trim() })}
+          style={{ ...cellStyle, flex: 1 }} />
+        <input value={d.nameEn} placeholder="Name (Latin)"
+          onChange={(e) => setD({ ...d, nameEn: e.target.value })}
+          onBlur={() => d.nameEn.trim() && d.nameEn !== bot.nameEn && onPatch({ nameEn: d.nameEn.trim() })}
+          style={{ ...cellStyle, flex: 1 }} />
+        <button type="button" onClick={onRemove} title="Delete bot" className="btn btn-sm"
+          style={{ padding: '5px 7px', color: '#f87171' }}><Trash2 size={14} /></button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <select value={d.personality}
+          onChange={(e) => { const p = e.target.value as WerkBotPersonality; setD({ ...d, personality: p }); onPatch({ personality: p }); }}
+          style={{ ...cellStyle, flex: 1.4 }}>
+          {PERSONALITIES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+        <input type="number" value={d.speedPct ?? ''} placeholder="spd" title="Speed % override (blank = auto)" min={30} max={100}
+          onChange={(e) => setD({ ...d, speedPct: e.target.value === '' ? null : Number(e.target.value) })}
+          onBlur={(e) => onPatch({ speedPct: numOrNull(e.target.value) })}
+          style={{ ...cellStyle, width: 58 }} />
+        <input type="number" value={d.skillPct ?? ''} placeholder="skl" title="Skill 0–100 override (blank = auto)" min={0} max={100}
+          onChange={(e) => setD({ ...d, skillPct: e.target.value === '' ? null : Number(e.target.value) })}
+          onBlur={(e) => onPatch({ skillPct: numOrNull(e.target.value) })}
+          style={{ ...cellStyle, width: 58 }} />
+        <button type="button" onClick={() => { setD({ ...d, enabled: !d.enabled }); onPatch({ enabled: !d.enabled }); }}
+          className={`btn btn-sm ${d.enabled ? 'btn-primary' : ''}`} style={{ padding: '5px 9px', fontSize: 11 }}>
+          {d.enabled ? 'On' : 'Off'}
+        </button>
       </div>
     </div>
   );

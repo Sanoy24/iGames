@@ -99,10 +99,44 @@ export interface AdminWerkConfig {
   winControlCounter: number;
 }
 
+/** An admin-managed house bot row (the DB pool rosters are drawn from). */
+export interface AdminWerkBot {
+  id: number;
+  name: string;
+  nameEn: string;
+  color: string;
+  personality: WerkBotPersonality;
+  speedPct: number | null;
+  skillPct: number | null;
+  enabled: boolean;
+  sortOrder: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateWerkBotInput = {
+  name: string;
+  nameEn: string;
+  color?: string;
+  personality?: WerkBotPersonality;
+  speedPct?: number | null;
+  skillPct?: number | null;
+  enabled?: boolean;
+  sortOrder?: number;
+};
+
 export const adminWerkApi = {
   getConfig: () => api.get<AdminWerkConfig>('/admin/werk/config').then((r) => r.data),
   updateConfig: (dto: Partial<AdminWerkConfig>) =>
     api.patch<AdminWerkConfig>('/admin/werk/config', dto).then((r) => r.data),
+  // Bot pool management.
+  listBots: () => api.get<AdminWerkBot[]>('/admin/werk/bots').then((r) => r.data),
+  createBot: (dto: CreateWerkBotInput) =>
+    api.post<AdminWerkBot>('/admin/werk/bots', dto).then((r) => r.data),
+  updateBot: (id: number, dto: Partial<CreateWerkBotInput>) =>
+    api.patch<AdminWerkBot>(`/admin/werk/bots/${id}`, dto).then((r) => r.data),
+  deleteBot: (id: number) => api.delete<{ deleted: true }>(`/admin/werk/bots/${id}`).then((r) => r.data),
 };
 
 export const werkApi = {

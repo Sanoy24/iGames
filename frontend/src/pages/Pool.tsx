@@ -5,7 +5,7 @@ import { ArrowLeft, Bot, Swords, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
 import { poolApi } from '../lib/poolApi';
-import type { PoolConfig, PoolMatchView, PoolTournament, Seat } from '../lib/poolApi';
+import type { PoolConfig, PoolGroup, PoolMatchView, PoolTournament, Seat } from '../lib/poolApi';
 import { usePoolMatchFound, usePoolMatchSocket, type PoolShotResolvedEvent } from '../hooks/usePoolSocket';
 import { PoolTable, type PoolTableHandle } from '../components/PoolTable';
 import type { Ball, ShotInput } from '@pool-engine';
@@ -59,6 +59,71 @@ function PocketedTray({ board, size = 18 }: { board: Ball[]; size?: number }) {
         </>
       )}
       {eight && <BallChip n={8} size={size} />}
+    </div>
+  );
+}
+
+/** Two-player match header: avatars (glow = whose turn), POT, timer / thinking. */
+function MatchHeader({
+  onBack, meName, oppName, oppIsBot, myGroup, oppGroup, isMyTurn, ballInHand, opponentThinking, remaining, pot,
+}: {
+  onBack: () => void;
+  meName: string;
+  oppName: string;
+  oppIsBot: boolean;
+  myGroup: PoolGroup | null;
+  oppGroup: PoolGroup | null;
+  isMyTurn: boolean;
+  ballInHand: boolean;
+  opponentThinking: boolean;
+  remaining: number | null;
+  pot: number;
+}) {
+  const initial = (s: string) => (s.trim()[0] ?? '?').toUpperCase();
+  const Avatar = ({ text, active, bot }: { text: string; active: boolean; bot?: boolean }) => (
+    <div style={{
+      width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: bot ? 17 : 14, fontWeight: 800, color: '#fff', flexShrink: 0,
+      background: bot ? '#3a2f52' : '#254a63',
+      border: `2px solid ${active ? 'var(--green,#6fce9a)' : 'transparent'}`,
+      boxShadow: active ? '0 0 10px rgba(111,206,154,0.55)' : 'none',
+      transition: 'border-color 0.2s, box-shadow 0.2s',
+    }}>{bot ? '🤖' : text}</div>
+  );
+  const Group = ({ g }: { g: PoolGroup | null }) => !g ? null : (
+    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: g === 'solids' ? '#e6b422' : '#cfd6df' }}>
+      {g === 'solids' ? '● Solids' : '◐ Stripes'}
+    </span>
+  );
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
+      <button className="btn" onClick={onBack} style={{ padding: '4px 8px', flexShrink: 0 }} aria-label="Back to lobby"><ArrowLeft size={15} /></button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <Avatar text={initial(meName)} active={isMyTurn} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 96 }}>{meName}</div>
+          <Group g={myGroup} />
+        </div>
+      </div>
+      <div style={{ marginLeft: 'auto', marginRight: 'auto', textAlign: 'center', lineHeight: 1.25 }}>
+        {pot > 0 && <div style={{ fontSize: 11, fontWeight: 800, color: '#f6c945' }}>POT {pot}</div>}
+        {isMyTurn
+          ? (
+            <div style={{ fontSize: 11, color: ballInHand ? 'var(--green,#6fce9a)' : 'var(--text-muted)', fontFamily: ballInHand ? 'inherit' : 'ui-monospace, monospace' }}>
+              {ballInHand ? '✋ ball in hand' : remaining != null ? `⏱ ${remaining}s` : 'your turn'}
+            </div>
+          )
+          : opponentThinking
+            ? <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: 'var(--text-muted)' }}><span className="spinner" style={{ width: 11, height: 11 }} />thinking…</div>
+            : null}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, justifyContent: 'flex-end' }}>
+        <div style={{ minWidth: 0, textAlign: 'right' }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 96 }}>{oppName}</div>
+          <Group g={oppGroup} />
+        </div>
+        <Avatar text={initial(oppName)} active={opponentThinking} bot={oppIsBot} />
+      </div>
     </div>
   );
 }
@@ -238,13 +303,23 @@ export function Pool({ onBack }: { onBack: () => void }) {
     const deadlineMs = match.turnDeadline ? new Date(match.turnDeadline).getTime() : null;
     const remaining = deadlineMs ? Math.max(0, Math.ceil((deadlineMs - now) / 1000)) : null;
     const opponentName = match.mode === 'single' ? t('pool.opponentAI') : t('pool.opponent');
-    const modeLabel = match.mode === 'single' ? t('pool.modePractice') : match.mode === 'tournament' ? t('pool.modeTournament') : t('pool.modeRanked');
-    const turnText = match.status !== 'active'
-      ? t('pool.gameOver')
-      : isMyTurn
-        ? (match.ballInHand ? t('pool.yourTurnBallInHand') : t('pool.yourTurn'))
-        : t('pool.opponentShooting', { name: opponentName });
     const opponentThinking = match.status === 'active' && !isMyTurn;
+    const oppGroup = mySeat ? match.groups[mySeat === 'A' ? 'B' : 'A'] : null;
+    const header = (
+      <MatchHeader
+        onBack={backToLobby}
+        meName={user?.displayName ?? 'You'}
+        oppName={opponentName}
+        oppIsBot={match.mode === 'single'}
+        myGroup={myGroup}
+        oppGroup={oppGroup}
+        isMyTurn={isMyTurn}
+        ballInHand={isMyTurn && match.ballInHand}
+        opponentThinking={opponentThinking}
+        remaining={remaining}
+        pot={match.stakeMinor * 2}
+      />
+    );
 
     const resultCard = ended && (
       <div style={{ padding: 18, borderRadius: 14, textAlign: 'center', background: 'rgba(18,22,28,0.97)', border: '1px solid var(--border, rgba(255,255,255,0.12))', maxWidth: 340, boxShadow: '0 24px 60px -20px rgba(0,0,0,0.8)' }}>
@@ -265,22 +340,9 @@ export function Pool({ onBack }: { onBack: () => void }) {
     if (landscape) {
       return (
         <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0b0f14', display: 'flex', flexDirection: 'column', padding: '8px 12px 10px', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button className="btn" onClick={backToLobby} style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ArrowLeft size={16} /> {t('pool.lobby')}
-            </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 15, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>
-              {opponentThinking && <span className="spinner" style={{ width: 14, height: 14 }} />}
-              {turnText}
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>{header}</div>
             <PocketedTray board={match.board} size={16} />
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, fontSize: 12.5, color: 'var(--text-muted)' }}>
-              <span>{t('pool.youLabel')} <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
-              {isMyTurn && remaining != null && (
-                <span style={{ fontFamily: 'ui-monospace, monospace', color: remaining <= 5 ? 'var(--danger,#e0653c)' : 'inherit' }}>⏱ {remaining}s</span>
-              )}
-              <span>{modeLabel} · {t('pool.stakeLabel', { amount: match.stakeMinor })}</span>
-            </div>
           </div>
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} />
@@ -297,29 +359,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
     // ── Portrait: in-page, tall vertical table ─────────────────────────────────
     return (
       <div style={{ padding: '4px 10px 14px', maxWidth: 640, margin: '0 auto' }}>
-        {/* Compact single-row header: back + turn + group + timer */}
-        <div
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
-            padding: '5px 8px 5px 6px', borderRadius: 10,
-            background: isMyTurn ? 'rgba(111,206,154,0.12)' : 'rgba(255,255,255,0.04)',
-            border: `1px solid ${isMyTurn ? 'rgba(111,206,154,0.35)' : 'var(--border, rgba(255,255,255,0.08))'}`,
-          }}
-        >
-          <button className="btn" onClick={backToLobby} style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}>
-            <ArrowLeft size={15} />
-          </button>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>
-            {opponentThinking && <span className="spinner" style={{ width: 12, height: 12 }} />}
-            {turnText}
-          </span>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5, color: 'var(--text-muted)' }}>
-            <span><strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
-            {isMyTurn && remaining != null && (
-              <span style={{ fontFamily: 'ui-monospace, monospace', color: remaining <= 5 ? 'var(--danger,#e0653c)' : 'inherit' }}>⏱ {remaining}s</span>
-            )}
-          </div>
-        </div>
+        <div style={{ marginBottom: 8 }}>{header}</div>
 
         {match.board.some((b) => b.pocketed && b.number !== 0) && (
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>

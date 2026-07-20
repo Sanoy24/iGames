@@ -2,8 +2,9 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { recordShot, buildTable, buildTuning, DEFAULT_PHYSICS } from '../lib/poolEngine';
-import type { Ball, ShotInput, TableSpec } from '../lib/poolEngine';
+import type { Ball, ShotEvent, ShotInput, TableSpec } from '../lib/poolEngine';
 import type { PoolMatchView, Seat } from '../lib/poolApi';
+import { resumeAudio, ballClick, cushionHit, pocketDrop, cueStrike } from '../lib/poolSfx';
 
 export interface PoolTableHandle {
   /** Animate a shot (deterministic replay) from the current displayed board. */
@@ -34,7 +35,17 @@ const darken = (h: string, a: number) => { const [r, g, b] = hexToRgb(h); return
 
 const NUDGE_STEP = 0.006; // radians (~0.34°) per fine-aim tick
 
-interface Anim { frames: Array<Array<{ x: number; y: number; pocketed: boolean }>>; frameDt: number; i: number; acc: number; last: number; }
+interface Anim {
+  frames: Array<Array<{ x: number; y: number; pocketed: boolean }>>;
+  frameDt: number;
+  time: number;   // playback time in seconds (matches event.t at 1x)
+  last: number;   // performance.now() of the previous frame
+  events: ShotEvent[];
+  firedIdx: number;
+  vel: Array<{ x: number; y: number }>; // per-ball speed for motion trails
+  final?: Ball[];
+}
+interface Ring { pocketIndex: number; start: number; }
 
 export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   { view, canShoot, onSubmit, orientation = 'portrait', mustCall = false },
@@ -54,6 +65,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   // so their stroke is visible; our own shots (already aimed + charged) skip it.
   const queue = useRef<{ input: ShotInput; preroll: boolean }[]>([]);
   const preShot = useRef<{ input: ShotInput; start: number; from: { x: number; y: number } } | null>(null);
+  const rings = useRef<Ring[]>([]); // pocket-drop flashes
   const aim = useRef(0);
   const power = useRef(0);
   const spin = useRef({ side: 0, vertical: 0 });
@@ -315,8 +327,28 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     const strike = (input: ShotInput) => {
       power.current = 0;
       const rec = recordShot(balls.current, input, table.current, { tuning: tuning.current });
-      anim.current = { frames: rec.frames, frameDt: rec.frameDt, i: 0, acc: 0, last: performance.now() };
-      (anim.current as Anim & { final?: Ball[] }).final = rec.result.balls;
+      resumeAudio();
+      cueStrike(input.power);
+      anim.current = {
+        frames: rec.frames,
+        frameDt: rec.frameDt,
+        time: 0,
+        last: performance.now(),
+        events: rec.result.events,
+        firedIdx: 0,
+        vel: balls.current.map(() => ({ x: 0, y: 0 })),
+        final: rec.result.balls,
+      };
+    };
+
+    // Play a shot event's sound + trigger a pocket flash.
+    const playEvent = (e: ShotEvent) => {
+      if (e.type === 'ball-ball') ballClick(1);
+      else if (e.type === 'ball-cushion') cushionHit(1);
+      else if (e.type === 'pocket' || e.type === 'scratch') {
+        pocketDrop();
+        if (e.pocketIndex != null) rings.current.push({ pocketIndex: e.pocketIndex, start: performance.now() });
+      }
     };
 
     const render = (now: number) => {
@@ -344,16 +376,29 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       if (anim.current) {
         const a = anim.current;
         const dtReal = Math.min(0.05, (now - a.last) / 1000);
-        a.last = now; a.acc += dtReal;
-        while (a.acc >= a.frameDt && a.i < a.frames.length - 1) { a.acc -= a.frameDt; a.i++; }
-        const frame = a.frames[a.i];
+        a.last = now; a.time += dtReal;
+        const total = (a.frames.length - 1) * a.frameDt;
+        const clamped = Math.min(a.time, total);
+        // Interpolate between the two nearest recorded frames for buttery motion.
+        const fp = clamped / a.frameDt;
+        const lo = Math.floor(fp);
+        const hi = Math.min(lo + 1, a.frames.length - 1);
+        const frac = fp - lo;
+        const f0 = a.frames[lo], f1 = a.frames[hi];
         balls.current.forEach((b, idx) => {
-          const f = frame[idx];
-          if (f) { b.pos.x = f.x; b.pos.y = f.y; b.pocketed = f.pocketed; }
+          const p0 = f0[idx], p1 = f1[idx];
+          if (!p0 || !p1) return;
+          const nx = p0.x + (p1.x - p0.x) * frac;
+          const ny = p0.y + (p1.y - p0.y) * frac;
+          a.vel[idx] = { x: (p1.x - p0.x) / a.frameDt, y: (p1.y - p0.y) / a.frameDt };
+          b.pos.x = nx; b.pos.y = ny; b.pocketed = p1.pocketed;
         });
-        if (a.i >= a.frames.length - 1) {
-          const final = (a as Anim & { final?: Ball[] }).final;
-          if (final) balls.current = final.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }));
+        // Fire sounds for events reached by the current playback time.
+        while (a.firedIdx < a.events.length && a.events[a.firedIdx].t <= a.time) {
+          playEvent(a.events[a.firedIdx]); a.firedIdx++;
+        }
+        if (a.time >= total) {
+          if (a.final) balls.current = a.final.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }));
           anim.current = null;
           if (queue.current.length === 0) {
             balls.current = viewRef.current.board.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }));
@@ -385,7 +430,53 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
         if (bihActive.current) drawPlacementHint(cue);
         drawAim(cue);
       }
+
+      // Motion trails: a soft streak behind each fast-moving ball.
+      const a = anim.current;
+      if (a) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        balls.current.forEach((b, idx) => {
+          if (b.pocketed) return;
+          const v = a.vel[idx]; if (!v) return;
+          const spd = Math.hypot(v.x, v.y);
+          if (spd < 0.25) return;
+          const len = Math.min(r * 2.6, spd * 0.02 * geom.current.scale);
+          const ux = v.x / spd, uy = v.y / spd;
+          const sd = sdir(ux, uy);
+          const cx = px(b.pos), cy = py(b.pos);
+          const grad = ctx.createLinearGradient(cx - sd.x * len, cy - sd.y * len, cx, cy);
+          const col = b.number === 0 ? '255,255,255' : '255,240,200';
+          grad.addColorStop(0, `rgba(${col},0)`);
+          grad.addColorStop(1, `rgba(${col},0.28)`);
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = r * 1.5;
+          ctx.beginPath(); ctx.moveTo(cx - sd.x * len, cy - sd.y * len); ctx.lineTo(cx, cy); ctx.stroke();
+        });
+        ctx.restore();
+      }
+
       for (const b of balls.current) { if (!b.pocketed) drawBall(b, r); }
+
+      // Pocket-drop flashes: an expanding fading ring at the pocket.
+      if (rings.current.length > 0) {
+        const RING_MS = 360;
+        ctx.save();
+        rings.current = rings.current.filter((ring) => {
+          const age = now - ring.start;
+          if (age > RING_MS) return false;
+          const p = age / RING_MS;
+          const pk = table.current.pockets[ring.pocketIndex];
+          if (!pk) return false;
+          const rad = table.current.pocketRadius * geom.current.scale * (1.1 + p * 1.6);
+          ctx.strokeStyle = `rgba(246,201,69,${0.5 * (1 - p)})`;
+          ctx.lineWidth = 3 * (1 - p) + 0.5;
+          ctx.beginPath(); ctx.arc(px(pk), py(pk), rad, 0, 7); ctx.stroke();
+          return true;
+        });
+        ctx.restore();
+      }
+
       raf = requestAnimationFrame(render);
     };
 
@@ -426,6 +517,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     };
 
     const onDown = (e: PointerEvent) => {
+      resumeAudio();
       if (!canShootRef.current || anim.current) return;
       const cue = cueBall();
       if (bihActive.current && cue && !cue.pocketed) {
@@ -523,6 +615,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   };
   const needsCall = mustCall && calledPocketUI == null;
   const onPowerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    resumeAudio();
     if (!canShoot || anim.current || needsCall) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     charging.current = true;

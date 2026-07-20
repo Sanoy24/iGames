@@ -1,0 +1,27 @@
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { GamesModule } from '../games/games.module';
+import { RngModule } from '../rng/rng.module';
+import { WalletModule } from '../wallet/wallet.module';
+import { WerkConfig } from './entities/werk-config.entity';
+import { WerkSession } from './entities/werk-session.entity';
+import { WerkService } from './werk.service';
+import { WerkController } from './werk.controller';
+import { WerkAdminController } from './werk-admin.controller';
+
+@Module({
+  imports: [
+    JwtModule.register({}),
+    TypeOrmModule.forFeature([WerkConfig, WerkSession]),
+    GamesModule,
+    RngModule,
+    WalletModule,
+  ],
+  controllers: [WerkController, WerkAdminController],
+  providers: [WerkService, JwtAuthGuard, RolesGuard],
+  exports: [WerkService],
+})
+export class WerkModule {}

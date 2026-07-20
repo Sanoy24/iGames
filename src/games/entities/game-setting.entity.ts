@@ -6,7 +6,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-export type GameCode = 'keno' | 'bingo' | 'crash' | 'pool';
+export type GameCode = 'keno' | 'bingo' | 'crash' | 'pool' | 'werk';
 
 /**
  * Player-facing availability of a game.

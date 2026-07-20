@@ -605,11 +605,11 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     return () => { c.removeEventListener('pointerdown', down); c.removeEventListener('pointermove', move); };
   }, []);
 
-  // ── power meter (DOM): drag across to charge, release to shoot ───────────────
-  const setPowerFromEvent = (clientX: number) => {
+  // ── power meter (DOM): drag up to charge, release to shoot ───────────────────
+  const setPowerFromEvent = (clientY: number) => {
     const el = powerRef.current; if (!el) return;
     const rect = el.getBoundingClientRect();
-    const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+    const ratio = clamp(1 - (clientY - rect.top) / rect.height, 0, 1);
     power.current = ratio;
     setPowerPct(ratio);
   };
@@ -619,11 +619,11 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     if (!canShoot || anim.current || needsCall) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     charging.current = true;
-    setPowerFromEvent(e.clientX);
+    setPowerFromEvent(e.clientY);
   };
   const onPowerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!charging.current) return;
-    setPowerFromEvent(e.clientX);
+    setPowerFromEvent(e.clientY);
   };
   const onPowerUp = () => {
     if (!charging.current) return;
@@ -648,11 +648,12 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   useEffect(() => () => stopNudge(), []);
 
   const isLandscape = orientation === 'landscape';
-  const containerHeight = isLandscape ? '100%' : '80vh';
-  const SEG = 24; // power-meter segments
+  const containerHeight = isLandscape ? '100%' : '74vh';
+  const colW = isLandscape ? 118 : 74;
+  const SEG = 20; // power-meter segments
   const litSegs = Math.round(powerPct * SEG);
   const segColor = (i: number) => {
-    const t = i / (SEG - 1); // 0 green → 1 red
+    const t = i / (SEG - 1); // 0 green → 1 red (bottom → top)
     if (t < 0.45) return '#3ecf6a';
     if (t < 0.7) return '#e6c229';
     if (t < 0.87) return '#e2801d';
@@ -673,12 +674,12 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: containerHeight, width: '100%' }}>
-      {/* Table (fills the space above the controls) */}
+    <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', height: containerHeight, width: '100%' }}>
+      {/* Table (fills the space left of the controls) */}
       <div
         ref={wrapRef}
         style={{
-          flex: 1, minHeight: 0,
+          flex: 1, minWidth: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'linear-gradient(180deg,#5c3a22,#3b2416 12%,#3b2416 88%,#200f07)',
           borderRadius: 16, padding: 4, boxShadow: '0 20px 50px -24px rgba(0,0,0,.9)',
@@ -687,60 +688,52 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
         <canvas ref={cv} style={{ display: 'block', borderRadius: 10, cursor: canShoot ? 'crosshair' : 'default', touchAction: 'none' }} />
       </div>
 
-      {/* ── Bottom control bar (Pool Masters style) ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 2px 0' }}>
-        {/* Spin */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-          <canvas ref={spinCv} width={88} height={88} style={{ width: 60, height: 60, borderRadius: '50%', touchAction: 'none', cursor: 'pointer' }} />
-          <span style={{ fontSize: 8.5, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Spin</span>
+      {/* ── Right vertical control column ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, width: colW }}>
+        {/* Vertical segmented power meter — drag up to charge, release to shoot */}
+        <span style={{ fontSize: 8, letterSpacing: '0.1em', textTransform: 'uppercase', color: needsCall ? '#f6c945' : 'var(--text-muted)', fontWeight: 700, textAlign: 'center' }}>
+          {needsCall ? 'Call' : 'Power'}
+        </span>
+        <div
+          ref={powerRef}
+          onPointerDown={onPowerDown}
+          onPointerMove={onPowerMove}
+          onPointerUp={onPowerUp}
+          onPointerCancel={onPowerUp}
+          style={{
+            position: 'relative', flex: 1, minHeight: 120, width: isLandscape ? 46 : 38,
+            borderRadius: 10, background: '#171b21', border: `2px solid ${needsCall ? '#f6c945' : '#333c48'}`,
+            display: 'flex', flexDirection: 'column-reverse', gap: 2, padding: 3, touchAction: 'none',
+            cursor: canShoot && !needsCall ? 'ns-resize' : 'not-allowed',
+            opacity: canShoot ? (needsCall ? 0.65 : 1) : 0.4,
+          }}
+        >
+          {Array.from({ length: SEG }, (_, i) => (
+            <div
+              key={i}
+              style={{
+                flex: 1, borderRadius: 2,
+                background: i < litSegs ? segColor(i) : 'rgba(255,255,255,0.06)',
+                boxShadow: i < litSegs ? `0 0 6px ${segColor(i)}66` : 'none',
+                transition: charging.current ? 'none' : 'background 0.1s',
+              }}
+            />
+          ))}
+          <span style={{ position: 'absolute', bottom: 4, left: 0, right: 0, textAlign: 'center', fontSize: 10, fontWeight: 800, color: '#fff', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>
+            {Math.round(powerPct * 100)}
+          </span>
         </div>
 
-        {/* Fine aim + power */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 9, letterSpacing: '0.16em', textTransform: 'uppercase', color: needsCall ? '#f6c945' : 'var(--text-muted)', fontWeight: 700 }}>
-              {needsCall ? "Call a pocket" : 'Shot Power'}
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {aimBtn(-1, 'Aim left', <ChevronLeft size={18} />)}
-              <span style={{ fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Aim</span>
-              {aimBtn(1, 'Aim right', <ChevronRight size={18} />)}
-            </div>
-          </div>
+        {/* Fine aim */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {aimBtn(-1, 'Aim left', <ChevronLeft size={16} />)}
+          {aimBtn(1, 'Aim right', <ChevronRight size={16} />)}
+        </div>
 
-          {/* Segmented power meter — drag across, release to shoot */}
-          <div
-            ref={powerRef}
-            onPointerDown={onPowerDown}
-            onPointerMove={onPowerMove}
-            onPointerUp={onPowerUp}
-            onPointerCancel={onPowerUp}
-            style={{
-              position: 'relative', height: 34, borderRadius: 9,
-              background: '#171b21', border: `2px solid ${needsCall ? '#f6c945' : '#333c48'}`,
-              display: 'flex', gap: 2, padding: 3, touchAction: 'none',
-              cursor: canShoot && !needsCall ? 'ew-resize' : 'not-allowed',
-              opacity: canShoot ? (needsCall ? 0.65 : 1) : 0.4,
-            }}
-          >
-            {Array.from({ length: SEG }, (_, i) => (
-              <div
-                key={i}
-                style={{
-                  flex: 1, borderRadius: 2,
-                  background: i < litSegs ? segColor(i) : 'rgba(255,255,255,0.06)',
-                  boxShadow: i < litSegs ? `0 0 6px ${segColor(i)}66` : 'none',
-                  transition: charging.current ? 'none' : 'background 0.1s',
-                }}
-              />
-            ))}
-            <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, fontWeight: 800, color: '#fff', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>
-              {Math.round(powerPct * 100)}
-            </span>
-          </div>
-          <span style={{ fontSize: 8.5, color: 'var(--text-muted)', textAlign: 'center' }}>
-            {needsCall ? 'Tap the pocket you’re calling on the table' : 'Drag across to power up, release to shoot'}
-          </span>
+        {/* Spin — where the cue strikes the ball */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <canvas ref={spinCv} width={88} height={88} style={{ width: isLandscape ? 74 : 58, height: isLandscape ? 74 : 58, borderRadius: '50%', touchAction: 'none', cursor: 'pointer' }} />
+          <span style={{ fontSize: 8, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Spin</span>
         </div>
       </div>
     </div>

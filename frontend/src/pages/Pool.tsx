@@ -321,18 +321,37 @@ export function Pool({ onBack }: { onBack: () => void }) {
       />
     );
 
-    const resultCard = ended && (
-      <div style={{ padding: 18, borderRadius: 14, textAlign: 'center', background: 'rgba(18,22,28,0.97)', border: '1px solid var(--border, rgba(255,255,255,0.12))', maxWidth: 340, boxShadow: '0 24px 60px -20px rgba(0,0,0,0.8)' }}>
-        <div style={{ fontSize: 40, marginBottom: 6 }}>
-          {ended.aborted ? '↩️' : ended.winnerSeat === mySeat ? '🏆' : '💔'}
+    const didWin = !!ended && !ended.aborted && ended.winnerSeat === mySeat;
+    const resultModal = ended && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(2px)' }}>
+        <div style={{
+          width: '100%', maxWidth: 360, textAlign: 'center', padding: '26px 22px', borderRadius: 20,
+          background: 'linear-gradient(180deg,#1b2230,#12151b)',
+          border: `2px solid ${ended.aborted ? '#3a4652' : didWin ? '#f6c945' : '#e0403c'}`,
+          boxShadow: `0 30px 80px -20px rgba(0,0,0,0.9), 0 0 40px -8px ${didWin ? 'rgba(246,201,69,0.45)' : 'transparent'}`,
+          animation: 'pool-pop 0.28s cubic-bezier(0.2,0.9,0.3,1.2)',
+        }}>
+          <div style={{ fontSize: 56, lineHeight: 1, marginBottom: 8 }}>
+            {ended.aborted ? '↩️' : didWin ? '🏆' : '💔'}
+          </div>
+          <h2 style={{
+            margin: '0 0 8px', fontSize: 34, fontWeight: 900, letterSpacing: '0.02em',
+            color: ended.aborted ? '#cfd6df' : didWin ? '#f6c945' : '#ff6b63',
+            textShadow: didWin ? '0 2px 16px rgba(246,201,69,0.5)' : 'none',
+            fontFamily: 'var(--font-display, inherit)',
+          }}>
+            {ended.aborted ? t('pool.matchAborted') : didWin ? t('pool.youWin') : t('pool.youLost')}
+          </h2>
+          {didWin && match.stakeMinor > 0 && (
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#6fce9a', marginBottom: 8 }}>
+              + {t('pool.tournamentPrize', { amount: match.stakeMinor * 2 })}
+            </div>
+          )}
+          <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+            {ended.aborted ? t('pool.stakeRefunded') : ended.reason ?? ''}
+          </p>
+          <button className="btn btn-primary" onClick={backToLobby} style={{ width: '100%' }}>{t('pool.backToLobby')}</button>
         </div>
-        <h3 style={{ margin: '0 0 6px', fontSize: 19, fontWeight: 800 }}>
-          {ended.aborted ? t('pool.matchAborted') : ended.winnerSeat === mySeat ? t('pool.youWin') : t('pool.youLost')}
-        </h3>
-        <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--text-muted)' }}>
-          {ended.aborted ? t('pool.stakeRefunded') : ended.reason ?? ''}
-        </p>
-        <button className="btn btn-primary" onClick={backToLobby} style={{ width: '100%' }}>{t('pool.backToLobby')}</button>
       </div>
     );
 
@@ -347,11 +366,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} />
           </div>
-          {ended && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)' }}>
-              {resultCard}
-            </div>
-          )}
+          {resultModal}
         </div>
       );
     }
@@ -381,12 +396,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
           </div>
         )}
 
-        {/* Result overlay */}
-        {ended && (
-          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
-            {resultCard}
-          </div>
-        )}
+        {resultModal}
       </div>
     );
   }

@@ -28,6 +28,7 @@ import { NotificationsModule } from "./notifications/notifications.module";
 import { SupportModule } from "./support/support.module";
 import { GamesModule } from "./games/games.module";
 import { PoolModule } from "./pool/pool.module";
+import { WerkModule } from "./werk/werk.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -95,6 +96,7 @@ const isDev = process.env.NODE_ENV !== "production";
         SupportModule,
         GamesModule,
         PoolModule,
+        WerkModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

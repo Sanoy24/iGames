@@ -121,6 +121,7 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
         seed: s.seed, mode: s.mode, durationSec: s.durationSec, totalPlayers: s.totalPlayers,
         botCount: s.botCount, coinDensityX100: s.coinDensityX100, finalSprintWarningSec: s.finalSprintWarningSec,
         powerupsEnabled: s.powerupsEnabled, theme: s.mazeTheme, humanName: user?.displayName ?? 'You',
+        bots: s.bots,
       });
       g.onCollect = (_p, c) => { if (c.type === 'gold') goldPickup(); else coinPickup(); };
       g.onPower = () => powerPickup();

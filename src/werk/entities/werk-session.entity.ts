@@ -53,6 +53,17 @@ export class WerkSession {
   @Column({ type: 'int' })
   botCount: number;
 
+  // Layout params snapshotted at start so the server can rebuild the exact same
+  // maze/coins at settle even if the admin changed config in between.
+  @Column({ type: 'int', default: 15 })
+  coinDensityX100: number;
+
+  @Column({ type: 'int', default: 7 })
+  finalSprintWarningSec: number;
+
+  @Column({ type: 'boolean', default: true })
+  powerupsEnabled: boolean;
+
   // ── RNG evidence ─────────────────────────────────────────────────────────────
   /** Deterministic layout seed drawn by the RNG service. */
   @Column({ type: 'bigint' })
@@ -60,6 +71,10 @@ export class WerkSession {
 
   @Column({ type: 'varchar', length: 36, nullable: true })
   seedAuditLogId: string | null;
+
+  /** Server-generated bot roster (identity + behaviour) snapshotted at start. */
+  @Column({ type: 'json', nullable: true })
+  botRoster: unknown[] | null;
 
   // ── Settlement ───────────────────────────────────────────────────────────────
   /** Human's final rank (1 = best). null until settled. */

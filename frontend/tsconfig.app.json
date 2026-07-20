@@ -20,7 +20,8 @@
       "@pool-engine": ["../src/pool/engine/index.ts"],
       "@pool-rules": ["../src/pool/rules/rules.ts"],
       "@pool-rules/types": ["../src/pool/rules/rules-types.ts"],
-      "@pool-physics": ["../src/pool/pool-physics.ts"]
+      "@pool-physics": ["../src/pool/pool-physics.ts"],
+      "@werk-sim": ["../src/werk/sim/index.ts"]
     },
 
     /* Linting */

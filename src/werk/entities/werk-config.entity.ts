@@ -6,6 +6,19 @@ export type WerkWinningMode = 'A' | 'B';
 /** Visual theme applied to the maze on the client. */
 export type WerkMazeTheme = 'adwa' | 'highland' | 'desert';
 
+/** How the bot roster fills the non-human slots (spec §5.2). */
+export type WerkBotSeedMode = 'auto' | 'zero' | 'custom';
+
+/** Overall bot skill — scales speed, decision quality, and reaction cadence. */
+export type WerkBotDifficulty = 'easy' | 'medium' | 'hard';
+
+/** Bot AI archetypes (spec §5.2). */
+export type WerkBotPersonality = 'gatherer' | 'sniper' | 'strategist' | 'explorer' | 'chaotic';
+
+export const ALL_WERK_PERSONALITIES: WerkBotPersonality[] = [
+  'gatherer', 'sniper', 'strategist', 'explorer', 'chaotic',
+];
+
 /**
  * DB-backed configuration for the ወርቅ ፍለጋ (Werk Flega — "Gold Rush") maze game.
  * Single row keyed `default`, mirroring PoolConfig / CrashConfig.
@@ -46,6 +59,23 @@ export class WerkConfig {
   @Column({ type: 'int', default: 9 })
   botCount: number;
 
+  // ── Bots (server-generated roster; spec §5.2) ───────────────────────────────
+  /** auto = varied personalities; zero = no bots; custom = cycle `botPersonalities`. */
+  @Column({ type: 'enum', enum: ['auto', 'zero', 'custom'], default: 'auto' })
+  botSeedMode: WerkBotSeedMode;
+
+  /** Skill band: scales bot speed, target choice, and reaction time (house edge). */
+  @Column({ type: 'enum', enum: ['easy', 'medium', 'hard'], default: 'medium' })
+  botDifficulty: WerkBotDifficulty;
+
+  /**
+   * Personality pool the roster draws from. In `auto` mode bots are picked
+   * randomly (deterministically, from the seed) among these; in `custom` mode the
+   * slots cycle through this list in order. Stored as a CSV text array.
+   */
+  @Column({ type: 'simple-array', nullable: true })
+  botPersonalities: WerkBotPersonality[] | null;
+
   /** Game clock, seconds. 30–600. */
   @Column({ type: 'int', default: 120 })
   gameDurationSec: number;
@@ -85,6 +115,29 @@ export class WerkConfig {
 
   @Column({ type: 'int', default: 0 })
   payoutRank5MultX100: number;
+
+  // ── House-edge win control (server-authoritative outcome shaping) ────────────
+  /** Master switch for the win controller below. */
+  @Column({ type: 'boolean', default: true })
+  winControlEnabled: boolean;
+
+  /**
+   * When the total participant count (human + bots) is BELOW this, the house
+   * always wins: the human is forced strictly below every bot (no top prize).
+   */
+  @Column({ type: 'int', default: 10 })
+  houseGuaranteedBelowPlayers: number;
+
+  /**
+   * For larger games, force a (randomly chosen, RNG-audited) bot to beat the
+   * human every Nth settled round. 0 disables the periodic forced win.
+   */
+  @Column({ type: 'int', default: 4 })
+  botForcedWinEveryNRounds: number;
+
+  /** Internal rolling counter of large-game settlements since the last forced win. */
+  @Column({ type: 'int', default: 0 })
+  winControlCounter: number;
 
   /** Admin user id who last changed this config. */
   @Column({ type: 'varchar', length: 36, nullable: true })

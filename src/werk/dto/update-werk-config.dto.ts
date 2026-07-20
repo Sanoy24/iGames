@@ -1,5 +1,12 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
-import type { WerkMazeTheme, WerkWinningMode } from '../entities/werk-config.entity';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  ALL_WERK_PERSONALITIES,
+  type WerkBotDifficulty,
+  type WerkBotPersonality,
+  type WerkBotSeedMode,
+  type WerkMazeTheme,
+  type WerkWinningMode,
+} from '../entities/werk-config.entity';
 
 /**
  * Partial update of the Werk Flega config. Every field optional so admins can
@@ -37,6 +44,20 @@ export class UpdateWerkConfigDto {
   @Min(0)
   @Max(99)
   botCount?: number;
+
+  @IsOptional()
+  @IsIn(['auto', 'zero', 'custom'])
+  botSeedMode?: WerkBotSeedMode;
+
+  @IsOptional()
+  @IsIn(['easy', 'medium', 'hard'])
+  botDifficulty?: WerkBotDifficulty;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsIn(ALL_WERK_PERSONALITIES, { each: true })
+  botPersonalities?: WerkBotPersonality[];
 
   @IsOptional()
   @IsInt()
@@ -97,4 +118,20 @@ export class UpdateWerkConfigDto {
   @Min(0)
   @Max(100_000)
   payoutRank5MultX100?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  winControlEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  houseGuaranteedBelowPlayers?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(1000)
+  botForcedWinEveryNRounds?: number;
 }

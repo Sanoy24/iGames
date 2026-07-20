@@ -10,6 +10,7 @@ const poolEngine = fileURLToPath(new URL('../src/pool/engine/index.ts', import.m
 const poolRules = fileURLToPath(new URL('../src/pool/rules/rules.ts', import.meta.url));
 const poolRulesTypes = fileURLToPath(new URL('../src/pool/rules/rules-types.ts', import.meta.url));
 const poolPhysics = fileURLToPath(new URL('../src/pool/pool-physics.ts', import.meta.url));
+const werkSim = fileURLToPath(new URL('../src/werk/sim/index.ts', import.meta.url));
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -20,6 +21,7 @@ export default defineConfig({
             '@pool-rules/types': poolRulesTypes,
             '@pool-rules': poolRules,
             '@pool-physics': poolPhysics,
+            '@werk-sim': werkSim,
         },
     },
     build: {

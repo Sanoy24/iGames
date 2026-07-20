@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { adminWerkApi, type AdminWerkConfig } from '../lib/werkApi';
+import { adminWerkApi, type AdminWerkConfig, type WerkBotPersonality } from '../lib/werkApi';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
 
@@ -55,6 +55,21 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
   const set = <K extends keyof AdminWerkConfig>(k: K, v: AdminWerkConfig[K]) =>
     setCfg((c) => (c ? { ...c, [k]: v } : c));
 
+  const ALL_PERSONALITIES: Array<{ id: WerkBotPersonality; label: string }> = [
+    { id: 'gatherer', label: 'ሰብሳቢ Gatherer' },
+    { id: 'sniper', label: 'ተወዳዳሪ Sniper' },
+    { id: 'strategist', label: 'ስትራቴጂስት Strategist' },
+    { id: 'explorer', label: 'ፈላጊ Explorer' },
+    { id: 'chaotic', label: 'ዘፈቀደ Chaotic' },
+  ];
+  const activePersonalities = cfg?.botPersonalities ?? ALL_PERSONALITIES.map((p) => p.id);
+  const togglePersonality = (id: WerkBotPersonality) => {
+    const next = activePersonalities.includes(id)
+      ? activePersonalities.filter((p) => p !== id)
+      : [...activePersonalities, id];
+    if (next.length) set('botPersonalities', next); // never allow an empty pool
+  };
+
   const save = async () => {
     if (!cfg) return;
     setSaving(true);
@@ -95,6 +110,48 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
               <NumField label="Duration (s)" value={cfg.gameDurationSec} onChange={(v) => set('gameDurationSec', v)} min={30} max={600} />
               <NumField label="Coin density ×100" value={cfg.coinDensityX100} onChange={(v) => set('coinDensityX100', v)} min={5} max={30} />
               <NumField label="Sprint warn (s)" value={cfg.finalSprintWarningSec} onChange={(v) => set('finalSprintWarningSec', v)} min={3} max={15} />
+            </div>
+
+            {/* Bots */}
+            <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>Bots</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>Seed mode</span>
+                <select value={cfg.botSeedMode} onChange={(e) => set('botSeedMode', e.target.value as AdminWerkConfig['botSeedMode'])}
+                  style={{ padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--surface,#0c0a08)', color: 'inherit' }}>
+                  <option value="auto">Auto (varied)</option>
+                  <option value="custom">Custom (cycle pool)</option>
+                  <option value="zero">Zero (no bots)</option>
+                </select>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>Difficulty</span>
+                <select value={cfg.botDifficulty} onChange={(e) => set('botDifficulty', e.target.value as AdminWerkConfig['botDifficulty'])}
+                  style={{ padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--surface,#0c0a08)', color: 'inherit' }}>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </label>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Personality pool {cfg.botSeedMode === 'zero' ? '(bots disabled)' : cfg.botSeedMode === 'custom' ? '(cycled in order)' : '(picked at random)'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, opacity: cfg.botSeedMode === 'zero' ? 0.5 : 1 }}>
+                {ALL_PERSONALITIES.map((p) => {
+                  const on = activePersonalities.includes(p.id);
+                  return (
+                    <button key={p.id} type="button" onClick={() => togglePersonality(p.id)} disabled={cfg.botSeedMode === 'zero'}
+                      style={{ fontSize: 11.5, padding: '5px 9px', borderRadius: 999, cursor: 'pointer',
+                        background: on ? 'rgba(252,221,9,0.16)' : 'rgba(255,255,255,0.05)',
+                        border: `1px solid ${on ? 'rgba(252,221,9,0.5)' : 'var(--border, rgba(255,255,255,0.15))'}`,
+                        color: on ? '#FCDD09' : 'var(--text-muted)' }}>
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Winning mode */}

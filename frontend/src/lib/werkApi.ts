@@ -2,6 +2,19 @@ import api from './api';
 
 export type WerkMode = 'A' | 'B';
 export type WerkMazeTheme = 'adwa' | 'highland' | 'desert';
+export type WerkBotSeedMode = 'auto' | 'zero' | 'custom';
+export type WerkBotDifficulty = 'easy' | 'medium' | 'hard';
+export type WerkBotPersonality = 'gatherer' | 'sniper' | 'strategist' | 'explorer' | 'chaotic';
+
+/** A server-generated bot the client renders + animates verbatim. */
+export interface WerkBot {
+  name: string;
+  nameEn: string;
+  color: string;
+  personality: WerkBotPersonality;
+  speedPct: number;
+  skill: number;
+}
 
 /** Public config the client reads to render the lobby + build a game. */
 export interface WerkConfig {
@@ -35,6 +48,7 @@ export interface WerkSessionView {
   powerupsEnabled: boolean;
   mazeTheme: WerkMazeTheme;
   payoutMultsX100: number[];
+  bots: WerkBot[];
   humanRank: number | null;
   prizeMinor: number;
 }
@@ -55,6 +69,9 @@ export interface AdminWerkConfig {
   maxStakeMinor: number;
   totalPlayers: number;
   botCount: number;
+  botSeedMode: WerkBotSeedMode;
+  botDifficulty: WerkBotDifficulty;
+  botPersonalities: WerkBotPersonality[] | null;
   gameDurationSec: number;
   winningMode: WerkMode;
   finalSprintWarningSec: number;

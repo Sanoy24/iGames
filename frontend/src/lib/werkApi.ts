@@ -46,6 +46,34 @@ export interface WerkSettleInput {
   eliminated?: boolean;
 }
 
+/** Full admin config row (all editable fields). */
+export interface AdminWerkConfig {
+  key: string;
+  enabled: boolean;
+  entryStakeMinor: number;
+  minStakeMinor: number;
+  maxStakeMinor: number;
+  totalPlayers: number;
+  botCount: number;
+  gameDurationSec: number;
+  winningMode: WerkMode;
+  finalSprintWarningSec: number;
+  coinDensityX100: number;
+  powerupsEnabled: boolean;
+  mazeTheme: WerkMazeTheme;
+  payoutRank1MultX100: number;
+  payoutRank2MultX100: number;
+  payoutRank3MultX100: number;
+  payoutRank4MultX100: number;
+  payoutRank5MultX100: number;
+}
+
+export const adminWerkApi = {
+  getConfig: () => api.get<AdminWerkConfig>('/admin/werk/config').then((r) => r.data),
+  updateConfig: (dto: Partial<AdminWerkConfig>) =>
+    api.patch<AdminWerkConfig>('/admin/werk/config', dto).then((r) => r.data),
+};
+
 export const werkApi = {
   getConfig: () => api.get<WerkConfig>('/werk/config').then((r) => r.data),
   start: (stakeMinor?: number) =>

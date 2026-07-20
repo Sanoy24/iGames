@@ -343,8 +343,8 @@ export function Pool({ onBack }: { onBack: () => void }) {
             {ended.aborted ? t('pool.matchAborted') : didWin ? t('pool.youWin') : t('pool.youLost')}
           </h2>
           {didWin && match.stakeMinor > 0 && (
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#6fce9a', marginBottom: 8 }}>
-              + {t('pool.tournamentPrize', { amount: match.stakeMinor * 2 })}
+            <div style={{ fontSize: 16, fontWeight: 800, color: '#6fce9a', marginBottom: 8 }}>
+              🪙 +{match.stakeMinor * 2}
             </div>
           )}
           <p style={{ margin: '0 0 18px', fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.4 }}>

@@ -139,6 +139,11 @@
 .game-banner-crash .game-banner-tag { color: #fca5a5; }
 .game-banner-crash .game-banner-title { color: #fca5a5; }
 
+@keyframes pool-pop {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
 /* Pool control buttons (fine-aim +/-) */
 .pool-ctl-btn {
   display: inline-flex; align-items: center; justify-content: center;

@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
-type Filter = 'all' | 'keno' | 'bingo' | 'crash' | 'pool';
+type Filter = 'all' | 'keno' | 'bingo' | 'crash' | 'pool' | 'werk';
 
 const BINGO_LETTERS = ['B', 'I', 'N', 'G', 'O'];
 const BINGO_COLORS = ['#4ade80', '#facc15', '#60a5fa', '#f87171', '#c084fc'];
@@ -21,6 +21,7 @@ const FILTER_CHIPS: { id: Filter; labelKey: string; icon: string }[] = [
   { id: 'bingo', labelKey: 'games.filterBingo', icon: '🎯' },
   { id: 'crash', labelKey: 'games.filterCrash', icon: '🚀' },
   { id: 'pool',  labelKey: 'games.filterPool',  icon: '🎱' },
+  { id: 'werk',  labelKey: 'games.filterWerk',  icon: '⛏️' },
 ];
 
 const containerVariants = {
@@ -42,7 +43,7 @@ export function Games({ onNavigate }: Props) {
 
   // Availability: while the catalog is loading (null) default to visible+playable.
   // Once loaded, a game missing from the catalog is hidden by the backend.
-  const gameInfo = (code: 'keno' | 'bingo' | 'crash' | 'pool') => {
+  const gameInfo = (code: 'keno' | 'bingo' | 'crash' | 'pool' | 'werk') => {
     if (!gameCatalog) return { hidden: false, maint: false, msg: '' };
     const entry = gameCatalog.find((g) => g.code === code);
     if (!entry) return { hidden: true, maint: false, msg: '' };
@@ -56,14 +57,16 @@ export function Games({ onNavigate }: Props) {
   const bingo = gameInfo('bingo');
   const crash = gameInfo('crash');
   const pool = gameInfo('pool');
+  const werk = gameInfo('werk');
 
-  const open = (code: 'keno' | 'bingo' | 'crash' | 'pool', info: { maint: boolean; msg: string }) =>
+  const open = (code: 'keno' | 'bingo' | 'crash' | 'pool' | 'werk', info: { maint: boolean; msg: string }) =>
     info.maint ? addToast('info', info.msg) : onNavigate(code);
 
   const showKeno  = (filter === 'all' || filter === 'keno')  && !keno.hidden;
   const showBingo = (filter === 'all' || filter === 'bingo') && !bingo.hidden;
   const showCrash = (filter === 'all' || filter === 'crash') && !crash.hidden;
   const showPool  = (filter === 'all' || filter === 'pool')  && !pool.hidden;
+  const showWerk  = (filter === 'all' || filter === 'werk')  && !werk.hidden;
 
   return (
     <motion.div
@@ -347,6 +350,47 @@ export function Games({ onNavigate }: Props) {
                       border: '2px solid rgba(255,255,255,0.25)',
                       fontFamily: 'var(--font-display)',
                     }}
+                    animate={{ y: [0, -6, 0] }}
+                    transition={{ duration: 2 + i * 0.3, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    {n}
+                  </motion.span>
+                ))}
+              </div>
+            </motion.button>
+          )}
+          {/* ── Werk Flega ── */}
+          {showWerk && (
+            <motion.button
+              layout
+              key="werk"
+              variants={itemVariants}
+              className="game-banner"
+              onClick={() => open('werk', werk)}
+              exit={{ opacity: 0, y: -12, scale: 0.97 }}
+              whileHover={{ scale: 1.015, y: -3 }}
+              whileTap={{ scale: 0.975 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+              style={{ opacity: werk.maint ? 0.6 : 1, background: 'linear-gradient(135deg, #0a4d2c 0%, #1a1006 100%)', border: '1px solid rgba(212,160,23,0.35)' }}
+            >
+              <div className="game-banner-content">
+                <span className="game-banner-tag">
+                  {werk.maint ? t('games.maintenance') : t('games.werkTag')}
+                </span>
+                <h2 className="game-banner-title" style={{ color: '#FCDD09' }}>ወርቅ ፍለጋ</h2>
+                <p className="game-banner-desc">{t('games.werkDesc')}</p>
+                <div className="game-banner-stats">
+                  <span className="game-stat-pill"><Users size={10} style={{ display:'inline', marginRight:3 }} />{t('games.werkStat1')}</span>
+                  <span className="game-stat-pill">{t('games.werkStat2')}</span>
+                  <span className="game-stat-pill"><Trophy size={10} style={{ display:'inline', marginRight:3 }} />{t('games.werkStat3')}</span>
+                </div>
+                <span className="game-banner-cta">{t('common.playNow')} →</span>
+              </div>
+              <div className="game-banner-deco" style={{ gap: 6 }}>
+                {['🪙', '⛏️', '★'].map((n, i) => (
+                  <motion.span
+                    key={n}
+                    style={{ fontSize: 26 }}
                     animate={{ y: [0, -6, 0] }}
                     transition={{ duration: 2 + i * 0.3, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
                   >

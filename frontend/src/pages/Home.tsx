@@ -13,10 +13,10 @@ import { ETHIOPIA_TZ } from '../lib/utils';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
-type GameCode = 'keno' | 'bingo' | 'crash' | 'pool';
+type GameCode = 'keno' | 'bingo' | 'crash' | 'pool' | 'werk';
 // Fixed priority order for the Home "Play Now" strip. The rotating window walks
 // this list, so all enabled games get a turn in the featured pair over reloads.
-const HOME_GAME_ORDER: GameCode[] = ['bingo', 'keno', 'crash', 'pool'];
+const HOME_GAME_ORDER: GameCode[] = ['bingo', 'keno', 'crash', 'pool', 'werk'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -297,6 +297,14 @@ export function Home({ onNavigate }: Props) {
             icon={<Circle style={{ color: '#eab308' }} />} tag={t('gameCard.poolTag')} name="Pool"
             sub={maint ? t('gameCard.underMaintenance') : t('gameCard.poolSub')}
             badge={maint ? paused : t('gameCard.new')} badgeColor="rgba(234,179,8,0.2)" />
+        );
+      case 'werk':
+        return (
+          <GameCard key="werk" onClick={onClick}
+            gradientFrom="rgba(252,221,9,0.16)" gradientTo="rgba(10,60,40,0.95)" glowColor="rgba(252,221,9,0.22)"
+            icon={<span style={{ fontSize: 18 }}>⛏️</span>} tag={t('gameCard.werkTag')} name="ወርቅ ፍለጋ"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.werkSub')}
+            badge={maint ? paused : t('gameCard.new')} badgeColor="rgba(252,221,9,0.22)" />
         );
     }
   };

@@ -16,6 +16,7 @@ const Profile = lazy(() => import('./pages/Profile').then((m) => ({ default: m.P
 const Agent = lazy(() => import('./pages/Agent').then((m) => ({ default: m.Agent })));
 const Crash = lazy(() => import('./pages/Crash').then((m) => ({ default: m.Crash })));
 const Pool = lazy(() => import('./pages/Pool').then((m) => ({ default: m.Pool })));
+const WerkFelega = lazy(() => import('./pages/WerkFelega').then((m) => ({ default: m.WerkFelega })));
 const Leaderboard = lazy(() => import('./pages/Leaderboard').then((m) => ({ default: m.Leaderboard })));
 const Support = lazy(() => import('./pages/Support').then((m) => ({ default: m.Support })));
 import { BottomNav } from './components/BottomNav';
@@ -197,6 +198,7 @@ export function App() {
           {activeTab === 'bingo' && <Bingo onBack={() => setActiveTab('games')} />}
           {activeTab === 'crash' && <Crash onBack={() => setActiveTab('games')} />}
           {activeTab === 'pool' && <Pool onBack={() => setActiveTab('games')} />}
+          {activeTab === 'werk' && <WerkFelega onBack={() => setActiveTab('games')} />}
           {activeTab === 'wallet' && <Wallet onNavigate={setActiveTab} />}
           {activeTab === 'leaderboard' && <Leaderboard />}
           {activeTab === 'admin' && <Admin />}

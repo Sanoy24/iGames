@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { recordShot, buildTable, buildTuning, DEFAULT_PHYSICS } from '../lib/poolEngine';
 import type { Ball, ShotInput, TableSpec } from '../lib/poolEngine';
@@ -17,6 +17,8 @@ interface Props {
   onSubmit: (input: ShotInput) => void;
   /** 'portrait' renders the table vertically (long axis down-screen) so it fills a phone. */
   orientation?: 'portrait' | 'landscape';
+  /** True when the shooter must call a pocket before shooting (on the 8, or strict mode). */
+  mustCall?: boolean;
 }
 
 const BALL_COLORS: Record<number, string> = {
@@ -35,7 +37,7 @@ const NUDGE_STEP = 0.006; // radians (~0.34°) per fine-aim tick
 interface Anim { frames: Array<Array<{ x: number; y: number; pocketed: boolean }>>; frameDt: number; i: number; acc: number; last: number; }
 
 export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
-  { view, canShoot, onSubmit, orientation = 'portrait' },
+  { view, canShoot, onSubmit, orientation = 'portrait', mustCall = false },
   ref,
 ) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -48,7 +50,10 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   const tuning = useRef(buildTuning(DEFAULT_PHYSICS));
   const balls = useRef<Ball[]>([]);
   const anim = useRef<Anim | null>(null);
-  const queue = useRef<ShotInput[]>([]);
+  // `preroll` shows an aim + pull-back before the strike — used for the opponent/AI
+  // so their stroke is visible; our own shots (already aimed + charged) skip it.
+  const queue = useRef<{ input: ShotInput; preroll: boolean }[]>([]);
+  const preShot = useRef<{ input: ShotInput; start: number; from: { x: number; y: number } } | null>(null);
   const aim = useRef(0);
   const power = useRef(0);
   const spin = useRef({ side: 0, vertical: 0 });
@@ -61,13 +66,21 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   const bihActive = useRef(false);
   const placing = useRef(false);
   const placedCue = useRef<{ x: number; y: number } | null>(null);
+  // Call-shot: the player must tap a pocket to call it before shooting.
+  const mustCallRef = useRef(false);
+  const calledPocket = useRef<number | null>(null);
 
   const geom = useRef({ rail: 16, scale: 340, rotated: false });
 
   // Power slider is DOM, so its fill/knob need a little React state to repaint.
   const [powerPct, setPowerPct] = useState(0);
+  const [calledPocketUI, setCalledPocketUI] = useState<number | null>(null);
 
   useEffect(() => { onSubmitRef.current = onSubmit; });
+  useEffect(() => {
+    mustCallRef.current = mustCall;
+    if (!mustCall) { calledPocket.current = null; setCalledPocketUI(null); }
+  }, [mustCall]);
 
   // Keep refs in sync with props; snap to the authoritative board when idle.
   useEffect(() => {
@@ -84,7 +97,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
 
   useImperativeHandle(ref, () => ({
     enqueueShot: (input: ShotInput) => {
-      queue.current.push(input);
+      queue.current.push({ input, preroll: true }); // opponent/AI — show the stroke
     },
   }), []);
 
@@ -93,7 +106,8 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     if (!canShootRef.current || anim.current) return;
     const input: ShotInput = { angle: aim.current, power: p, spin: { ...spin.current } };
     if (placedCue.current) input.cuePos = { ...placedCue.current };
-    queue.current.push(input); // optimistic local animation
+    if (mustCallRef.current && calledPocket.current != null) input.calledPocket = calledPocket.current;
+    queue.current.push({ input, preroll: false }); // mine — already aimed, strike now
     onSubmitRef.current(input);
     placedCue.current = null;
   };
@@ -260,16 +274,73 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       ctx.restore();
     };
 
-    const startNextAnim = () => {
-      const input = queue.current.shift();
-      if (!input) return;
+    // On the 8: mark each pocket as a call target; the chosen one glows gold.
+    const drawPocketTargets = () => {
+      const t = table.current;
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350);
+      for (let i = 0; i < t.pockets.length; i++) {
+        const pk = t.pockets[i];
+        const cx = px(pk), cy = py(pk);
+        const rad = t.pocketRadius * geom.current.scale * 1.5;
+        const chosen = calledPocket.current === i;
+        ctx.save();
+        ctx.lineWidth = chosen ? 4 : 2.5;
+        ctx.strokeStyle = chosen ? '#f6c945' : `rgba(246,201,69,${0.35 + 0.35 * pulse})`;
+        ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 7); ctx.stroke();
+        if (chosen) {
+          ctx.fillStyle = 'rgba(246,201,69,0.18)';
+          ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 7); ctx.fill();
+          ctx.fillStyle = '#f6c945';
+          ctx.font = '700 12px ui-sans-serif, system-ui';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('★', cx, cy);
+        }
+        ctx.restore();
+      }
+    };
+
+    const PRE_MS = 480; // aim + pull-back shown before a queued shot strikes
+    const PLACE_FRAC = 0.45; // first part of the pre-roll glides the cue to its ball-in-hand spot
+
+    // A little hand marker shown while the AI slides the cue ball into place.
+    const drawHand = (cue: Ball) => {
+      const cx = px(cue.pos), cy = py(cue.pos), r = br();
+      ctx.save();
+      ctx.font = `${Math.max(14, r * 1.7)}px serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('✋', cx + r * 1.1, cy - r * 1.1);
+      ctx.restore();
+    };
+
+    const strike = (input: ShotInput) => {
+      power.current = 0;
       const rec = recordShot(balls.current, input, table.current, { tuning: tuning.current });
       anim.current = { frames: rec.frames, frameDt: rec.frameDt, i: 0, acc: 0, last: performance.now() };
       (anim.current as Anim & { final?: Ball[] }).final = rec.result.balls;
     };
 
     const render = (now: number) => {
-      if (!anim.current && queue.current.length > 0) startNextAnim();
+      // Pop the next queued shot: opponent shots get a pre-roll (glide the cue into
+      // place if ball-in-hand, then pull back); ours strike immediately.
+      if (!anim.current && !preShot.current && queue.current.length > 0) {
+        const { input, preroll } = queue.current.shift()!;
+        const c = balls.current.find((b) => b.number === 0);
+        const from = c ? { x: c.pos.x, y: c.pos.y } : { x: 0, y: 0 };
+        aim.current = input.angle;
+        if (preroll) {
+          preShot.current = { input, start: now, from };
+        } else {
+          if (input.cuePos && c) { c.pos.x = input.cuePos.x; c.pos.y = input.cuePos.y; }
+          strike(input);
+        }
+      }
+      // Pull-back done → strike.
+      if (preShot.current && now - preShot.current.start >= PRE_MS) {
+        const input = preShot.current.input;
+        preShot.current = null;
+        strike(input);
+      }
+
       if (anim.current) {
         const a = anim.current;
         const dtReal = Math.min(0.05, (now - a.last) / 1000);
@@ -292,9 +363,25 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
 
       drawTable();
       const r = br();
-      const idle = !anim.current && queue.current.length === 0;
       const cue = balls.current.find((b) => b.number === 0);
-      if (idle && canShootRef.current && cue && !cue.pocketed) {
+      if (preShot.current && cue && !cue.pocketed) {
+        const ps = preShot.current;
+        const prog = Math.min(1, (now - ps.start) / PRE_MS);
+        let pullStart = 0;
+        if (ps.input.cuePos) {
+          // First: slide the cue ball from where it was to the placement spot.
+          const placeProg = Math.min(1, prog / PLACE_FRAC);
+          cue.pos.x = ps.from.x + (ps.input.cuePos.x - ps.from.x) * placeProg;
+          cue.pos.y = ps.from.y + (ps.input.cuePos.y - ps.from.y) * placeProg;
+          if (placeProg < 1) drawHand(cue);
+          pullStart = PLACE_FRAC;
+        }
+        // Then: pull the cue back proportional to power.
+        const pullProg = Math.max(0, Math.min(1, (prog - pullStart) / (1 - pullStart)));
+        power.current = ps.input.power * pullProg;
+        drawAim(cue);
+      } else if (!anim.current && queue.current.length === 0 && canShootRef.current && cue && !cue.pocketed) {
+        if (mustCallRef.current) drawPocketTargets();
         if (bihActive.current) drawPlacementHint(cue);
         drawAim(cue);
       }
@@ -348,6 +435,19 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
           placing.current = true;
           updatePlace(e);
           return;
+        }
+      }
+      // Call-shot: tapping near a pocket calls it (rather than aiming).
+      if (mustCallRef.current) {
+        const p = toCanvas(e); const w = toWorld(p.x, p.y);
+        const t = table.current;
+        for (let i = 0; i < t.pockets.length; i++) {
+          const pk = t.pockets[i];
+          if (Math.hypot(w.x - pk.x, w.y - pk.y) <= t.pocketRadius * 2.6) {
+            calledPocket.current = i;
+            setCalledPocketUI(i);
+            return;
+          }
         }
       }
       canvas.setPointerCapture(e.pointerId);
@@ -413,23 +513,24 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     return () => { c.removeEventListener('pointerdown', down); c.removeEventListener('pointermove', move); };
   }, []);
 
-  // ── power slider (DOM): pull up to charge, release to shoot ──────────────────
-  const setPowerFromEvent = (clientY: number) => {
+  // ── power meter (DOM): drag across to charge, release to shoot ───────────────
+  const setPowerFromEvent = (clientX: number) => {
     const el = powerRef.current; if (!el) return;
     const rect = el.getBoundingClientRect();
-    const ratio = clamp(1 - (clientY - rect.top) / rect.height, 0, 1);
+    const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
     power.current = ratio;
     setPowerPct(ratio);
   };
+  const needsCall = mustCall && calledPocketUI == null;
   const onPowerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!canShoot || anim.current) return;
+    if (!canShoot || anim.current || needsCall) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     charging.current = true;
-    setPowerFromEvent(e.clientY);
+    setPowerFromEvent(e.clientX);
   };
   const onPowerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!charging.current) return;
-    setPowerFromEvent(e.clientY);
+    setPowerFromEvent(e.clientX);
   };
   const onPowerUp = () => {
     if (!charging.current) return;
@@ -454,15 +555,37 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   useEffect(() => () => stopNudge(), []);
 
   const isLandscape = orientation === 'landscape';
-  const tableHeight = isLandscape ? '88vh' : '72vh';
+  const containerHeight = isLandscape ? '100%' : '80vh';
+  const SEG = 24; // power-meter segments
+  const litSegs = Math.round(powerPct * SEG);
+  const segColor = (i: number) => {
+    const t = i / (SEG - 1); // 0 green → 1 red
+    if (t < 0.45) return '#3ecf6a';
+    if (t < 0.7) return '#e6c229';
+    if (t < 0.87) return '#e2801d';
+    return '#e0403c';
+  };
+  const aimBtn = (dir: 1 | -1, label: string, icon: ReactNode) => (
+    <button
+      className="pool-ctl-btn"
+      disabled={!canShoot}
+      onPointerDown={() => startNudge(dir)}
+      onPointerUp={stopNudge}
+      onPointerLeave={stopNudge}
+      onPointerCancel={stopNudge}
+      aria-label={label}
+    >
+      {icon}
+    </button>
+  );
 
   return (
-    <div style={{ display: 'flex', gap: isLandscape ? 12 : 8, alignItems: 'stretch', width: '100%' }}>
-      {/* Table */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: containerHeight, width: '100%' }}>
+      {/* Table (fills the space above the controls) */}
       <div
         ref={wrapRef}
         style={{
-          flex: 1, minWidth: 0, height: tableHeight,
+          flex: 1, minHeight: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'linear-gradient(180deg,#5c3a22,#3b2416 12%,#3b2416 88%,#200f07)',
           borderRadius: 16, padding: 4, boxShadow: '0 20px 50px -24px rgba(0,0,0,.9)',
@@ -471,10 +594,28 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
         <canvas ref={cv} style={{ display: 'block', borderRadius: 10, cursor: canShoot ? 'crosshair' : 'default', touchAction: 'none' }} />
       </div>
 
-      {/* Control column */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: isLandscape ? 128 : 92 }}>
-        {/* Power slider — pull up, release to shoot */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minHeight: 150 }}>
+      {/* ── Bottom control bar (Pool Masters style) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '2px 2px 0' }}>
+        {/* Spin */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+          <canvas ref={spinCv} width={88} height={88} style={{ width: 60, height: 60, borderRadius: '50%', touchAction: 'none', cursor: 'pointer' }} />
+          <span style={{ fontSize: 8.5, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Spin</span>
+        </div>
+
+        {/* Fine aim + power */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 9, letterSpacing: '0.16em', textTransform: 'uppercase', color: needsCall ? '#f6c945' : 'var(--text-muted)', fontWeight: 700 }}>
+              {needsCall ? "Call a pocket" : 'Shot Power'}
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {aimBtn(-1, 'Aim left', <ChevronLeft size={18} />)}
+              <span style={{ fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Aim</span>
+              {aimBtn(1, 'Aim right', <ChevronRight size={18} />)}
+            </div>
+          </div>
+
+          {/* Segmented power meter — drag across, release to shoot */}
           <div
             ref={powerRef}
             onPointerDown={onPowerDown}
@@ -482,49 +623,31 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
             onPointerUp={onPowerUp}
             onPointerCancel={onPowerUp}
             style={{
-              position: 'relative', width: isLandscape ? 52 : 40, flex: 1, minHeight: 120,
-              borderRadius: 14, background: '#20262e', border: '2px solid #3a4652',
-              overflow: 'hidden', touchAction: 'none',
-              cursor: canShoot ? 'ns-resize' : 'not-allowed', opacity: canShoot ? 1 : 0.45,
+              position: 'relative', height: 34, borderRadius: 9,
+              background: '#171b21', border: `2px solid ${needsCall ? '#f6c945' : '#333c48'}`,
+              display: 'flex', gap: 2, padding: 3, touchAction: 'none',
+              cursor: canShoot && !needsCall ? 'ew-resize' : 'not-allowed',
+              opacity: canShoot ? (needsCall ? 0.65 : 1) : 0.4,
             }}
           >
-            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: `${powerPct * 100}%`, background: 'linear-gradient(0deg,#c14a1b,#e2711d 55%,#e6b422)', transition: charging.current ? 'none' : 'height 0.12s' }} />
-            <div style={{ position: 'absolute', left: '50%', bottom: `${powerPct * 100}%`, transform: 'translate(-50%,50%)', width: '78%', height: 12, borderRadius: 7, background: '#0e0e10', border: '2px solid #e6b422', boxShadow: '0 1px 4px rgba(0,0,0,.5)' }} />
-            <span style={{ position: 'absolute', top: 5, left: 0, right: 0, textAlign: 'center', fontSize: 8.5, letterSpacing: '0.12em', color: '#cbb98f', pointerEvents: 'none' }}>PULL</span>
-            <span style={{ position: 'absolute', bottom: 5, left: 0, right: 0, textAlign: 'center', fontSize: 10, fontWeight: 700, color: '#fff', pointerEvents: 'none' }}>{Math.round(powerPct * 100)}</span>
+            {Array.from({ length: SEG }, (_, i) => (
+              <div
+                key={i}
+                style={{
+                  flex: 1, borderRadius: 2,
+                  background: i < litSegs ? segColor(i) : 'rgba(255,255,255,0.06)',
+                  boxShadow: i < litSegs ? `0 0 6px ${segColor(i)}66` : 'none',
+                  transition: charging.current ? 'none' : 'background 0.1s',
+                }}
+              />
+            ))}
+            <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 11, fontWeight: 800, color: '#fff', pointerEvents: 'none', textShadow: '0 1px 3px #000' }}>
+              {Math.round(powerPct * 100)}
+            </span>
           </div>
-        </div>
-
-        {/* Fine aim */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button
-            className="btn"
-            style={{ padding: '6px 8px' }}
-            disabled={!canShoot}
-            onPointerDown={() => startNudge(-1)}
-            onPointerUp={stopNudge}
-            onPointerLeave={stopNudge}
-            aria-label="Aim left"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            className="btn"
-            style={{ padding: '6px 8px' }}
-            disabled={!canShoot}
-            onPointerDown={() => startNudge(1)}
-            onPointerUp={stopNudge}
-            onPointerLeave={stopNudge}
-            aria-label="Aim right"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-
-        {/* Spin */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-          <canvas ref={spinCv} width={88} height={88} style={{ width: isLandscape ? 84 : 72, height: isLandscape ? 84 : 72, borderRadius: '50%', touchAction: 'none', cursor: 'pointer' }} />
-          <span style={{ fontSize: 9, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Spin</span>
+          <span style={{ fontSize: 8.5, color: 'var(--text-muted)', textAlign: 'center' }}>
+            {needsCall ? 'Tap the pocket you’re calling on the table' : 'Drag across to power up, release to shoot'}
+          </span>
         </div>
       </div>
     </div>

@@ -145,6 +145,10 @@ export class UpdatePoolConfigDto {
 
   // ── Global ────────────────────────────────────────────────────────────────
   @IsOptional()
+  @IsBoolean()
+  strictCallShot?: boolean;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   rulesetVersion?: number;

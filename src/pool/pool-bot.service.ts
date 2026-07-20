@@ -19,6 +19,7 @@ interface Candidate {
   aim: number;
   power: number;
   score: number; // lower is better
+  pocketIndex: number;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -50,9 +51,20 @@ export class PoolBotService {
     const targets = this.legalTargets(onTable, state, botSeat);
     const best = this.bestPot(cue, targets, onTable, table);
 
+    // Ball in hand: pick the placement that yields the best pot, then shoot it.
+    if (state.ballInHand) {
+      const placed = this.bestPlacement(cue, targets, onTable, table);
+      if (placed) {
+        const jitter = (rng() * 2 - 1) * profile.maxJitter * (1 - profile.accuracy) * 4;
+        // Always call the pocket it's aiming into (required by the 8-ball rule and
+        // by strict call-shot mode; harmless for regular balls in casual mode).
+        return { angle: placed.pot.aim + jitter, power: placed.pot.power, spin: { side: 0, vertical: 0 }, cuePos: placed.pos, calledPocket: placed.pot.pocketIndex };
+      }
+    }
+
     if (best) {
       const jitter = (rng() * 2 - 1) * profile.maxJitter * (1 - profile.accuracy) * 4;
-      return { angle: best.aim + jitter, power: best.power, spin: { side: 0, vertical: 0 } };
+      return { angle: best.aim + jitter, power: best.power, spin: { side: 0, vertical: 0 }, calledPocket: best.pocketIndex };
     }
     return this.safetyShot(cue, targets, rng, profile.maxJitter);
   }
@@ -79,7 +91,8 @@ export class PoolBotService {
     let best: Candidate | null = null;
 
     for (const target of targets) {
-      for (const pocket of table.pockets) {
+      for (let pocketIndex = 0; pocketIndex < table.pockets.length; pocketIndex++) {
+        const pocket = table.pockets[pocketIndex];
         const bpx = pocket.x - target.pos.x;
         const bpy = pocket.y - target.pos.y;
         const bpLen = Math.hypot(bpx, bpy);
@@ -110,8 +123,42 @@ export class PoolBotService {
         const score = distance * (2 - cutCos); // prefer square, short cuts
         const power = clamp(0.32 + distance / (table.width * 1.6), 0.32, 0.9);
         if (!best || score < best.score) {
-          best = { target, aim: Math.atan2(aimY, aimX), power, score };
+          best = { target, aim: Math.atan2(aimY, aimX), power, score, pocketIndex };
         }
+      }
+    }
+    return best;
+  }
+
+  /**
+   * With ball in hand, try placing the cue in line behind each target (opposite
+   * its pocket) and keep the placement that gives the best straight pot. Only
+   * legal spots (inside the cushions, not overlapping a ball) are considered.
+   */
+  private bestPlacement(
+    cue: Ball,
+    targets: Ball[],
+    onTable: Ball[],
+    table: TableSpec,
+  ): { pos: { x: number; y: number }; pot: Candidate } | null {
+    const R = table.ballRadius;
+    let best: { pos: { x: number; y: number }; pot: Candidate } | null = null;
+
+    for (const target of targets) {
+      for (const pocket of table.pockets) {
+        const bpx = pocket.x - target.pos.x;
+        const bpy = pocket.y - target.pos.y;
+        const bpLen = Math.hypot(bpx, bpy);
+        if (bpLen < 1e-6) continue;
+        const dbx = bpx / bpLen, dby = bpy / bpLen;
+        // Sit the cue a comfortable distance behind the target, in line with the pocket.
+        const pos = {
+          x: clamp(target.pos.x - dbx * (2 * R + 6 * R), R, table.width - R),
+          y: clamp(target.pos.y - dby * (2 * R + 6 * R), R, table.height - R),
+        };
+        if (onTable.some((b) => Math.hypot(b.pos.x - pos.x, b.pos.y - pos.y) < 2 * R)) continue;
+        const pot = this.bestPot({ ...cue, pos }, targets, onTable, table);
+        if (pot && (!best || pot.score < best.pot.score)) best = { pos, pot };
       }
     }
     return best;

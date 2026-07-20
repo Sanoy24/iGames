@@ -243,7 +243,7 @@ export class PoolMatchService {
     const { table, tuning } = this.physicsFor(match);
     const pre = this.toState(match);
     const result = runShot(pre.balls, input, table, { tuning });
-    const outcome = resolveShot(pre, result, table);
+    const outcome = resolveShot(pre, result, table, input.calledPocket, cfg.strictCallShot);
     const shotIndex = match.shotCount;
     const s = outcome.state;
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Circle, Users, Trophy, Sliders, Plus, Play } from 'lucide-react';
+import { RefreshCw, Circle, Users, Trophy, Sliders, Plus, Play, Scale } from 'lucide-react';
 import {
   adminPoolApi,
   type AdminPoolConfig,
@@ -80,6 +80,7 @@ const EDITABLE_KEYS: (keyof AdminPoolConfig)[] = [
   'twoPlayerEnabled', 'minStakeMinor', 'maxStakeMinor', 'rakePct', 'shotClockSeconds', 'maxTimeoutFouls',
   'tournamentEnabled', 'tournamentEntryFeeMinor', 'tournamentSize', 'tournamentRakePct',
   'tournamentPrize1Weight', 'tournamentPrize2Weight', 'tournamentPrize34Weight',
+  'strictCallShot',
   'slidingFrictionX100', 'rollingFrictionX1000', 'cushionReboundPct', 'ballReboundPct',
   'pocketSizePct', 'cueMaxSpeedX100', 'maxSideSpin', 'maxRollSpin',
   'rulesetVersion', 'engineVersion',
@@ -301,6 +302,16 @@ export function PoolAdmin() {
             </div>
           )}
         </div>
+      </Section>
+
+      {/* ── Rules ── */}
+      <Section icon={<Scale size={15} style={{ color: '#f6c945' }} />} title="Rules">
+        <Toggle label="Strict called-shot mode" value={draft.strictCallShot} onChange={(v) => set('strictCallShot', v)} />
+        <p style={{ fontSize: 10.5, color: 'var(--text-muted)', margin: 0 }}>
+          On: every shot must call a pocket and a legal ball must drop there to continue (a ball made
+          elsewhere is "slop" — it stays down but the turn ends), and groups are assigned only on a called
+          pot. Off (casual): regular balls count in any pocket; only the 8-ball's pocket is called.
+        </p>
       </Section>
 
       {/* ── Physics tuning ── */}

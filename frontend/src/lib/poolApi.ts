@@ -64,6 +64,7 @@ export interface PoolConfig {
   tournamentEntryFeeMinor: number;
   tournamentSize: number;
   tournamentRakePct: number;
+  strictCallShot: boolean;
 }
 
 export interface PoolTournament {

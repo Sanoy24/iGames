@@ -139,6 +139,17 @@
 .game-banner-crash .game-banner-tag { color: #fca5a5; }
 .game-banner-crash .game-banner-title { color: #fca5a5; }
 
+/* Pool control buttons (fine-aim +/-) */
+.pool-ctl-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #222834; border: 1px solid #39424f; color: #e6e9ef;
+  cursor: pointer; user-select: none; touch-action: none;
+  transition: background 0.12s, transform 0.08s;
+}
+.pool-ctl-btn:active { background: #2d3746; transform: scale(0.92); }
+.pool-ctl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .game-banner-pool {
   background: linear-gradient(130deg, #04140c 0%, #06251a 55%, #04140c 100%);
   border-color: rgba(16, 185, 129, 0.22);

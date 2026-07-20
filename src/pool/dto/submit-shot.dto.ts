@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, Max, Min, ValidateNested } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, Max, Min, ValidateNested } from 'class-validator';
 
 export class ShotSpinDto {
   @IsNumber()
@@ -41,4 +41,11 @@ export class SubmitShotDto {
   @ValidateNested()
   @Type(() => CuePosDto)
   cuePos?: CuePosDto;
+
+  /** Called pocket (0–5) for the 8-ball; wrong pocket loses. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(5)
+  calledPocket?: number;
 }

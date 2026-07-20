@@ -47,6 +47,18 @@ describe('PoolBotService', () => {
     expect(result.scratch).toBe(false);
   });
 
+  it('places the cue ball (cuePos) when it has ball in hand', async () => {
+    const bot = makeBot();
+    // A pottable solid; with ball in hand the bot should relocate the cue for a good shot.
+    const balls = [cue(0.3, 0.3), solid(3, 2.2, 1.05)];
+    const shot = await bot.computeShot(state(balls, { ballInHand: true }), 'B', 'hard', table);
+    expect(shot.cuePos).toBeDefined();
+    // Placement must be legal: inside the cushions and clear of the target.
+    expect(shot.cuePos!.x).toBeGreaterThanOrEqual(table.ballRadius);
+    expect(shot.cuePos!.x).toBeLessThanOrEqual(table.width - table.ballRadius);
+    expect(Math.hypot(shot.cuePos!.x - 2.2, shot.cuePos!.y - 1.05)).toBeGreaterThan(2 * table.ballRadius);
+  });
+
   it('never aims at the 8 first on an open table', async () => {
     const bot = makeBot();
     // Only the cue and the 8 on the table → no legal target → safety, but it must

@@ -68,6 +68,12 @@ export interface ShotInput {
   spin: ShotSpin;
   /** Optional cue-ball placement for break / ball-in-hand. */
   cuePos?: Vec2;
+  /**
+   * Called pocket index (into `TableSpec.pockets`) for the 8-ball. When the
+   * shooter is on the 8, pocketing it in any OTHER pocket loses the game. Ignored
+   * for every other ball (regular balls are "any pocket"). Undefined = no call.
+   */
+  calledPocket?: number;
 }
 
 export type ShotEventType =

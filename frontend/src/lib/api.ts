@@ -852,6 +852,8 @@ export type AdminPoolConfig = {
   cueMaxSpeedX100: number;
   maxSideSpin: number;
   maxRollSpin: number;
+  // Rules
+  strictCallShot: boolean;
   // Global
   rulesetVersion: number;
   engineVersion: number;

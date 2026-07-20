@@ -98,6 +98,7 @@ export class PoolMatchController {
       power: dto.power,
       spin: { side: dto.spin.side, vertical: dto.spin.vertical },
       cuePos: dto.cuePos ? { x: dto.cuePos.x, y: dto.cuePos.y } : undefined,
+      calledPocket: dto.calledPocket,
     });
   }
 

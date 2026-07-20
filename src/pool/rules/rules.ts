@@ -95,7 +95,13 @@ function resetCue(balls: Ball[], table: TableSpec): void {
  * assigned on the first post-break shot that pockets exactly one group; the 8 is
  * legal only once the shooter's group is cleared and the shot carries no foul.
  */
-export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec): ShotOutcome {
+export function resolveShot(
+  pre: GameState,
+  result: ShotResult,
+  table: TableSpec,
+  calledPocket?: number,
+  strictCallShot = false,
+): ShotOutcome {
   const board = result.balls;
   const shooter = pre.turn;
   const opp = otherSeat(shooter);
@@ -178,11 +184,29 @@ export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec
     }
   }
 
-  // After legal contact, a ball must be pocketed or driven to a rail.
+  // After legal contact, a ball must be pocketed or driven to a rail (WPA §18).
+  // Frozen-ball refinement (§16): an object ball already touching a rail before
+  // the shot ("frozen") does not satisfy the requirement just by staying on that
+  // rail — a DIFFERENT ball (or the cue) must reach a rail, a ball must be
+  // pocketed, or the frozen ball must leave the rail and return. We approximate
+  // "leave and return" as a cushion contact from the frozen ball noticeably after
+  // the strike (it had time to travel away and bank back).
   if (firstContact !== null) {
+    const R = table.ballRadius;
+    const frozen = new Set(
+      pre.balls
+        .filter((b) => !b.pocketed && b.number !== 0)
+        .filter((b) => Math.min(b.pos.x, table.width - b.pos.x, b.pos.y, table.height - b.pos.y) <= R + 0.006)
+        .map((b) => b.number),
+    );
     const railAfter =
       contactT != null &&
-      result.events.some((e) => e.type === 'ball-cushion' && e.t >= contactT);
+      result.events.some(
+        (e) =>
+          e.type === 'ball-cushion' &&
+          e.t >= contactT &&
+          (!frozen.has(e.ballNumber ?? -1) || e.t >= contactT + 0.2),
+      );
     if (result.pocketed.length === 0 && !railAfter) fouls.push('no-rail');
   }
 
@@ -191,7 +215,11 @@ export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec
     const foul = fouls.length > 0;
     const shooterGroup = groups[shooter];
     const cleared = shooterGroup !== null && ballsRemaining(board, shooterGroup) === 0;
-    const legal8 = !tableOpen && shooterGroup !== null && cleared && !foul;
+    // Called-pocket rule: if the shooter called a pocket for the 8, it must drop
+    // there — any other pocket loses (WPA §20). No call = any pocket (lenient).
+    const eightPocket = result.events.find((e) => e.type === 'pocket' && e.ballNumber === 8)?.pocketIndex;
+    const wrongPocket = calledPocket != null && eightPocket != null && eightPocket !== calledPocket;
+    const legal8 = !tableOpen && shooterGroup !== null && cleared && !foul && !wrongPocket;
     const winner = legal8 ? shooter : opp;
     if (scratch) resetCue(board, table);
     return {
@@ -212,17 +240,32 @@ export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec
       winner,
       reason: legal8
         ? `${shooter} legally pockets the 8 — ${shooter} wins`
-        : foul
-          ? `8 pocketed on a foul — ${opp} wins`
-          : `8 pocketed too early — ${opp} wins`,
+        : wrongPocket
+          ? `8 in the wrong pocket — ${opp} wins`
+          : foul
+            ? `8 pocketed on a foul — ${opp} wins`
+            : `8 pocketed too early — ${opp} wins`,
     };
   }
+
+  // Called-shot (strict) mode: object balls that dropped into the CALLED pocket.
+  // Group assignment + continuation then require a legal ball in the called pocket;
+  // a ball made in any other pocket is "slop" — it stays down but the turn ends
+  // (WPA §9 / §257). Only active when strict mode is on and a pocket was called.
+  const strict = strictCallShot && calledPocket != null;
+  const calledPotted = strict
+    ? result.events
+        .filter((e) => e.type === 'pocket' && e.pocketIndex === calledPocket && e.ballNumber != null && e.ballNumber !== 0)
+        .map((e) => e.ballNumber as number)
+    : [];
 
   // ── GROUP ASSIGNMENT (open table, clean shot) ───────────────────────────────
   let assignedGroups = false;
   if (tableOpen && fouls.length === 0 && pocketedObjects.length > 0) {
-    const madeSolids = pocketedObjects.some((n) => n < 8);
-    const madeStripes = pocketedObjects.some((n) => n > 8);
+    // In strict mode only a ball made in the called pocket assigns the group.
+    const assigning = strict ? calledPotted.filter((n) => n !== 8) : pocketedObjects;
+    const madeSolids = assigning.some((n) => n < 8);
+    const madeStripes = assigning.some((n) => n > 8);
     if (madeSolids && !madeStripes) {
       groups = { ...groups, [shooter]: 'solids', [opp]: 'stripes' } as GameState['groups'];
       tableOpen = false;
@@ -232,7 +275,7 @@ export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec
       tableOpen = false;
       assignedGroups = true;
     }
-    // Both groups pocketed → table stays open.
+    // Both groups pocketed (or slop) → table stays open.
   }
 
   // ── CONTINUATION ────────────────────────────────────────────────────────────
@@ -240,16 +283,28 @@ export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec
   let turn = shooter;
   let turnPassed = false;
   let ballInHand = false;
+  let slop = false;
   if (foul) {
     turn = opp;
     turnPassed = true;
     ballInHand = true;
   } else {
     const ownGroup = groups[shooter];
-    const pocketedOwn =
-      ownGroup !== null
-        ? pocketedObjects.some((n) => ballFamily(n) === ownGroup)
-        : pocketedObjects.length > 0; // still open (made both groups) → keep shooting
+    let pocketedOwn: boolean;
+    if (strict) {
+      // Continue only if a legal ball dropped into the CALLED pocket.
+      pocketedOwn =
+        ownGroup !== null
+          ? calledPotted.some((n) => ballFamily(n) === ownGroup)
+          : calledPotted.some((n) => n !== 8);
+      // A ball dropped, but not the called shot → slop; turn passes.
+      slop = !pocketedOwn && pocketedObjects.length > 0;
+    } else {
+      pocketedOwn =
+        ownGroup !== null
+          ? pocketedObjects.some((n) => ballFamily(n) === ownGroup)
+          : pocketedObjects.length > 0; // still open (made both groups) → keep shooting
+    }
     if (!pocketedOwn) {
       turn = opp;
       turnPassed = true;
@@ -261,9 +316,11 @@ export function resolveShot(pre: GameState, result: ShotResult, table: TableSpec
     ? `Foul (${fouls.join(', ')}) — ${opp} ball in hand`
     : assignedGroups
       ? `${shooter} takes ${groups[shooter]} and continues`
-      : turnPassed
-        ? `No ball made — turn passes to ${opp}`
-        : `${shooter} pockets and continues`;
+      : slop
+        ? `Slop — ball made off the called pocket, turn passes to ${opp}`
+        : turnPassed
+          ? `No ball made — turn passes to ${opp}`
+          : `${shooter} pockets and continues`;
 
   return {
     state: {

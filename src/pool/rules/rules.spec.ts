@@ -232,6 +232,25 @@ describe('rules — the 8 ball', () => {
     expect(out.winner).toBe('A');
   });
 
+  it('calling the pocket and sinking the 8 there wins', () => {
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 8, 9, 10, 11, 12, 13, 14, 15]) });
+    const board = buildBoard([0, 9, 10, 11, 12, 13, 14, 15]);
+    const pocket8: ShotEvent = { type: 'pocket', t: 0.5, ballNumber: 8, pocketIndex: 2 };
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [8], firstContactNumber: 8, events: [contact(8), pocket8] }), table, 2);
+    expect(out.gameOver).toBe(true);
+    expect(out.winner).toBe('A');
+  });
+
+  it('sinking the 8 in a pocket other than the called one loses', () => {
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 8, 9, 10, 11, 12, 13, 14, 15]) });
+    const board = buildBoard([0, 9, 10, 11, 12, 13, 14, 15]);
+    const pocket8: ShotEvent = { type: 'pocket', t: 0.5, ballNumber: 8, pocketIndex: 5 };
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [8], firstContactNumber: 8, events: [contact(8), pocket8] }), table, 2); // called 2, dropped 5
+    expect(out.gameOver).toBe(true);
+    expect(out.winner).toBe('B');
+    expect(out.reason).toMatch(/wrong pocket/i);
+  });
+
   it('pocketing the 8 early loses the game', () => {
     const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 1, 8, 9, 10, 11, 12, 13, 14, 15]) });
     const board = buildBoard([0, 1, 9, 10, 11, 12, 13, 14, 15]); // 8 gone, solid 1 still up
@@ -255,5 +274,84 @@ describe('rules — the 8 ball', () => {
     expect(out.fouls).toContain('wrong-ball-first');
     expect(out.state.ballInHand).toBe(true);
     expect(out.gameOver).toBe(false);
+  });
+});
+
+describe('rules — frozen balls (§16)', () => {
+  // Freeze solid 1 against the bottom rail; solid 2 sits mid-table (not frozen).
+  const frozenSetup = () => {
+    const balls = buildBoard([0, 1, 2, 8, 9, 10, 11, 12, 13, 14, 15]);
+    balls[1].pos = { x: 1.0, y: table.ballRadius }; // touching the rail = frozen
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls });
+    const board = balls.map((b) => ({ ...b, pos: { ...b.pos } }));
+    return { pre, board };
+  };
+
+  it('hitting a frozen ball with nothing else reaching a rail is a foul', () => {
+    const { pre, board } = frozenSetup();
+    // The only cushion contact is the frozen ball itself, right after the strike.
+    const out = resolveShot(pre, makeResult({ balls: board, firstContactNumber: 1, events: [contact(1, 0.2), rail(1, 0.22)] }), table);
+    expect(out.fouls).toContain('no-rail');
+  });
+
+  it('a different (non-frozen) ball reaching a rail satisfies the requirement', () => {
+    const { pre, board } = frozenSetup();
+    const out = resolveShot(pre, makeResult({ balls: board, firstContactNumber: 1, events: [contact(1, 0.2), rail(2, 0.3)] }), table);
+    expect(out.fouls).not.toContain('no-rail');
+  });
+
+  it('a frozen ball that banks away and returns to a rail counts', () => {
+    const { pre, board } = frozenSetup();
+    // A late cushion hit (well after contact) = it left the rail and came back.
+    const out = resolveShot(pre, makeResult({ balls: board, firstContactNumber: 1, events: [contact(1, 0.2), rail(1, 0.6)] }), table);
+    expect(out.fouls).not.toContain('no-rail');
+  });
+});
+
+describe('rules — strict called shots (§9/§257)', () => {
+  const pocket = (ball: number, idx: number): ShotEvent => ({ type: 'pocket', t: 0.5, ballNumber: ball, pocketIndex: idx });
+
+  it('a legal ball in the called pocket continues the turn', () => {
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 1, 2, 8, 9, 10, 11, 12, 13, 14, 15]) });
+    const board = buildBoard([0, 2, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [1], firstContactNumber: 1, events: [contact(1), pocket(1, 3)] }), table, 3, true);
+    expect(out.turnPassed).toBe(false);
+    expect(out.state.turn).toBe('A');
+  });
+
+  it('a ball made off the called pocket is slop — stays down, turn passes', () => {
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 1, 2, 8, 9, 10, 11, 12, 13, 14, 15]) });
+    const board = buildBoard([0, 2, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [1], firstContactNumber: 1, events: [contact(1), pocket(1, 5)] }), table, 3, true); // called 3, dropped 5
+    expect(out.turnPassed).toBe(true);
+    expect(out.state.turn).toBe('B');
+    expect(out.reason).toMatch(/slop/i);
+    expect(out.pocketed).toContain(1); // ball remains pocketed
+  });
+
+  it('assigns the group only on a called pot (open table)', () => {
+    const pre = makeState({ tableOpen: true, groups: { A: null, B: null } });
+    const board = buildBoard([0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [1], firstContactNumber: 1, events: [contact(1), pocket(1, 3)] }), table, 3, true);
+    expect(out.assignedGroups).toBe(true);
+    expect(out.state.groups.A).toBe('solids');
+  });
+
+  it('slop on an open table does not assign a group and passes the turn', () => {
+    const pre = makeState({ tableOpen: true, groups: { A: null, B: null } });
+    const board = buildBoard([0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [1], firstContactNumber: 1, events: [contact(1), pocket(1, 5)] }), table, 3, true); // called 3
+    expect(out.assignedGroups).toBe(false);
+    expect(out.state.tableOpen).toBe(true);
+    expect(out.state.turn).toBe('B');
+  });
+
+  it('casual mode ignores the called pocket for regular balls (any pocket continues)', () => {
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 1, 2, 8, 9, 10, 11, 12, 13, 14, 15]) });
+    const board = buildBoard([0, 2, 8, 9, 10, 11, 12, 13, 14, 15]);
+    // Not strict: dropping in a different pocket than "called" still continues.
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [1], firstContactNumber: 1, events: [contact(1), pocket(1, 5)] }), table, 3, false);
+    expect(out.turnPassed).toBe(false);
+    expect(out.state.turn).toBe('A');
   });
 });

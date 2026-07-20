@@ -8,14 +8,66 @@ import { poolApi } from '../lib/poolApi';
 import type { PoolConfig, PoolMatchView, PoolTournament, Seat } from '../lib/poolApi';
 import { usePoolMatchFound, usePoolMatchSocket, type PoolShotResolvedEvent } from '../hooks/usePoolSocket';
 import { PoolTable, type PoolTableHandle } from '../components/PoolTable';
-import type { ShotInput } from '@pool-engine';
+import type { Ball, ShotInput } from '@pool-engine';
 
 type EndState = { winnerSeat?: Seat | null; reason?: string; aborted?: boolean } | null;
+
+const BALL_COLORS: Record<number, string> = {
+  1: '#e6b422', 2: '#1f4fa0', 3: '#c62828', 4: '#6a3d9a', 5: '#e2711d',
+  6: '#1f7a3f', 7: '#7a2418', 8: '#141414',
+  9: '#e6b422', 10: '#1f4fa0', 11: '#c62828', 12: '#6a3d9a', 13: '#e2711d', 14: '#1f7a3f', 15: '#7a2418',
+};
+
+/** A small potted ball chip (solid = filled; stripe = white with a colour band). */
+function BallChip({ n, size = 18 }: { n: number; size?: number }) {
+  const color = BALL_COLORS[n] ?? '#ccc';
+  const stripe = n >= 9 && n <= 15;
+  return (
+    <span
+      style={{
+        position: 'relative', width: size, height: size, borderRadius: '50%',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: stripe ? '#f2ecdf' : color, overflow: 'hidden',
+        border: '1px solid rgba(0,0,0,0.35)', flexShrink: 0,
+      }}
+    >
+      {stripe && <span style={{ position: 'absolute', left: 0, right: 0, top: '30%', bottom: '30%', background: color }} />}
+      <span style={{ position: 'relative', width: '46%', height: '46%', borderRadius: '50%', background: '#fbf7ee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.42, fontWeight: 700, color: '#1a1712', fontFamily: 'ui-monospace, monospace' }}>{n}</span>
+    </span>
+  );
+}
+
+/** Shows which balls have been pocketed, split into solids / stripes / the 8. */
+function PocketedTray({ board, size = 18 }: { board: Ball[]; size?: number }) {
+  const potted = board.filter((b) => b.pocketed && b.number !== 0).map((b) => b.number);
+  if (potted.length === 0) return null;
+  const solids = potted.filter((n) => n >= 1 && n <= 7).sort((a, b) => a - b);
+  const stripes = potted.filter((n) => n >= 9 && n <= 15).sort((a, b) => a - b);
+  const eight = potted.includes(8);
+  const group = (balls: number[]) => (
+    <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+      {balls.map((n) => <BallChip key={n} n={n} size={size} />)}
+    </div>
+  );
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+      {solids.length > 0 && group(solids)}
+      {stripes.length > 0 && (
+        <>
+          {solids.length > 0 && <span style={{ width: 1, height: size, background: 'rgba(255,255,255,0.15)' }} />}
+          {group(stripes)}
+        </>
+      )}
+      {eight && <BallChip n={8} size={size} />}
+    </div>
+  );
+}
 
 export function Pool({ onBack }: { onBack: () => void }) {
   const { t } = useTranslation();
   const user = useStore((s) => s.user);
   const addToast = useStore((s) => s.addToast);
+  const isSocketConnected = useStore((s) => s.isSocketConnected);
   const seatLabel = (seat: Seat) => (seat === 'A' ? t('pool.player1') : t('pool.player2'));
 
   const [config, setConfig] = useState<PoolConfig | null>(null);
@@ -78,6 +130,37 @@ export function Pool({ onBack }: { onBack: () => void }) {
     },
     onMatchEnded: (e) => setEnded(e),
   });
+
+  // Resync the authoritative match state whenever we return to the foreground or
+  // the socket reconnects. Backgrounding a tab drops socket events, so a turn that
+  // advanced while away (e.g. the AI played, or our turn came back) would otherwise
+  // leave the board frozen. This guarantees we never get stuck out of sync.
+  const matchId = match?.id ?? null;
+  useEffect(() => {
+    if (!matchId) return;
+    const resync = () => {
+      poolApi.getMatch(matchId)
+        .then((v) => {
+          setMatch(v);
+          if (v.status !== 'active') setEnded((e) => e ?? { winnerSeat: v.winnerSeat });
+        })
+        .catch(() => {});
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') resync(); };
+    window.addEventListener('focus', resync);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', resync);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [matchId]);
+
+  // Re-fetch on socket (re)connect so a reconnect pulls the latest board.
+  useEffect(() => {
+    if (matchId && isSocketConnected) {
+      poolApi.getMatch(matchId).then(setMatch).catch(() => {});
+    }
+  }, [matchId, isSocketConnected]);
 
   useEffect(() => {
     if (ended && mySeat && ended.winnerSeat === mySeat) {
@@ -144,6 +227,14 @@ export function Pool({ onBack }: { onBack: () => void }) {
     const isMyTurn = match.turn === mySeat && match.status === 'active';
     const canShoot = isMyTurn && !!mySeat;
     const myGroup = mySeat ? match.groups[mySeat] : null;
+    // On the 8: my group is assigned and none of its object balls remain — I must
+    // call a pocket for the 8 (server enforces wrong-pocket = loss).
+    const myGroupLeft = myGroup
+      ? match.board.filter((b) => !b.pocketed && b.number !== 0 && b.number !== 8 && (myGroup === 'solids' ? b.number < 8 : b.number > 8)).length
+      : 1;
+    const onEight = !!myGroup && !match.tableOpen && myGroupLeft === 0;
+    // Must call a pocket: always on the 8, and on every shot in strict mode.
+    const mustCall = canShoot && (onEight || !!config?.strictCallShot);
     const deadlineMs = match.turnDeadline ? new Date(match.turnDeadline).getTime() : null;
     const remaining = deadlineMs ? Math.max(0, Math.ceil((deadlineMs - now) / 1000)) : null;
     const opponentName = match.mode === 'single' ? t('pool.opponentAI') : t('pool.opponent');
@@ -153,6 +244,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
       : isMyTurn
         ? (match.ballInHand ? t('pool.yourTurnBallInHand') : t('pool.yourTurn'))
         : t('pool.opponentShooting', { name: opponentName });
+    const opponentThinking = match.status === 'active' && !isMyTurn;
 
     const resultCard = ended && (
       <div style={{ padding: 18, borderRadius: 14, textAlign: 'center', background: 'rgba(18,22,28,0.97)', border: '1px solid var(--border, rgba(255,255,255,0.12))', maxWidth: 340, boxShadow: '0 24px 60px -20px rgba(0,0,0,0.8)' }}>
@@ -177,7 +269,11 @@ export function Pool({ onBack }: { onBack: () => void }) {
             <button className="btn" onClick={backToLobby} style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
               <ArrowLeft size={16} /> {t('pool.lobby')}
             </button>
-            <div style={{ fontWeight: 700, fontSize: 15, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>{turnText}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 15, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>
+              {opponentThinking && <span className="spinner" style={{ width: 14, height: 14 }} />}
+              {turnText}
+            </div>
+            <PocketedTray board={match.board} size={16} />
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, fontSize: 12.5, color: 'var(--text-muted)' }}>
               <span>{t('pool.youLabel')} <strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
               {isMyTurn && remaining != null && (
@@ -187,7 +283,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-            <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" />
+            <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} />
           </div>
           {ended && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)' }}>
@@ -213,7 +309,10 @@ export function Pool({ onBack }: { onBack: () => void }) {
           <button className="btn" onClick={backToLobby} style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 4 }}>
             <ArrowLeft size={15} />
           </button>
-          <span style={{ fontWeight: 700, fontSize: 13, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>{turnText}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: isMyTurn ? 'var(--green,#6fce9a)' : 'inherit' }}>
+            {opponentThinking && <span className="spinner" style={{ width: 12, height: 12 }} />}
+            {turnText}
+          </span>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5, color: 'var(--text-muted)' }}>
             <span><strong style={{ color: 'var(--text)' }}>{myGroup ?? (match.tableOpen ? t('pool.groupOpen') : '—')}</strong></span>
             {isMyTurn && remaining != null && (
@@ -222,7 +321,13 @@ export function Pool({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
-        <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="portrait" />
+        {match.board.some((b) => b.pocketed && b.number !== 0) && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+            <PocketedTray board={match.board} size={18} />
+          </div>
+        )}
+
+        <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="portrait" mustCall={mustCall} />
 
         {/* Shot feed */}
         {feed.length > 0 && (

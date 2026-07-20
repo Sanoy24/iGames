@@ -130,6 +130,16 @@ export class PoolConfig {
   maxRollSpin: number;
 
   // ── Global ────────────────────────────────────────────────────────────────
+  /**
+   * Strict WPA called-shot mode. When true, every shot must call a pocket and a
+   * legal ball must drop there to continue (a ball made in any other pocket is
+   * "slop" — it stays down but the turn ends), and groups are assigned only on a
+   * called pot. When false (default, casual), regular balls count in any pocket;
+   * only the 8-ball's pocket is ever called.
+   */
+  @Column({ type: 'boolean', default: false })
+  strictCallShot: boolean;
+
   /** Rules variant the engine enforces; bumped when the ruleset changes. */
   @Column({ type: 'int', default: 1 })
   rulesetVersion: number;

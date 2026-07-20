@@ -7,7 +7,7 @@ import {
   type BotResult,
   type Layout,
 } from './sim';
-import { buildBotRoster } from './werk-bots';
+import { buildBotRoster, DEFAULT_WERK_BOTS } from './werk-bots';
 
 /**
  * Unit coverage for the server-authoritative settle path. Everything money- and
@@ -28,8 +28,10 @@ const ROSTER_CFG = {
   botSeedMode: 'auto' as const,
   botSpeedPct: 88,
   botSkillPct: 60,
-  botPersonalities: null,
 };
+
+/** Admin-managed DB bot pool (the default seed set) that rosters are drawn from. */
+const POOL = DEFAULT_WERK_BOTS;
 
 /** Flood-fill the maze grid to prove every cell is reachable (spanning tree). */
 function reachableCells(layout: Layout): number {
@@ -95,14 +97,33 @@ describe('werk layout (buildLayout)', () => {
 
 describe('werk bot roster (buildBotRoster)', () => {
   it('is deterministic and honours the requested count', () => {
-    const a = buildBotRoster(777, 8, ROSTER_CFG);
-    const b = buildBotRoster(777, 8, ROSTER_CFG);
+    const a = buildBotRoster(777, 8, ROSTER_CFG, POOL);
+    const b = buildBotRoster(777, 8, ROSTER_CFG, POOL);
     expect(a).toEqual(b);
     expect(a).toHaveLength(8);
   });
 
+  it('draws bot identities from the DB pool (not from code)', () => {
+    const roster = buildBotRoster(777, 8, ROSTER_CFG, POOL);
+    const poolNames = new Set(POOL.map((b) => b.name));
+    for (const b of roster) expect(poolNames.has(b.name)).toBe(true);
+  });
+
+  it('returns an empty roster when the DB pool is empty', () => {
+    expect(buildBotRoster(777, 8, ROSTER_CFG, [])).toEqual([]);
+  });
+
+  it('honours a per-bot speed/skill override from the pool', () => {
+    const pool = [{ name: 'x', nameEn: 'x', color: '#fff', personality: 'gatherer' as const, speedPct: 42, skillPct: 77 }];
+    const roster = buildBotRoster(5, 3, ROSTER_CFG, pool); // cycles the single bot
+    for (const b of roster) {
+      expect(b.speedPct).toBe(42);
+      expect(b.skill).toBeCloseTo(0.77, 3);
+    }
+  });
+
   it('tracks the admin-set speed/skill (no hardcoded difficulty bands)', () => {
-    const roster = buildBotRoster(2024, 24, ROSTER_CFG);
+    const roster = buildBotRoster(2024, 24, ROSTER_CFG, POOL);
     const avgSpeed = roster.reduce((s, b) => s + b.speedPct, 0) / roster.length;
     const avgSkill = roster.reduce((s, b) => s + b.skill, 0) / roster.length;
     // Jitter is ±5 / ±0.1 around the admin base (88 / 0.60), so averages sit close.
@@ -120,21 +141,21 @@ describe('werk bot roster (buildBotRoster)', () => {
   });
 
   it('weaker admin settings really do produce weaker bots', () => {
-    const strong = buildBotRoster(9, 30, { ...ROSTER_CFG, botSpeedPct: 100, botSkillPct: 95 });
-    const weak = buildBotRoster(9, 30, { ...ROSTER_CFG, botSpeedPct: 40, botSkillPct: 10 });
+    const strong = buildBotRoster(9, 30, { ...ROSTER_CFG, botSpeedPct: 100, botSkillPct: 95 }, POOL);
+    const weak = buildBotRoster(9, 30, { ...ROSTER_CFG, botSpeedPct: 40, botSkillPct: 10 }, POOL);
     const avg = (r: typeof strong, k: 'speedPct' | 'skill') => r.reduce((s, b) => s + b[k], 0) / r.length;
     expect(avg(strong, 'speedPct')).toBeGreaterThan(avg(weak, 'speedPct'));
     expect(avg(strong, 'skill')).toBeGreaterThan(avg(weak, 'skill'));
   });
 
   it('returns an empty roster in zero-seed mode', () => {
-    expect(buildBotRoster(1, 8, { ...ROSTER_CFG, botSeedMode: 'zero' })).toEqual([]);
+    expect(buildBotRoster(1, 8, { ...ROSTER_CFG, botSeedMode: 'zero' }, POOL)).toEqual([]);
   });
 });
 
 describe('werk bot simulation (simulateBots)', () => {
   const layout = buildLayout(314159, LAYOUT_PARAMS(6));
-  const roster = buildBotRoster(314159, 6, ROSTER_CFG);
+  const roster = buildBotRoster(314159, 6, ROSTER_CFG, POOL);
   const cfg = { mode: 'A' as const, durationSec: 45, finalSprintWarningSec: 10 };
 
   it('is deterministic (identical results for the same seed) — client == server', () => {
@@ -190,7 +211,7 @@ describe('werk standings (computeStandings)', () => {
 describe('werk house win control (applyWinControl)', () => {
   const drawSeed = jest.fn();
   const service = new WerkService(
-    {} as never, {} as never, {} as never,
+    {} as never, {} as never, {} as never, {} as never,
     { drawSeed } as never,
     {} as never, {} as never,
   );

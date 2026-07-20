@@ -8,6 +8,7 @@ import { RngModule } from '../rng/rng.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { WerkConfig } from './entities/werk-config.entity';
 import { WerkSession } from './entities/werk-session.entity';
+import { WerkBot } from './entities/werk-bot.entity';
 import { WerkService } from './werk.service';
 import { WerkController } from './werk.controller';
 import { WerkAdminController } from './werk-admin.controller';
@@ -15,7 +16,7 @@ import { WerkAdminController } from './werk-admin.controller';
 @Module({
   imports: [
     JwtModule.register({}),
-    TypeOrmModule.forFeature([WerkConfig, WerkSession]),
+    TypeOrmModule.forFeature([WerkConfig, WerkSession, WerkBot]),
     GamesModule,
     RngModule,
     WalletModule,

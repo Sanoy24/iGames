@@ -13,10 +13,13 @@ import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { WerkConfig } from './entities/werk-config.entity';
 import { WerkSession } from './entities/werk-session.entity';
+import { WerkBot } from './entities/werk-bot.entity';
 import { UpdateWerkConfigDto } from './dto/update-werk-config.dto';
 import { StartWerkGameDto } from './dto/start-werk-game.dto';
 import { SettleWerkGameDto } from './dto/settle-werk-game.dto';
-import { buildBotRoster, type WerkBotDescriptor } from './werk-bots';
+import { CreateWerkBotDto } from './dto/create-werk-bot.dto';
+import { UpdateWerkBotDto } from './dto/update-werk-bot.dto';
+import { buildBotRoster, DEFAULT_WERK_BOTS, type WerkBotDescriptor, type WerkBotPoolEntry } from './werk-bots';
 import {
   buildLayout, simulateBots, computeStandings, makeRng, SIM_DT, CELL, HUMAN_SPEED,
   type BotConfig, type BotResult, type StandingRow,
@@ -81,6 +84,8 @@ export class WerkService implements OnApplicationBootstrap {
     private readonly configRepo: Repository<WerkConfig>,
     @InjectRepository(WerkSession)
     private readonly sessionRepo: Repository<WerkSession>,
+    @InjectRepository(WerkBot)
+    private readonly botRepo: Repository<WerkBot>,
     private readonly dataSource: DataSource,
     private readonly rngService: RngService,
     private readonly walletService: WalletService,
@@ -103,12 +108,20 @@ export class WerkService implements OnApplicationBootstrap {
     const qr = this.dataSource.createQueryRunner();
     try {
       await qr.connect();
-      for (const entity of [WerkConfig, WerkSession]) {
+      for (const entity of [WerkConfig, WerkSession, WerkBot]) {
         const meta = this.dataSource.getMetadata(entity);
         if (!(await qr.hasTable(meta.tableName))) {
           await qr.createTable(Table.create(meta, this.dataSource.driver), true);
           this.logger.log(`Self-healed: created ${meta.tableName} table`);
         }
+      }
+      // Seed the default bot pool once, so the game works out of the box.
+      if ((await qr.manager.count(WerkBot)) === 0) {
+        await qr.manager.insert(
+          WerkBot,
+          DEFAULT_WERK_BOTS.map((b, i) => ({ ...b, sortOrder: i })),
+        );
+        this.logger.log(`Seeded ${DEFAULT_WERK_BOTS.length} default Werk bots`);
       }
       this.tablesEnsured = true;
     } catch (err) {
@@ -182,6 +195,50 @@ export class WerkService implements OnApplicationBootstrap {
     return this.configRepo.save(cfg);
   }
 
+  // ── Bots (admin-managed DB pool) ────────────────────────────────────────────
+
+  /** The enabled bot pool a game's roster is drawn from (identity + overrides). */
+  private async loadBotPool(): Promise<WerkBotPoolEntry[]> {
+    const bots = await this.botRepo.find({
+      where: { enabled: true },
+      order: { sortOrder: 'ASC', id: 'ASC' },
+    });
+    return bots.map((b) => ({
+      name: b.name,
+      nameEn: b.nameEn,
+      color: b.color,
+      personality: b.personality,
+      speedPct: b.speedPct,
+      skillPct: b.skillPct,
+    }));
+  }
+
+  /** All bots (enabled + disabled), for the admin manager. */
+  async listBots(): Promise<WerkBot[]> {
+    await this.getConfig(); // ensure tables exist + defaults seeded
+    return this.botRepo.find({ order: { sortOrder: 'ASC', id: 'ASC' } });
+  }
+
+  async createBot(dto: CreateWerkBotDto, adminId: string): Promise<WerkBot> {
+    await this.getConfig();
+    const bot = this.botRepo.create({ ...dto, createdBy: adminId });
+    return this.botRepo.save(bot);
+  }
+
+  async updateBot(id: number, dto: UpdateWerkBotDto): Promise<WerkBot> {
+    await this.getConfig();
+    const bot = await this.botRepo.findOneBy({ id });
+    if (!bot) throw new NotFoundException('Bot not found');
+    Object.assign(bot, dto);
+    return this.botRepo.save(bot);
+  }
+
+  async deleteBot(id: number): Promise<{ deleted: true }> {
+    const res = await this.botRepo.delete({ id });
+    if (!res.affected) throw new NotFoundException('Bot not found');
+    return { deleted: true };
+  }
+
   // ── Play ──────────────────────────────────────────────────────────────────
 
   private toSessionView(s: WerkSession, cfg: WerkConfig): WerkSessionView {
@@ -220,6 +277,8 @@ export class WerkService implements OnApplicationBootstrap {
     }
 
     const botCount = this.effectiveBotCount(cfg);
+    // Draw the roster from the admin-managed DB pool (read-only, outside the txn).
+    const botPool = await this.loadBotPool();
 
     const session = await this.dataSource.transaction(async (manager) => {
       // Persist the session first so its id can anchor the stake + RNG audit rows.
@@ -264,13 +323,13 @@ export class WerkService implements OnApplicationBootstrap {
       created.seed = draw.numbers[0];
       created.seedAuditLogId = draw.auditLogId ?? null;
       created.walletDebit = { ledgerEntryId: debit.ledgerEntry.id };
-      // Deterministically generate the bot roster from the audited seed + config.
-      created.botRoster = buildBotRoster(created.seed, botCount, {
-        botSeedMode: cfg.botSeedMode,
-        botSpeedPct: cfg.botSpeedPct,
-        botSkillPct: cfg.botSkillPct,
-        botPersonalities: cfg.botPersonalities,
-      });
+      // Deterministically draw the roster from the audited seed, config + DB pool.
+      created.botRoster = buildBotRoster(
+        created.seed,
+        botCount,
+        { botSeedMode: cfg.botSeedMode, botSpeedPct: cfg.botSpeedPct, botSkillPct: cfg.botSkillPct },
+        botPool,
+      );
       await manager.save(created);
       return created;
     });

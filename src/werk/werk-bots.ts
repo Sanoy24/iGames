@@ -5,9 +5,10 @@ import {
 } from './entities/werk-config.entity';
 
 /**
- * A single server-authoritative bot. The client renders + animates exactly this;
- * it no longer invents names, personalities, colours, or speeds. Reproducible
- * from the game seed, so a session's roster can be re-derived for audit.
+ * A single server-authoritative bot handed to the client. The client renders +
+ * animates exactly this; it no longer invents names, personalities, colours, or
+ * speeds. Reproducible from the game seed + the DB pool, so a session's roster
+ * can be re-derived for audit.
  */
 export interface WerkBotDescriptor {
   name: string; // Amharic display name
@@ -20,7 +21,19 @@ export interface WerkBotDescriptor {
   skill: number;
 }
 
-/** Amharic name pool (name, latin transliteration). */
+/** One candidate bot from the admin-managed DB pool (identity + optional overrides). */
+export interface WerkBotPoolEntry {
+  name: string;
+  nameEn: string;
+  color: string;
+  personality: WerkBotPersonality;
+  /** % of human speed; null → use config base + jitter. */
+  speedPct: number | null;
+  /** 0–100 skill; null → use config base + jitter. */
+  skillPct: number | null;
+}
+
+/** Default Amharic name pool (name, latin transliteration) — used to SEED the DB. */
 const NAMES: Array<[string, string]> = [
   ['አበበ', 'Abebe'], ['ከበደ', 'Kebede'], ['ጫላ', 'Chala'], ['ሳምሶን', 'Samson'],
   ['ብርሃኑ', 'Birhanu'], ['ተስፋዬ', 'Tesfaye'], ['ዳዊት', 'Dawit'], ['ሰለሞን', 'Solomon'],
@@ -35,6 +48,21 @@ const COLORS = [
   '#e6b422', '#4ade80', '#60a5fa', '#f87171', '#c084fc', '#fb923c', '#34d399',
   '#f472b6', '#a3e635', '#22d3ee', '#facc15', '#818cf8', '#fb7185', '#2dd4bf',
 ];
+
+/**
+ * The default bot roster used to seed an empty `werk_bot` table on first boot, so
+ * the game works out of the box and the historical identities are preserved.
+ * Personalities are spread round-robin over the 5 archetypes for variety; speed
+ * and skill are left null so they follow the admin's global config.
+ */
+export const DEFAULT_WERK_BOTS: WerkBotPoolEntry[] = NAMES.map(([name, nameEn], i) => ({
+  name,
+  nameEn,
+  color: COLORS[i % COLORS.length],
+  personality: ALL_WERK_PERSONALITIES[i % ALL_WERK_PERSONALITIES.length],
+  speedPct: null,
+  skillPct: null,
+}));
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -51,9 +79,13 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * Build the deterministic bot roster for a game. Uses a seed derived from the
- * game seed (so it doesn't perturb the client's maze/coin PRNG stream) plus the
- * admin-set mode, difficulty, and personality pool.
+ * Build the deterministic bot roster for a game by drawing `count` bots from the
+ * admin-managed DB `pool`. Uses a seed derived from the game seed (so it doesn't
+ * perturb the client's maze/coin PRNG stream). Each bot keeps its intrinsic
+ * identity + personality; speed/skill come from the bot's own override when set,
+ * otherwise the admin's global base (`botSpeedPct`/`botSkillPct`) plus a small
+ * deterministic jitter. If more bots are needed than the pool holds, the shuffled
+ * pool is cycled.
  */
 export function buildBotRoster(
   seed: number,
@@ -62,36 +94,40 @@ export function buildBotRoster(
     botSeedMode: WerkBotSeedMode;
     botSpeedPct: number;
     botSkillPct: number;
-    botPersonalities: WerkBotPersonality[] | null;
   },
+  pool: WerkBotPoolEntry[],
 ): WerkBotDescriptor[] {
-  if (cfg.botSeedMode === 'zero' || count <= 0) return [];
+  if (cfg.botSeedMode === 'zero' || count <= 0 || pool.length === 0) return [];
 
   const rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
-  const pool = (cfg.botPersonalities && cfg.botPersonalities.length ? cfg.botPersonalities : ALL_WERK_PERSONALITIES);
-  // Admin-set base speed/skill with a small deterministic per-bot jitter so a
-  // roster feels varied without any hardcoded difficulty bands.
   const baseSpeed = clamp(cfg.botSpeedPct, 30, 100);
   const baseSkill = clamp(cfg.botSkillPct, 0, 100) / 100;
 
-  // Deterministic shuffle of names + colours so rosters vary between games.
-  const names = [...NAMES];
-  for (let i = names.length - 1; i > 0; i--) {
+  // Deterministic shuffle of the DB pool so rosters vary between games.
+  const bots = [...pool];
+  for (let i = bots.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
-    [names[i], names[j]] = [names[j], names[i]];
+    [bots[i], bots[j]] = [bots[j], bots[i]];
   }
 
   const roster: WerkBotDescriptor[] = [];
   for (let i = 0; i < count; i++) {
-    const [name, nameEn] = names[i % names.length];
-    const personality: WerkBotPersonality =
-      cfg.botSeedMode === 'custom' ? pool[i % pool.length] : pool[Math.floor(rng() * pool.length)];
-    const speedPct = Math.round(clamp(baseSpeed + (rng() - 0.5) * 10, 30, 100));
-    const skill = +clamp(baseSkill + (rng() - 0.5) * 0.2, 0, 1).toFixed(3);
+    const b = bots[i % bots.length];
+    const speedPct =
+      b.speedPct != null
+        ? Math.round(clamp(b.speedPct, 30, 100))
+        : Math.round(clamp(baseSpeed + (rng() - 0.5) * 10, 30, 100));
+    const skill =
+      b.skillPct != null
+        ? +clamp(b.skillPct / 100, 0, 1).toFixed(3)
+        : +clamp(baseSkill + (rng() - 0.5) * 0.2, 0, 1).toFixed(3);
     roster.push({
-      name, nameEn,
-      color: COLORS[(i + 1) % COLORS.length],
-      personality, speedPct, skill,
+      name: b.name,
+      nameEn: b.nameEn,
+      color: b.color,
+      personality: b.personality,
+      speedPct,
+      skill,
     });
   }
   return roster;

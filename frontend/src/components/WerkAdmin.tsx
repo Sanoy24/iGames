@@ -59,7 +59,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
  * Admin configuration panel for Werk Flega. Modal; calls the role-guarded
  * /admin/werk/config endpoints. Rendered only for admins from the game lobby.
  */
-export function WerkAdmin({ onClose }: { onClose: () => void }) {
+export function WerkAdmin({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
   const addToast = useStore((s) => s.addToast);
   const [cfg, setCfg] = useState<AdminWerkConfig | null>(null);
   const [saving, setSaving] = useState(false);
@@ -88,18 +88,10 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
     }
   };
 
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface,#12161c)', border: '1px solid var(--border, rgba(255,255,255,0.12))', borderRadius: 16, padding: 18, maxWidth: 480, width: '100%', maxHeight: '88vh', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
-          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>⛏️ Werk Flega — Admin</h3>
-          <button className="btn" onClick={onClose} style={{ marginLeft: 'auto', padding: '4px 8px' }}><X size={16} /></button>
-        </div>
-
-        {!cfg ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: 30 }}><div className="spinner" /></div>
-        ) : (
-          <div style={{ display: 'grid', gap: 12 }}>
+  const inner = !cfg ? (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: 30 }}><div className="spinner" /></div>
+  ) : (
+    <div style={{ display: 'grid', gap: 12 }}>
             <Toggle label="Game enabled" value={cfg.enabled} onChange={(v) => set('enabled', v)} />
             <Toggle label="Power-ups" value={cfg.powerupsEnabled} onChange={(v) => set('powerupsEnabled', v)} />
 
@@ -146,11 +138,8 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
             <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
               {cfg.botSeedMode === 'zero'
                 ? 'Bots are disabled — games run with the human only.'
-                : `Each game draws ${cfg.botCount} bot(s) at random from the enabled pool below. Speed/skill above are the base; a bot with its own override ignores them.`}
+                : `Each game draws ${cfg.botCount} bot(s) from the enabled pool. Speed/skill above are the base; a bot with its own override ignores them. Manage the pool under Admin → Bots → Werk Flega.`}
             </div>
-
-            {/* Bot pool manager */}
-            {cfg.botSeedMode !== 'zero' && <WerkBotManager />}
 
             {/* Winning mode */}
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -198,7 +187,32 @@ export function WerkAdmin({ onClose }: { onClose: () => void }) {
               {saving ? 'Saving…' : 'Save config'}
             </button>
           </div>
-        )}
+  );
+
+  // Embedded in the main Admin panel (no modal chrome).
+  if (embedded) {
+    return (
+      <div>
+        <div className="adm-section-head">
+          <div>
+            <h2 className="adm-section-title">⛏️ Werk Flega</h2>
+            <p className="adm-section-sub">Stakes, round shape, bot pool, prizes &amp; win control.</p>
+          </div>
+        </div>
+        {inner}
+      </div>
+    );
+  }
+
+  // Modal, opened from the in-game lobby gear.
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: 'var(--surface,#12161c)', border: '1px solid var(--border, rgba(255,255,255,0.12))', borderRadius: 16, padding: 18, maxWidth: 480, width: '100%', maxHeight: '88vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>⛏️ Werk Flega — Admin</h3>
+          <button className="btn" onClick={onClose} style={{ marginLeft: 'auto', padding: '4px 8px' }}><X size={16} /></button>
+        </div>
+        {inner}
       </div>
     </div>
   );
@@ -214,7 +228,7 @@ const cellStyle: CSSProperties = {
  * `enabled` rows here — this is where bots actually come from. Changes autosave:
  * text/number fields on blur, toggles/selects immediately.
  */
-function WerkBotManager() {
+export function WerkBotManager() {
   const addToast = useStore((s) => s.addToast);
   const [bots, setBots] = useState<AdminWerkBot[] | null>(null);
   const [adding, setAdding] = useState(false);

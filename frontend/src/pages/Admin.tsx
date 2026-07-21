@@ -36,8 +36,9 @@ import { formatCredits, useStore } from '../store/useStore';
 import { SupportConsole } from '../components/SupportConsole';
 import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
+import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -47,6 +48,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
   { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
   { id: 'pool',        label: 'Pool',        icon: <Circle size={15} /> },
+  { id: 'werk',        label: 'Werk Flega',  icon: <span style={{ fontSize: 14, lineHeight: 1 }}>⛏️</span> },
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
   { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
@@ -2631,8 +2633,38 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
 
 
 // ══════════════════════════════════════════════════════════════════
-// Bots
+// Bots hub — one place for every game's bots (models differ underneath):
+//   • Liquidity: funded player accounts that fake Keno/Bingo/Crash activity.
+//   • Werk Flega: cosmetic AI maze opponents (name/colour/skill, no wallet).
 // ══════════════════════════════════════════════════════════════════
+type BotsSubTab = 'liquidity' | 'werk';
+const BOTS_SUBTABS: Array<{ id: BotsSubTab; label: string }> = [
+  { id: 'liquidity', label: 'Liquidity (Keno/Bingo/Crash)' },
+  { id: 'werk', label: '⛏️ Werk Flega' },
+];
+
+function BotsHub() {
+  const [sub, setSub] = useState<BotsSubTab>('liquidity');
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {BOTS_SUBTABS.map((s) => (
+          <button key={s.id} className={`btn btn-sm ${sub === s.id ? 'btn-primary' : ''}`} onClick={() => setSub(s.id)}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {sub === 'liquidity' && <BotsAdmin />}
+      {sub === 'werk' && (
+        <div>
+          <SectionHead title="Werk Flega bots" sub="Cosmetic AI opponents drawn into each maze game. Edit / add / disable — the next game reflects it." />
+          <WerkBotManager />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BotsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [bots, setBots]           = useState<BotUser[]>([]);
@@ -3824,7 +3856,8 @@ export function Admin() {
           {tab === 'keno'          && <KenoAdmin />}
           {tab === 'bingo'         && <BingoAdmin />}
           {tab === 'pool'          && <PoolAdmin />}
-          {tab === 'bots'          && <BotsAdmin />}
+          {tab === 'werk'          && <WerkAdmin embedded />}
+          {tab === 'bots'          && <BotsHub />}
           {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
           {tab === 'support'       && <SupportConsole />}

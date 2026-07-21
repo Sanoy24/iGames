@@ -2,8 +2,8 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy, Circle } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy, Circle, type LucideIcon } from 'lucide-react';
+import { useStore, type LiveCounts } from '../store/useStore';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoDraw, LedgerEntry, RecentWin } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
@@ -17,6 +17,16 @@ type GameCode = 'keno' | 'bingo' | 'crash' | 'pool' | 'werk';
 // Fixed priority order for the Home "Play Now" strip. The rotating window walks
 // this list, so all enabled games get a turn in the featured pair over reloads.
 const HOME_GAME_ORDER: GameCode[] = ['bingo', 'keno', 'crash', 'pool', 'werk'];
+
+// Per-game "online now" pills for the quick-stats strip. Only games we receive a
+// live count for appear here; each is shown only while that game is available
+// (not hidden), so the strip is driven by the catalog, never hardcoded on/off.
+type StatGame = { code: GameCode; Icon: LucideIcon; color: string; labelKey: string; count: (c: LiveCounts) => number };
+const STAT_GAMES: StatGame[] = [
+  { code: 'keno', Icon: Zap, color: '#a78bfa', labelKey: 'home.inKeno', count: (c) => c.kenoOnline },
+  { code: 'bingo', Icon: Target, color: '#ef4444', labelKey: 'home.inBingo', count: (c) => c.bingoOnline },
+  { code: 'crash', Icon: TrendingUp, color: '#10b981', labelKey: 'home.inCrash', count: (c) => c.crashOnline ?? 0 },
+];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -209,10 +219,8 @@ export function Home({ onNavigate }: Props) {
     walletApi.getRecentWins(20).then(setRecentWins).catch(() => {});
   }, []);
 
-  // Catalog state for the games whose live status/counters we surface here, so
-  // those indicators obey admin hide/maintenance exactly like the game cards do.
+  // Keno's live draw indicator obeys its catalog state (like the cards do).
   const keno = gameInfo('keno');
-  const bingo = gameInfo('bingo');
 
   useEffect(() => {
     walletApi.getLedger(5).then(entries => setRecentActivity(entries)).catch(() => {});
@@ -382,23 +390,17 @@ export function Home({ onNavigate }: Props) {
       </section>
 
       {/* ── Quick stats strip ── */}
-      {/* Per-game pills obey admin hide state (like the cards); total always shows. */}
+      {/* One pill per AVAILABLE game we track a count for (catalog-driven — a hidden
+          game drops out); the total online pill always closes the row. */}
       {liveCounts && (
         <div className="stat-pill-row">
-          {!keno.hidden && (
-            <span className="stat-pill">
-              <Zap size={11} style={{ color: '#a78bfa' }} />
-              <span className="stat-pill-val">{liveCounts.kenoOnline}</span>
-              <span className="stat-pill-lbl">{t('home.inKeno')}</span>
+          {STAT_GAMES.filter((g) => !gameInfo(g.code).hidden).map((g) => (
+            <span className="stat-pill" key={g.code}>
+              <g.Icon size={11} style={{ color: g.color }} />
+              <span className="stat-pill-val">{g.count(liveCounts)}</span>
+              <span className="stat-pill-lbl">{t(g.labelKey)}</span>
             </span>
-          )}
-          {!bingo.hidden && (
-            <span className="stat-pill">
-              <Target size={11} style={{ color: '#ef4444' }} />
-              <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
-              <span className="stat-pill-lbl">{t('home.inBingo')}</span>
-            </span>
-          )}
+          ))}
           <span className="stat-pill">
             <Trophy size={11} style={{ color: 'var(--gold)' }} />
             <span className="stat-pill-val">{liveCounts.totalOnline}</span>

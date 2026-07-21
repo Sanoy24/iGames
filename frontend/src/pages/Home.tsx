@@ -209,11 +209,22 @@ export function Home({ onNavigate }: Props) {
     walletApi.getRecentWins(20).then(setRecentWins).catch(() => {});
   }, []);
 
+  // Catalog state for the games whose live status/counters we surface here, so
+  // those indicators obey admin hide/maintenance exactly like the game cards do.
+  const keno = gameInfo('keno');
+  const bingo = gameInfo('bingo');
+
   useEffect(() => {
-    kenoApi.getActiveDraw().then(d => setActiveDraw(d)).catch(() => {});
     walletApi.getLedger(5).then(entries => setRecentActivity(entries)).catch(() => {});
     loadRecentWins();
   }, [loadRecentWins]);
+
+  // Only poll/show Keno's live draw when Keno is actually available. When it's
+  // hidden or under maintenance, clear it so no stale "Keno starting" pill shows.
+  useEffect(() => {
+    if (keno.hidden || keno.maint) { setActiveDraw(null); return; }
+    kenoApi.getActiveDraw().then(d => setActiveDraw(d)).catch(() => {});
+  }, [keno.hidden, keno.maint]);
 
   // Refresh wins ticker when draws/rooms complete
   useEffect(() => {
@@ -371,18 +382,23 @@ export function Home({ onNavigate }: Props) {
       </section>
 
       {/* ── Quick stats strip ── */}
+      {/* Per-game pills obey admin hide state (like the cards); total always shows. */}
       {liveCounts && (
         <div className="stat-pill-row">
-          <span className="stat-pill">
-            <Zap size={11} style={{ color: '#a78bfa' }} />
-            <span className="stat-pill-val">{liveCounts.kenoOnline}</span>
-            <span className="stat-pill-lbl">{t('home.inKeno')}</span>
-          </span>
-          <span className="stat-pill">
-            <Target size={11} style={{ color: '#ef4444' }} />
-            <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
-            <span className="stat-pill-lbl">{t('home.inBingo')}</span>
-          </span>
+          {!keno.hidden && (
+            <span className="stat-pill">
+              <Zap size={11} style={{ color: '#a78bfa' }} />
+              <span className="stat-pill-val">{liveCounts.kenoOnline}</span>
+              <span className="stat-pill-lbl">{t('home.inKeno')}</span>
+            </span>
+          )}
+          {!bingo.hidden && (
+            <span className="stat-pill">
+              <Target size={11} style={{ color: '#ef4444' }} />
+              <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
+              <span className="stat-pill-lbl">{t('home.inBingo')}</span>
+            </span>
+          )}
           <span className="stat-pill">
             <Trophy size={11} style={{ color: 'var(--gold)' }} />
             <span className="stat-pill-val">{liveCounts.totalOnline}</span>

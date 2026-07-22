@@ -37,28 +37,47 @@ function BallChip({ n, size = 18 }: { n: number; size?: number }) {
   );
 }
 
-/** Shows which balls have been pocketed, split into solids / stripes / the 8. */
-function PocketedTray({ board, size = 18 }: { board: Ball[]; size?: number }) {
+/**
+ * Pocketed balls attributed to their owner: the player's own group sits on the
+ * left (under their avatar), the opponent's on the right, and the 8-ball in the
+ * middle. While the table is still open (no groups assigned yet) the potted
+ * balls have no owner, so they're shown neutrally in the centre.
+ */
+function PocketedTray({
+  board, myGroup, oppGroup, size = 18, stretch = false,
+}: {
+  board: Ball[];
+  myGroup: PoolGroup | null;
+  oppGroup: PoolGroup | null;
+  size?: number;
+  stretch?: boolean;
+}) {
   const potted = board.filter((b) => b.pocketed && b.number !== 0).map((b) => b.number);
   if (potted.length === 0) return null;
   const solids = potted.filter((n) => n >= 1 && n <= 7).sort((a, b) => a - b);
   const stripes = potted.filter((n) => n >= 9 && n <= 15).sort((a, b) => a - b);
   const eight = potted.includes(8);
-  const group = (balls: number[]) => (
+  const ofGroup = (g: PoolGroup | null) => (g === 'solids' ? solids : g === 'stripes' ? stripes : []);
+  const mine = ofGroup(myGroup);
+  const theirs = ofGroup(oppGroup);
+  // Open table → nobody owns a group yet; keep those balls neutral in the middle.
+  const neutral = myGroup || oppGroup ? [] : [...solids, ...stripes].sort((a, b) => a - b);
+
+  const chips = (balls: number[]) => (
     <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
       {balls.map((n) => <BallChip key={n} n={n} size={size} />)}
     </div>
   );
   return (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-      {solids.length > 0 && group(solids)}
-      {stripes.length > 0 && (
-        <>
-          {solids.length > 0 && <span style={{ width: 1, height: size, background: 'rgba(255,255,255,0.15)' }} />}
-          {group(stripes)}
-        </>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: stretch ? '100%' : undefined }}>
+      <div style={{ flex: stretch ? 1 : undefined, display: 'flex', justifyContent: 'flex-start' }}>{chips(mine)}</div>
+      {(neutral.length > 0 || eight) && (
+        <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+          {chips(neutral)}
+          {eight && <BallChip n={8} size={size} />}
+        </div>
       )}
-      {eight && <BallChip n={8} size={size} />}
+      <div style={{ flex: stretch ? 1 : undefined, display: 'flex', justifyContent: 'flex-end' }}>{chips(theirs)}</div>
     </div>
   );
 }
@@ -361,7 +380,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
         <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0b0f14', display: 'flex', flexDirection: 'column', padding: '8px 12px 10px', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>{header}</div>
-            <PocketedTray board={match.board} size={16} />
+            <PocketedTray board={match.board} myGroup={myGroup} oppGroup={oppGroup} size={16} />
           </div>
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} />
@@ -377,8 +396,8 @@ export function Pool({ onBack }: { onBack: () => void }) {
         <div style={{ marginBottom: 8 }}>{header}</div>
 
         {match.board.some((b) => b.pocketed && b.number !== 0) && (
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
-            <PocketedTray board={match.board} size={18} />
+          <div style={{ marginBottom: 8, padding: '0 6px' }}>
+            <PocketedTray board={match.board} myGroup={myGroup} oppGroup={oppGroup} size={18} stretch />
           </div>
         )}
 

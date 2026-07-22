@@ -14,6 +14,9 @@ export interface PoolMatchView {
   status: 'active' | 'completed' | 'aborted';
   seatAUserId: string | null;
   seatBUserId: string | null;
+  /** Display (Telegram) names captured at creation; null for a bot/legacy seat. */
+  seatAName: string | null;
+  seatBName: string | null;
   stakeMinor: number;
   turn: Seat;
   groups: { A: PoolGroup | null; B: PoolGroup | null };

@@ -7,6 +7,7 @@ import { GamesModule } from '../games/games.module';
 import { RngModule } from '../rng/rng.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { GameEventsModule } from '../events/game-events.module';
+import { User } from '../users/entities/user.entity';
 import { PoolConfig } from './entities/pool-config.entity';
 import { PoolMatch } from './entities/pool-match.entity';
 import { PoolShot } from './entities/pool-shot.entity';
@@ -33,6 +34,7 @@ import { PoolAdminController } from './pool-admin.controller';
       PoolQueueEntry,
       PoolTournament,
       PoolTournamentPlayer,
+      User,
     ]),
     GamesModule,
     RngModule,

@@ -12,6 +12,9 @@ import type { Ball, ShotInput } from '@pool-engine';
 
 type EndState = { winnerSeat?: Seat | null; reason?: string; aborted?: boolean } | null;
 
+// How long to look for a human opponent before offering the AI fallback.
+const SEARCH_WINDOW_S = 30;
+
 const BALL_COLORS: Record<number, string> = {
   1: '#e6b422', 2: '#1f4fa0', 3: '#c62828', 4: '#6a3d9a', 5: '#e2711d',
   6: '#1f7a3f', 7: '#7a2418', 8: '#141414',
@@ -157,6 +160,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
   const [config, setConfig] = useState<PoolConfig | null>(null);
   const [match, setMatch] = useState<PoolMatchView | null>(null);
   const [queuedStake, setQueuedStake] = useState<number | null>(null);
+  const [queueStartedAt, setQueueStartedAt] = useState<number | null>(null);
   const [stake, setStake] = useState(10);
   const [feed, setFeed] = useState<string[]>([]);
   const [ended, setEnded] = useState<EndState>(null);
@@ -194,6 +198,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
   const enterMatch = (view: PoolMatchView) => {
     setMatch(view);
     setQueuedStake(null);
+    setQueueStartedAt(null);
     setEnded(null);
     setFeed([]);
   };
@@ -275,7 +280,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
     try {
       const res = await poolApi.joinQueue(stake);
       if (res.matched) enterMatch(res.match);
-      else setQueuedStake(res.stakeMinor);
+      else { setQueuedStake(res.stakeMinor); setQueueStartedAt(Date.now()); }
     } catch (e) {
       err(e, t('pool.errJoinQueue'));
     } finally {
@@ -288,7 +293,17 @@ export function Pool({ onBack }: { onBack: () => void }) {
       await poolApi.leaveQueue();
     } finally {
       setQueuedStake(null);
+      setQueueStartedAt(null);
     }
+  };
+
+  // From the "no players found" prompt: drop out of the human queue and start an
+  // AI match instead, so the player is never stuck waiting on an empty lobby.
+  const playVsAiFromQueue = async () => {
+    try { await poolApi.leaveQueue(); } catch { /* ignore — starting AI regardless */ }
+    setQueuedStake(null);
+    setQueueStartedAt(null);
+    await startSingle();
   };
 
   const submitShot = (input: ShotInput) => {
@@ -321,7 +336,11 @@ export function Pool({ onBack }: { onBack: () => void }) {
     const mustCall = canShoot && (onEight || !!config?.strictCallShot);
     const deadlineMs = match.turnDeadline ? new Date(match.turnDeadline).getTime() : null;
     const remaining = deadlineMs ? Math.max(0, Math.ceil((deadlineMs - now) / 1000)) : null;
-    const opponentName = match.mode === 'single' ? t('pool.opponentAI') : t('pool.opponent');
+    // Real opponent (Telegram) name for two-player; AI label for single-player.
+    const oppSeatName = mySeat ? (mySeat === 'A' ? match.seatBName : match.seatAName) : (match.seatBName ?? match.seatAName);
+    const opponentName = match.mode === 'single'
+      ? t('pool.opponentAI')
+      : (oppSeatName?.trim() || t('pool.opponent'));
     const opponentThinking = match.status === 'active' && !isMyTurn;
     const oppGroup = mySeat ? match.groups[mySeat === 'A' ? 'B' : 'A'] : null;
     const header = (
@@ -421,6 +440,12 @@ export function Pool({ onBack }: { onBack: () => void }) {
   }
 
   // ── Lobby ───────────────────────────────────────────────────────────────────
+  // Matchmaking countdown: search for a human for a fixed window, then offer to
+  // fall back to the AI so the player is never left staring at an empty lobby.
+  const searchElapsed = queueStartedAt ? Math.floor((now - queueStartedAt) / 1000) : 0;
+  const searchRemaining = Math.max(0, SEARCH_WINDOW_S - searchElapsed);
+  const noPlayers = queuedStake != null && searchRemaining === 0;
+  const aiAvailable = config?.singlePlayerEnabled !== false;
   return (
     <div style={{ padding: '12px 14px 28px', maxWidth: 640, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
@@ -447,11 +472,30 @@ export function Pool({ onBack }: { onBack: () => void }) {
       {config?.twoPlayerEnabled !== false && (
         <LobbyCard icon={<Swords size={22} />} title={t('pool.ranked2p')} subtitle={t('pool.rankedSubtitle')}>
           {queuedStake != null ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div className="spinner" style={{ width: 18, height: 18 }} />
-              <span style={{ fontSize: 13 }}>{t('pool.searchingStake', { amount: queuedStake })}</span>
-              <button className="btn" onClick={leaveQueue} style={{ marginLeft: 'auto', padding: '6px 10px' }}>{t('common.cancel')}</button>
-            </div>
+            noPlayers ? (
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 3 }}>{t('pool.noPlayersTitle')}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.4 }}>{t('pool.noPlayersBody')}</div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {aiAvailable && (
+                    <button className="btn btn-primary" disabled={busy} onClick={playVsAiFromQueue} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Bot size={15} /> {t('pool.playVsAI')}
+                    </button>
+                  )}
+                  <button className="btn" disabled={busy} onClick={() => setQueueStartedAt(Date.now())}>{t('pool.keepSearching')}</button>
+                  <button className="btn btn-ghost" onClick={leaveQueue} style={{ marginLeft: 'auto' }}>{t('common.cancel')}</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="spinner" style={{ width: 18, height: 18 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13 }}>{t('pool.searchingStake', { amount: queuedStake })}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>{t('pool.searchingCountdown', { secs: searchRemaining })}</div>
+                </div>
+                <button className="btn" onClick={leaveQueue} style={{ marginLeft: 'auto', padding: '6px 10px' }}>{t('common.cancel')}</button>
+              </div>
+            )
           ) : (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <label style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{t('pool.stake')}</label>

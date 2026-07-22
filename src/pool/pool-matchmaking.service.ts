@@ -99,12 +99,16 @@ export class PoolMatchmakingService {
       this.gateway.emitPoolMatchUpdated(result.match.id, view);
       this.logger.log(`Paired ${result.match.seatAUserId} vs ${result.match.seatBUserId} @ ${stakeMinor}`);
     }
+    // Queue size just changed (a player enqueued, or a pair drained it) — refresh
+    // the live counts so the Home "waiting for a Pool match" banner stays current.
+    void this.gateway.broadcastLiveCounts();
     return result;
   }
 
   /** Leave the queue (no-op if not queued). */
   async leave(userId: string): Promise<{ removed: boolean }> {
     const res = await this.queueRepo.delete({ userId });
+    if ((res.affected ?? 0) > 0) void this.gateway.broadcastLiveCounts();
     return { removed: (res.affected ?? 0) > 0 };
   }
 

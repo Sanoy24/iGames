@@ -14,6 +14,7 @@ import { randomUUID } from 'crypto';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { User } from '../users/entities/user.entity';
 import { PoolMatch } from './entities/pool-match.entity';
 import { PoolShot } from './entities/pool-shot.entity';
 import { PoolConfig } from './entities/pool-config.entity';
@@ -54,6 +55,8 @@ export class PoolMatchService {
     private readonly matchRepo: Repository<PoolMatch>,
     @InjectRepository(PoolShot)
     private readonly shotRepo: Repository<PoolShot>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly rngService: RngService,
     private readonly poolService: PoolService,
@@ -83,6 +86,13 @@ export class PoolMatchService {
     const state = newGame(buildTable(physics), seed, breaker);
     const repo = manager ? manager.getRepository(PoolMatch) : this.matchRepo;
 
+    // Snapshot each real player's display (Telegram) name so the client can show
+    // the actual opponent, not a generic label. Bot seats (null userId) stay null.
+    const [seatAName, seatBName] = await Promise.all([
+      this.resolveName(input.seatAUserId),
+      this.resolveName(input.seatBUserId),
+    ]);
+
     const match = repo.create({
       id: matchId,
       mode: input.mode,
@@ -90,6 +100,8 @@ export class PoolMatchService {
       status: 'active',
       seatAUserId: input.seatAUserId,
       seatBUserId: input.seatBUserId,
+      seatAName,
+      seatBName,
       stakeMinor: input.stakeMinor ?? 0,
       rackSeed: seed,
       seedHash: draw.randomnessMaterialHash,
@@ -145,6 +157,13 @@ export class PoolMatchService {
     });
     this.broadcastMatch(match);
     return match;
+  }
+
+  /** A user's display (Telegram) name, or null for a bot/unknown seat. */
+  private async resolveName(userId: string | null): Promise<string | null> {
+    if (!userId) return null;
+    const u = await this.userRepo.findOne({ where: { id: userId }, select: { id: true, displayName: true } });
+    return u?.displayName ?? null;
   }
 
   // ── Reads ─────────────────────────────────────────────────────────────────
@@ -482,6 +501,8 @@ export class PoolMatchService {
       status: m.status,
       seatAUserId: m.seatAUserId,
       seatBUserId: m.seatBUserId,
+      seatAName: m.seatAName ?? null,
+      seatBName: m.seatBName ?? null,
       stakeMinor: m.stakeMinor,
       turn: m.turn,
       groups: { A: m.groupA, B: m.groupB },

@@ -41,6 +41,17 @@ export class PoolMatch {
   @Column({ type: 'varchar', length: 36, nullable: true })
   seatBUserId: string | null;
 
+  /**
+   * Display (Telegram) names captured at creation so the client can show the real
+   * opponent's name — not a generic "Opponent" — without a per-view user lookup.
+   * Null for a bot seat (the client renders "AI") or legacy rows.
+   */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  seatAName: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  seatBName: string | null;
+
   /** Per-seat stake in minor units (escrow handled by a later step). */
   @Column({ type: 'int', default: 0 })
   stakeMinor: number;

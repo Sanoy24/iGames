@@ -51,6 +51,7 @@ function harness(opponent: { userId: string; stakeMinor: number } | null) {
   const gateway = {
     emitPoolMatchFound: jest.fn(),
     emitPoolMatchUpdated: jest.fn(),
+    broadcastLiveCounts: jest.fn().mockResolvedValue(undefined),
   } as unknown as GameEventsGateway;
 
   const service = new PoolMatchmakingService(queueRepo, dataSource, poolService, matchService, walletService, gateway);

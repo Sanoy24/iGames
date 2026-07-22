@@ -13,6 +13,7 @@ import { BingoRoomResponse } from '../bingo/bingo.service';
 import { WalletSummary } from '../wallet/wallet.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { User } from '../users/entities/user.entity';
+import { PoolQueueEntry } from '../pool/entities/pool-queue-entry.entity';
 import { PresenceService } from './presence.service';
 
 export type KenoDrawStartedPayload = {
@@ -86,6 +87,8 @@ export class GameEventsGateway
     @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(PoolQueueEntry)
+    private readonly poolQueueRepo: Repository<PoolQueueEntry>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly presenceService: PresenceService,
@@ -196,6 +199,10 @@ export class GameEventsGateway
       crashBots: 0,
       totalBots: 0,
     }));
+    // Players actively waiting in the two-player Pool queue. DB-sourced (shared
+    // across instances) so any node's heartbeat reports the true figure. Powers
+    // the Home "someone's waiting for a Pool match" banner.
+    const poolWaiting = await this.poolQueueRepo.count().catch(() => 0);
     return {
       kenoOnline: real.kenoOnline + bots.kenoBots,
       bingoOnline: real.bingoOnline + bots.bingoBots,
@@ -205,6 +212,7 @@ export class GameEventsGateway
       // Playing = real players in a game + bots participating in a game.
       totalPlaying: real.totalPlaying + bots.kenoBots + bots.bingoBots + bots.crashBots,
       totalConnections: real.totalConnections,
+      poolWaiting,
       bots,
     };
   }

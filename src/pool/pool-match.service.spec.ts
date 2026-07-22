@@ -27,6 +27,10 @@ function harness() {
     find: ({ where }: any) => Promise.resolve(shots.filter((s) => s.matchId === where.matchId)),
   } as unknown as Repository<PoolShot>;
 
+  const userRepo = {
+    findOne: ({ where }: any) => Promise.resolve({ id: where.id, displayName: `User ${where.id}` }),
+  } as unknown as Repository<import('../users/entities/user.entity').User>;
+
   const insertShot = (row: any) => {
     if (shots.some((s) => s.matchId === row.matchId && s.shotIndex === row.shotIndex)) {
       const err: any = new Error('dup');
@@ -92,7 +96,7 @@ function harness() {
     onMatchCompleted: jest.fn().mockResolvedValue(undefined),
   } as unknown as import('./pool-tournament.service').PoolTournamentService;
 
-  const service = new PoolMatchService(matchRepo, shotRepo, dataSource, rng, pool, wallet, gateway, bot, tournament);
+  const service = new PoolMatchService(matchRepo, shotRepo, userRepo, dataSource, rng, pool, wallet, gateway, bot, tournament);
   return { service, matches, shots, insertShot, rng, pool, wallet, gateway };
 }
 

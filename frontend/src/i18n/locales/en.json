@@ -46,7 +46,9 @@
     "recentActivity": "Recent Activity",
     "helpFaq": "Help & FAQ",
     "won": "won",
-    "on": "on"
+    "on": "on",
+    "poolWaiting": "🎱 {{count}} players are waiting for a Pool match — tap to play",
+    "poolWaitingOne": "🎱 A player is waiting for a Pool match — tap to play"
   },
   "gameCard": {
     "fastDraw": "Fast Draw",
@@ -230,7 +232,11 @@
       "active": "Active",
       "completed": "Completed",
       "cancelled": "Cancelled"
-    }
+    },
+    "searchingCountdown": "Looking for a human for {{secs}}s…",
+    "noPlayersTitle": "No players found",
+    "noPlayersBody": "No opponent joined at this stake yet. Play the AI now, or keep waiting for a human.",
+    "keepSearching": "Keep searching"
   },
   "leaderboard": {
     "title": "Leaderboard",

@@ -28,6 +28,8 @@ export type LiveCounts = {
   totalOnline: number;
   totalPlaying: number;
   totalConnections: number;
+  /** Players currently waiting in the two-player Pool matchmaking queue. */
+  poolWaiting?: number;
   /** House bot breakdown folded into the *Online numbers above (for admin/insight). */
   bots?: {
     kenoBots: number;

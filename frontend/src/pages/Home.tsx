@@ -106,6 +106,38 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
   );
 }
 
+// ─── Pool waiting marquee ──────────────────────────────────────────────────────
+
+// Advertises that a player is sitting in the Pool queue so others can hop in and
+// match them. Rendered only while at least one player is actually waiting; tapping
+// it jumps straight to the Pool tab.
+function PoolWaitingTicker({ count, onGo }: { count: number; onGo: () => void }) {
+  const { t } = useTranslation();
+  if (count <= 0) return null;
+  const msg = count === 1 ? t('home.poolWaitingOne') : t('home.poolWaiting', { count });
+  const items = Array.from({ length: 6 });
+  return (
+    <button
+      onClick={onGo}
+      className="ticker-wrap"
+      style={{
+        display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer', color: 'inherit',
+        borderRadius: 10, padding: '6px 0',
+        background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.28)',
+      }}
+    >
+      <div className="ticker-inner">
+        {items.map((_, i) => (
+          <span key={i} className="ticker-item" style={{ color: 'var(--gold)' }}>
+            <span className="ticker-item-name" style={{ fontWeight: 700 }}>{msg}</span>
+            <span style={{ color: 'rgba(234,179,8,0.35)', margin: '0 10px' }}>•</span>
+          </span>
+        ))}
+      </div>
+    </button>
+  );
+}
+
 // ─── FAQ ─────────────────────────────────────────────────────────────────────
 
 const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
@@ -333,6 +365,14 @@ export function Home({ onNavigate }: Props) {
 
       {/* ── Live wins ticker ── */}
       <LiveWinsTicker wins={recentWins} />
+
+      {/* ── Pool queue call-to-action (only while someone is waiting, Pool visible) ── */}
+      {!gameInfo('pool').hidden && (
+        <PoolWaitingTicker
+          count={liveCounts?.poolWaiting ?? 0}
+          onGo={() => { soundEngine.click(); onNavigate('pool'); }}
+        />
+      )}
 
       {/* ── Balance hero ── */}
       <section className="jackpot-hero">

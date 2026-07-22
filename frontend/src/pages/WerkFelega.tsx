@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import confetti from 'canvas-confetti';
-import { ArrowLeft, Pause, Play, Settings, Volume2, VolumeX, X, Zap } from 'lucide-react';
+import {
+  ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
+  Pause, Play, Settings, Volume2, VolumeX, X, Zap,
+} from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { walletApi } from '../lib/api';
 import { getErrorMessage } from '../lib/utils';
@@ -228,15 +231,23 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   if (screen === 'result' && result) return <ResultScreen result={result} onNewGame={backToLobby} onMenu={onBack} />;
 
   // ── PLAYING ─────────────────────────────────────────────────────────────────
+  // Portrait layout: a fixed top HUD bar, a flexible maze viewport that the canvas
+  // fills (nothing overlaps it but the transient sprint countdown), and a bottom
+  // control deck holding the live board + D-pad + action buttons.
   const g = gameRef.current;
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: C.bg, overflow: 'hidden' }}>
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
-      {g && <GameHud game={g} muted={muted} paused={paused} onLeave={leaveGame} onPause={() => setPaused((p) => !p)} onMute={toggleMute} />}
-      {g && <Joystick inputRef={inputRef} />}
-      {g && <ActionButtons inputRef={inputRef} />}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: C.bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {g && <TopHud game={g} name={user?.displayName ?? t('werk.you')} muted={muted} paused={paused} onLeave={leaveGame} onPause={() => setPaused((p) => !p)} onMute={toggleMute} />}
+
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
+        {g && <SprintOverlay game={g} />}
+      </div>
+
+      {g && <ControlDeck game={g} inputRef={inputRef} />}
+
       {paused && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(11,15,20,0.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(11,15,20,0.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
           <div style={{ ...glass, padding: 26, textAlign: 'center', minWidth: 220 }}>
             <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 18, color: C.text }}>{t('werk.paused')}</div>
             <button onClick={() => setPaused(false)} style={{ ...primaryBtn, width: '100%', marginBottom: 10, justifyContent: 'center' }}><Play size={15} /> {t('werk.resume')}</button>
@@ -248,82 +259,144 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── HUD ──────────────────────────────────────────────────────────────────────
-function GameHud({ game, muted, paused, onLeave, onPause, onMute }: {
-  game: WerkGame; muted: boolean; paused: boolean; onLeave: () => void; onPause: () => void; onMute: () => void;
+// ── Top HUD bar (a real bar — never drawn over the maze) ─────────────────────
+function TopHud({ game, name, muted, paused, onLeave, onPause, onMute }: {
+  game: WerkGame; name: string; muted: boolean; paused: boolean; onLeave: () => void; onPause: () => void; onMute: () => void;
 }) {
   const { t } = useTranslation();
-  const standings = game.standings();
-  const mine = standings.find((s) => s.player.isHuman)!;
-  const top = standings.slice(0, 5);
+  const mine = game.standings().find((s) => s.player.isHuman)!;
   const h = game.human;
   const secs = Math.ceil(game.timeLeft);
   const isSprint = game.isFinalSprint;
-
+  const initial = (name || '?').trim().charAt(0).toUpperCase() || '?';
   return (
-    <>
-      {/* Top bar */}
-      <div style={{ position: 'absolute', top: 10, left: 10, right: 10, display: 'flex', gap: 8, alignItems: 'flex-start', pointerEvents: 'none' }}>
-        <button onClick={onLeave} style={{ ...iconBtn, pointerEvents: 'auto' }} aria-label="Leave"><ArrowLeft size={16} /></button>
-        <div style={{ marginInline: 'auto', textAlign: 'center', padding: '5px 20px', borderRadius: 14, ...glass, background: isSprint ? 'rgba(255,92,92,0.82)' : 'rgba(22,27,34,0.72)', borderColor: isSprint ? C.danger : C.border, transform: isSprint ? `scale(${1 + 0.05 * Math.sin(Date.now() / 110)})` : 'none' }}>
-          <div style={{ fontSize: 26, fontWeight: 900, fontFamily: 'ui-monospace, monospace', lineHeight: 1, color: '#fff', letterSpacing: '0.02em' }}>{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</div>
-        </div>
-        <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
-          <button onClick={onPause} style={iconBtn} aria-label="Pause">{paused ? <Play size={16} /> : <Pause size={16} />}</button>
-          <button onClick={onMute} style={iconBtn} aria-label="Mute">{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
-        </div>
-      </div>
-
-      {/* Minimap top-right */}
-      <Minimap game={game} />
-
-      {/* Compact leaderboard, top-right below minimap */}
-      <div style={{ position: 'absolute', top: 148, right: 10, width: 150, ...glass, padding: '8px 9px', fontSize: 11.5 }}>
-        <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', color: C.dim, marginBottom: 5 }}>{t('werk.leaderboard')}</div>
-        {top.map((s, i) => (
-          <div key={s.player.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 0', fontWeight: s.player.isHuman ? 800 : 500, color: s.player.isHuman ? C.accent : C.text }}>
-            <span style={{ width: 11, textAlign: 'right', color: C.dim }}>{i + 1}</span>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.player.color, flexShrink: 0 }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{s.player.isHuman ? t('werk.you') : s.player.name}</span>
-            <span style={{ fontFamily: 'ui-monospace, monospace', color: C.coin }}>{s.player.coinValue}</span>
+    <div style={{ ...glass, borderRadius: 0, borderTopWidth: 0, borderInline: 'none', padding: '8px 10px calc(8px)', paddingTop: 'calc(8px + env(safe-area-inset-top))', display: 'flex', flexDirection: 'column', gap: 7, zIndex: 10, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button onClick={onLeave} style={iconBtn} aria-label="Leave"><ArrowLeft size={16} /></button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 15, color: '#06121a', background: `linear-gradient(135deg, ${C.accent}, ${C.accent2})` }}>{initial}</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+            <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.05em' }}>#{mine.rank}<span style={{ opacity: 0.6 }}> / {game.players.length}</span></div>
           </div>
-        ))}
+        </div>
+        <div style={{ padding: '4px 14px', borderRadius: 12, background: isSprint ? 'rgba(255,92,92,0.85)' : 'rgba(30,36,45,0.7)', border: `1px solid ${isSprint ? C.danger : C.border}` }}>
+          <span style={{ fontSize: 20, fontWeight: 900, fontFamily: 'ui-monospace, monospace', color: '#fff', letterSpacing: '0.02em' }}>{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</span>
+        </div>
+        <button onClick={onPause} style={iconBtn} aria-label="Pause">{paused ? <Play size={16} /> : <Pause size={16} />}</button>
+        <button onClick={onMute} style={iconBtn} aria-label="Mute">{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
       </div>
-
-      {/* Coins + rank cluster, bottom-center-ish (above controls) */}
-      <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', marginTop: 46, display: 'flex', gap: 8, pointerEvents: 'none' }}>
-        <span style={{ ...glass, padding: '4px 12px', fontSize: 15, fontWeight: 800, color: C.coin, display: 'flex', alignItems: 'center', gap: 5 }}>🪙 {h.coinValue}</span>
-        <span style={{ ...glass, padding: '4px 12px', fontSize: 14, fontWeight: 800, color: C.text }}>#{mine.rank}<span style={{ color: C.dim, fontSize: 11 }}>/{game.players.length}</span></span>
-      </div>
-
-      {/* Personal stats bottom-left (compact) */}
-      <div style={{ position: 'absolute', bottom: 150, left: 12, ...glass, padding: '7px 10px', fontSize: 11, minWidth: 128 }}>
-        <div style={{ display: 'flex', gap: 8, color: C.dim }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, background: 'rgba(255,213,74,0.12)', border: '1px solid rgba(255,213,74,0.3)', color: C.coin, fontWeight: 800, fontSize: 13 }}>🪙 {h.coinValue}</span>
+        <span style={{ display: 'flex', gap: 8, fontSize: 11, color: C.dim }}>
           <span style={{ color: COIN_COLOR.bronze }}>●{h.bronze}</span>
           <span style={{ color: COIN_COLOR.silver }}>●{h.silver}</span>
           <span style={{ color: COIN_COLOR.gold }}>●{h.gold}</span>
-        </div>
-        <div style={{ marginTop: 6, height: 5, background: 'rgba(255,255,255,0.12)', borderRadius: 3, overflow: 'hidden' }}>
+        </span>
+        <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden', minWidth: 36 }} title="Energy">
           <div style={{ width: `${h.stamina}%`, height: '100%', background: h.stamina > 30 ? C.success : C.danger, transition: 'width 0.1s' }} />
         </div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 5 }}>
-          {h.boost > 0 && <span style={{ color: C.accent }}>⚡{h.boost.toFixed(0)}</span>}
-          {h.magnet > 0 && <span style={{ color: C.accent2 }}>🧲{h.magnet.toFixed(0)}</span>}
-          {(h._pendingSpeed || h._pendingMagnet || h._pendingShield) && <span style={{ color: C.coin }}>★{t('werk.powerReady')}</span>}
-        </div>
+        <span style={{ fontSize: 10, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
+          {game.opts.mode === 'B' ? t('werk.modeB') : t('werk.modeA')}
+        </span>
       </div>
-
-      {isSprint && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-          <div style={{ fontSize: 130, fontWeight: 900, color: 'rgba(255,92,92,0.9)', textShadow: `0 0 50px ${C.danger}` }}>{secs > 0 ? secs : t('werk.timeUp')}</div>
-          <div style={{ position: 'absolute', top: '16%', fontSize: 15, fontWeight: 800, color: '#fff', background: 'rgba(255,92,92,0.75)', padding: '7px 16px', borderRadius: 10 }}>{t('werk.reachCenter')} ★</div>
-        </div>
-      )}
-    </>
+    </div>
   );
 }
 
-function Minimap({ game }: { game: WerkGame }) {
+/** Big transient countdown during the Mode-B final sprint; sits over the maze but is click-through. */
+function SprintOverlay({ game }: { game: WerkGame }) {
+  const { t } = useTranslation();
+  if (!game.isFinalSprint) return null;
+  const secs = Math.ceil(game.timeLeft);
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+      <div style={{ fontSize: 120, fontWeight: 900, color: 'rgba(255,92,92,0.9)', textShadow: `0 0 50px ${C.danger}` }}>{secs > 0 ? secs : t('werk.timeUp')}</div>
+      <div style={{ position: 'absolute', top: '12%', fontSize: 14, fontWeight: 800, color: '#fff', background: 'rgba(255,92,92,0.75)', padding: '6px 14px', borderRadius: 10 }}>{t('werk.reachCenter')} ★</div>
+    </div>
+  );
+}
+
+// ── Bottom control deck: live board + D-pad + actions ────────────────────────
+function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.MutableRefObject<HumanInput> }) {
+  const { t } = useTranslation();
+  const h = game.human;
+  const top = game.standings().slice(0, 4);
+  const powerReady = !!(h._pendingSpeed || h._pendingMagnet || h._pendingShield);
+  return (
+    <div style={{ ...glass, borderRadius: 0, borderBottomWidth: 0, borderInline: 'none', padding: '10px 12px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 12, zIndex: 10, flexShrink: 0 }}>
+      {/* Info strip: minimap + live leaderboard (out of the play area) */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <Minimap game={game} size={58} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 8.5, textTransform: 'uppercase', letterSpacing: '0.14em', color: C.dim, marginBottom: 3 }}>{t('werk.leaderboard')}</div>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2 }}>
+            {top.map((s, i) => (
+              <span key={s.player.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, flexShrink: 0, background: s.player.isHuman ? 'rgba(0,212,255,0.14)' : 'rgba(30,36,45,0.7)', border: `1px solid ${s.player.isHuman ? 'rgba(0,212,255,0.4)' : C.border}` }}>
+                <span style={{ fontSize: 9, color: C.dim }}>{i + 1}</span>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.player.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontWeight: s.player.isHuman ? 800 : 600, color: s.player.isHuman ? C.accent : C.text, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.player.isHuman ? t('werk.you') : s.player.name}</span>
+                <span style={{ fontSize: 11, fontFamily: 'ui-monospace, monospace', color: C.coin }}>{s.player.coinValue}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+        <DPad inputRef={inputRef} />
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+          <button
+            onPointerDown={(e) => { e.preventDefault(); inputRef.current.usePower = true; }}
+            aria-label="Use power-up"
+            style={{ width: 62, height: 62, borderRadius: '50%', background: 'rgba(255,213,74,0.16)', border: `2px solid ${powerReady ? C.coin : 'rgba(255,213,74,0.4)'}`, color: C.coin, fontSize: 24, touchAction: 'none', boxShadow: powerReady ? '0 0 20px rgba(255,213,74,0.5)' : 'none' }}>★</button>
+          <button
+            onPointerDown={(e) => { e.preventDefault(); inputRef.current.sprint = true; }}
+            onPointerUp={() => { inputRef.current.sprint = false; }}
+            onPointerLeave={() => { inputRef.current.sprint = false; }}
+            onPointerCancel={() => { inputRef.current.sprint = false; }}
+            aria-label="Sprint"
+            style={{ width: 62, height: 62, borderRadius: '50%', background: 'rgba(0,212,255,0.16)', border: '2px solid rgba(0,212,255,0.55)', color: C.accent, touchAction: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Zap size={24} /></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Easy directional D-pad (replaces the fiddly analog stick) ────────────────
+type Dir = 'up' | 'down' | 'left' | 'right';
+function DPad({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }) {
+  const press = (dir: Dir, v: boolean) => { inputRef.current[dir] = v; };
+  const btn = (dir: Dir, area: string, icon: React.ReactNode) => (
+    <button
+      onPointerDown={(e) => { e.preventDefault(); press(dir, true); }}
+      onPointerUp={() => press(dir, false)}
+      onPointerLeave={() => press(dir, false)}
+      onPointerCancel={() => press(dir, false)}
+      style={{ gridArea: area, ...dpadBtn }}
+      aria-label={dir}
+    >{icon}</button>
+  );
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 52px)', gridTemplateRows: 'repeat(3, 52px)', gap: 6, gridTemplateAreas: `'. u .' 'l m r' '. d .'`, touchAction: 'none', userSelect: 'none' }}>
+      {btn('up', 'u', <ChevronUp size={22} />)}
+      {btn('left', 'l', <ChevronLeft size={22} />)}
+      <div style={{ gridArea: 'm', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 12, height: 12, borderRadius: '50%', background: 'rgba(255,255,255,0.18)' }} />
+      </div>
+      {btn('right', 'r', <ChevronRight size={22} />)}
+      {btn('down', 'd', <ChevronDown size={22} />)}
+    </div>
+  );
+}
+const dpadBtn: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 14,
+  background: 'rgba(30,36,45,0.9)', border: `1px solid ${C.border}`, color: C.text,
+  touchAction: 'none', userSelect: 'none', cursor: 'pointer', WebkitTapHighlightColor: 'transparent',
+};
+
+function Minimap({ game, size = 118 }: { game: WerkGame; size?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const cv = ref.current; if (!cv) return;
@@ -341,49 +414,7 @@ function Minimap({ game }: { game: WerkGame }) {
       ctx.beginPath(); ctx.arc(p.x * scale, p.y * scale, p.isHuman ? 3 : 2, 0, Math.PI * 2); ctx.fill();
     }
   });
-  return <canvas ref={ref} width={128} height={128} style={{ position: 'absolute', top: 12, right: 10, width: 118, height: 118, borderRadius: 14, ...glass }} />;
-}
-
-// ── Floating analog joystick (left half) ───────────────────────────────────
-function Joystick({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }) {
-  const [base, setBase] = useState<{ x: number; y: number } | null>(null);
-  const [thumb, setThumb] = useState({ x: 0, y: 0 });
-  const R = 46;
-  const clear = () => { const i = inputRef.current; i.up = i.down = i.left = i.right = false; };
-  const apply = (dx: number, dy: number) => {
-    const i = inputRef.current; const dead = 12;
-    i.left = dx < -dead; i.right = dx > dead; i.up = dy < -dead; i.down = dy > dead;
-  };
-  return (
-    <div
-      style={{ position: 'absolute', left: 0, bottom: 0, width: '50%', height: 260, touchAction: 'none', zIndex: 5 }}
-      onPointerDown={(e) => { (e.target as HTMLElement).setPointerCapture(e.pointerId); setBase({ x: e.clientX, y: e.clientY }); setThumb({ x: 0, y: 0 }); }}
-      onPointerMove={(e) => { if (!base) return; let dx = e.clientX - base.x, dy = e.clientY - base.y; const m = Math.hypot(dx, dy); if (m > R) { dx = (dx / m) * R; dy = (dy / m) * R; } setThumb({ x: dx, y: dy }); apply(dx, dy); }}
-      onPointerUp={() => { setBase(null); clear(); }}
-      onPointerCancel={() => { setBase(null); clear(); }}
-    >
-      {base && (
-        <div style={{ position: 'fixed', left: base.x - R, top: base.y - R, width: R * 2, height: R * 2, borderRadius: '50%', ...glass, background: 'rgba(0,212,255,0.06)', borderColor: 'rgba(0,212,255,0.35)' }}>
-          <div style={{ position: 'absolute', left: R + thumb.x - 22, top: R + thumb.y - 22, width: 44, height: 44, borderRadius: '50%', background: 'rgba(0,212,255,0.5)', border: '2px solid rgba(0,212,255,0.8)', boxShadow: '0 0 18px rgba(0,212,255,0.5)' }} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ActionButtons({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }) {
-  return (
-    <div style={{ position: 'absolute', right: 16, bottom: 24, display: 'flex', flexDirection: 'column', gap: 12, zIndex: 6 }}>
-      <button
-        onPointerDown={(e) => { e.preventDefault(); inputRef.current.usePower = true; }}
-        style={{ width: 66, height: 66, borderRadius: '50%', background: 'rgba(255,213,74,0.18)', border: '2px solid rgba(255,213,74,0.6)', color: C.coin, fontSize: 26, touchAction: 'none', boxShadow: '0 0 20px rgba(255,213,74,0.25)' }}>★</button>
-      <button
-        onPointerDown={(e) => { e.preventDefault(); inputRef.current.sprint = true; }}
-        onPointerUp={() => { inputRef.current.sprint = false; }}
-        onPointerLeave={() => { inputRef.current.sprint = false; }}
-        style={{ width: 66, height: 66, borderRadius: '50%', background: 'rgba(0,212,255,0.16)', border: '2px solid rgba(0,212,255,0.55)', color: C.accent, touchAction: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Zap size={26} /></button>
-    </div>
-  );
+  return <canvas ref={ref} width={128} height={128} style={{ width: size, height: size, borderRadius: 12, ...glass, flexShrink: 0 }} />;
 }
 
 // ── Result screen ──────────────────────────────────────────────────────────
@@ -485,6 +516,24 @@ const primaryBtn: React.CSSProperties = { display: 'flex', alignItems: 'center',
 const ghostBtn: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 12, background: 'rgba(30,36,45,0.7)', border: `1px solid ${C.border}`, color: C.text, fontWeight: 600, fontSize: 13.5, cursor: 'pointer' };
 const iconBtn: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 12, ...glass, color: C.text, cursor: 'pointer' };
 
+// ── Maze themes (admin-selectable "sector" look) ─────────────────────────────
+type ThemeKey = 'adwa' | 'highland' | 'desert';
+const THEMES: Record<ThemeKey, { floor: string; tile: string; tileEdge: string; wall: string; wallGlow: string; hub: string }> = {
+  adwa: { floor: '#0e131a', tile: 'rgba(124,92,255,0.05)', tileEdge: 'rgba(0,212,255,0.10)', wall: '#C79B36', wallGlow: 'rgba(212,160,23,0.4)', hub: '#FCDD09' },
+  highland: { floor: '#0b1613', tile: 'rgba(52,211,153,0.05)', tileEdge: 'rgba(52,211,153,0.14)', wall: '#2FBF8F', wallGlow: 'rgba(47,191,143,0.4)', hub: '#34D399' },
+  desert: { floor: '#191308', tile: 'rgba(251,191,36,0.06)', tileEdge: 'rgba(251,191,36,0.15)', wall: '#E0A23A', wallGlow: 'rgba(224,162,58,0.4)', hub: '#FBBF24' },
+};
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 // ── Canvas world renderer (premium dark maze) ────────────────────────────────
 function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: number) {
   if (!canvas) return;
@@ -506,9 +555,22 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
   ctx.save();
   ctx.translate(-camX, -camY);
 
-  // Floor (dark with a faint warm vignette around the player)
-  ctx.fillStyle = '#12161c';
+  const th = THEMES[(game.opts.theme as ThemeKey)] ?? THEMES.adwa;
+
+  // Floor
+  ctx.fillStyle = th.floor;
   ctx.fillRect(0, 0, game.worldPx, game.worldPx);
+
+  // Sector tiles — the bordered "rooms" grid look (visible cells only).
+  {
+    const tsc = Math.max(0, Math.floor(camX / CELL) - 1), tec = Math.min(game.size - 1, Math.ceil((camX + vw) / CELL) + 1);
+    const tsr = Math.max(0, Math.floor(camY / CELL) - 1), ter = Math.min(game.size - 1, Math.ceil((camY + vh) / CELL) + 1);
+    ctx.fillStyle = th.tile; ctx.strokeStyle = th.tileEdge; ctx.lineWidth = 1;
+    for (let gy = tsr; gy <= ter; gy++) for (let gx = tsc; gx <= tec; gx++) {
+      roundRectPath(ctx, gx * CELL + 3, gy * CELL + 3, CELL - 6, CELL - 6, 6);
+      ctx.fill(); ctx.stroke();
+    }
+  }
 
   // Center hub
   const [ccx, ccy] = game.center;
@@ -520,15 +582,15 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
   grad.addColorStop(1, 'rgba(255,213,74,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(hubX - CELL * 1.4, hubY - CELL * 1.4, CELL * 2.8, CELL * 2.8);
-  ctx.fillStyle = isSprint ? C.danger : '#c79b16';
+  ctx.fillStyle = isSprint ? C.danger : th.hub;
   ctx.font = `${CELL * 0.9}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('★', hubX, hubY + 2);
 
-  // Walls (warm gold, subtle glow)
+  // Walls (themed, subtle glow)
   const sc = Math.max(0, Math.floor(camX / CELL) - 1), ec = Math.min(game.size - 1, Math.ceil((camX + vw) / CELL) + 1);
   const sr = Math.max(0, Math.floor(camY / CELL) - 1), er = Math.min(game.size - 1, Math.ceil((camY + vh) / CELL) + 1);
-  ctx.strokeStyle = '#C79B36'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
-  ctx.shadowColor = 'rgba(212,160,23,0.4)'; ctx.shadowBlur = 6;
+  ctx.strokeStyle = th.wall; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+  ctx.shadowColor = th.wallGlow; ctx.shadowBlur = 6;
   ctx.beginPath();
   for (let gy = sr; gy <= er; gy++) for (let gx = sc; gx <= ec; gx++) {
     const cell = game.grid[gy][gx];

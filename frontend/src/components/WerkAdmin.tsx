@@ -156,9 +156,9 @@ export function WerkAdmin({ onClose, embedded = false }: { onClose?: () => void;
               <span style={{ fontSize: 12, fontWeight: 600 }}>Maze theme</span>
               <select value={cfg.mazeTheme} onChange={(e) => set('mazeTheme', e.target.value as AdminWerkConfig['mazeTheme'])}
                 style={{ padding: '8px 9px', borderRadius: 8, border: '1px solid var(--border, rgba(255,255,255,0.15))', background: 'var(--surface,#0c0a08)', color: 'inherit' }}>
-                <option value="adwa">Adwa</option>
-                <option value="highland">Highland</option>
-                <option value="desert">Desert</option>
+                <option value="adwa">Adwa — gold walls / cyan sectors</option>
+                <option value="highland">Highland — teal / green</option>
+                <option value="desert">Desert — amber / sand</option>
               </select>
             </label>
 

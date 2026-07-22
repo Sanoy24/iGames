@@ -351,7 +351,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       }
     };
 
-    const render = (now: number) => {
+    const drawFrame = (now: number) => {
       // Pop the next queued shot: opponent shots get a pre-roll (glide the cue into
       // place if ball-in-hand, then pull back); ours strike immediately.
       if (!anim.current && !preShot.current && queue.current.length > 0) {
@@ -378,26 +378,36 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
         const dtReal = Math.min(0.05, (now - a.last) / 1000);
         a.last = now; a.time += dtReal;
         const total = (a.frames.length - 1) * a.frameDt;
-        const clamped = Math.min(a.time, total);
+        // A malformed/degenerate recording (fewer than 2 frames, or a non-finite
+        // duration) must not stall on a stale frame forever — treat it as done so
+        // we snap back to the authoritative board instead of freezing the table.
+        const done = a.frames.length < 2 || !Number.isFinite(total) || a.time >= total;
+        const clamped = Number.isFinite(total) ? Math.min(a.time, total) : 0;
         // Interpolate between the two nearest recorded frames for buttery motion.
-        const fp = clamped / a.frameDt;
-        const lo = Math.floor(fp);
+        const fpRaw = clamped / a.frameDt;
+        const fp = Number.isFinite(fpRaw) ? fpRaw : 0;
+        const lo = Math.min(Math.max(0, Math.floor(fp)), a.frames.length - 1);
         const hi = Math.min(lo + 1, a.frames.length - 1);
         const frac = fp - lo;
         const f0 = a.frames[lo], f1 = a.frames[hi];
-        balls.current.forEach((b, idx) => {
-          const p0 = f0[idx], p1 = f1[idx];
-          if (!p0 || !p1) return;
-          const nx = p0.x + (p1.x - p0.x) * frac;
-          const ny = p0.y + (p1.y - p0.y) * frac;
-          a.vel[idx] = { x: (p1.x - p0.x) / a.frameDt, y: (p1.y - p0.y) / a.frameDt };
-          b.pos.x = nx; b.pos.y = ny; b.pocketed = p1.pocketed;
-        });
+        if (f0 && f1) {
+          balls.current.forEach((b, idx) => {
+            const p0 = f0[idx], p1 = f1[idx];
+            if (!p0 || !p1) return;
+            const nx = p0.x + (p1.x - p0.x) * frac;
+            const ny = p0.y + (p1.y - p0.y) * frac;
+            // Never write a non-finite position: it would throw inside the canvas
+            // gradient/arc calls below and kill the entire render loop.
+            if (!Number.isFinite(nx) || !Number.isFinite(ny)) return;
+            a.vel[idx] = { x: (p1.x - p0.x) / a.frameDt, y: (p1.y - p0.y) / a.frameDt };
+            b.pos.x = nx; b.pos.y = ny; b.pocketed = p1.pocketed;
+          });
+        }
         // Fire sounds for events reached by the current playback time.
         while (a.firedIdx < a.events.length && a.events[a.firedIdx].t <= a.time) {
           playEvent(a.events[a.firedIdx]); a.firedIdx++;
         }
-        if (a.time >= total) {
+        if (done) {
           if (a.final) balls.current = a.final.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }));
           anim.current = null;
           if (queue.current.length === 0) {
@@ -476,7 +486,33 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
         });
         ctx.restore();
       }
+    };
 
+    // The render loop must survive a bad frame. `render` only reschedules itself
+    // at its own tail, so a single uncaught throw inside `drawFrame` (e.g. a
+    // canvas call fed a non-finite value) would silently kill the loop and freeze
+    // the whole table while React keeps updating turns/score around it. Instead we
+    // catch, log once, drop transient animation state, and snap to the server's
+    // authoritative board — the game stays live and correct, just skips one shot's
+    // animation. The console error is intentionally preserved to surface the cause.
+    let errorLogged = false;
+    const render = (now: number) => {
+      try {
+        drawFrame(now);
+      } catch (e) {
+        if (!errorLogged) {
+          errorLogged = true;
+          console.error('[pool] render frame failed — recovering to authoritative board', e);
+        }
+        anim.current = null;
+        preShot.current = null;
+        queue.current = [];
+        try {
+          balls.current = viewRef.current.board.map(
+            (b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }),
+          );
+        } catch { /* board unavailable — keep the last good frame */ }
+      }
       raf = requestAnimationFrame(render);
     };
 

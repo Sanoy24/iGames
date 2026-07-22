@@ -97,7 +97,7 @@ function harness() {
   } as unknown as import('./pool-tournament.service').PoolTournamentService;
 
   const service = new PoolMatchService(matchRepo, shotRepo, userRepo, dataSource, rng, pool, wallet, gateway, bot, tournament);
-  return { service, matches, shots, insertShot, rng, pool, wallet, gateway };
+  return { service, matches, shots, insertShot, rng, pool, wallet, gateway, bot };
 }
 
 const BREAK: ShotInput = { angle: 0, power: 1, spin: { side: 0, vertical: 0 } };
@@ -217,6 +217,23 @@ describe('PoolMatchService', () => {
       m.id,
       expect.objectContaining({ winnerSeat: 'B' }),
     );
+  });
+
+  it('single-player: a shot-clock timeout hands the turn to the AI, which then plays it', async () => {
+    const { service, matches, pool, bot } = harness();
+    (pool.getConfig as jest.Mock).mockResolvedValue({
+      engineVersion: 1, rulesetVersion: 1, shotClockSeconds: 30, rakePct: 5, maxTimeoutFouls: 3,
+      botDifficulty: 'medium', singlePlayerStakeMinor: 0,
+    });
+    // Human on seat A, AI on seat B (null userId).
+    const m = await service.createMatch({ mode: 'single', seatAUserId: 'ua', seatBUserId: null });
+    expireTurn(matches.get(m.id)!);
+
+    await service.handleShotTimeout(m.id);
+
+    // The AI must actually take the handed turn (not hang on "thinking…"), so its
+    // shot planner is invoked — this is the fix for the single-player timeout hang.
+    expect(bot.computeShot).toHaveBeenCalled();
   });
 
   it('does nothing when the deadline has not passed', async () => {

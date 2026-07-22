@@ -75,6 +75,14 @@ export interface HumanInput {
   right: boolean;
   sprint: boolean;
   usePower: boolean;
+  /**
+   * Analog joystick vector, each component in [-1, 1] (y is down-positive to match
+   * screen space). Its magnitude drives variable speed (small tilt = walk, full
+   * push = run). When it's ~zero the keyboard up/down/left/right booleans are used
+   * instead, so both input methods work.
+   */
+  moveX?: number;
+  moveY?: number;
 }
 
 export interface WerkGameOptions {
@@ -198,20 +206,37 @@ export class WerkGame {
     h.boost = Math.max(0, h.boost - dt);
     h.magnet = Math.max(0, h.magnet - dt);
     h.shield = Math.max(0, h.shield - dt);
-    let dxi = 0, dyi = 0;
-    if (input.up) dyi -= 1;
-    if (input.down) dyi += 1;
-    if (input.left) dxi -= 1;
-    if (input.right) dxi += 1;
-    const wantSprint = input.sprint && h.stamina > 0 && (dxi !== 0 || dyi !== 0);
+    // Movement direction + magnitude: the analog stick wins when deflected,
+    // otherwise fall back to 8-way keyboard (which is always full speed).
+    let dirX = 0, dirY = 0, mag = 0;
+    const ax = input.moveX ?? 0, ay = input.moveY ?? 0;
+    const aMag = Math.hypot(ax, ay);
+    if (aMag > 0.001) {
+      mag = Math.min(1, aMag);
+      dirX = ax / aMag; dirY = ay / aMag;
+    } else {
+      let dxi = 0, dyi = 0;
+      if (input.up) dyi -= 1;
+      if (input.down) dyi += 1;
+      if (input.left) dxi -= 1;
+      if (input.right) dxi += 1;
+      if (dxi !== 0 || dyi !== 0) {
+        const inv = 1 / Math.hypot(dxi, dyi);
+        dirX = dxi * inv; dirY = dyi * inv; mag = 1;
+      }
+    }
+    const moving = mag > 0;
+
+    const wantSprint = input.sprint && h.stamina > 0 && moving;
     if (wantSprint) h.stamina = Math.max(0, h.stamina - STAMINA_DRAIN * dt);
     else h.stamina = Math.min(STAMINA_MAX, h.stamina + STAMINA_REGEN * dt);
-    let spd = HUMAN_SPEED;
-    if (wantSprint) spd *= SPRINT_MULT;
-    if (h.boost > 0) spd *= SPEED_BOOST_MULT;
-    if (dxi !== 0 || dyi !== 0) {
-      const inv = 1 / Math.hypot(dxi, dyi);
-      const [nx, ny] = moveWithSlide(this.layout, h.x, h.y, dxi * inv * spd * dt, dyi * inv * spd * dt, PLAYER_RADIUS);
+
+    if (moving) {
+      // Variable speed: 45% (gentle walk) at the deadzone edge → 100% at full push.
+      let spd = HUMAN_SPEED * (0.45 + 0.55 * mag);
+      if (wantSprint) spd *= SPRINT_MULT;
+      if (h.boost > 0) spd *= SPEED_BOOST_MULT;
+      const [nx, ny] = moveWithSlide(this.layout, h.x, h.y, dirX * spd * dt, dirY * spd * dt, PLAYER_RADIUS);
       h.x = nx; h.y = ny;
     }
   }

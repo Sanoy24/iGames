@@ -242,13 +242,26 @@ export class PoolMatchService {
     this.validateInput(match, input);
 
     const { outcome, match: after } = await this.applyResolvedShot(matchId, seat, input);
-
-    if (after.mode === 'single' && after.status === 'active') {
-      const botSeat: Seat | null =
-        after.seatBUserId === null ? 'B' : after.seatAUserId === null ? 'A' : null;
-      if (botSeat && after.turn === botSeat) await this.runBotTurns(matchId, botSeat);
-    }
+    await this.maybeRunBotTurns(after);
     return outcome;
+  }
+
+  /** Seat controlled by the AI in a single-player match (null if not single). */
+  private botSeatOf(match: PoolMatch): Seat | null {
+    if (match.mode !== 'single') return null;
+    return match.seatBUserId === null ? 'B' : match.seatAUserId === null ? 'A' : null;
+  }
+
+  /**
+   * If it's the AI's turn in a single-player match, play it out. Called after a
+   * human shot AND after a shot-clock timeout hands the turn to the AI — without
+   * this the AI would sit on "thinking…" whenever it got the turn from anything
+   * other than the human's own submitted shot.
+   */
+  private async maybeRunBotTurns(match: PoolMatch): Promise<void> {
+    if (match.status !== 'active') return;
+    const botSeat = this.botSeatOf(match);
+    if (botSeat && match.turn === botSeat) await this.runBotTurns(match.id, botSeat);
   }
 
   /** Run, resolve, persist, settle and broadcast one shot in a transaction. */
@@ -479,6 +492,13 @@ export class PoolMatchService {
           .onMatchCompleted(fresh)
           .catch((e) => this.logger.error(`Tournament advance failed: ${e?.message ?? e}`));
       }
+    } else {
+      // Turn passed to the AI on a timeout — let it actually play, otherwise the
+      // game hangs on "AI thinking" and the shot clock ping-pongs the player to a
+      // forfeit loss (the 8 never pocketed). Mirrors the submitShot bot hand-off.
+      await this.maybeRunBotTurns(fresh).catch((e) =>
+        this.logger.warn(`Bot turn after timeout failed for ${matchId}: ${e?.message ?? e}`),
+      );
     }
   }
 

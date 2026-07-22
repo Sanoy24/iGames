@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import confetti from 'canvas-confetti';
 import {
-  ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp,
-  Pause, Play, Settings, Volume2, VolumeX, X, Zap,
+  ArrowLeft, Pause, Play, Settings, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { walletApi } from '../lib/api';
@@ -345,7 +344,7 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
 
       {/* Controls */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-        <DPad inputRef={inputRef} />
+        <Joystick inputRef={inputRef} />
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
           <button
             onPointerDown={(e) => { e.preventDefault(); inputRef.current.usePower = true; }}
@@ -364,37 +363,84 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
   );
 }
 
-// ── Easy directional D-pad (replaces the fiddly analog stick) ────────────────
-type Dir = 'up' | 'down' | 'left' | 'right';
-function DPad({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }) {
-  const press = (dir: Dir, v: boolean) => { inputRef.current[dir] = v; };
-  const btn = (dir: Dir, area: string, icon: React.ReactNode) => (
-    <button
-      onPointerDown={(e) => { e.preventDefault(); press(dir, true); }}
-      onPointerUp={() => press(dir, false)}
-      onPointerLeave={() => press(dir, false)}
-      onPointerCancel={() => press(dir, false)}
-      style={{ gridArea: area, ...dpadBtn }}
-      aria-label={dir}
-    >{icon}</button>
-  );
+// ── Virtual analog thumbstick (fixed base, drag the knob to move 360°) ────────
+// Sits where the old D-pad was. Deflection sets an analog vector on the input ref
+// (magnitude → variable speed); the knob follows the thumb and springs back on
+// release. Pointer capture keeps it tracking even if the thumb leaves the base.
+const JOY_SIZE = 150;    // base diameter (px) — matches the old D-pad footprint
+const JOY_KNOB = 62;     // knob diameter (px)
+const JOY_TRAVEL = (JOY_SIZE - JOY_KNOB) / 2; // max knob-center offset from base center
+const JOY_DEADZONE = 0.14; // fraction of travel ignored, so a resting thumb doesn't creep
+
+function Joystick({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }) {
+  const baseRef = useRef<HTMLDivElement>(null);
+  const knobRef = useRef<HTMLDivElement>(null);
+  const activeId = useRef<number | null>(null);
+
+  const reset = () => {
+    activeId.current = null;
+    if (knobRef.current) knobRef.current.style.transform = 'translate(-50%, -50%)';
+    inputRef.current.moveX = 0;
+    inputRef.current.moveY = 0;
+  };
+  const track = (clientX: number, clientY: number) => {
+    const base = baseRef.current; if (!base) return;
+    const rect = base.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    const dx = clientX - cx, dy = clientY - cy;
+    const dist = Math.hypot(dx, dy);
+    const nx = dist > 0 ? dx / dist : 0, ny = dist > 0 ? dy / dist : 0;
+    const clamped = Math.min(dist, JOY_TRAVEL);
+    if (knobRef.current) {
+      knobRef.current.style.transform = `translate(calc(-50% + ${nx * clamped}px), calc(-50% + ${ny * clamped}px))`;
+    }
+    const raw = clamped / JOY_TRAVEL; // 0..1
+    const mag = raw <= JOY_DEADZONE ? 0 : (raw - JOY_DEADZONE) / (1 - JOY_DEADZONE);
+    inputRef.current.moveX = nx * mag;
+    inputRef.current.moveY = ny * mag;
+  };
+  const onDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    activeId.current = e.pointerId;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    track(e.clientX, e.clientY);
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (activeId.current !== e.pointerId) return;
+    track(e.clientX, e.clientY);
+  };
+  const onUp = (e: React.PointerEvent) => {
+    if (activeId.current !== e.pointerId) return;
+    reset();
+  };
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 52px)', gridTemplateRows: 'repeat(3, 52px)', gap: 6, gridTemplateAreas: `'. u .' 'l m r' '. d .'`, touchAction: 'none', userSelect: 'none' }}>
-      {btn('up', 'u', <ChevronUp size={22} />)}
-      {btn('left', 'l', <ChevronLeft size={22} />)}
-      <div style={{ gridArea: 'm', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 12, height: 12, borderRadius: '50%', background: 'rgba(255,255,255,0.18)' }} />
-      </div>
-      {btn('right', 'r', <ChevronRight size={22} />)}
-      {btn('down', 'd', <ChevronDown size={22} />)}
+    <div
+      ref={baseRef}
+      onPointerDown={onDown}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerCancel={onUp}
+      aria-label="Move"
+      style={{
+        position: 'relative', width: JOY_SIZE, height: JOY_SIZE, borderRadius: '50%', flexShrink: 0,
+        touchAction: 'none', userSelect: 'none', WebkitTapHighlightColor: 'transparent', cursor: 'pointer',
+        background: 'radial-gradient(circle at 50% 38%, rgba(40,48,60,0.92), rgba(18,22,28,0.92))',
+        border: `2px solid ${C.border}`, boxShadow: 'inset 0 2px 12px rgba(0,0,0,0.55)',
+      }}
+    >
+      <div style={{ position: 'absolute', inset: 12, borderRadius: '50%', border: '1px dashed rgba(255,255,255,0.08)' }} />
+      <div
+        ref={knobRef}
+        style={{
+          position: 'absolute', top: '50%', left: '50%', width: JOY_KNOB, height: JOY_KNOB, borderRadius: '50%',
+          transform: 'translate(-50%, -50%)', pointerEvents: 'none',
+          background: 'radial-gradient(circle at 40% 34%, rgba(0,212,255,0.95), rgba(0,140,190,0.9))',
+          border: '2px solid rgba(0,212,255,0.7)', boxShadow: '0 4px 16px rgba(0,0,0,0.55), 0 0 14px rgba(0,212,255,0.35)',
+        }}
+      />
     </div>
   );
 }
-const dpadBtn: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 14,
-  background: 'rgba(30,36,45,0.9)', border: `1px solid ${C.border}`, color: C.text,
-  touchAction: 'none', userSelect: 'none', cursor: 'pointer', WebkitTapHighlightColor: 'transparent',
-};
 
 function Minimap({ game, size = 118 }: { game: WerkGame; size?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);

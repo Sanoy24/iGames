@@ -606,9 +606,25 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     };
     const onUp = () => { placing.current = false; aiming.current = false; };
 
+    // Returning from a backgrounded tab: rAF was paused while shots may have kept
+    // streaming in over the socket. Instead of replaying that whole backlog as a
+    // fast catch-up burst (balls flying at abnormal speed), drop the queue + the
+    // frozen animation and jump straight to the authoritative board.
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      queue.current = [];
+      anim.current = null;
+      preShot.current = null;
+      const v = viewRef.current;
+      if (v?.board) {
+        balls.current = v.board.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel }, spin: { ...b.spin } }));
+      }
+    };
+
     layout();
     const onResize = () => layout();
     window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', onVisibility);
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onUp);
@@ -617,6 +633,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisibility);
       canvas.removeEventListener('pointerdown', onDown);
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);

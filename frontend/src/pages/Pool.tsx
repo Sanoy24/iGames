@@ -320,6 +320,10 @@ export function Pool({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     if (!matchId) return;
     const resync = () => {
+      // Recompute the (deadline-based) shot clock against real time immediately,
+      // so a tab that was backgrounded shows the true remaining seconds at once
+      // rather than resuming from the frozen value.
+      setNow(Date.now());
       poolApi.getMatch(matchId)
         .then((v) => {
           setMatch(v);

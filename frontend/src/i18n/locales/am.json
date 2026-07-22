@@ -224,7 +224,24 @@
       "active": "ንቁ",
       "completed": "ተጠናቋል",
       "cancelled": "ተሰርዟል"
-    }
+    },
+    "chat": {
+      "tooEasy": "በጣም ቀላል ነው 😎",
+      "bestShot": "ይኸው ነው ችሎታህ?",
+      "watchLearn": "ተመልከትና ተማር 😏",
+      "warmingUp": "ገና እያሟሟቅኩ ነው 🔥",
+      "luckNextTime": "በሚቀጥለው ጊዜ መልካም ዕድል!",
+      "feelingLucky": "ዕድለኛ ነኝ ብለህ ታስባለህ?",
+      "niceShot": "ጥሩ ምት!",
+      "wellPlayed": "ጎበዝ! 👏",
+      "gg": "ጥሩ ጨዋታ ነበር 🎱",
+      "respect": "አክብሮት 🤝",
+      "rematch": "እንደገና እንጫወት?",
+      "goodLuck": "መልካም ዕድል! 🍀"
+    },
+    "quickChat": "ፈጣን መልእክት",
+    "taunts": "ማሾፊያ",
+    "friendly": "ወዳጃዊ"
   },
   "leaderboard": {
     "title": "የደረጃ ሰሌዳ",

@@ -114,7 +114,24 @@
       "active": "Kan socho'u",
       "completed": "Xumurame",
       "cancelled": "Haqame"
-    }
+    },
+    "chat": {
+      "tooEasy": "Baay'ee salphaa dha 😎",
+      "bestShot": "Kun dandeettii kee moo?",
+      "watchLearn": "Ilaaliitii baradhu 😏",
+      "warmingUp": "Ammallee of ho'isaan jira 🔥",
+      "luckNextTime": "Yeroo itti aanu carraa gaarii!",
+      "feelingLucky": "Carraa qabda jettee yaaddaa?",
+      "niceShot": "Rukuttaa gaarii!",
+      "wellPlayed": "Gaarii taphatte! 👏",
+      "gg": "Taphni gaarii ture 🎱",
+      "respect": "Kabaja 🤝",
+      "rematch": "Irra deebinee taphannaa?",
+      "goodLuck": "Carraa gaarii! 🍀"
+    },
+    "quickChat": "Ergaa saffisaa",
+    "taunts": "Qoosaa",
+    "friendly": "Michummaa"
   },
   "leaderboard": {
     "title": "Gabatee sadarkaa",

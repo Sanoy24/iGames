@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import confetti from 'canvas-confetti';
-import { ArrowLeft, Bot, Swords, Trophy } from 'lucide-react';
+import { ArrowLeft, Bot, MessageCircle, Swords, Trophy } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
-import { poolApi } from '../lib/poolApi';
+import { poolApi, POOL_EMOTES } from '../lib/poolApi';
 import type { PoolConfig, PoolGroup, PoolMatchView, PoolTournament, Seat } from '../lib/poolApi';
-import { usePoolMatchFound, usePoolMatchSocket, type PoolShotResolvedEvent } from '../hooks/usePoolSocket';
+import { usePoolMatchFound, usePoolMatchSocket, sendPoolEmote, type PoolShotResolvedEvent, type PoolEmoteEvent } from '../hooks/usePoolSocket';
 import { PoolTable, type PoolTableHandle } from '../components/PoolTable';
 import type { Ball, ShotInput } from '@pool-engine';
 
@@ -91,7 +91,7 @@ function PocketedTray({
  * deliberately short so the table is fully visible without scrolling.
  */
 function MatchHeader({
-  onBack, meName, oppName, oppIsBot, myGroup, oppGroup, isMyTurn, ballInHand, opponentThinking, remaining, pot, board,
+  onBack, meName, oppName, oppIsBot, myGroup, oppGroup, isMyTurn, ballInHand, opponentThinking, remaining, pot, board, myEmote, oppEmote,
 }: {
   onBack: () => void;
   meName: string;
@@ -105,6 +105,9 @@ function MatchHeader({
   remaining: number | null;
   pot: number;
   board: Ball[];
+  /** Localized quick-chat text currently shown for each side (undefined = none). */
+  myEmote?: string;
+  oppEmote?: string;
 }) {
   const initial = (s: string) => (s.trim()[0] ?? '?').toUpperCase();
   const Avatar = ({ text, active, bot }: { text: string; active: boolean; bot?: boolean }) => (
@@ -123,17 +126,29 @@ function MatchHeader({
     </span>
   );
   const hasPotted = board.some((b) => b.pocketed && b.number !== 0);
+  // Quick-chat bubble hanging just under a player's avatar (auto-cleared by parent).
+  const Bubble = ({ text, side }: { text: string; side: 'left' | 'right' }) => (
+    <div style={{
+      position: 'absolute', top: 'calc(100% + 5px)', zIndex: 20,
+      ...(side === 'left' ? { left: 2 } : { right: 2 }),
+      maxWidth: 190, background: '#f4efe4', color: '#1a1712',
+      fontSize: 12, fontWeight: 600, lineHeight: 1.25, padding: '5px 9px', borderRadius: 12,
+      boxShadow: '0 8px 20px -8px rgba(0,0,0,0.8)', pointerEvents: 'none',
+      animation: 'pool-pop 0.22s cubic-bezier(0.2,0.9,0.3,1.2)',
+    }}>{text}</div>
+  );
   return (
-    <div style={{ borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border, rgba(255,255,255,0.08))', overflow: 'hidden' }}>
+    <div style={{ borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border, rgba(255,255,255,0.08))', overflow: 'visible' }}>
       {/* Row 1: players + pot + turn indicator */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 8px' }}>
         <button className="btn" onClick={onBack} style={{ padding: '3px 7px', flexShrink: 0 }} aria-label="Back to lobby"><ArrowLeft size={15} /></button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           <Avatar text={initial(meName)} active={isMyTurn} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 92, lineHeight: 1.15 }}>{meName}</div>
             <Group g={myGroup} />
           </div>
+          {myEmote && <Bubble text={myEmote} side="left" />}
         </div>
         <div style={{ marginLeft: 'auto', marginRight: 'auto', textAlign: 'center', lineHeight: 1.2 }}>
           {pot > 0 && <div style={{ fontSize: 10.5, fontWeight: 800, color: '#f6c945' }}>POT {pot}</div>}
@@ -147,12 +162,13 @@ function MatchHeader({
               ? <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--text-muted)' }}><span className="spinner" style={{ width: 10, height: 10 }} />thinking…</div>
               : null}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, justifyContent: 'flex-end' }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, justifyContent: 'flex-end' }}>
           <div style={{ minWidth: 0, textAlign: 'right' }}>
             <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 92, lineHeight: 1.15 }}>{oppName}</div>
             <Group g={oppGroup} />
           </div>
           <Avatar text={initial(oppName)} active={opponentThinking} bot={oppIsBot} />
+          {oppEmote && <Bubble text={oppEmote} side="right" />}
         </div>
       </div>
       {/* Row 2: captured balls, folded in to save vertical space */}
@@ -161,6 +177,52 @@ function MatchHeader({
           <PocketedTray board={board} myGroup={myGroup} oppGroup={oppGroup} size={15} stretch />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Floating quick-chat button: tap 💬 to open a picker of predefined phrases; each
+ * sends only its id over the socket so the opponent reads it in their own language.
+ */
+function QuickChat({ onSend, bottom }: { onSend: (id: string) => void; bottom: number }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'fixed', right: 14, bottom, zIndex: 2500 }}>
+      {open && (
+        <>
+          {/* tap-away backdrop */}
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: -1 }} />
+          <div style={{
+            position: 'absolute', right: 0, bottom: 58, width: 236, maxHeight: '46vh', overflowY: 'auto',
+            background: '#141a22', border: '1px solid var(--border, rgba(255,255,255,0.1))', borderRadius: 14,
+            padding: 10, boxShadow: '0 18px 44px -12px rgba(0,0,0,0.85)',
+          }}>
+            {(['taunts', 'friendly'] as const).map((group) => (
+              <div key={group} style={{ marginBottom: 6 }}>
+                <div style={{ fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '4px 2px 6px' }}>{t(`pool.${group}`)}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {POOL_EMOTES[group].map((id) => (
+                    <button key={id} className="btn" onClick={() => { onSend(id); setOpen(false); }}
+                      style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '7px 10px', fontSize: 13, width: '100%' }}>
+                      {t(`pool.chat.${id}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <button onClick={() => setOpen((o) => !o)} aria-label={t('pool.quickChat')}
+        style={{
+          width: 48, height: 48, borderRadius: '50%', border: '1px solid var(--border, rgba(255,255,255,0.15))',
+          background: open ? '#243244' : '#1b2530', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 8px 22px -6px rgba(0,0,0,0.75)', cursor: 'pointer',
+        }}>
+        <MessageCircle size={22} />
+      </button>
     </div>
   );
 }
@@ -181,6 +243,8 @@ export function Pool({ onBack }: { onBack: () => void }) {
   const [ended, setEnded] = useState<EndState>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
+  // Latest quick-chat emote per seat (id + timestamp), auto-cleared after a few secs.
+  const [emotes, setEmotes] = useState<Partial<Record<Seat, { id: string; ts: number }>>>({});
   const tableRef = useRef<PoolTableHandle>(null);
 
   // Orientation drives the whole play layout: portrait = tall vertical table in
@@ -216,6 +280,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
     setQueueStartedAt(null);
     setEnded(null);
     setFeed([]);
+    setEmotes({});
   };
 
   usePoolMatchFound((view) => {
@@ -233,7 +298,19 @@ export function Pool({ onBack }: { onBack: () => void }) {
       if (mySeat && e.seat !== mySeat) tableRef.current?.enqueueShot(e.input);
     },
     onMatchEnded: (e) => setEnded(e),
+    onEmote: (e: PoolEmoteEvent) => {
+      // Map the sender's userId to their seat; ignore emotes from non-players.
+      const seat: Seat | null = e.userId === match?.seatAUserId ? 'A' : e.userId === match?.seatBUserId ? 'B' : null;
+      if (!seat) return;
+      setEmotes((cur) => ({ ...cur, [seat]: { id: e.id, ts: e.ts } }));
+      // Auto-clear after ~3.4s, but only if a newer emote hasn't replaced it.
+      window.setTimeout(() => {
+        setEmotes((cur) => (cur[seat]?.ts === e.ts ? { ...cur, [seat]: undefined } : cur));
+      }, 3400);
+    },
   });
+
+  const sendEmote = (id: string) => { if (match) sendPoolEmote(match.id, id); };
 
   // Resync the authoritative match state whenever we return to the foreground or
   // the socket reconnects. Backgrounding a tab drops socket events, so a turn that
@@ -358,6 +435,13 @@ export function Pool({ onBack }: { onBack: () => void }) {
       : (oppSeatName?.trim() || t('pool.opponent'));
     const opponentThinking = match.status === 'active' && !isMyTurn;
     const oppGroup = mySeat ? match.groups[mySeat === 'A' ? 'B' : 'A'] : null;
+    // Localize each side's live quick-chat emote (in the viewer's own language).
+    const meSeatKey: Seat = mySeat ?? 'A';
+    const oppSeatKey: Seat = meSeatKey === 'A' ? 'B' : 'A';
+    const myEmote = emotes[meSeatKey] ? t(`pool.chat.${emotes[meSeatKey]!.id}`) : undefined;
+    const oppEmote = emotes[oppSeatKey] ? t(`pool.chat.${emotes[oppSeatKey]!.id}`) : undefined;
+    // Quick chat is a human-vs-human feature (no point taunting the AI).
+    const showQuickChat = match.mode !== 'single' && match.status === 'active';
     const header = (
       <MatchHeader
         onBack={backToLobby}
@@ -372,6 +456,8 @@ export function Pool({ onBack }: { onBack: () => void }) {
         remaining={remaining}
         pot={match.stakeMinor * 2}
         board={match.board}
+        myEmote={myEmote}
+        oppEmote={oppEmote}
       />
     );
     // Aim-prediction guide only vs the AI; human-vs-human is unassisted.
@@ -419,6 +505,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
             <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} assist={assist} />
           </div>
+          {showQuickChat && <QuickChat onSend={sendEmote} bottom={16} />}
           {resultModal}
         </div>
       );
@@ -442,6 +529,7 @@ export function Pool({ onBack }: { onBack: () => void }) {
           </div>
         )}
 
+        {showQuickChat && <QuickChat onSend={sendEmote} bottom={84} />}
         {resultModal}
       </div>
     );

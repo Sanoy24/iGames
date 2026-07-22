@@ -114,7 +114,24 @@
       "active": "Attiv",
       "completed": "Komplut",
       "cancelled": "Ikkanċellat"
-    }
+    },
+    "chat": {
+      "tooEasy": "Faċli wisq 😎",
+      "bestShot": "Dak l-aħjar li tista'?",
+      "watchLearn": "Ara u titgħallem 😏",
+      "warmingUp": "Għadni nisħon 🔥",
+      "luckNextTime": "Xorti aħjar id-darba li jmiss!",
+      "feelingLucky": "Tħossok xortik tajba?",
+      "niceShot": "Tir sabiħ!",
+      "wellPlayed": "Logħba tajba! 👏",
+      "gg": "GG 🎱",
+      "respect": "Rispett 🤝",
+      "rematch": "Nerġgħu nilagħbu?",
+      "goodLuck": "Xorti tajba! 🍀"
+    },
+    "quickChat": "Chat mgħaġġel",
+    "taunts": "Tgħajjar",
+    "friendly": "Ħabib"
   },
   "leaderboard": {
     "title": "Klassifika",

@@ -236,7 +236,24 @@
     "searchingCountdown": "Looking for a human for {{secs}}s…",
     "noPlayersTitle": "No players found",
     "noPlayersBody": "No opponent joined at this stake yet. Play the AI now, or keep waiting for a human.",
-    "keepSearching": "Keep searching"
+    "keepSearching": "Keep searching",
+    "chat": {
+      "tooEasy": "Too easy 😎",
+      "bestShot": "Is that your best shot?",
+      "watchLearn": "Watch and learn 😏",
+      "warmingUp": "Just warming up 🔥",
+      "luckNextTime": "Better luck next time!",
+      "feelingLucky": "Feeling lucky?",
+      "niceShot": "Nice shot!",
+      "wellPlayed": "Well played 👏",
+      "gg": "GG 🎱",
+      "respect": "Respect 🤝",
+      "rematch": "Rematch?",
+      "goodLuck": "Good luck! 🍀"
+    },
+    "quickChat": "Quick chat",
+    "taunts": "Taunts",
+    "friendly": "Friendly"
   },
   "leaderboard": {
     "title": "Leaderboard",

@@ -82,6 +82,18 @@ export interface PoolTournament {
   winnerUserId: string | null;
 }
 
+/**
+ * Predefined quick-chat emotes. Only the ID travels over the socket — each client
+ * localizes it via `t('pool.chat.<id>')`, so every player reads the message in
+ * their OWN chosen language. Grouped for the picker; the flat list is the
+ * server-side whitelist (keep the backend gateway's set in sync with these ids).
+ */
+export const POOL_EMOTES = {
+  taunts: ['tooEasy', 'bestShot', 'watchLearn', 'warmingUp', 'luckNextTime', 'feelingLucky'],
+  friendly: ['niceShot', 'wellPlayed', 'gg', 'respect', 'rematch', 'goodLuck'],
+} as const;
+export const POOL_EMOTE_IDS: string[] = [...POOL_EMOTES.taunts, ...POOL_EMOTES.friendly];
+
 export const poolApi = {
   getConfig: () => api.get<PoolConfig>('/pool/config').then((r) => r.data),
   startSingle: () => api.post<PoolMatchView>('/pool/single').then((r) => r.data),

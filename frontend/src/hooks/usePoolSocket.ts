@@ -25,10 +25,24 @@ export interface PoolMatchEndedEvent {
   aborted?: boolean;
 }
 
+/** A predefined quick-chat emote from a player (only the id travels the wire). */
+export interface PoolEmoteEvent {
+  matchId: string;
+  userId: string;
+  id: string;
+  ts: number;
+}
+
 interface Handlers {
   onMatchUpdated?: (view: PoolMatchView) => void;
   onShotResolved?: (e: PoolShotResolvedEvent) => void;
   onMatchEnded?: (e: PoolMatchEndedEvent) => void;
+  onEmote?: (e: PoolEmoteEvent) => void;
+}
+
+/** Send a predefined quick-chat emote to the opponent (fire-and-forget). */
+export function sendPoolEmote(matchId: string, id: string): void {
+  getSocket()?.emit('pool.emote', { matchId, id });
 }
 
 /**
@@ -57,11 +71,15 @@ export function usePoolMatchSocket(matchId: string | null, handlers: Handlers) {
     const onEnded = (e: PoolMatchEndedEvent) => {
       if (e.matchId === matchId) ref.current.onMatchEnded?.(e);
     };
+    const onEmote = (e: PoolEmoteEvent) => {
+      if (e.matchId === matchId) ref.current.onEmote?.(e);
+    };
 
     socket.emit('pool.join', { matchId });
     socket.on('pool.match.updated', onUpdated);
     socket.on('pool.shot.resolved', onShot);
     socket.on('pool.match.ended', onEnded);
+    socket.on('pool.emote', onEmote);
     // Re-join the room after a reconnect (socket drops room membership).
     const onConnect = () => socket.emit('pool.join', { matchId });
     socket.on('connect', onConnect);
@@ -71,6 +89,7 @@ export function usePoolMatchSocket(matchId: string | null, handlers: Handlers) {
       socket.off('pool.match.updated', onUpdated);
       socket.off('pool.shot.resolved', onShot);
       socket.off('pool.match.ended', onEnded);
+      socket.off('pool.emote', onEmote);
       socket.off('connect', onConnect);
     };
   }, [matchId, connected]);

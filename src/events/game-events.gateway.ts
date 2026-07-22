@@ -409,6 +409,33 @@ export class GameEventsGateway
     if (payload?.matchId) await client.leave(`pool_match_${payload.matchId}`);
   }
 
+  /** Whitelist of predefined quick-chat emote ids — keep in sync with the client's
+   * POOL_EMOTES. Only these ids are relayed; no free text is ever accepted. */
+  private static readonly POOL_EMOTES = new Set([
+    'tooEasy', 'bestShot', 'watchLearn', 'warmingUp', 'luckNextTime', 'feelingLucky',
+    'niceShot', 'wellPlayed', 'gg', 'respect', 'rematch', 'goodLuck',
+  ]);
+  private readonly lastEmoteAt = new Map<string, number>();
+
+  /**
+   * Relay a predefined quick-chat emote to everyone in the match room. Only a
+   * whitelisted id crosses the wire (each client localizes it), and each user is
+   * rate-limited so the taunts can't be spammed. Non-players are naturally
+   * filtered client-side (the bubble only renders for the two seat users).
+   */
+  @SubscribeMessage('pool.emote')
+  handlePoolEmote(client: Socket, payload: { matchId?: string; id?: string }) {
+    const matchId = payload?.matchId;
+    const id = payload?.id;
+    if (!matchId || typeof id !== 'string' || !GameEventsGateway.POOL_EMOTES.has(id)) return;
+    const userId: string | undefined = client.data?.user?.sub;
+    if (!userId) return;
+    const now = Date.now();
+    if (now - (this.lastEmoteAt.get(userId) ?? 0) < 1500) return; // ~1 per 1.5s
+    this.lastEmoteAt.set(userId, now);
+    this.server.to(`pool_match_${matchId}`).emit('pool.emote', { matchId, userId, id, ts: now });
+  }
+
   /** Authoritative board/turn state after any change. */
   emitPoolMatchUpdated(matchId: string, payload: unknown): void {
     this.server.to(`pool_match_${matchId}`).emit('pool.match.updated', payload);

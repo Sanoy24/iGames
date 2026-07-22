@@ -257,29 +257,28 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       const dir = { x: Math.cos(aim.current), y: Math.sin(aim.current) };
       const sd = sdir(dir.x, dir.y);
       const cx = px(cue.pos), cy = py(cue.pos), r = br();
-      // Assist (vs AI): predict first contact and show the full guide. Human-vs-human:
-      // no prediction — just a short pointing line so you can see your aim direction.
-      const assist = assistRef.current;
-      const p = assist ? predict(cue) : null;
+      // The aim line (cue's path to first contact) and the ghost ball are always
+      // shown — that's basic aiming. Only the object-ball direction line (where the
+      // struck ball would travel) is an assist, hidden in human-vs-human.
+      const showObjectPath = assistRef.current;
+      const p = predict(cue);
       ctx.save();
       ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(244,239,228,0.6)'; ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.moveTo(cx, cy);
-      const end = p
-        ? { x: px(p.contact), y: py(p.contact) }
-        : assist
-          ? { x: cx + sd.x * 800, y: cy + sd.y * 800 }
-          : { x: cx + sd.x * r * 3.2, y: cy + sd.y * r * 3.2 };
+      const end = p ? { x: px(p.contact), y: py(p.contact) } : { x: cx + sd.x * 800, y: cy + sd.y * 800 };
       ctx.lineTo(end.x, end.y); ctx.stroke(); ctx.setLineDash([]);
       if (p && p.hit.kind === 'ball' && p.hit.ball) {
         ctx.strokeStyle = 'rgba(244,239,228,0.55)';
         ctx.beginPath(); ctx.arc(end.x, end.y, r, 0, 7); ctx.stroke();
-        const ob = p.hit.ball;
-        const odx = ob.pos.x - p.contact.x, ody = ob.pos.y - p.contact.y;
-        const ol = Math.hypot(odx, ody) || 1;
-        const od = sdir(odx / ol, ody / ol);
-        ctx.strokeStyle = 'rgba(217,164,65,0.9)'; ctx.lineWidth = 1.8;
-        ctx.beginPath(); ctx.moveTo(px(ob.pos), py(ob.pos));
-        ctx.lineTo(px(ob.pos) + od.x * 52, py(ob.pos) + od.y * 52); ctx.stroke();
+        if (showObjectPath) {
+          const ob = p.hit.ball;
+          const odx = ob.pos.x - p.contact.x, ody = ob.pos.y - p.contact.y;
+          const ol = Math.hypot(odx, ody) || 1;
+          const od = sdir(odx / ol, ody / ol);
+          ctx.strokeStyle = 'rgba(217,164,65,0.9)'; ctx.lineWidth = 1.8;
+          ctx.beginPath(); ctx.moveTo(px(ob.pos), py(ob.pos));
+          ctx.lineTo(px(ob.pos) + od.x * 52, py(ob.pos) + od.y * 52); ctx.stroke();
+        }
       }
       ctx.restore();
       // cue stick, pulled back by the charged power

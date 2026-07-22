@@ -114,7 +114,24 @@
       "active": "ንጡፍ",
       "completed": "ተዛዚሙ",
       "cancelled": "ተሰሪዙ"
-    }
+    },
+    "chat": {
+      "tooEasy": "ኣዝዩ ቀሊል እዩ 😎",
+      "bestShot": "እዚ ድዩ ክእለትካ?",
+      "watchLearn": "ረኣይን ተማሃርን 😏",
+      "warmingUp": "ገና እናውዓኹ እየ 🔥",
+      "luckNextTime": "ኣብ ዝመጽእ ግዜ ዕድል ይሃብካ!",
+      "feelingLucky": "ዕድለኛ ኢየ ትብል ዲኻ?",
+      "niceShot": "ጽቡቕ ምት!",
+      "wellPlayed": "ጎበዝ! 👏",
+      "gg": "ጽቡቕ ጸወታ ነይሩ 🎱",
+      "respect": "ኣኽብሮት 🤝",
+      "rematch": "ደጊምና ንጻወት?",
+      "goodLuck": "ዕድል ይሃብካ! 🍀"
+    },
+    "quickChat": "ቅልጡፍ መልእኽቲ",
+    "taunts": "መላገጺ",
+    "friendly": "ምሕዝነታዊ"
   },
   "leaderboard": {
     "title": "ሰሌዳ ደረጃ",

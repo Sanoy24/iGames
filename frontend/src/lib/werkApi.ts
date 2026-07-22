@@ -126,10 +126,32 @@ export type CreateWerkBotInput = {
   sortOrder?: number;
 };
 
+// Fields the admin can actually edit (mirrors the backend UpdateWerkConfigDto).
+// Everything else on a loaded row — `key`, `winControlCounter`, and the ORM's
+// `createdAt`/`updatedAt`/`updatedBy` — is server-managed; the backend runs a
+// whitelist pipe and rejects any unknown property, so we send ONLY these keys.
+const WERK_CONFIG_EDITABLE_KEYS = [
+  'enabled', 'entryStakeMinor', 'minStakeMinor', 'maxStakeMinor', 'totalPlayers',
+  'botCount', 'botSeedMode', 'botSpeedPct', 'botSkillPct', 'botPersonalities',
+  'gameDurationSec', 'winningMode', 'finalSprintWarningSec', 'coinDensityX100',
+  'powerupsEnabled', 'mazeTheme', 'payoutRank1MultX100', 'payoutRank2MultX100',
+  'payoutRank3MultX100', 'payoutRank4MultX100', 'payoutRank5MultX100',
+  'winControlEnabled', 'houseGuaranteedBelowPlayers', 'botForcedWinEveryNRounds',
+] as const satisfies readonly (keyof AdminWerkConfig)[];
+
+/** Keep only editable, non-null fields so the whitelist pipe never rejects. */
+function cleanWerkConfig(dto: Partial<AdminWerkConfig>): Partial<AdminWerkConfig> {
+  const out: Partial<AdminWerkConfig> = {};
+  for (const k of WERK_CONFIG_EDITABLE_KEYS) {
+    if (dto[k] != null) (out as Record<string, unknown>)[k] = dto[k];
+  }
+  return out;
+}
+
 export const adminWerkApi = {
   getConfig: () => api.get<AdminWerkConfig>('/admin/werk/config').then((r) => r.data),
   updateConfig: (dto: Partial<AdminWerkConfig>) =>
-    api.patch<AdminWerkConfig>('/admin/werk/config', dto).then((r) => r.data),
+    api.patch<AdminWerkConfig>('/admin/werk/config', cleanWerkConfig(dto)).then((r) => r.data),
   // Bot pool management.
   listBots: () => api.get<AdminWerkBot[]>('/admin/werk/bots').then((r) => r.data),
   createBot: (dto: CreateWerkBotInput) =>

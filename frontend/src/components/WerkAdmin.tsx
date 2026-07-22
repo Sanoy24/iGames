@@ -75,10 +75,8 @@ export function WerkAdmin({ onClose, embedded = false }: { onClose?: () => void;
     if (!cfg) return;
     setSaving(true);
     try {
-      // Strip server-owned fields the update DTO doesn't accept.
-      const { key, winControlCounter, ...dto } = cfg;
-      void key; void winControlCounter;
-      const updated = await adminWerkApi.updateConfig(dto);
+      // updateConfig() sends only editable fields, so passing the whole row is safe.
+      const updated = await adminWerkApi.updateConfig(cfg);
       setCfg(updated);
       addToast('success', 'Werk Flega config saved');
     } catch (e) {

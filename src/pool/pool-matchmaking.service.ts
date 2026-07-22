@@ -9,7 +9,15 @@ import { PoolService } from './pool.service';
 import { PoolMatchService } from './pool-match.service';
 import { Seat } from './rules/rules-types';
 
+/** Client-facing join result: the matched match is a VIEW (same shape the socket
+ * `pool.match.found` and every other endpoint send), never the raw entity — the
+ * client relies on `match.groups`, which only exists on the view. */
 export type JoinResult =
+  | { matched: true; match: ReturnType<PoolMatchService['buildView']> }
+  | { matched: false; queued: true; stakeMinor: number };
+
+/** Internal pairing result carrying the raw entity (used only inside the tx). */
+type PairedTx =
   | { matched: true; match: PoolMatch }
   | { matched: false; queued: true; stakeMinor: number };
 
@@ -42,7 +50,7 @@ export class PoolMatchmakingService {
       );
     }
 
-    const result = await this.dataSource.transaction<JoinResult>(async (manager) => {
+    const result = await this.dataSource.transaction<PairedTx>(async (manager) => {
       const qRepo = manager.getRepository(PoolQueueEntry);
       const opponent = await qRepo
         .createQueryBuilder('q')
@@ -98,9 +106,12 @@ export class PoolMatchmakingService {
       }
       this.gateway.emitPoolMatchUpdated(result.match.id, view);
       this.logger.log(`Paired ${result.match.seatAUserId} vs ${result.match.seatBUserId} @ ${stakeMinor}`);
+      // Queue drained by the pairing — refresh the Home "waiting" banner.
+      void this.gateway.broadcastLiveCounts();
+      // Return the VIEW (not the entity) so the joining client renders correctly.
+      return { matched: true, match: view };
     }
-    // Queue size just changed (a player enqueued, or a pair drained it) — refresh
-    // the live counts so the Home "waiting for a Pool match" banner stays current.
+    // Player enqueued — queue size changed, refresh the live counts.
     void this.gateway.broadcastLiveCounts();
     return result;
   }

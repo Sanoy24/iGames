@@ -85,9 +85,13 @@ function PocketedTray({
   );
 }
 
-/** Two-player match header: avatars (glow = whose turn), POT, timer / thinking. */
+/**
+ * Compact two-player match header: avatars (glow = whose turn), POT, timer /
+ * thinking, and — folded into the same card — each player's captured balls. Kept
+ * deliberately short so the table is fully visible without scrolling.
+ */
 function MatchHeader({
-  onBack, meName, oppName, oppIsBot, myGroup, oppGroup, isMyTurn, ballInHand, opponentThinking, remaining, pot,
+  onBack, meName, oppName, oppIsBot, myGroup, oppGroup, isMyTurn, ballInHand, opponentThinking, remaining, pot, board,
 }: {
   onBack: () => void;
   meName: string;
@@ -100,52 +104,63 @@ function MatchHeader({
   opponentThinking: boolean;
   remaining: number | null;
   pot: number;
+  board: Ball[];
 }) {
   const initial = (s: string) => (s.trim()[0] ?? '?').toUpperCase();
   const Avatar = ({ text, active, bot }: { text: string; active: boolean; bot?: boolean }) => (
     <div style={{
-      width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: bot ? 17 : 14, fontWeight: 800, color: '#fff', flexShrink: 0,
+      width: 30, height: 30, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: bot ? 15 : 13, fontWeight: 800, color: '#fff', flexShrink: 0,
       background: bot ? '#3a2f52' : '#254a63',
       border: `2px solid ${active ? 'var(--green,#6fce9a)' : 'transparent'}`,
-      boxShadow: active ? '0 0 10px rgba(111,206,154,0.55)' : 'none',
+      boxShadow: active ? '0 0 9px rgba(111,206,154,0.55)' : 'none',
       transition: 'border-color 0.2s, box-shadow 0.2s',
     }}>{bot ? '🤖' : text}</div>
   );
   const Group = ({ g }: { g: PoolGroup | null }) => !g ? null : (
-    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: g === 'solids' ? '#e6b422' : '#cfd6df' }}>
+    <span style={{ fontSize: 8.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: g === 'solids' ? '#e6b422' : '#cfd6df' }}>
       {g === 'solids' ? '● Solids' : '◐ Stripes'}
     </span>
   );
+  const hasPotted = board.some((b) => b.pocketed && b.number !== 0);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border, rgba(255,255,255,0.08))' }}>
-      <button className="btn" onClick={onBack} style={{ padding: '4px 8px', flexShrink: 0 }} aria-label="Back to lobby"><ArrowLeft size={15} /></button>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        <Avatar text={initial(meName)} active={isMyTurn} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 96 }}>{meName}</div>
-          <Group g={myGroup} />
+    <div style={{ borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border, rgba(255,255,255,0.08))', overflow: 'hidden' }}>
+      {/* Row 1: players + pot + turn indicator */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 8px' }}>
+        <button className="btn" onClick={onBack} style={{ padding: '3px 7px', flexShrink: 0 }} aria-label="Back to lobby"><ArrowLeft size={15} /></button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <Avatar text={initial(meName)} active={isMyTurn} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 92, lineHeight: 1.15 }}>{meName}</div>
+            <Group g={myGroup} />
+          </div>
+        </div>
+        <div style={{ marginLeft: 'auto', marginRight: 'auto', textAlign: 'center', lineHeight: 1.2 }}>
+          {pot > 0 && <div style={{ fontSize: 10.5, fontWeight: 800, color: '#f6c945' }}>POT {pot}</div>}
+          {isMyTurn
+            ? (
+              <div style={{ fontSize: 10.5, color: ballInHand ? 'var(--green,#6fce9a)' : 'var(--text-muted)', fontFamily: ballInHand ? 'inherit' : 'ui-monospace, monospace' }}>
+                {ballInHand ? '✋ ball in hand' : remaining != null ? `⏱ ${remaining}s` : 'your turn'}
+              </div>
+            )
+            : opponentThinking
+              ? <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--text-muted)' }}><span className="spinner" style={{ width: 10, height: 10 }} />thinking…</div>
+              : null}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, justifyContent: 'flex-end' }}>
+          <div style={{ minWidth: 0, textAlign: 'right' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 92, lineHeight: 1.15 }}>{oppName}</div>
+            <Group g={oppGroup} />
+          </div>
+          <Avatar text={initial(oppName)} active={opponentThinking} bot={oppIsBot} />
         </div>
       </div>
-      <div style={{ marginLeft: 'auto', marginRight: 'auto', textAlign: 'center', lineHeight: 1.25 }}>
-        {pot > 0 && <div style={{ fontSize: 11, fontWeight: 800, color: '#f6c945' }}>POT {pot}</div>}
-        {isMyTurn
-          ? (
-            <div style={{ fontSize: 11, color: ballInHand ? 'var(--green,#6fce9a)' : 'var(--text-muted)', fontFamily: ballInHand ? 'inherit' : 'ui-monospace, monospace' }}>
-              {ballInHand ? '✋ ball in hand' : remaining != null ? `⏱ ${remaining}s` : 'your turn'}
-            </div>
-          )
-          : opponentThinking
-            ? <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: 'var(--text-muted)' }}><span className="spinner" style={{ width: 11, height: 11 }} />thinking…</div>
-            : null}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, justifyContent: 'flex-end' }}>
-        <div style={{ minWidth: 0, textAlign: 'right' }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 96 }}>{oppName}</div>
-          <Group g={oppGroup} />
+      {/* Row 2: captured balls, folded in to save vertical space */}
+      {hasPotted && (
+        <div style={{ padding: '2px 10px 3px', borderTop: '1px solid var(--border, rgba(255,255,255,0.06))' }}>
+          <PocketedTray board={board} myGroup={myGroup} oppGroup={oppGroup} size={15} stretch />
         </div>
-        <Avatar text={initial(oppName)} active={opponentThinking} bot={oppIsBot} />
-      </div>
+      )}
     </div>
   );
 }
@@ -356,8 +371,11 @@ export function Pool({ onBack }: { onBack: () => void }) {
         opponentThinking={opponentThinking}
         remaining={remaining}
         pot={match.stakeMinor * 2}
+        board={match.board}
       />
     );
+    // Aim-prediction guide only vs the AI; human-vs-human is unassisted.
+    const assist = match.mode === 'single';
 
     const didWin = !!ended && !ended.aborted && ended.winnerSeat === mySeat;
     const resultModal = ended && (
@@ -397,12 +415,9 @@ export function Pool({ onBack }: { onBack: () => void }) {
     if (landscape) {
       return (
         <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0b0f14', display: 'flex', flexDirection: 'column', padding: '8px 12px 10px', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>{header}</div>
-            <PocketedTray board={match.board} myGroup={myGroup} oppGroup={oppGroup} size={16} />
-          </div>
+          {header}
           <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-            <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} />
+            <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="landscape" mustCall={mustCall} assist={assist} />
           </div>
           {resultModal}
         </div>
@@ -411,24 +426,17 @@ export function Pool({ onBack }: { onBack: () => void }) {
 
     // ── Portrait: in-page, tall vertical table ─────────────────────────────────
     return (
-      <div style={{ padding: '4px 10px 14px', maxWidth: 640, margin: '0 auto' }}>
-        <div style={{ marginBottom: 8 }}>{header}</div>
+      <div style={{ padding: '4px 10px 10px', maxWidth: 640, margin: '0 auto' }}>
+        <div style={{ marginBottom: 6 }}>{header}</div>
 
-        {match.board.some((b) => b.pocketed && b.number !== 0) && (
-          <div style={{ marginBottom: 8, padding: '0 6px' }}>
-            <PocketedTray board={match.board} myGroup={myGroup} oppGroup={oppGroup} size={18} stretch />
-          </div>
-        )}
+        <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="portrait" mustCall={mustCall} assist={assist} />
 
-        <PoolTable ref={tableRef} view={match} mySeat={mySeat} canShoot={canShoot} onSubmit={submitShot} orientation="portrait" mustCall={mustCall} />
-
-        {/* Shot feed */}
+        {/* Shot feed — latest lines only, kept short so the table stays in view */}
         {feed.length > 0 && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 10.5, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 6 }}>{t('pool.shotLog')}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {feed.map((line, i) => (
-                <div key={i} style={{ fontSize: 12.5, color: i === 0 ? 'var(--text)' : 'var(--text-muted)' }}>{line}</div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {feed.slice(0, 2).map((line, i) => (
+                <div key={i} style={{ fontSize: 12, color: i === 0 ? 'var(--text)' : 'var(--text-muted)' }}>{line}</div>
               ))}
             </div>
           </div>

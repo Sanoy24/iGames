@@ -20,6 +20,13 @@ interface Props {
   orientation?: 'portrait' | 'landscape';
   /** True when the shooter must call a pocket before shooting (on the 8, or strict mode). */
   mustCall?: boolean;
+  /**
+   * Show the predictive aim guide (dashed trajectory to first contact, ghost ball,
+   * and the object-ball's resulting direction). Enabled vs the AI; disabled in
+   * human-vs-human so the shot is a test of skill, not the assist line. The basic
+   * aim line + cue stick still render either way.
+   */
+  assist?: boolean;
 }
 
 const BALL_COLORS: Record<number, string> = {
@@ -48,7 +55,7 @@ interface Anim {
 interface Ring { pocketIndex: number; start: number; }
 
 export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
-  { view, canShoot, onSubmit, orientation = 'portrait', mustCall = false },
+  { view, canShoot, onSubmit, orientation = 'portrait', mustCall = false, assist = true },
   ref,
 ) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -81,6 +88,9 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   // Call-shot: the player must tap a pocket to call it before shooting.
   const mustCallRef = useRef(false);
   const calledPocket = useRef<number | null>(null);
+  // Predictive aim guide on/off (off in human-vs-human). Kept in a ref so the
+  // animation loop reads it without re-subscribing.
+  const assistRef = useRef(true);
 
   const geom = useRef({ rail: 16, scale: 340, rotated: false });
 
@@ -89,6 +99,7 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
   const [calledPocketUI, setCalledPocketUI] = useState<number | null>(null);
 
   useEffect(() => { onSubmitRef.current = onSubmit; });
+  useEffect(() => { assistRef.current = assist; }, [assist]);
   useEffect(() => {
     mustCallRef.current = mustCall;
     if (!mustCall) { calledPocket.current = null; setCalledPocketUI(null); }
@@ -246,11 +257,18 @@ export const PoolTable = forwardRef<PoolTableHandle, Props>(function PoolTable(
       const dir = { x: Math.cos(aim.current), y: Math.sin(aim.current) };
       const sd = sdir(dir.x, dir.y);
       const cx = px(cue.pos), cy = py(cue.pos), r = br();
-      const p = predict(cue);
+      // Assist (vs AI): predict first contact and show the full guide. Human-vs-human:
+      // no prediction — just a short pointing line so you can see your aim direction.
+      const assist = assistRef.current;
+      const p = assist ? predict(cue) : null;
       ctx.save();
       ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(244,239,228,0.6)'; ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.moveTo(cx, cy);
-      const end = p ? { x: px(p.contact), y: py(p.contact) } : { x: cx + sd.x * 800, y: cy + sd.y * 800 };
+      const end = p
+        ? { x: px(p.contact), y: py(p.contact) }
+        : assist
+          ? { x: cx + sd.x * 800, y: cy + sd.y * 800 }
+          : { x: cx + sd.x * r * 3.2, y: cy + sd.y * r * 3.2 };
       ctx.lineTo(end.x, end.y); ctx.stroke(); ctx.setLineDash([]);
       if (p && p.hit.kind === 'ball' && p.hit.ball) {
         ctx.strokeStyle = 'rgba(244,239,228,0.55)';

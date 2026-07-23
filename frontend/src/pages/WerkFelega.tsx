@@ -206,7 +206,7 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
               </span>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
             <div style={{ flex: '0 0 auto' }}>
               <div style={{ fontSize: 10.5, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 3 }}>{t('werk.stake')}</div>
               <input type="number" value={stake} min={config?.minStakeMinor ?? 1} max={config?.maxStakeMinor ?? 1000}

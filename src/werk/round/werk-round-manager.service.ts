@@ -124,6 +124,10 @@ export class WerkRoundManager implements OnApplicationBootstrap {
       if (r.scheduledStartAt && now >= r.scheduledStartAt.getTime()) {
         if (this.live.humans.size > 0) await this.startRound(cfg);
         else await this.cancelRound('no players');
+      } else if (this.live.humans.size === 0 && this.gateway.werkPresenceCount() === 0) {
+        // No one has joined AND no one is even watching the Werk screen — tear the
+        // idle lobby down so nothing exists while there are no users.
+        await this.cancelRound('no users present');
       }
     } else if (r.status === 'running') {
       const timeLeft = r.durationSec - this.live.elapsed;
@@ -237,7 +241,9 @@ export class WerkRoundManager implements OnApplicationBootstrap {
       this.live = this.hydrate(active);
       return;
     }
-    if (playable && cfg.enabled) await this.ensureLobby(cfg);
+    // Only open a lobby when at least one user is actually on the Werk screen —
+    // no round should exist (or start) while there are no users.
+    if (playable && cfg.enabled && this.gateway.werkPresenceCount() > 0) await this.ensureLobby(cfg);
   }
 
   /** Create a fresh idle lobby round (no countdown until the first join). */
@@ -380,7 +386,8 @@ export class WerkRoundManager implements OnApplicationBootstrap {
       await this.roundRepo.update({ id: this.live.round.id }, { activeGuard: null });
       this.live = null;
     }
-    if (playable && cfg.enabled) await this.ensureLobby(cfg);
+    // Only open the next lobby if someone is still around to play it.
+    if (playable && cfg.enabled && this.gateway.werkPresenceCount() > 0) await this.ensureLobby(cfg);
   }
 
   // ── Settlement ───────────────────────────────────────────────────────────────

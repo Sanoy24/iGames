@@ -45,6 +45,12 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   const [muted, setMutedState] = useState(false);
   const [spectating, setSpectating] = useState(false);
   const [result, setResult] = useState<{ standings: WerkStanding[]; prizeMinor: number; rank: number; eliminated: boolean } | null>(null);
+  // Our own participation in the current round. Set from the per-user join/current
+  // responses — NOT from the shared round.state broadcast, which carries no
+  // per-user seat (so relying on it would drop a paid player to "spectator").
+  const [myPart, setMyPart] = useState<{ roundId: string; participantId: string; seat: number } | null>(null);
+  const myPartRef = useRef(myPart);
+  useEffect(() => { myPartRef.current = myPart; }, [myPart]);
   const [, forceHud] = useState(0);
 
   const gameRef = useRef<WerkGame | null>(null);
@@ -58,27 +64,34 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   useEffect(() => { screenRef.current = screen; }, [screen]);
   const toggleMute = () => { const n = !muted; setMutedState(n); setWerkMuted(n); };
 
+  const adoptParticipation = useCallback((r: WerkRoundView) => {
+    if (r.yourParticipantId && r.yourSeat != null) {
+      setMyPart({ roundId: r.id, participantId: r.yourParticipantId, seat: r.yourSeat });
+    }
+  }, []);
+
   useEffect(() => {
     werkApi.getConfig().then((c) => { setConfig(c); setStake(c.entryStakeMinor); }).catch(() => {});
-    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); }).catch(() => {});
-  }, []);
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') { setRound(r); adoptParticipation(r); } }).catch(() => {});
+  }, [adoptParticipation]);
 
   const roundId = round && round.status !== 'none' ? round.id : null;
 
-  const startPlaying = useCallback((v: WerkRoundView, asSpectator: boolean) => {
+  /** Enter the round view. `seat` null = spectator; a number = play from that seat. */
+  const startPlaying = useCallback((v: WerkRoundView, seat: number | null) => {
     if (!config) return;
     const g = new WerkGame({
       seed: v.seed, mode: v.mode, durationSec: v.durationSec, maxPlayers: v.maxPlayers,
       botCount: v.botCount, coinDensityX100: v.coinDensityX100, finalSprintWarningSec: v.finalSprintWarningSec,
       powerupsEnabled: v.powerupsEnabled, theme: (v.mazeTheme ?? config.mazeTheme) as MazeTheme,
-      yourSeat: asSpectator ? null : v.yourSeat, yourName: user?.displayName ?? 'You',
+      yourSeat: seat, yourName: user?.displayName ?? 'You',
     });
     g.onCollect = (type) => { if (type === 'gold') goldPickup(); else coinPickup(); };
     g.onPower = () => powerPickup();
     g.onSprintWarn = () => sprintHorn();
     g.applyRoundState(v);
     gameRef.current = g;
-    setSpectating(asSpectator);
+    setSpectating(seat === null);
     setResult(null);
     setScreen('playing');
   }, [config, user]);
@@ -86,8 +99,10 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   const handleCompleted = useCallback((v: WerkRoundView) => {
     gameRef.current?.markCompleted();
     setRound(v);
-    const mine = v.standings.find((s) => s.participantId && s.participantId === v.yourParticipantId)
+    const mp = myPartRef.current;
+    const mine = v.standings.find((s) => s.participantId && s.participantId === mp?.participantId)
       ?? v.standings.find((s) => s.isHuman && s.userId === user?.id);
+    setMyPart(null); // this round is over — clear so the lobby lets us join the next
     if (!mine) {
       // Spectator — return to the lobby to join the next round.
       gameRef.current = null;
@@ -108,8 +123,11 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
     onRoundState: (v) => {
       setRound(v);
       gameRef.current?.applyRoundState(v);
-      if (v.status === 'running' && v.yourParticipantId && screenRef.current !== 'playing') {
-        startPlaying(v, false);
+      // Auto-enter play when OUR round starts. Participation is tracked locally
+      // (from join/current) because this broadcast has no per-user seat.
+      const mp = myPartRef.current;
+      if (mp && v.id === mp.roundId && v.status === 'running' && screenRef.current !== 'playing') {
+        startPlaying(v, mp.seat);
       }
     },
     onSnapshot: (s) => { gameRef.current?.applySnapshot(s); },
@@ -123,15 +141,19 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
       werkApi.getCurrent().then((r) => {
         if (r.status === 'none') return;
         setRound(r);
+        adoptParticipation(r);
         gameRef.current?.applyRoundState(r);
-        if (screenRef.current === 'playing' && (r.status === 'completed' || r.status === 'cancelled')) {
+        // Resuming into our own running round we weren't rendering yet? Enter it.
+        if (screenRef.current !== 'playing' && r.status === 'running' && r.yourParticipantId && r.yourSeat != null) {
+          startPlaying(r, r.yourSeat);
+        } else if (screenRef.current === 'playing' && (r.status === 'completed' || r.status === 'cancelled')) {
           handleCompleted(r);
         }
       }).catch(() => {});
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [handleCompleted]);
+  }, [handleCompleted, adoptParticipation, startPlaying]);
 
   // ── Game loop ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -187,7 +209,8 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
     try {
       const v = await werkApi.join(stake);
       setRound(v);
-      if (v.status === 'running' && v.yourParticipantId) startPlaying(v, false);
+      adoptParticipation(v);
+      if (v.status === 'running' && v.yourParticipantId && v.yourSeat != null) startPlaying(v, v.yourSeat);
     } catch (e) {
       addToast('error', getErrorMessage(e) || t('werk.errStart'));
     } finally {
@@ -195,7 +218,7 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const spectate = () => { if (round && round.status !== 'none') startPlaying(round, true); };
+  const spectate = () => { if (round && round.status !== 'none') startPlaying(round, null); };
 
   const leaveGame = async () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -205,20 +228,23 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
     if (wasPlayer) {
       try { await werkApi.leave(); walletApi.getWallet().then(setWallet).catch(() => {}); } catch { /* ignore */ }
     }
+    setMyPart(null);
     setScreen('lobby');
-    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); else setRound(null); }).catch(() => {});
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') { setRound(r); adoptParticipation(r); } else setRound(null); }).catch(() => {});
   };
 
   const backToLobby = () => {
     gameRef.current = null;
     setResult(null);
+    setMyPart(null);
     setScreen('lobby');
-    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); else setRound(null); }).catch(() => {});
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') { setRound(r); adoptParticipation(r); } else setRound(null); }).catch(() => {});
   };
 
   const leaveLobby = async () => {
     try { await werkApi.leave(); walletApi.getWallet().then(setWallet).catch(() => {}); } catch { /* ignore */ }
-    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); else setRound(null); }).catch(() => {});
+    setMyPart(null);
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') { setRound(r); adoptParticipation(r); } else setRound(null); }).catch(() => {});
   };
 
   // ── LOBBY ─────────────────────────────────────────────────────────────────
@@ -226,7 +252,7 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
     const mults = config?.payoutMultsX100 ?? [];
     const status = round?.status ?? 'none';
     const inProgress = status === 'running' || status === 'settling';
-    const iAmInLobby = status === 'lobby' && !!round?.yourParticipantId;
+    const iAmInLobby = status === 'lobby' && !!round && !!myPart && myPart.roundId === round.id;
     return (
       <div style={{ minHeight: '70vh', background: `radial-gradient(1200px 600px at 50% -10%, rgba(124,92,255,0.14), transparent), radial-gradient(900px 500px at 50% 120%, rgba(0,212,255,0.10), transparent), ${C.bg}`, borderRadius: 20, padding: '14px 14px 28px', maxWidth: 680, margin: '0 auto', color: C.text }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>

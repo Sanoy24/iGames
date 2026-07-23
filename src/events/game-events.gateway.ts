@@ -474,6 +474,11 @@ export class GameEventsGateway
     this.werkInputHandler = fn;
   }
 
+  /** Distinct users currently on the Werk screen (in the lobby room). */
+  werkPresenceCount(): number {
+    return this.getDistinctUsers('game_werk').size;
+  }
+
   /** Join the shared lobby room + a specific round's room to play/spectate. */
   @SubscribeMessage('werk.join')
   async handleWerkJoin(client: Socket, payload: { roundId?: string }) {

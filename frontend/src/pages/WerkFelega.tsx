@@ -344,7 +344,7 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
 
       {/* Controls */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-        <Joystick inputRef={inputRef} />
+        {/* Action buttons on the left, movement thumbstick on the right. */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
           <button
             onPointerDown={(e) => { e.preventDefault(); inputRef.current.usePower = true; }}
@@ -358,6 +358,7 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
             aria-label="Sprint"
             style={{ width: 62, height: 62, borderRadius: '50%', background: 'rgba(0,212,255,0.16)', border: '2px solid rgba(0,212,255,0.55)', color: C.accent, touchAction: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Zap size={24} /></button>
         </div>
+        <Joystick inputRef={inputRef} />
       </div>
     </div>
   );

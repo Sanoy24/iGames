@@ -5,6 +5,8 @@ export type User = {
   email?: string;
   phoneNumber?: string;
   status?: string;
+  /** Server-computed — true when the user has a live socket connection right now. */
+  online?: boolean;
   lastLoginAt?: string;
   workStartHour?: number;
   workStartMinute?: number;

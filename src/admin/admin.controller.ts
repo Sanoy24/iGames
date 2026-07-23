@@ -15,6 +15,7 @@ import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
+import { GameEventsGateway } from '../events/game-events.gateway';
 
 @SkipThrottle()
 @Controller('admin')
@@ -26,6 +27,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly usersService: UsersService,
     private readonly walletService: WalletService,
+    private readonly gameEventsGateway: GameEventsGateway,
   ) {}
 
   @Get('stats/overview')
@@ -46,18 +48,20 @@ export class AdminController {
   // ── Users ─────────────────────────────────────────────────────────
 
   @Get('users')
-  getUsers(
+  async getUsers(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '50',
     @Query('role') role?: string,
     @Query('search') search?: string,
   ) {
-    return this.usersService.listUsers(
+    const result = await this.usersService.listUsers(
       parseInt(page, 10) || 1,
       parseInt(limit, 10) || 50,
       role,
       search,
     );
+    const onlineIds = this.gameEventsGateway.getOnlineUserIds();
+    return { ...result, data: result.data.map((user) => ({ ...user, online: onlineIds.has(user.id) })) };
   }
 
   @Get('users/:id/activity')

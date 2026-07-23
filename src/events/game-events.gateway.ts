@@ -153,27 +153,33 @@ export class GameEventsGateway
     void this.broadcastLiveCounts();
   }
 
-  getLiveCounts() {
+  /** Distinct user IDs with at least one live socket connection right now (room-scoped when given). */
+  private getDistinctUsers(roomName?: string): Set<string> {
     const socketMap = this.server?.sockets.sockets;
-    const getDistinctUsers = (roomName?: string) => {
-      const socketIds = roomName
-        ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
-        : Array.from(socketMap?.keys() ?? []);
-      const users = new Set<string>();
-      for (const socketId of socketIds) {
-        const socket = socketMap?.get(socketId);
-        const userId = socket?.data?.user?.sub;
-        if (typeof userId === 'string' && userId) {
-          users.add(userId);
-        }
+    const socketIds = roomName
+      ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
+      : Array.from(socketMap?.keys() ?? []);
+    const users = new Set<string>();
+    for (const socketId of socketIds) {
+      const socket = socketMap?.get(socketId);
+      const userId = socket?.data?.user?.sub;
+      if (typeof userId === 'string' && userId) {
+        users.add(userId);
       }
-      return users;
-    };
+    }
+    return users;
+  }
 
-    const kenoUsers = getDistinctUsers('game_keno');
-    const bingoUsers = getDistinctUsers('game_bingo');
-    const crashUsers = getDistinctUsers('game_crash');
-    const totalUsers = getDistinctUsers();
+  /** Currently-connected user IDs — lets admin views flag a player "online" right now. */
+  getOnlineUserIds(): Set<string> {
+    return this.getDistinctUsers();
+  }
+
+  getLiveCounts() {
+    const kenoUsers = this.getDistinctUsers('game_keno');
+    const bingoUsers = this.getDistinctUsers('game_bingo');
+    const crashUsers = this.getDistinctUsers('game_crash');
+    const totalUsers = this.getDistinctUsers();
     const playingUsers = new Set<string>([...kenoUsers, ...bingoUsers, ...crashUsers]);
 
     return {
@@ -182,7 +188,7 @@ export class GameEventsGateway
       crashOnline: crashUsers.size,
       totalOnline: totalUsers.size,
       totalPlaying: playingUsers.size,
-      totalConnections: socketMap?.size || 0,
+      totalConnections: this.server?.sockets.sockets.size || 0,
     };
   }
 

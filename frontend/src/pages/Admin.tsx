@@ -296,6 +296,12 @@ function PlayersAdmin() {
     void load();
   }, [load]);
 
+  // Keep the "Online" column reasonably live without a full manual refresh.
+  useEffect(() => {
+    const id = setInterval(() => { void load(); }, 15000);
+    return () => clearInterval(id);
+  }, [load]);
+
   const handleUpdateStatus = async (userId: string, newStatus: 'active' | 'suspended') => {
     try {
       await adminUsersApi.updateUserStatus(userId, newStatus);
@@ -443,6 +449,7 @@ function PlayersAdmin() {
                 <th>Contact info</th>
                 <th>Wallet Balance</th>
                 <th>Status</th>
+                <th>Online</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -476,6 +483,15 @@ function PlayersAdmin() {
                     <td>
                       <span className={`badge ${u.status === 'active' || !u.status ? 'badge-green' : 'badge-red'}`}>
                         {u.status ?? 'active'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`badge ${u.online ? 'badge-green' : 'badge-gray'}`}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+                          background: u.online ? 'var(--green)' : 'var(--text-muted)',
+                        }} />
+                        {u.online ? 'Online' : 'Offline'}
                       </span>
                     </td>
                     <td>

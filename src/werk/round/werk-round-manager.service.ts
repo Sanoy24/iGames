@@ -1,6 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import IORedis from 'ioredis';
+import { REDIS_CLIENT } from '../../redis/redis.constants';
 import { RngService } from '../../rng/rng.service';
 import { WalletService } from '../../wallet/wallet.service';
 import { GamesService } from '../../games/games.service';
@@ -32,6 +34,16 @@ const SHIELD_SEC = 10;
 
 /** Distinguish human arbitration ids from bot ids (bots are 1..N). */
 const HUMAN_ID_BASE = 1_000_000;
+
+/**
+ * Redis channel that carries player input to the leader. A player's socket may be
+ * connected to ANY instance, but only the leader holds the live round — so a
+ * non-leader forwards input here for the leader to apply. Without this, snapshots
+ * (broadcast cluster-wide via the socket.io Redis adapter) still reach the player
+ * so bots appear to move, but their own input is silently dropped and their avatar
+ * never moves.
+ */
+const WERK_INPUT_CHANNEL = 'igames:werk:input';
 
 export interface WerkInput {
   moveX?: number;
@@ -85,9 +97,13 @@ const HUMAN_COLORS = ['#00D4FF', '#7C5CFF', '#34D399', '#FBBF24', '#FF5C5C', '#F
  * and final standings; clients only send input and render broadcast snapshots.
  */
 @Injectable()
-export class WerkRoundManager implements OnApplicationBootstrap {
+export class WerkRoundManager implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(WerkRoundManager.name);
   private live: LiveRound | null = null;
+  /** Set by WerkScheduler each tick — only the leader applies input + drives the round. */
+  private leader = false;
+  /** Dedicated Redis connection subscribed to forwarded input (leader consumes it). */
+  private inputSub: IORedis | null = null;
 
   constructor(
     @InjectRepository(WerkRound) private readonly roundRepo: Repository<WerkRound>,
@@ -99,11 +115,39 @@ export class WerkRoundManager implements OnApplicationBootstrap {
     private readonly gamesService: GamesService,
     private readonly werkService: WerkService,
     private readonly gateway: GameEventsGateway,
+    @Inject(REDIS_CLIENT) private readonly redis: IORedis,
   ) {}
 
   onApplicationBootstrap(): void {
     // Let the gateway forward client input to us without a circular module import.
     this.gateway.registerWerkInputHandler((userId, input) => this.handleInput(userId, input));
+    // Subscribe (on a dedicated connection) to input forwarded from other
+    // instances; only apply it while we're the leader holding the live round.
+    this.inputSub = this.redis.duplicate();
+    this.inputSub.on('message', (channel: string, message: string) => {
+      if (channel !== WERK_INPUT_CHANNEL || !this.leader) return;
+      try {
+        const { userId, input } = JSON.parse(message) as { userId: string; input: WerkInput };
+        this.applyInput(userId, input);
+      } catch {
+        /* ignore malformed input */
+      }
+    });
+    this.inputSub.subscribe(WERK_INPUT_CHANNEL).catch((err) =>
+      this.logger.error(`Werk input subscribe failed: ${err instanceof Error ? err.message : err}`),
+    );
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.inputSub) {
+      await this.inputSub.quit().catch(() => undefined);
+      this.inputSub = null;
+    }
+  }
+
+  /** Called by WerkScheduler with the current leadership status. */
+  setLeader(isLeader: boolean): void {
+    this.leader = isLeader;
   }
 
   // ── Lifecycle (driven ~1Hz by the leader) ────────────────────────────────────
@@ -597,17 +641,35 @@ export class WerkRoundManager implements OnApplicationBootstrap {
     return { left: true };
   }
 
+  /**
+   * Entry point for a player's input (called on whichever instance owns the
+   * socket). If we're the leader holding this player's live round, apply it
+   * directly; otherwise forward it to the leader over Redis. Sanitising here keeps
+   * the forwarded payload small and trusted.
+   */
   handleInput(userId: string, raw: unknown): void {
+    const r = (raw ?? {}) as WerkInput;
+    const input: WerkInput = {
+      moveX: typeof r.moveX === 'number' ? Math.max(-1, Math.min(1, r.moveX)) : 0,
+      moveY: typeof r.moveY === 'number' ? Math.max(-1, Math.min(1, r.moveY)) : 0,
+      sprint: !!r.sprint,
+      usePower: !!r.usePower,
+    };
+    if (this.leader && this.live?.round.status === 'running' && this.live.humans.has(userId)) {
+      this.applyInput(userId, input);
+    } else {
+      // Not the leader (or no live round here) — hand off to the instance that is.
+      this.redis.publish(WERK_INPUT_CHANNEL, JSON.stringify({ userId, input })).catch(() => undefined);
+    }
+  }
+
+  /** Apply already-sanitised input to the live human. Leader-only. */
+  private applyInput(userId: string, input: WerkInput): void {
     const live = this.live;
     if (!live || live.round.status !== 'running') return;
     const h = live.humans.get(userId);
     if (!h) return;
-    const input = (raw ?? {}) as WerkInput;
-    h.input = {
-      moveX: typeof input.moveX === 'number' ? Math.max(-1, Math.min(1, input.moveX)) : 0,
-      moveY: typeof input.moveY === 'number' ? Math.max(-1, Math.min(1, input.moveY)) : 0,
-      sprint: !!input.sprint,
-    };
+    h.input = { moveX: input.moveX ?? 0, moveY: input.moveY ?? 0, sprint: !!input.sprint };
     if (input.usePower) h.usePowerLatch = true;
   }
 

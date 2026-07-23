@@ -214,7 +214,16 @@ export function resolveShot(
   if (result.pocketed.includes(8)) {
     const foul = fouls.length > 0;
     const shooterGroup = groups[shooter];
-    const cleared = shooterGroup !== null && ballsRemaining(board, shooterGroup) === 0;
+    // Same-stroke rule (WPA/BCA §20): the 8 is legal only if the shooter's group
+    // was ALREADY clear BEFORE this stroke. Pocketing the 8 on the same stroke as
+    // the last ball of the group is a loss — so we test the board as it stood at
+    // the START of the shot (`pre.balls`), NOT the final board. Measuring the final
+    // board would wrongly reward clearing the last group ball and the 8 together.
+    const cleared = shooterGroup !== null && ballsRemaining(pre.balls, shooterGroup) === 0;
+    const sameStroke =
+      shooterGroup !== null &&
+      ballsRemaining(pre.balls, shooterGroup) > 0 &&
+      ballsRemaining(board, shooterGroup) === 0;
     // Called-pocket rule: if the shooter called a pocket for the 8, it must drop
     // there — any other pocket loses (WPA §20). No call = any pocket (lenient).
     const eightPocket = result.events.find((e) => e.type === 'pocket' && e.ballNumber === 8)?.pocketIndex;
@@ -244,7 +253,9 @@ export function resolveShot(
           ? `8 in the wrong pocket — ${opp} wins`
           : foul
             ? `8 pocketed on a foul — ${opp} wins`
-            : `8 pocketed too early — ${opp} wins`,
+            : sameStroke
+              ? `8 pocketed on the same stroke as the last ${shooterGroup} — ${opp} wins`
+              : `8 pocketed too early — ${opp} wins`,
     };
   }
 

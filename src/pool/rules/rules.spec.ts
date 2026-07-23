@@ -259,6 +259,21 @@ describe('rules — the 8 ball', () => {
     expect(out.winner).toBe('B');
   });
 
+  it('pocketing the 8 on the same stroke as the last group ball loses (WPA/BCA §20)', () => {
+    // A=solids still has ONE solid (1) plus the 8 up; this stroke pockets BOTH.
+    const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 1, 8, 9, 10, 11, 12, 13, 14, 15]) });
+    const board = buildBoard([0, 9, 10, 11, 12, 13, 14, 15]); // 1 and 8 both gone
+    const events: ShotEvent[] = [
+      contact(1),
+      { type: 'pocket', t: 0.4, ballNumber: 1, pocketIndex: 2 },
+      { type: 'pocket', t: 0.5, ballNumber: 8, pocketIndex: 3 },
+    ];
+    const out = resolveShot(pre, makeResult({ balls: board, pocketed: [1, 8], firstContactNumber: 1, events }), table);
+    expect(out.gameOver).toBe(true);
+    expect(out.winner).toBe('B');
+    expect(out.reason).toMatch(/same stroke/i);
+  });
+
   it('scratching while pocketing the 8 loses even if the group was cleared', () => {
     const pre = makeState({ tableOpen: false, groups: { A: 'solids', B: 'stripes' }, balls: buildBoard([0, 8, 9, 10, 11, 12, 13, 14, 15]) });
     const board = buildBoard([9, 10, 11, 12, 13, 14, 15]); // 8 and cue gone

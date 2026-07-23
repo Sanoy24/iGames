@@ -30,6 +30,7 @@ export class WerkScheduler implements OnApplicationShutdown {
 
   async onApplicationShutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.roundManager.setLeader(false);
     if (this.heldLock) {
       await this.lockService.releaseLock(this.heldLock).catch(() => undefined);
       this.heldLock = null;
@@ -57,7 +58,9 @@ export class WerkScheduler implements OnApplicationShutdown {
     if (this.shuttingDown || this.lifecycleRunning) return;
     this.lifecycleRunning = true;
     try {
-      if (!(await this.renewLeadership())) return;
+      const leader = await this.renewLeadership();
+      this.roundManager.setLeader(leader);
+      if (!leader) return;
       await this.roundManager.lifecycle();
     } catch (err) {
       this.logger.error(`Werk lifecycle failed: ${err instanceof Error ? err.message : err}`);

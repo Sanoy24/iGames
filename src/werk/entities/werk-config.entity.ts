@@ -65,7 +65,7 @@ export class WerkConfig {
   botMaxRealPlayers: number;
 
   /** How long the lobby/join countdown lasts before a round starts, seconds. */
-  @Column({ type: 'int', default: 15 })
+  @Column({ type: 'int', default: 8 })
   lobbyCountdownSec: number;
 
   /** How long the results are shown before the next round opens, seconds. */

@@ -102,7 +102,7 @@ export function WerkAdmin({ onClose, embedded = false }: { onClose?: () => void;
               <NumField label="Duration (s)" value={cfg.gameDurationSec} onChange={(v) => set('gameDurationSec', v)} min={30} max={600} />
               <NumField label="Coin density ×100" value={cfg.coinDensityX100} onChange={(v) => set('coinDensityX100', v)} min={5} max={30} />
               <NumField label="Sprint warn (s)" value={cfg.finalSprintWarningSec} onChange={(v) => set('finalSprintWarningSec', v)} min={3} max={15} />
-              <NumField label="Lobby countdown (s)" value={cfg.lobbyCountdownSec} onChange={(v) => set('lobbyCountdownSec', v)} min={5} max={120} hint="join window before start" />
+              <NumField label="Lobby countdown (s)" value={cfg.lobbyCountdownSec} onChange={(v) => set('lobbyCountdownSec', v)} min={3} max={120} hint="join window before start" />
               <NumField label="Result display (s)" value={cfg.resultDisplaySec} onChange={(v) => set('resultDisplaySec', v)} min={2} max={60} hint="before the next round" />
               <NumField label="Bots off at ≥ N real players" value={cfg.botMaxRealPlayers} onChange={(v) => set('botMaxRealPlayers', v)} min={0} max={100} hint="0 = bots never join" />
             </div>

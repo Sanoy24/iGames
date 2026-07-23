@@ -52,7 +52,7 @@ export class UpdateWerkConfigDto {
 
   @IsOptional()
   @IsInt()
-  @Min(5)
+  @Min(3)
   @Max(120)
   lobbyCountdownSec?: number;
 

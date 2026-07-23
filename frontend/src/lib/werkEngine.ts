@@ -119,7 +119,7 @@ export class WerkGame {
   readonly opts: WerkRoundOpts;
   readonly layout: Layout;
   /** Own predicted avatar, or null when spectating. */
-  human: Player | null;
+  human: Player | null = null;
   private remotes = new Map<number, RemotePlayer>();
   private taken = new Set<number>();       // coins taken by anyone (server truth)
   private myCollected = new Set<number>(); // optimistic local pickups (own display)
@@ -146,7 +146,10 @@ export class WerkGame {
       powerupsEnabled: opts.powerupsEnabled,
       botCount: opts.botCount,
     });
-    this.human = opts.yourSeat != null ? this.makeHuman(opts.yourSeat, opts.yourName) : null;
+    // setOwnSeat both creates the avatar AND records ownArbId, so snapshots can
+    // match our own player (otherwise the server's copy of us renders as a second
+    // "ghost" ball and our prediction never reconciles to the real position).
+    if (opts.yourSeat != null) this.setOwnSeat(opts.yourSeat, opts.yourName);
     if (this.human) { this.serverX = this.human.x; this.serverY = this.human.y; }
   }
 

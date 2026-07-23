@@ -1,23 +1,55 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { ChevronRight, HelpCircle, Clock, TrendingUp, Zap, Target, Trophy, Circle, type LucideIcon } from 'lucide-react';
+import { useStore, type LiveCounts } from '../store/useStore';
 import { kenoApi, walletApi } from '../lib/api';
 import type { KenoDraw, LedgerEntry, RecentWin } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { soundEngine } from '../lib/audio';
 import { getSocket } from '../hooks/useSocketConnection';
+import { ETHIOPIA_TZ } from '../lib/utils';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
+type GameCode = 'keno' | 'bingo' | 'crash' | 'pool' | 'werk';
+// Fixed priority order for the Home "Play Now" strip. The rotating window walks
+// this list, so all enabled games get a turn in the featured pair over reloads.
+const HOME_GAME_ORDER: GameCode[] = ['bingo', 'keno', 'crash', 'pool', 'werk'];
+
+// Per-game "online now" pills for the quick-stats strip. Only games we receive a
+// live count for appear here; each is shown only while that game is available
+// (not hidden), so the strip is driven by the catalog, never hardcoded on/off.
+type StatGame = { code: GameCode; Icon: LucideIcon; color: string; labelKey: string; count: (c: LiveCounts) => number };
+const STAT_GAMES: StatGame[] = [
+  { code: 'keno', Icon: Zap, color: '#a78bfa', labelKey: 'home.inKeno', count: (c) => c.kenoOnline },
+  { code: 'bingo', Icon: Target, color: '#ef4444', labelKey: 'home.inBingo', count: (c) => c.bingoOnline },
+  { code: 'crash', Icon: TrendingUp, color: '#10b981', labelKey: 'home.inCrash', count: (c) => c.crashOnline ?? 0 },
+];
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function timeGreeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
+function timeGreeting(t: TFunction): string {
+  // Greeting follows Ethiopia time, not the device's timezone.
+  const h = Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: ETHIOPIA_TZ, hour: '2-digit', hourCycle: 'h23' }).format(new Date()),
+  );
+  if (h < 12) return t('home.morning');
+  if (h < 17) return t('home.afternoon');
+  return t('home.evening');
 }
+
+// Ledger entryType/sourceType → i18n key under `ledger.*`.
+const LEDGER_KEY: Record<string, string> = {
+  ticket_win: 'winnings', win: 'winnings',
+  ticket_purchase: 'ticketPurchase', stake: 'ticketPurchase',
+  ticket_refund: 'ticketRefund', refund: 'refund',
+  deposit: 'deposit', withdrawal: 'withdrawal', bonus: 'bonus',
+  admin_adjustment: 'adjustment', agent_receipt: 'agentTransfer',
+};
+
+const FAQ_KEYS = ['currency', 'deposit', 'withdraw', 'instant'] as const;
 
 function useCountdownSecs(targetIso: string | null | undefined) {
   const [secs, setSecs] = useState<number | null>(null);
@@ -50,6 +82,7 @@ function useAnimatedNumber(target: number) {
 // ─── Live wins ticker ─────────────────────────────────────────────────────────
 
 function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
+  const { t } = useTranslation();
   // Duplicate for seamless CSS loop — need enough items to fill viewport twice
   const items = wins.length > 0 ? [...wins, ...wins] : [];
 
@@ -62,9 +95,9 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
           <span key={i} className="ticker-item">
             <Trophy size={11} style={{ color: 'var(--gold)', flexShrink: 0 }} />
             <span className="ticker-item-name">{w.displayName}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>won</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{t('home.won')}</span>
             <span className="ticker-item-win">{new Intl.NumberFormat().format(w.amountMinor)} ETB</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>on {w.game}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{t('home.on')} {w.game}</span>
             <span style={{ color: 'rgba(255,255,255,0.1)', margin: '0 4px' }}>•</span>
           </span>
         ))}
@@ -73,16 +106,39 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
   );
 }
 
-// ─── FAQ ─────────────────────────────────────────────────────────────────────
+// ─── Pool waiting marquee ──────────────────────────────────────────────────────
 
-const FAQ = [
-  { q: 'How does Keno work?', a: 'Pick 1–12 numbers from 1–80. When the draw runs, 20 numbers are randomly selected. Your payout depends on how many of your picks match.' },
-  { q: 'How does Bingo work?', a: 'Join a room and buy tickets. Numbers are drawn one at a time. Match one row, two rows, or a full card to win prize tiers.' },
-  { q: 'What currency does iGames use?', a: 'All balances, stakes, and payouts are shown in ETB (Ethiopian Birr).' },
-  { q: 'How do I top up?', a: 'Wallet → Top Up (Telebirr). Transfer the amount, then paste the SMS confirmation to instantly credit your account.' },
-  { q: 'How do I withdraw?', a: 'Wallet → Request Payout. Enter the amount and your Telebirr phone number. An agent processes the transfer.' },
-  { q: 'Are winnings instant?', a: 'Yes — credited to your wallet immediately after each draw or room settlement.' },
-];
+// Advertises that a player is sitting in the Pool queue so others can hop in and
+// match them. Rendered only while at least one player is actually waiting; tapping
+// it jumps straight to the Pool tab.
+function PoolWaitingTicker({ count, onGo }: { count: number; onGo: () => void }) {
+  const { t } = useTranslation();
+  if (count <= 0) return null;
+  const msg = count === 1 ? t('home.poolWaitingOne') : t('home.poolWaiting', { count });
+  const items = Array.from({ length: 6 });
+  return (
+    <button
+      onClick={onGo}
+      className="ticker-wrap"
+      style={{
+        display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer', color: 'inherit',
+        borderRadius: 10, padding: '6px 0',
+        background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.28)',
+      }}
+    >
+      <div className="ticker-inner">
+        {items.map((_, i) => (
+          <span key={i} className="ticker-item" style={{ color: 'var(--gold)' }}>
+            <span className="ticker-item-name" style={{ fontWeight: 700 }}>{msg}</span>
+            <span style={{ color: 'rgba(234,179,8,0.35)', margin: '0 10px' }}>•</span>
+          </span>
+        ))}
+      </div>
+    </button>
+  );
+}
+
+// ─── FAQ ─────────────────────────────────────────────────────────────────────
 
 const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = React.useState(false);
@@ -111,20 +167,6 @@ const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
     </div>
   );
 });
-
-const LEDGER_LABELS: Record<string, string> = {
-  ticket_win: 'Winnings',
-  win: 'Winnings',
-  ticket_purchase: 'Ticket Purchase',
-  stake: 'Ticket Purchase',
-  ticket_refund: 'Ticket Refund',
-  refund: 'Refund',
-  deposit: 'Deposit',
-  withdrawal: 'Withdrawal',
-  bonus: 'Bonus',
-  admin_adjustment: 'Adjustment',
-  agent_receipt: 'Agent Transfer',
-};
 
 function entryBadge(entry: LedgerEntry) {
   const type = (entry.entryType ?? entry.sourceType ?? '') as string;
@@ -184,9 +226,23 @@ function GameCard({ onClick, gradientFrom, gradientTo, glowColor, icon, tag, nam
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function Home({ onNavigate }: Props) {
+  const { t } = useTranslation();
   const user = useStore(s => s.user);
   const wallet = useStore(s => s.wallet);
   const liveCounts = useStore(s => s.liveCounts);
+  const gameCatalog = useStore(s => s.gameCatalog);
+  const addToast = useStore(s => s.addToast);
+  const gameInfo = (code: GameCode) => {
+    if (!gameCatalog) return { hidden: false, maint: false, msg: '' };
+    const e = gameCatalog.find(g => g.code === code);
+    if (!e) return { hidden: true, maint: false, msg: '' };
+    return { hidden: e.state === 'hidden', maint: e.state === 'maintenance', msg: e.maintenanceMessage || `${e.name} is under maintenance.` };
+  };
+  const openGame = (code: GameCode, info: { maint: boolean; msg: string }) => {
+    soundEngine.click();
+    if (info.maint) { addToast('info', info.msg); return; }
+    onNavigate(code);
+  };
   const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
   const [recentActivity, setRecentActivity] = useState<LedgerEntry[]>([]);
   const [recentWins, setRecentWins] = useState<RecentWin[]>([]);
@@ -195,11 +251,20 @@ export function Home({ onNavigate }: Props) {
     walletApi.getRecentWins(20).then(setRecentWins).catch(() => {});
   }, []);
 
+  // Keno's live draw indicator obeys its catalog state (like the cards do).
+  const keno = gameInfo('keno');
+
   useEffect(() => {
-    kenoApi.getActiveDraw().then(d => setActiveDraw(d)).catch(() => {});
     walletApi.getLedger(5).then(entries => setRecentActivity(entries)).catch(() => {});
     loadRecentWins();
   }, [loadRecentWins]);
+
+  // Only poll/show Keno's live draw when Keno is actually available. When it's
+  // hidden or under maintenance, clear it so no stale "Keno starting" pill shows.
+  useEffect(() => {
+    if (keno.hidden || keno.maint) { setActiveDraw(null); return; }
+    kenoApi.getActiveDraw().then(d => setActiveDraw(d)).catch(() => {});
+  }, [keno.hidden, keno.maint]);
 
   // Refresh wins ticker when draws/rooms complete
   useEffect(() => {
@@ -231,20 +296,92 @@ export function Home({ onNavigate }: Props) {
     }
   }, [balance]);
 
+  // ── Featured "Play Now" pair ───────────────────────────────────────────────
+  // Catalog-driven (not hardcoded to Keno+Bingo): take every enabled game, then
+  // show a rotating window of two so all enabled games get exposure across loads.
+  // One random start per mount; with ≤2 enabled we just show what's enabled.
+  const rotateSeed = useRef(Math.floor(Math.random() * 997));
+  const featuredGames = useMemo(() => {
+    const enabled = HOME_GAME_ORDER
+      .map((code) => ({ code, info: gameInfo(code) }))
+      .filter((x) => !x.info.hidden);
+    if (enabled.length <= 2) return enabled;
+    const start = rotateSeed.current % enabled.length;
+    return [enabled[start], enabled[(start + 1) % enabled.length]];
+    // gameInfo derives purely from gameCatalog, so that's the only real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameCatalog]);
+
+  const cardFor = (code: GameCode, info: { hidden: boolean; maint: boolean; msg: string }) => {
+    const onClick = () => openGame(code, info);
+    const maint = info.maint;
+    const paused = t('gameCard.paused');
+    switch (code) {
+      case 'keno':
+        return (
+          <GameCard key="keno" onClick={onClick}
+            gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(139,92,246,0.25)"
+            icon={<Zap style={{ color: '#a78bfa' }} />} tag={t('gameCard.fastDraw')} name="Keno"
+            sub={maint ? t('gameCard.underMaintenance') : (countdown && activeDraw?.status === 'open' ? t('gameCard.drawIn', { time: countdown }) : t('gameCard.pickNumbers'))}
+            badge={maint ? paused : t('gameCard.live')} badgeColor="rgba(139,92,246,0.25)" />
+        );
+      case 'bingo':
+        return (
+          <GameCard key="bingo" onClick={onClick}
+            gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(239,68,68,0.2)"
+            icon={<Target style={{ color: '#f87171' }} />} tag={t('gameCard.liveRooms')} name="Bingo"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.nextBingo')}
+            badge={maint ? paused : t('gameCard.hot')} badgeColor="rgba(239,68,68,0.2)" />
+        );
+      case 'crash':
+        return (
+          <GameCard key="crash" onClick={onClick}
+            gradientFrom="rgba(16,185,129,0.15)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(16,185,129,0.2)"
+            icon={<TrendingUp style={{ color: '#10b981' }} />} tag={t('gameCard.crashTag')} name="Crash"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.crashSub')}
+            badge={maint ? paused : t('gameCard.live')} badgeColor="rgba(16,185,129,0.2)" />
+        );
+      case 'pool':
+        return (
+          <GameCard key="pool" onClick={onClick}
+            gradientFrom="rgba(234,179,8,0.15)" gradientTo="rgba(16,18,28,0.95)" glowColor="rgba(234,179,8,0.2)"
+            icon={<Circle style={{ color: '#eab308' }} />} tag={t('gameCard.poolTag')} name="Pool"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.poolSub')}
+            badge={maint ? paused : t('gameCard.new')} badgeColor="rgba(234,179,8,0.2)" />
+        );
+      case 'werk':
+        return (
+          <GameCard key="werk" onClick={onClick}
+            gradientFrom="rgba(252,221,9,0.16)" gradientTo="rgba(10,60,40,0.95)" glowColor="rgba(252,221,9,0.22)"
+            icon={<span style={{ fontSize: 18 }}>⛏️</span>} tag={t('gameCard.werkTag')} name="ወርቅ ፍለጋ"
+            sub={maint ? t('gameCard.underMaintenance') : t('gameCard.werkSub')}
+            badge={maint ? paused : t('gameCard.new')} badgeColor="rgba(252,221,9,0.22)" />
+        );
+    }
+  };
+
   return (
     <div className="stack-lg">
 
       {/* ── Live wins ticker ── */}
       <LiveWinsTicker wins={recentWins} />
 
+      {/* ── Pool queue call-to-action (only while someone is waiting, Pool visible) ── */}
+      {!gameInfo('pool').hidden && (
+        <PoolWaitingTicker
+          count={liveCounts?.poolWaiting ?? 0}
+          onGo={() => { soundEngine.click(); onNavigate('pool'); }}
+        />
+      )}
+
       {/* ── Balance hero ── */}
       <section className="jackpot-hero">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', fontWeight: 600, marginBottom: 4 }}>
-              {timeGreeting()}, {user?.displayName ?? 'Player'}
+              {timeGreeting(t)}, {user?.displayName ?? t('home.player')}
             </p>
-            <div className="jackpot-label" style={{ textAlign: 'left' }}>Your Balance</div>
+            <div className="jackpot-label" style={{ textAlign: 'left' }}>{t('home.yourBalance')}</div>
             <motion.div
               key={balanceKey}
               className="jackpot-value"
@@ -255,7 +392,7 @@ export function Home({ onNavigate }: Props) {
             >
               {formattedBalance}
             </motion.div>
-            <div className="jackpot-sub" style={{ textAlign: 'left' }}>ETB available</div>
+            <div className="jackpot-sub" style={{ textAlign: 'left' }}>{t('home.etbAvailable')}</div>
           </div>
           <motion.button
             className="btn btn-primary btn-glow btn-sm"
@@ -265,7 +402,7 @@ export function Home({ onNavigate }: Props) {
             style={{ marginTop: 8, flexShrink: 0 }}
           >
             <TrendingUp size={13} />
-            Top Up
+            {t('common.deposit')}
           </motion.button>
         </div>
 
@@ -274,41 +411,40 @@ export function Home({ onNavigate }: Props) {
           {liveCounts && liveCounts.totalOnline > 0 && (
             <span className="live-badge-pulse" style={{ fontSize: 10 }}>
               <span className="pulse-dot" />
-              {liveCounts.totalOnline} online now
+              {t('home.onlineNow', { count: liveCounts.totalOnline })}
             </span>
           )}
           {liveCounts && liveCounts.totalPlaying > 0 && (
             <span className="live-badge-pulse" style={{ fontSize: 10, background: 'rgba(239,68,68,0.1)', color: '#f87171', border: '1px solid rgba(239,68,68,0.2)' }}>
               <span className="pulse-dot" style={{ background: 'var(--danger)', boxShadow: '0 0 6px rgba(239,68,68,0.5)' }} />
-              {liveCounts.totalPlaying} playing
+              {t('home.playing', { count: liveCounts.totalPlaying })}
             </span>
           )}
           {activeDraw && (
             <span className="live-badge-pulse" style={{ fontSize: 10, background: 'rgba(245,158,11,0.1)', color: 'var(--gold)', border: '1px solid rgba(245,158,11,0.2)' }}>
               <Clock size={10} />
-              {activeDraw.status === 'open' && countdown ? `Keno in ${countdown}` : 'Keno drawing…'}
+              {activeDraw.status === 'open' && countdown ? t('home.kenoIn', { time: countdown }) : t('home.kenoDrawing')}
             </span>
           )}
         </div>
       </section>
 
       {/* ── Quick stats strip ── */}
+      {/* One pill per AVAILABLE game we track a count for (catalog-driven — a hidden
+          game drops out); the total online pill always closes the row. */}
       {liveCounts && (
         <div className="stat-pill-row">
-          <span className="stat-pill">
-            <Zap size={11} style={{ color: '#a78bfa' }} />
-            <span className="stat-pill-val">{liveCounts.kenoOnline}</span>
-            <span className="stat-pill-lbl">in Keno</span>
-          </span>
-          <span className="stat-pill">
-            <Target size={11} style={{ color: '#ef4444' }} />
-            <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
-            <span className="stat-pill-lbl">in Bingo</span>
-          </span>
+          {STAT_GAMES.filter((g) => !gameInfo(g.code).hidden).map((g) => (
+            <span className="stat-pill" key={g.code}>
+              <g.Icon size={11} style={{ color: g.color }} />
+              <span className="stat-pill-val">{g.count(liveCounts)}</span>
+              <span className="stat-pill-lbl">{t(g.labelKey)}</span>
+            </span>
+          ))}
           <span className="stat-pill">
             <Trophy size={11} style={{ color: 'var(--gold)' }} />
             <span className="stat-pill-val">{liveCounts.totalOnline}</span>
-            <span className="stat-pill-lbl">total online</span>
+            <span className="stat-pill-lbl">{t('home.totalOnline')}</span>
           </span>
         </div>
       )}
@@ -316,28 +452,11 @@ export function Home({ onNavigate }: Props) {
       {/* ── Game lobby ── */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-          <span className="section-title" style={{ fontSize: 15 }}>Play Now</span>
-          <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('games')}>All games →</button>
+          <span className="section-title" style={{ fontSize: 15 }}>{t('home.playNow')}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('games')}>{t('home.allGames')}</button>
         </div>
         <div className="lobby-grid">
-          <GameCard
-            onClick={() => { soundEngine.click(); onNavigate('keno'); }}
-            gradientFrom="rgba(139,92,246,0.18)" gradientTo="rgba(16,18,28,0.95)"
-            glowColor="rgba(139,92,246,0.25)"
-            icon={<Zap style={{ color: '#a78bfa' }} />}
-            tag="Fast Draw" name="Keno"
-            sub={countdown && activeDraw?.status === 'open' ? `Draw in ${countdown}` : 'Pick 1–12 numbers'}
-            badge="LIVE" badgeColor="rgba(139,92,246,0.25)"
-          />
-          <GameCard
-            onClick={() => { soundEngine.click(); onNavigate('bingo'); }}
-            gradientFrom="rgba(239,68,68,0.15)" gradientTo="rgba(16,18,28,0.95)"
-            glowColor="rgba(239,68,68,0.2)"
-            icon={<Target style={{ color: '#f87171' }} />}
-            tag="Live Rooms" name="Bingo"
-            sub="90-ball & pattern cards"
-            badge="HOT" badgeColor="rgba(239,68,68,0.2)"
-          />
+          {featuredGames.map((f) => cardFor(f.code, f.info))}
         </div>
       </div>
 
@@ -345,13 +464,14 @@ export function Home({ onNavigate }: Props) {
       {recentActivity.length > 0 && (
         <section className="card">
           <div className="section-header">
-            <div className="section-title" style={{ fontSize: 14 }}>Recent Activity</div>
-            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('wallet')}>See all →</button>
+            <div className="section-title" style={{ fontSize: 14 }}>{t('home.recentActivity')}</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => onNavigate('wallet')}>{t('home.seeAll')}</button>
           </div>
           <div className="activity-feed" style={{ marginTop: 8 }}>
             {recentActivity.slice(0, 4).map((entry, i) => {
               const badge = entryBadge(entry);
-              const label = LEDGER_LABELS[(entry.entryType ?? entry.sourceType ?? '') as string] ?? 'Transaction';
+              const ledgerKey = LEDGER_KEY[(entry.entryType ?? entry.sourceType ?? '') as string];
+              const label = ledgerKey ? t(`ledger.${ledgerKey}`) : t('ledger.transaction');
               const isCredit = entry.direction === 'credit';
               return (
                 <motion.div
@@ -365,8 +485,8 @@ export function Home({ onNavigate }: Props) {
                   <div className="activity-body">
                     <span className="activity-name">{label}</span>
                     <span className="activity-game">
-                      {new Date(entry.createdAt ?? 0).toLocaleDateString(undefined, {
-                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      {new Date(entry.createdAt ?? 0).toLocaleDateString('en-GB', {
+                        timeZone: ETHIOPIA_TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
                       })}
                     </span>
                   </div>
@@ -387,10 +507,10 @@ export function Home({ onNavigate }: Props) {
       <section className="card">
         <div className="home-faq-header">
           <HelpCircle size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-          <span className="section-title" style={{ fontSize: 14 }}>Help &amp; FAQ</span>
+          <span className="section-title" style={{ fontSize: 14 }}>{t('home.helpFaq')}</span>
         </div>
         <div className="rules-accordion">
-          {FAQ.map((item, i) => <FaqItem key={i} q={item.q} a={item.a} />)}
+          {FAQ_KEYS.map((k) => <FaqItem key={k} q={t(`faq.${k}.q`)} a={t(`faq.${k}.a`)} />)}
         </div>
       </section>
 

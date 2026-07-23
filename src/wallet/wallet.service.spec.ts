@@ -83,7 +83,8 @@ function makeService({
     completeIdempotencyRecord: jest.fn().mockResolvedValue(undefined),
   } as unknown as LedgerService;
 
-  const mockEventsGateway = { emitWalletUpdated: jest.fn() } as any;
+  const mockEventsGateway = { emitWalletUpdated: jest.fn(), emitUserNotification: jest.fn() } as any;
+  const mockNotificationsService = { create: jest.fn(), safeCreate: jest.fn() } as any;
 
   const service = new WalletService(
     mockDataSource,
@@ -92,6 +93,7 @@ function makeService({
     { findOneBy: jest.fn() } as any,
     mockLedgerService,
     mockEventsGateway,
+    mockNotificationsService,
   );
 
   return { service, mockManager, mockDataSource, mockLedgerService };

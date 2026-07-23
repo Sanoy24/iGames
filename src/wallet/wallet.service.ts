@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { LedgerService } from '../ledger/ledger.service';
 import { LedgerEntry, LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action-log.entity';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
@@ -68,7 +69,8 @@ export class WalletService {
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepository: Repository<Withdrawal>,
     private readonly ledgerService: LedgerService,
-    private readonly gameEventsGateway: GameEventsGateway
+    private readonly gameEventsGateway: GameEventsGateway,
+    private readonly notificationsService: NotificationsService
   ) {}
 
   async ensureDefaultWallet(
@@ -583,7 +585,7 @@ export class WalletService {
       throw new BadRequestException('Rejection remark must be at least 15 characters');
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const settled = await this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
       const walletRepo = manager.getRepository(Wallet);
 
@@ -667,6 +669,37 @@ export class WalletService {
 
       return withdrawal;
     });
+
+    await this.notifyWithdrawalSettled(settled, adminNotes);
+    return settled;
+  }
+
+  /**
+   * Post-commit, best-effort notification for a settled withdrawal. Called after
+   * the DB transaction so a notification failure can never roll back the payout.
+   */
+  private async notifyWithdrawalSettled(withdrawal: Withdrawal, remark?: string): Promise<void> {
+    const amount = withdrawal.amountMinor.toLocaleString();
+    if (withdrawal.status === 'completed') {
+      await this.notificationsService.safeCreate({
+        userId: withdrawal.userId,
+        type: 'withdrawal',
+        title: 'Withdrawal approved',
+        body: `Your ${amount} ETB payout has been approved and sent.`,
+        data: { withdrawalId: withdrawal.id, amountMinor: withdrawal.amountMinor, status: 'completed' },
+      });
+    } else if (withdrawal.status === 'rejected') {
+      const reason = remark?.trim() ?? withdrawal.adminNotes?.trim();
+      await this.notificationsService.safeCreate({
+        userId: withdrawal.userId,
+        type: 'withdrawal',
+        title: 'Withdrawal rejected',
+        body: reason
+          ? `Your ${amount} ETB payout request was rejected. Reason: ${reason}`
+          : `Your ${amount} ETB payout request was rejected.`,
+        data: { withdrawalId: withdrawal.id, amountMinor: withdrawal.amountMinor, status: 'rejected', reason: reason ?? null },
+      });
+    }
   }
 
   async getPlayerWithdrawals(userId: string): Promise<Withdrawal[]> {
@@ -762,9 +795,11 @@ export class WalletService {
     withdrawalId: string;
     agentId: string;
     telebirrReference: string;
-    serviceChargePct: number;
+    serviceFeePct: number;
+    commissionPct: number;
+    superAdminUserId?: string | null;
   }): Promise<Withdrawal> {
-    return this.dataSource.transaction(async (manager) => {
+    const settled = await this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
       const walletRepo = manager.getRepository(Wallet);
 
@@ -778,11 +813,15 @@ export class WalletService {
         throw new ConflictException('Withdrawal not found or not assigned to you');
       }
 
-      const serviceChargeMinor = Math.floor(withdrawal.amountMinor * input.serviceChargePct / 100);
-      const netAmountMinor = withdrawal.amountMinor - serviceChargeMinor;
+      // Two cuts from the gross: a platform service fee (to the super-admin) and
+      // an agent commission (to the processing agent). The user nets the rest.
+      const serviceFeeMinor = Math.floor(withdrawal.amountMinor * input.serviceFeePct / 100);
+      const commissionMinor = Math.floor(withdrawal.amountMinor * input.commissionPct / 100);
+      const totalChargeMinor = serviceFeeMinor + commissionMinor;
+      const netAmountMinor = withdrawal.amountMinor - totalChargeMinor;
 
       if (netAmountMinor <= 0) {
-        throw new BadRequestException('Service charge would consume the entire withdrawal amount');
+        throw new BadRequestException('Service fee and commission would consume the entire withdrawal amount');
       }
 
       // Settle the user's reservation
@@ -798,7 +837,8 @@ export class WalletService {
       wallet.reservedMinor -= withdrawal.amountMinor;
       await walletRepo.save(wallet);
 
-      // Credit the agent's wallet (net of service charge)
+      // Credit the agent's wallet: the payout-custody amount the user receives
+      // (reconciles the cash the agent paid out) plus their earned commission.
       await this.ensureDefaultWallet(input.agentId, manager);
       await this.creditInSession(
         {
@@ -812,14 +852,61 @@ export class WalletService {
             withdrawalId: withdrawal.id,
             userId: withdrawal.userId,
             grossAmountMinor: withdrawal.amountMinor,
-            serviceChargeMinor,
+            serviceFeeMinor,
+            commissionMinor,
+            kind: 'payout_custody',
           },
         },
         manager,
       );
 
+      if (commissionMinor > 0) {
+        await this.creditInSession(
+          {
+            userId: input.agentId,
+            amountMinor: commissionMinor,
+            entryType: 'agent_receipt',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal.id,
+            idempotencyKey: `agent-commission:${withdrawal.id}`,
+            metadata: {
+              withdrawalId: withdrawal.id,
+              userId: withdrawal.userId,
+              grossAmountMinor: withdrawal.amountMinor,
+              kind: 'commission',
+            },
+          },
+          manager,
+        );
+      }
+
+      // Credit the designated super-admin's wallet with the service fee.
+      if (serviceFeeMinor > 0 && input.superAdminUserId && input.superAdminUserId !== input.agentId) {
+        await this.ensureDefaultWallet(input.superAdminUserId, manager);
+        await this.creditInSession(
+          {
+            userId: input.superAdminUserId,
+            amountMinor: serviceFeeMinor,
+            entryType: 'adjustment',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal.id,
+            idempotencyKey: `platform-service-fee:${withdrawal.id}`,
+            metadata: {
+              withdrawalId: withdrawal.id,
+              userId: withdrawal.userId,
+              agentId: input.agentId,
+              grossAmountMinor: withdrawal.amountMinor,
+              kind: 'service_fee',
+            },
+          },
+          manager,
+        );
+      }
+
       withdrawal.status = 'completed';
-      withdrawal.serviceChargeMinor = serviceChargeMinor;
+      withdrawal.serviceChargeMinor = totalChargeMinor;
+      withdrawal.serviceFeeMinor = serviceFeeMinor;
+      withdrawal.commissionMinor = commissionMinor;
       withdrawal.netAmountMinor = netAmountMinor;
       withdrawal.telebirrReference = input.telebirrReference.trim();
       withdrawal.processedAt = new Date();
@@ -837,24 +924,28 @@ export class WalletService {
           metadata: {
             destinationAccount: withdrawal.destinationAccount,
             netAmountMinor,
-            serviceChargeMinor,
+            serviceFeeMinor,
+            commissionMinor,
             telebirrReference: withdrawal.telebirrReference,
           },
         },
         manager,
       );
 
-      if (serviceChargeMinor > 0) {
+      if (serviceFeeMinor > 0) {
         await manager.query(`
           INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
           VALUES ('global', ?)
           ON DUPLICATE KEY UPDATE totalServiceChargesMinor = totalServiceChargesMinor + ?
-        `, [serviceChargeMinor, serviceChargeMinor]);
+        `, [serviceFeeMinor, serviceFeeMinor]);
       }
 
       this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));
       return withdrawal;
     });
+
+    await this.notifyWithdrawalSettled(settled);
+    return settled;
   }
 
   async rejectWithdrawalByAgent(withdrawalId: string, agentId: string, remarks: string): Promise<Withdrawal> {
@@ -888,6 +979,7 @@ export class WalletService {
         remarks: withdrawal.adminNotes,
       },
     });
+    await this.notifyWithdrawalSettled(saved, remarks);
     return saved;
   }
 

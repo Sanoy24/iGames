@@ -45,9 +45,19 @@ export class Withdrawal {
   @Column({ type: 'timestamp', nullable: true })
   claimedAt?: Date;
 
+  /** Total deducted from the gross (serviceFee + commission). */
   @Column({ type: 'bigint', default: 0, transformer: bigintTransformer })
   serviceChargeMinor: number;
 
+  /** Platform service fee portion, credited to the super-admin wallet. */
+  @Column({ type: 'bigint', default: 0, transformer: bigintTransformer })
+  serviceFeeMinor: number;
+
+  /** Agent commission portion, credited to the processing agent's wallet. */
+  @Column({ type: 'bigint', default: 0, transformer: bigintTransformer })
+  commissionMinor: number;
+
+  /** Net amount the user receives (gross − serviceFee − commission). */
   @Column({ type: 'bigint', nullable: true, transformer: bigintTransformer })
   netAmountMinor?: number;
 

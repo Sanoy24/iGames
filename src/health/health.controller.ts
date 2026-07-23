@@ -5,6 +5,7 @@ import {
   HealthCheckService,
   TypeOrmHealthIndicator
 } from '@nestjs/terminus';
+import { VERSION_INFO } from './version.info';
 
 @ApiTags('health')
 @Controller('health')
@@ -40,6 +41,30 @@ export class HealthController {
       service: 'igames-backend',
       uptime: process.uptime(),
       timestamp: new Date().toISOString()
+    };
+  }
+
+  @Get('version')
+  @ApiOkResponse({
+    schema: {
+      example: {
+        service: 'igames-backend',
+        version: '0.1.0',
+        gitCommit: 'e0fa893',
+        gitBranch: 'migration/mysql',
+        startedAt: '2026-07-03T12:00:00.000Z',
+        uptimeSeconds: 1234,
+        nodeEnv: 'production',
+        now: '2026-07-03T12:20:34.000Z'
+      }
+    }
+  })
+  version() {
+    return {
+      ...VERSION_INFO,
+      uptimeSeconds: Math.floor(process.uptime()),
+      nodeEnv: process.env.NODE_ENV ?? 'development',
+      now: new Date().toISOString()
     };
   }
 }

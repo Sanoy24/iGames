@@ -18,6 +18,7 @@ import { User } from '../users/entities/user.entity';
 import { KenoDraw } from '../keno/entities/keno-draw.entity';
 import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 import { LedgerEntry } from '../ledger/entities/ledger-entry.entity';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
@@ -35,6 +36,7 @@ export class AdminService {
     private readonly usersService: UsersService,
     private readonly agentsService: AgentsService,
     private readonly gameEventsGateway: GameEventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async getSystemConfig(): Promise<SystemConfig> {
@@ -42,7 +44,7 @@ export class AdminService {
     if (!config) {
       config = this.systemConfigRepository.create({
         key: 'global',
-        telebirrCreditMinorPerBirr: 100,
+        telebirrCreditMinorPerBirr: 1, // flat 1:1 — 1 Birr deposited = 1 ETB credited
         welcomeBonusMinor: 0
       });
       await this.systemConfigRepository.save(config);
@@ -197,6 +199,26 @@ export class AdminService {
       } else {
         return await this.walletService.debitInSession(payload, manager);
       }
+    }).then(async (result) => {
+      const amount = amountMinor.toLocaleString();
+      await this.notificationsService.safeCreate(
+        direction === 'credit'
+          ? {
+              userId,
+              type: 'bonus',
+              title: 'Credit added',
+              body: reason ? `You received ${amount} ETB: ${reason}` : `You received ${amount} ETB.`,
+              data: { amountMinor, direction, reason },
+            }
+          : {
+              userId,
+              type: 'adjustment',
+              title: 'Balance adjusted',
+              body: reason ? `${amount} ETB was deducted: ${reason}` : `${amount} ETB was deducted from your balance.`,
+              data: { amountMinor, direction, reason },
+            },
+      );
+      return result;
     });
   }
 
@@ -243,7 +265,7 @@ export class AdminService {
       throw new NotFoundException('User not found');
     }
 
-    const [ledger, withdrawals, deposits] = await Promise.all([
+    const [ledger, withdrawals, deposits, gameStats] = await Promise.all([
       this.dataSource.getRepository(LedgerEntry).find({
         where: { userId },
         order: { createdAt: 'DESC' },
@@ -261,6 +283,7 @@ export class AdminService {
         order: { createdAt: 'DESC' },
         take: safeLimit,
       }),
+      this.getUserGameStats(userId),
     ]);
 
     return {
@@ -268,6 +291,7 @@ export class AdminService {
       ledger,
       withdrawals,
       deposits,
+      gameStats,
       totals: {
         walletAvailableMinor: user.wallets?.[0]?.availableMinor ?? 0,
         walletReservedMinor: user.wallets?.[0]?.reservedMinor ?? 0,
@@ -279,6 +303,139 @@ export class AdminService {
           .reduce((sum, withdrawal) => sum + Number(withdrawal.amountMinor), 0),
       },
     };
+  }
+
+  /**
+   * Per-game play summary for one player: tickets/bets bought, distinct rounds
+   * played, total staked, wins (a win = positive payout, robust across all three
+   * games' status enums), and total won. Cancelled/refunded rows are excluded so
+   * "games played" reflects real participation. All money is integer minor units.
+   */
+  async getUserGameStats(userId: string) {
+    const agg = async (table: string, roundCol: string, extraWhere: string) => {
+      const rows: Array<{
+        tickets: string | number;
+        rounds: string | number;
+        staked: string | number;
+        wins: string | number;
+        winMinor: string | number;
+      }> = await this.dataSource.query(
+        `SELECT COUNT(*) tickets,
+                COUNT(DISTINCT ${roundCol}) rounds,
+                COALESCE(SUM(stakeMinor),0) staked,
+                COALESCE(SUM(CASE WHEN payoutMinor > 0 THEN 1 ELSE 0 END),0) wins,
+                COALESCE(SUM(payoutMinor),0) winMinor
+           FROM ${table}
+          WHERE userId = ?${extraWhere}`,
+        [userId],
+      );
+      const r = rows[0] ?? {};
+      return {
+        tickets: Number(r.tickets ?? 0),
+        rounds: Number(r.rounds ?? 0),
+        stakedMinor: Number(r.staked ?? 0),
+        wins: Number(r.wins ?? 0),
+        winMinor: Number(r.winMinor ?? 0),
+      };
+    };
+
+    const [bingo, keno, crash] = await Promise.all([
+      agg('bingo_tickets', 'roomId', ` AND status <> 'cancelled'`),
+      agg('keno_tickets', 'drawId', ` AND status <> 'cancelled'`),
+      agg('crash_bets', 'roundId', ''),
+    ]);
+
+    return {
+      bingo,
+      keno,
+      crash,
+      totalGamesPlayed: bingo.tickets + keno.tickets + crash.tickets,
+      totalRoundsPlayed: bingo.rounds + keno.rounds + crash.rounds,
+      totalStakedMinor: bingo.stakedMinor + keno.stakedMinor + crash.stakedMinor,
+      totalWins: bingo.wins + keno.wins + crash.wins,
+      totalWinMinor: bingo.winMinor + keno.winMinor + crash.winMinor,
+    };
+  }
+
+  /**
+   * Per-agent Bingo performance (Approach B): for each agent, the customers they
+   * brought (first-deposit link) and the play in their rooms — tickets, distinct
+   * players, total staked, total paid out, and GGR (house take = staked − payout).
+   * Ranked by staked. Money is integer minor units. Bingo tickets carry the room
+   * owner's agentId snapshot, so this is a straight group-by.
+   */
+  async getAgentPerformance(): Promise<
+    Array<{
+      agentId: string;
+      displayName: string;
+      customersBrought: number;
+      tickets: number;
+      players: number;
+      stakedMinor: number;
+      payoutMinor: number;
+      ggrMinor: number;
+      commissionEarnedMinor: number;
+    }>
+  > {
+    // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
+    const rows: Array<{
+      id: string;
+      displayName: string;
+      customers: string | number;
+      tickets: string | number;
+      players: string | number;
+      staked: string | number;
+      payout: string | number;
+      commission: string | number;
+    }> = await this.dataSource.query(
+      `SELECT u.id, u.displayName,
+              COALESCE(c.customers, 0) customers,
+              COALESCE(t.tickets, 0) tickets,
+              COALESCE(t.players, 0) players,
+              COALESCE(t.staked, 0) staked,
+              COALESCE(t.payout, 0) payout,
+              COALESCE(cm.commission, 0) commission
+         FROM users u
+         LEFT JOIN (
+           SELECT t.agentId, COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
+                  SUM(t.stakeMinor) staked, SUM(t.payoutMinor) payout
+             FROM bingo_tickets t
+             JOIN users pu ON pu.id = t.userId
+            WHERE t.agentId IS NOT NULL AND t.status <> 'cancelled'
+              AND JSON_EXTRACT(pu.productMetadata, '$.botPolicy') IS NULL
+            GROUP BY t.agentId
+         ) t ON t.agentId = u.id
+         LEFT JOIN (
+           SELECT referredByAgentId, COUNT(*) customers
+             FROM users
+            WHERE referredByAgentId IS NOT NULL
+            GROUP BY referredByAgentId
+         ) c ON c.referredByAgentId = u.id
+         LEFT JOIN (
+           SELECT userId, SUM(amountMinor) commission
+             FROM ledger_entries
+            WHERE entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'
+            GROUP BY userId
+         ) cm ON cm.userId = u.id
+        WHERE JSON_CONTAINS(u.roles, '"agent"')
+        ORDER BY staked DESC`,
+    );
+
+    return rows.map((r) => {
+      const stakedMinor = Number(r.staked ?? 0);
+      const payoutMinor = Number(r.payout ?? 0);
+      return {
+        agentId: r.id,
+        displayName: r.displayName,
+        customersBrought: Number(r.customers ?? 0),
+        tickets: Number(r.tickets ?? 0),
+        players: Number(r.players ?? 0),
+        stakedMinor,
+        payoutMinor,
+        ggrMinor: stakedMinor - payoutMinor,
+        commissionEarnedMinor: Number(r.commission ?? 0),
+      };
+    });
   }
 
   async getAgentActions(limit = 100) {

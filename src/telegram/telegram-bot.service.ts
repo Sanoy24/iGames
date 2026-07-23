@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { Bot, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
+import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback } from 'grammy';
 import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { UsersService } from '../users/users.service';
 
@@ -98,6 +98,98 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     // Win push notifications are disabled.
   }
 
+  /** True once the bot has a token and is initialized (else broadcasts can't send). */
+  public isReady(): boolean {
+    return this.bot !== undefined;
+  }
+
+  /**
+   * Fan a single message out to many chats (an admin broadcast). Sends serially
+   * with a small delay to stay under Telegram's global ~30 msg/s limit, honours
+   * 429 `retry_after`, and treats "blocked/deactivated" recipients as an
+   * expected skip rather than an error. When a photo is attached it is uploaded
+   * once and the resulting file_id is reused for every subsequent send, so an
+   * 18k-user broadcast uploads the image a single time.
+   */
+  async sendBroadcastMessage(opts: {
+    chatIds: string[];
+    text?: string | null;
+    imageAbsolutePath?: string | null;
+    buttons?: Array<{ text: string; url: string }> | null;
+    parseMode?: 'HTML' | 'MarkdownV2' | 'none' | null;
+    throttleMs?: number;
+    onProgress?: (sent: number, failed: number) => void;
+    progressEvery?: number;
+    isCancelled?: () => boolean;
+  }): Promise<{ sent: number; failed: number; lastError?: string }> {
+    if (!this.bot) throw new Error('Telegram bot is not initialized (TELEGRAM_BOT_TOKEN missing)');
+
+    const api = this.bot.api;
+    const parseMode = opts.parseMode && opts.parseMode !== 'none' ? opts.parseMode : undefined;
+    const keyboard = this.buildInlineButtons(opts.buttons ?? undefined);
+    const throttleMs = opts.throttleMs ?? 40; // ~25 msg/s
+    const progressEvery = opts.progressEvery ?? 200;
+    const hasImage = !!opts.imageAbsolutePath;
+    const hasText = !!(opts.text && opts.text.trim().length > 0);
+
+    let sent = 0;
+    let failed = 0;
+    let lastError: string | undefined;
+    let photoRef: string | InputFile | undefined = opts.imageAbsolutePath
+      ? new InputFile(opts.imageAbsolutePath)
+      : undefined;
+
+    for (const chatId of opts.chatIds) {
+      if (opts.isCancelled?.()) break;
+      try {
+        if (hasImage) {
+          const message = await api.sendPhoto(chatId, photoRef as string | InputFile, {
+            caption: hasText ? (opts.text as string) : undefined,
+            parse_mode: parseMode,
+            reply_markup: keyboard,
+          });
+          // Reuse the uploaded file for every subsequent recipient.
+          if (photoRef instanceof InputFile && message.photo?.length) {
+            photoRef = message.photo[message.photo.length - 1].file_id;
+          }
+        } else if (hasText) {
+          await api.sendMessage(chatId, opts.text as string, {
+            parse_mode: parseMode,
+            reply_markup: keyboard,
+          });
+        } else {
+          break; // nothing to send
+        }
+        sent++;
+      } catch (err) {
+        failed++;
+        const e = err as { error_code?: number; description?: string; message?: string; parameters?: { retry_after?: number } };
+        lastError = e.description ?? e.message ?? 'send failed';
+        // Respect Telegram flood control before continuing.
+        if (e.error_code === 429 && e.parameters?.retry_after) {
+          await this.sleep((e.parameters.retry_after + 1) * 1000);
+        }
+      }
+
+      if ((sent + failed) % progressEvery === 0) opts.onProgress?.(sent, failed);
+      if (throttleMs > 0) await this.sleep(throttleMs);
+    }
+
+    opts.onProgress?.(sent, failed);
+    return { sent, failed, lastError };
+  }
+
+  private buildInlineButtons(buttons?: Array<{ text: string; url: string }>): InlineKeyboard | undefined {
+    if (!buttons || buttons.length === 0) return undefined;
+    const kb = new InlineKeyboard();
+    buttons.forEach((b) => kb.url(b.text, b.url).row());
+    return kb;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   public handleWebhookRequest(req: any, res: any) {
     if (!this.bot) {
       res.status(500).send('Bot not initialized');
@@ -155,17 +247,44 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
       // Telegram only allows users to share their own contact via the request button
       if (!contact.phone_number || (contact.user_id && contact.user_id !== userId)) {
-        await ctx.reply('Please share your own phone number using the button provided.');
+        await ctx.reply('Please share your own phone number using the button provided.', {
+          reply_markup: this.contactRequestKeyboard(),
+        });
+        return;
+      }
+
+      // Persist the phone (normalized to +2519XXXXXXXX). setTelegramPhone creates
+      // the internal user first if needed — the contact is shared on /start,
+      // before the Mini App has ever opened, so the account may not exist yet.
+      // We AWAIT this so the Play button only appears once the phone is durably
+      // saved (the Mini App login refuses to start without it).
+      let savedPhone: string | null = null;
+      if (userId) {
+        try {
+          savedPhone = await this.usersService.setTelegramPhone({
+            telegramUserId: String(userId),
+            username: ctx.from?.username,
+            firstName: ctx.from?.first_name,
+            lastName: ctx.from?.last_name,
+            languageCode: ctx.from?.language_code,
+            phoneNumber: contact.phone_number,
+          });
+        } catch (err) {
+          this.logger.error(`Failed to persist phone for Telegram user ${userId}`, err as Error);
+        }
+      }
+
+      if (!savedPhone) {
+        await ctx.reply(
+          `That doesn't look like a valid Ethiopian phone number. Please share your phone using the button below.`,
+          { reply_markup: this.contactRequestKeyboard() },
+        );
         return;
       }
 
       if (userId) {
-        this.phoneCache.set(userId, contact.phone_number);
-        // Persist to DB — best-effort, do not block the reply
-        this.usersService
-          .updatePhoneByTelegramId(String(userId), contact.phone_number)
-          .catch((err) => this.logger.error(`Failed to persist phone for Telegram user ${userId}`, err));
-        this.logger.log(`Stored phone ${contact.phone_number} for Telegram user ${userId}`);
+        this.phoneCache.set(userId, savedPhone);
+        this.logger.log(`Stored phone ${savedPhone} for Telegram user ${userId}`);
       }
 
       const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);

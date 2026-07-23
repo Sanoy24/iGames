@@ -8,14 +8,31 @@ export class SystemConfig {
   @Column({ type: 'varchar', length: 50, unique: true, default: 'global' })
   key: string;
 
-  @Column({ type: 'int', default: 100 })
+  // Flat 1:1 wallet model — 1 Birr deposited credits 1 ETB.
+  @Column({ type: 'int', default: 1 })
   telebirrCreditMinorPerBirr: number;
 
   @Column({ type: 'int', default: 0 })
   welcomeBonusMinor: number;
 
+  /** Service fee % of a withdrawal that goes to the platform super-admin. */
   @Column({ type: 'int', default: 0 })
   withdrawalServiceChargePct: number;
+
+  /** Commission % of a withdrawal earned by the agent who processed it. */
+  @Column({ type: 'int', default: 0 })
+  withdrawalCommissionPct: number;
+
+  /**
+   * User id of the designated super-admin whose wallet receives withdrawal
+   * service fees. Null = fees are only tracked in platform_stats (no wallet credit).
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  superAdminUserId?: string | null;
+
+  /** Minimum a single Telebirr deposit must be to be accepted. 0 = no minimum. */
+  @Column({ type: 'int', default: 0 })
+  minDepositMinor: number;
 
   @Column({ type: 'int', default: 0 })
   withdrawalMinAmountMinor: number;
@@ -25,6 +42,22 @@ export class SystemConfig {
 
   @Column({ type: 'int', default: 1 })
   maxPendingWithdrawalsPerUser: number;
+
+  /**
+   * Per-agent Bingo rooms (Approach B). When true, each active agent owns a Bingo
+   * room, customers pick a room from a lobby, and settlement/stats are credited to
+   * the room's owner. When false, Bingo runs the original single shared-room model.
+   * Toggled from the admin panel.
+   */
+  @Column({ type: 'boolean', default: false })
+  agentRoomsEnabled: boolean;
+
+  /**
+   * % of a room's real-player GGR (staked − paid out, bots excluded) credited to
+   * the room-owning agent when the game completes. 0 = no commission (stats only).
+   */
+  @Column({ type: 'int', default: 0 })
+  agentRoomCommissionPct: number;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

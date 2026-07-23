@@ -58,6 +58,29 @@ export class User {
     withdraw: boolean;
   };
 
+  /**
+   * On-duty control for agents. `auto` follows the working window
+   * (`workDaysOfWeek` + work hours, evaluated in Ethiopia time); `on`/`off` are
+   * admin overrides that win over the schedule until cleared back to `auto`.
+   * Only an effectively-on-duty agent is shown to players as the deposit
+   * destination and may claim/complete withdrawals. Force-`on` is single-primary.
+   */
+  @Column({ type: 'varchar', length: 8, default: 'auto' })
+  onDutyMode: 'auto' | 'on' | 'off';
+
+  /** Days the agent works (0=Sun..6=Sat). Empty/absent = every day. */
+  @Column({ type: 'json', nullable: true })
+  workDaysOfWeek?: number[];
+
+  /**
+   * Agent (user id) who brought this customer — set to the agent who processed the
+   * customer's FIRST credited Telebirr deposit. Used for "customers brought" stats
+   * and to highlight the customer's home room in the lobby. Null = unattributed.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  referredByAgentId?: string | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

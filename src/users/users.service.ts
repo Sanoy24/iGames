@@ -1,10 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
-import { Repository, EntityManager, DataSource, IsNull } from 'typeorm';
+import { Repository, EntityManager, DataSource, IsNull, In } from 'typeorm';
 import { User } from './entities/user.entity';
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
+import { normalizeEthiopianPhone } from '../common/phone.util';
+import { AgentDutyMode, isAgentEffectivelyOnDuty, isWithinWorkingWindow } from '../common/agent-duty.util';
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -105,6 +107,22 @@ export class UsersService {
     };
   }
 
+  /**
+   * Persist a Telegram user's shared phone number. Ensures the internal user +
+   * identity exist first (the contact is usually shared on /start, BEFORE the
+   * Mini App has ever opened, so the user row may not exist yet), then stores
+   * the normalized `+2519XXXXXXXX` phone. Returns the normalized phone, or null
+   * when the shared number is not a valid Ethiopian mobile number.
+   */
+  async setTelegramPhone(input: TelegramIdentityInput & { phoneNumber: string }): Promise<string | null> {
+    const normalized = normalizeEthiopianPhone(input.phoneNumber);
+    if (!normalized) return null;
+
+    const { user } = await this.findOrCreateTelegramUser(input);
+    await this.userRepository.update(user.id, { phoneNumber: normalized });
+    return normalized;
+  }
+
   async listUsers(page: number, limit: number, role?: string, search?: string) {
     const skip = (page - 1) * limit;
     const queryBuilder = this.userRepository.createQueryBuilder('user')
@@ -143,10 +161,11 @@ export class UsersService {
     workStartMinute?: number;
     workEndHour?: number;
     workEndMinute?: number;
+    workDaysOfWeek?: number[];
     agentPermissions?: { deposit: boolean; withdraw: boolean };
   }): Promise<User> {
-    const normalizedPhone = input.phoneNumber.trim();
-    if (!normalizedPhone) throw new BadRequestException('Phone number is required');
+    const normalizedPhone = normalizeEthiopianPhone(input.phoneNumber);
+    if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
 
     return this.dataSource.transaction(async (manager) => {
       const authRepo = manager.getRepository(AuthIdentity);
@@ -168,6 +187,7 @@ export class UsersService {
         workStartMinute: input.workStartMinute,
         workEndHour: input.workEndHour,
         workEndMinute: input.workEndMinute,
+        workDaysOfWeek: input.workDaysOfWeek ?? [],
         agentPermissions: input.agentPermissions ?? { deposit: true, withdraw: true },
       });
       await userRepo.save(user);
@@ -197,6 +217,7 @@ export class UsersService {
       workStartMinute?: number;
       workEndHour?: number;
       workEndMinute?: number;
+      workDaysOfWeek?: number[];
       agentPermissions?: { deposit: boolean; withdraw: boolean };
       status?: 'active' | 'suspended' | 'closed';
     }
@@ -209,7 +230,8 @@ export class UsersService {
     if (update.displayName !== undefined) user.displayName = update.displayName.trim();
     if (update.status !== undefined) user.status = update.status as any;
     if (update.phoneNumber !== undefined) {
-      const normalizedPhone = update.phoneNumber.trim();
+      const normalizedPhone = normalizeEthiopianPhone(update.phoneNumber);
+      if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
       user.phoneNumber = normalizedPhone;
       await this.authIdentityRepository.update(
         { userId: user.id, provider: 'password' },
@@ -227,19 +249,114 @@ export class UsersService {
     user.workStartMinute = update.workStartMinute;
     user.workEndHour = update.workEndHour;
     user.workEndMinute = update.workEndMinute;
+    if (update.workDaysOfWeek !== undefined) user.workDaysOfWeek = update.workDaysOfWeek;
     if (update.agentPermissions !== undefined) user.agentPermissions = update.agentPermissions;
 
     await this.userRepository.save(user);
     return user;
   }
 
+  /**
+   * Admin sets an agent's on-duty mode (`auto` | `on` | `off`). Force-`on` is
+   * single-primary: putting one agent force-on demotes any other force-on agent
+   * back to `auto`, so at most one agent is ever manually pinned on.
+   */
+  async setAgentOnDutyMode(agentId: string, mode: AgentDutyMode): Promise<User> {
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(User);
+      const user = await repo.findOneBy({ id: agentId });
+      if (!user || !user.roles.includes('agent')) {
+        throw new NotFoundException('Agent not found');
+      }
+
+      if (mode === 'on') {
+        await repo
+          .createQueryBuilder()
+          .update(User)
+          .set({ onDutyMode: 'auto' })
+          .where('onDutyMode = :on', { on: 'on' })
+          .andWhere('id != :id', { id: agentId })
+          .execute();
+      }
+
+      user.onDutyMode = mode;
+      await repo.save(user);
+      return user;
+    });
+  }
+
+  /**
+   * The single agent effectively on duty right now, or null. Prefers a manually
+   * pinned (`on`) agent, otherwise the earliest-starting agent whose Ethiopia-time
+   * working window currently covers now. Only active accounts are considered.
+   */
+  async findOnDutyAgent(): Promise<User | null> {
+    const agents = await this.userRepository
+      .createQueryBuilder('user')
+      .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .andWhere('user.status = :status', { status: 'active' })
+      .getMany();
+
+    const now = new Date();
+    const onDuty = agents.filter((a) => isAgentEffectivelyOnDuty(a, now));
+    if (onDuty.length === 0) return null;
+
+    const forced = onDuty.filter((a) => a.onDutyMode === 'on');
+    if (forced.length > 0) {
+      // Most recently pinned wins (single-primary should leave just one anyway).
+      forced.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      return forced[0];
+    }
+
+    // Scheduled: deterministic pick by earliest start time, then creation order.
+    onDuty.sort((a, b) => {
+      const sa = (a.workStartHour ?? 0) * 60 + (a.workStartMinute ?? 0);
+      const sb = (b.workStartHour ?? 0) * 60 + (b.workStartMinute ?? 0);
+      if (sa !== sb) return sa - sb;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+    return onDuty[0];
+  }
+
+  /**
+   * Every active agent currently on duty — used when a player may CHOOSE which
+   * agent to deposit to (more than one on duty). Ordered so the same primary that
+   * `findOnDutyAgent` picks comes first: force-pinned agents (most recent first),
+   * then scheduled agents by earliest start.
+   */
+  async findOnDutyAgents(): Promise<User[]> {
+    const agents = await this.userRepository
+      .createQueryBuilder('user')
+      .where('JSON_CONTAINS(user.roles, :role)', { role: '"agent"' })
+      .andWhere('user.status = :status', { status: 'active' })
+      .getMany();
+
+    const now = new Date();
+    const onDuty = agents.filter((a) => isAgentEffectivelyOnDuty(a, now));
+
+    return onDuty.sort((a, b) => {
+      const aForced = a.onDutyMode === 'on' ? 1 : 0;
+      const bForced = b.onDutyMode === 'on' ? 1 : 0;
+      if (aForced !== bForced) return bForced - aForced; // forced-on first
+      if (aForced && bForced) return b.updatedAt.getTime() - a.updatedAt.getTime();
+      const sa = (a.workStartHour ?? 0) * 60 + (a.workStartMinute ?? 0);
+      const sb = (b.workStartHour ?? 0) * 60 + (b.workStartMinute ?? 0);
+      if (sa !== sb) return sa - sb;
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+  }
+
   async findBackofficeUserByCredentials(
     phoneNumber: string,
     password: string,
   ): Promise<User> {
-    const normalizedPhone = phoneNumber.trim();
+    // Match on the canonical +251 form, but also accept the exact string the
+    // agent was stored under (older rows may hold "09…" or "2519…").
+    const rawTrimmed = phoneNumber.trim();
+    const normalizedPhone = normalizeEthiopianPhone(rawTrimmed) ?? rawTrimmed;
+    const candidates = [...new Set([normalizedPhone, rawTrimmed])];
     const identity = await this.authIdentityRepository.findOne({
-      where: { provider: 'password', providerUserId: normalizedPhone },
+      where: { provider: 'password', providerUserId: In(candidates) },
       select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId']
     });
 
@@ -308,7 +425,16 @@ export class UsersService {
       .take(limit)
       .getManyAndCount();
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // Annotate each agent with their live Ethiopia-time duty state so the admin UI
+    // can show who is actually covering deposits without re-deriving the timezone.
+    const now = new Date();
+    const annotated = data.map((u) => ({
+      ...u,
+      effectiveOnDuty: isAgentEffectivelyOnDuty(u, now),
+      withinWorkingWindow: isWithinWorkingWindow(u, now),
+    }));
+
+    return { data: annotated, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async getProfile(userId: string): Promise<User> {
@@ -319,15 +445,21 @@ export class UsersService {
     const user = await this.userRepository.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('User not found');
     if (update.displayName?.trim()) user.displayName = update.displayName.trim();
-    if (update.phoneNumber?.trim()) user.phoneNumber = update.phoneNumber.trim();
+    if (update.phoneNumber?.trim()) {
+      const normalizedPhone = normalizeEthiopianPhone(update.phoneNumber);
+      if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
+      user.phoneNumber = normalizedPhone;
+    }
     await this.userRepository.save(user);
     return user;
   }
 
   async updatePhoneByTelegramId(telegramUserId: string, phoneNumber: string): Promise<void> {
+    const normalized = normalizeEthiopianPhone(phoneNumber);
+    if (!normalized) return;
     const identity = await this.authIdentityRepository.findOneBy({ provider: 'telegram', providerUserId: telegramUserId });
     if (!identity) return;
-    await this.userRepository.update(identity.userId, { phoneNumber });
+    await this.userRepository.update(identity.userId, { phoneNumber: normalized });
   }
 
   async updateStatus(userId: string, status: 'active' | 'suspended' | 'closed') {

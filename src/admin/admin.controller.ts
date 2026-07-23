@@ -9,11 +9,13 @@ import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminService } from './admin.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
+import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
+import { GameEventsGateway } from '../events/game-events.gateway';
 
 @SkipThrottle()
 @Controller('admin')
@@ -25,6 +27,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly usersService: UsersService,
     private readonly walletService: WalletService,
+    private readonly gameEventsGateway: GameEventsGateway,
   ) {}
 
   @Get('stats/overview')
@@ -45,18 +48,20 @@ export class AdminController {
   // ── Users ─────────────────────────────────────────────────────────
 
   @Get('users')
-  getUsers(
+  async getUsers(
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '50',
     @Query('role') role?: string,
     @Query('search') search?: string,
   ) {
-    return this.usersService.listUsers(
+    const result = await this.usersService.listUsers(
       parseInt(page, 10) || 1,
       parseInt(limit, 10) || 50,
       role,
       search,
     );
+    const onlineIds = this.gameEventsGateway.getOnlineUserIds();
+    return { ...result, data: result.data.map((user) => ({ ...user, online: onlineIds.has(user.id) })) };
   }
 
   @Get('users/:id/activity')
@@ -123,9 +128,22 @@ export class AdminController {
     return this.usersService.updateAgentUser(id, dto);
   }
 
+  @Patch('agents/:id/on-duty')
+  setAgentOnDuty(
+    @Param('id') id: string,
+    @Body() dto: SetAgentOnDutyDto,
+  ) {
+    return this.usersService.setAgentOnDutyMode(id, dto.mode);
+  }
+
   @Get('agents/actions')
   getAgentActions(@Query('limit') limit: string = '100') {
     return this.adminService.getAgentActions(parseInt(limit, 10) || 100);
+  }
+
+  @Get('agents/performance')
+  getAgentPerformance() {
+    return this.adminService.getAgentPerformance();
   }
 
   // ── Withdrawals ───────────────────────────────────────────────────

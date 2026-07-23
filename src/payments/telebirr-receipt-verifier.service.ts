@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   ServiceUnavailableException
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -34,6 +35,8 @@ export type VerifiedTelebirrReceipt = {
 
 @Injectable()
 export class TelebirrReceiptVerifierService {
+  private readonly logger = new Logger(TelebirrReceiptVerifierService.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly adminService: AdminService,
@@ -138,8 +141,8 @@ export class TelebirrReceiptVerifierService {
     if (!parsedReceipt.date) {
       throw new BadRequestException('Telebirr receipt is missing transaction date');
     }
-    const txDate = new Date(parsedReceipt.date);
-    if (isNaN(txDate.getTime())) {
+    const txDate = this.parseTelebirrDate(parsedReceipt.date);
+    if (!txDate) {
       throw new BadRequestException('Telebirr receipt transaction date is invalid');
     }
     const now = new Date();
@@ -173,48 +176,181 @@ export class TelebirrReceiptVerifierService {
       throw new BadRequestException(`Agent "${matchingAgent.displayName}" does not have deposit permission`);
     }
 
-    // Check agent work timeframe at the time of transaction
-    if (matchingAgent.workStartHour !== undefined && matchingAgent.workEndHour !== undefined) {
-      const txMinutes = txDate.getHours() * 60 + txDate.getMinutes();
-      const startMinutes = matchingAgent.workStartHour * 60 + (matchingAgent.workStartMinute || 0);
-      const endMinutes = matchingAgent.workEndHour * 60 + (matchingAgent.workEndMinute || 0);
-
-      const isOvernight = endMinutes <= startMinutes;
-      const inWindow = isOvernight
-        ? txMinutes >= startMinutes || txMinutes < endMinutes
-        : txMinutes >= startMinutes && txMinutes < endMinutes;
-
-      if (!inWindow) {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        throw new BadRequestException(
-          `Transaction occurred outside agent's working hours (${pad(matchingAgent.workStartHour)}:${pad(matchingAgent.workStartMinute || 0)} - ${pad(matchingAgent.workEndHour)}:${pad(matchingAgent.workEndMinute || 0)})`
-        );
-      }
+    // Verify the money actually landed on THIS agent's Telebirr account, not just a
+    // coincidentally matching display name. Telebirr masks the account number, so
+    // we compare the visible digits: a definite mismatch is rejected; a fully-masked
+    // (indeterminate) account falls back to the name match.
+    const receiverAccountMatched = this.accountMatchesPhone(
+      parsedReceipt.credited_party_acc_no,
+      matchingAgent.phoneNumber,
+    );
+    if (receiverAccountMatched === false) {
+      throw new BadRequestException(
+        `Telebirr payment went to an account that does not match agent "${matchingAgent.displayName}"`,
+      );
     }
+
+    // Minimum-deposit enforcement lives in PaymentsService.assertMeetsMinimum so
+    // both the preview and submit paths reject below-minimum receipts with one
+    // clear message.
+    const amountMinor = await this.toCreditMinor(amountBirr);
 
     return {
       receiptNo,
-      amountMinor: await this.toCreditMinor(amountBirr),
+      amountMinor,
       parsedReceipt,
       verification: {
         receiverNameMatched: true,
-        receiverAccountMatched: true,
+        receiverAccountMatched,
         transactionStatusAccepted,
-        expectedReceiverName: matchingAgent.displayName
+        expectedReceiverName: matchingAgent.displayName,
+        expectedReceiverAccount: matchingAgent.phoneNumber ?? undefined,
       },
       agentId: matchingAgent.id
     };
   }
 
-  private async loadReceipt(receiptNo: string): Promise<string> {
+  /**
+   * Parse a Telebirr receipt date. Telebirr prints `DD-MM-YYYY HH:mm:ss` (or with
+   * `/`) in Ethiopia local time (EAT, UTC+3) — which native `new Date()` reads as
+   * an invalid month, hence the "date is invalid" errors. We parse the fields
+   * explicitly and convert to the correct absolute UTC instant (subtract the +3
+   * offset) so the freshness window compares real elapsed time regardless of the
+   * server timezone. Falls back to native parsing for ISO/other formats.
+   */
+  private parseTelebirrDate(raw?: string): Date | null {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    const m = trimmed.match(
+      /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
+    );
+    if (m) {
+      const [, dd, mm, yyyy, hh = '0', min = '0', ss = '0'] = m;
+      const utcMs = Date.UTC(+yyyy, +mm - 1, +dd, +hh, +min, +ss) - 3 * 60 * 60 * 1000;
+      if (!Number.isNaN(utcMs)) return new Date(utcMs);
+    }
+    const native = new Date(trimmed);
+    return Number.isNaN(native.getTime()) ? null : native;
+  }
+
+  /**
+   * Does the receipt's (usually masked) credited account belong to `agentPhone`?
+   * Returns true (match), false (definite mismatch → reject), or null (can't tell,
+   * e.g. fully masked → fall back to the name match). Telebirr shows the account
+   * like `251912***789` / `0912****4321`; we compare the visible trailing digits,
+   * and do a full compare when the account is not masked at all.
+   */
+  private accountMatchesPhone(receiptAcc?: string, agentPhone?: string): boolean | null {
+    if (!receiptAcc || !agentPhone) return null;
+    // Canonical 9-digit local number (9XXXXXXXX), stripping +251 / 0 prefixes.
+    const phoneTail = agentPhone.replace(/\D/g, '').slice(-9);
+    if (phoneTail.length < 9) return null;
+
+    const isMasked = /[*xX•·.]/.test(receiptAcc.replace(/^\+?251|^0/, ''));
+    const accDigits = receiptAcc.replace(/\D/g, '');
+
+    // Not masked → compare the full local number.
+    if (!isMasked && accDigits.length >= 9) {
+      return accDigits.slice(-9) === phoneTail;
+    }
+
+    // Masked → compare the visible trailing run of digits (Telebirr reliably shows
+    // the last few). Require ≥3 to be meaningful.
+    const trailing = receiptAcc.match(/(\d+)\D*$/)?.[1] ?? '';
+    if (trailing.length >= 3) {
+      return phoneTail.endsWith(trailing.slice(-9));
+    }
+    return null;
+  }
+
+  /**
+   * Diagnostic probe (no DB write, no credit): fetch + parse a receipt so an ops
+   * self-test can confirm the server can actually reach and read Ethiotelecom.
+   */
+  async probeReceipt(receiptNo: string): Promise<{
+    loaded: boolean;
+    parsed: boolean;
+    amount?: number;
+    receiver?: string;
+    receiverAccount?: string;
+    transactionStatus?: string;
+    error?: string;
+  }> {
+    if (!/^[A-Za-z0-9_-]{4,80}$/.test(receiptNo)) {
+      return { loaded: false, parsed: false, error: 'Receipt number format is invalid' };
+    }
+    let html: string;
     try {
-      return await telebirrReceipt.utils.loadReceipt({ receiptNo });
+      html = await this.loadReceipt(receiptNo);
     } catch (error) {
+      const detail = (error as { response?: { detail?: string } })?.response?.detail;
+      return { loaded: false, parsed: false, error: detail ?? (error instanceof Error ? error.message : String(error)) };
+    }
+    try {
+      const parsed = telebirrReceipt.utils.parseFromHTML(html);
+      return {
+        loaded: true,
+        parsed: true,
+        amount: parsed.settled_amount ?? parsed.total_amount,
+        receiver: parsed.credited_party_name ?? parsed.to,
+        receiverAccount: parsed.credited_party_acc_no,
+        transactionStatus: parsed.transaction_status,
+      };
+    } catch (error) {
+      return { loaded: true, parsed: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private async loadReceipt(receiptNo: string): Promise<string> {
+    // When TELEBIRR_PROXY_URL is configured, fetch the receipt HTML through the
+    // egress proxy (services/telebirr-proxy) instead of hitting Ethiotelecom
+    // directly — for hosts that cannot reach transactioninfo.ethiotelecom.et.
+    // Blank = direct fetch (historical behaviour), so this is an on/off env switch.
+    const proxyUrl = this.configService.get<string>('TELEBIRR_PROXY_URL')?.trim();
+    const started = Date.now();
+    try {
+      if (proxyUrl) {
+        const html = await this.loadReceiptViaProxy(proxyUrl.replace(/\/+$/, ''), receiptNo);
+        this.logger.log(`Receipt loaded via PROXY in ${Date.now() - started}ms (${html.length} bytes)`);
+        return html;
+      }
+      this.logger.warn('TELEBIRR_PROXY_URL is not set — fetching Ethiotelecom DIRECTLY');
+      const html = await telebirrReceipt.utils.loadReceipt({ receiptNo });
+      this.logger.log(`Receipt loaded DIRECT in ${Date.now() - started}ms`);
+      return html;
+    } catch (error) {
+      this.logger.error(
+        `Receipt load FAILED after ${Date.now() - started}ms (proxy=${proxyUrl ? 'on' : 'off'}): ${error instanceof Error ? error.message : error}`,
+      );
       throw new ServiceUnavailableException({
         message: 'Unable to load Telebirr receipt',
         detail: error instanceof Error ? error.message : 'Unknown Telebirr receipt error'
       });
     }
+  }
+
+  private async loadReceiptViaProxy(baseUrl: string, receiptNo: string): Promise<string> {
+    const key = this.configService.get<string>('TELEBIRR_PROXY_KEY') ?? '';
+    const timeoutMs = Number(this.configService.get<string>('TELEBIRR_PROXY_TIMEOUT_MS') ?? 15000);
+
+    // GET ${baseUrl}/fetchreceipt?receiptNo=... — the proxy replies { html }.
+    // (An optional x-proxy-key header is sent when TELEBIRR_PROXY_KEY is set; the
+    // proxy may ignore it.)
+    const response = await fetch(
+      `${baseUrl}/fetchreceipt?receiptNo=${encodeURIComponent(receiptNo)}`,
+      {
+        headers: key ? { 'x-proxy-key': key } : {},
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Telebirr proxy returned HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as { html?: string };
+    if (!data?.html) {
+      throw new Error('Telebirr proxy returned no receipt HTML');
+    }
+    return data.html;
   }
 
   private extractReceiptNo(receiptNoOrUrl: string): string {
@@ -268,7 +404,10 @@ export class TelebirrReceiptVerifierService {
 
   private async toCreditMinor(amountBirr: number): Promise<number> {
     const systemConfig = await this.adminService.getSystemConfig();
-    const multiplier = systemConfig.telebirrCreditMinorPerBirr || 100;
+    // Flat 1:1 wallet model — 1 Birr deposited credits 1 ETB. The multiplier
+    // stays configurable, but defaults to 1 (not 100) so a 10 Birr top-up
+    // credits exactly 10, matching how balances are displayed everywhere.
+    const multiplier = systemConfig.telebirrCreditMinorPerBirr || 1;
 
     const amountMinor = Math.round(amountBirr * multiplier);
     if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {

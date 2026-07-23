@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, ChevronDown, ChevronUp, Clock, RefreshCw, Send, Undo2, Users, X } from 'lucide-react';
-import { agentApi, walletApi } from '../lib/api';
+import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
+import { agentApi, walletApi, type AgentSelfPerformance } from '../lib/api';
+import { SupportConsole } from '../components/SupportConsole';
 import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -33,12 +35,14 @@ function Step({ n, done, label }: { n: number; done?: boolean; label: string }) 
 }
 
 export function Agent() {
+  const { t } = useTranslation();
   const addToast = useStore((s) => s.addToast);
 
   const [available, setAvailable] = useState<Withdrawal[]>([]);
   const [mine, setMine] = useState<Withdrawal[]>([]);
-  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number } | null>(null);
+  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
+  const [perf, setPerf] = useState<AgentSelfPerformance | null>(null);
   const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [_withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,6 +52,7 @@ export function Agent() {
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
   const [showPool, setShowPool] = useState(false);
+  const [view, setView] = useState<'withdrawals' | 'support'>('withdrawals');
 
   const [transferPhone, setTransferPhone] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
@@ -65,6 +70,7 @@ export function Agent() {
       setMine(my);
       setConfig(cfg);
       setAgentWallet(wallet);
+      agentApi.getPerformance().then(setPerf).catch(() => undefined);
       const tx = await agentApi.getTransactions();
       setLedger(tx.ledger);
       setWithdrawalHistory(tx.withdrawals);
@@ -157,14 +163,30 @@ export function Agent() {
     }
   };
 
-  const serviceChargePct = config?.withdrawalServiceChargePct ?? 0;
-  const netAmount = (gross: number) => gross - Math.floor((gross * serviceChargePct) / 100);
+  const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
+  const commissionPct = config?.withdrawalCommissionPct ?? 0;
+  const feeOf = (gross: number) => Math.floor((gross * serviceFeePct) / 100);
+  const commissionOf = (gross: number) => Math.floor((gross * commissionPct) / 100);
+  const netAmount = (gross: number) => gross - feeOf(gross) - commissionOf(gross);
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ maxWidth: 520, margin: '0 auto', padding: '12px 12px 80px' }}>
 
+      {/* View toggle: Withdrawals ↔ Support */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        <button className={`btn btn-sm ${view === 'withdrawals' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('withdrawals')}>
+          <WalletIcon size={14} /> {t('agent.withdrawalsTab')}
+        </button>
+        <button className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('support')}>
+          <LifeBuoy size={14} /> {t('agent.supportTab')}
+        </button>
+      </div>
+
+      {view === 'support' && <SupportConsole />}
+
+      {view === 'withdrawals' && (<>
       {/* Stats bar */}
       <div style={{
         display: 'grid',
@@ -173,12 +195,12 @@ export function Agent() {
         marginBottom: 16,
       }}>
         {[
-          { label: 'Balance', value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
-          { label: 'Fee', value: `${serviceChargePct}%` },
-          { label: 'Pool', value: String(available.length) },
-          { label: 'Active', value: String(mine.length) },
-        ].map(({ label, value, accent }) => (
-          <div key={label} style={{
+          { key: 'balance', label: t('agent.balance'), value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
+          { key: 'feeComm', label: t('agent.feeComm'), value: `${serviceFeePct}/${commissionPct}%` },
+          { key: 'pool', label: t('agent.pool'), value: String(available.length) },
+          { key: 'active', label: t('agent.active'), value: String(mine.length) },
+        ].map(({ key, label, value, accent }) => (
+          <div key={key} style={{
             background: 'var(--card-bg)',
             border: '1px solid var(--border)',
             borderRadius: 10,
@@ -191,11 +213,36 @@ export function Agent() {
         ))}
       </div>
 
+      {/* My Bingo performance (Approach B) — shows once there's activity */}
+      {perf && (perf.tickets > 0 || perf.customersBrought > 0 || perf.commissionEarnedMinor > 0) && (
+        <div style={{
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: 14, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
+            {t('agent.myBingo', { defaultValue: 'My Bingo Room' })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {[
+              { label: t('agent.customers', { defaultValue: 'Customers' }), value: String(perf.customersBrought) },
+              { label: t('agent.players', { defaultValue: 'Players' }), value: String(perf.players) },
+              { label: t('agent.staked', { defaultValue: 'Staked' }), value: formatCredits(perf.stakedMinor) },
+              { label: t('agent.commission', { defaultValue: 'Commission' }), value: formatCredits(perf.commissionEarnedMinor), accent: true },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Header actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Users size={16} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontWeight: 700, fontSize: 16 }}>Agent Panel</span>
+          <span style={{ fontWeight: 700, fontSize: 16 }}>{t('agent.panelTitle')}</span>
         </div>
         <button className="btn btn-ghost btn-sm icon-btn" onClick={() => void load()} style={{ minWidth: 32 }}>
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -210,7 +257,7 @@ export function Agent() {
         padding: 16,
         marginBottom: 12,
       }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Transfer ETBedits to Player</div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Transfer ETB to Player</div>
         <form onSubmit={handleTransferToUser} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <input
             className="input"
@@ -223,7 +270,7 @@ export function Agent() {
             className="input"
             type="number"
             min="1"
-            placeholder="Amount in ETBedits"
+            placeholder="Amount in ETB"
             value={transferAmount}
             onChange={(e) => setTransferAmount(e.target.value)}
             required
@@ -262,7 +309,8 @@ export function Agent() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {mine.map((w) => {
               const net = netAmount(w.amountMinor);
-              const serviceCharge = w.amountMinor - net;
+              const serviceFee = feeOf(w.amountMinor);
+              const commission = commissionOf(w.amountMinor);
               const isBusy = busy[w.id] ?? false;
               return (
                 <motion.article
@@ -318,9 +366,15 @@ export function Agent() {
                         <span>{formatCredits(w.amountMinor)} ETB</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Fee ({serviceChargePct}%)</span>
-                        <span>−{formatCredits(serviceCharge)} ETB</span>
+                        <span style={{ color: 'var(--text-muted)' }}>Service fee ({serviceFeePct}%)</span>
+                        <span>−{formatCredits(serviceFee)} ETB</span>
                       </div>
+                      {commissionPct > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Your commission ({commissionPct}%)</span>
+                          <span style={{ color: 'var(--accent)' }}>+{formatCredits(commission)} ETB</span>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
                         <strong>You transfer</strong>
                         <strong style={{ color: 'var(--accent)', fontSize: 15 }}>{formatCreditsFull(net)}</strong>
@@ -497,6 +551,7 @@ export function Agent() {
           )}
         </AnimatePresence>
       </div>
+      </>)}
     </div>
   );
 }

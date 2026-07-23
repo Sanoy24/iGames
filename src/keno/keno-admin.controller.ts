@@ -43,6 +43,7 @@ export class KenoAdminController {
   async executeNextOpenDraw() {
     const result = await this.kenoService.executeNextOpenDraw();
     this.gameEventsGateway.emitKenoDrawCompleted(result);
+    void this.kenoService.notifyDrawWinners(result.id).catch(() => undefined);
     return result;
   }
 
@@ -50,6 +51,7 @@ export class KenoAdminController {
   async executeDraw(@Param('id') drawId: string) {
     const result = await this.kenoService.executeDraw(drawId);
     this.gameEventsGateway.emitKenoDrawCompleted(result);
+    void this.kenoService.notifyDrawWinners(result.id).catch(() => undefined);
     return result;
   }
 

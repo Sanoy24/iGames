@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+*.tsbuildinfo
 .env
 .env.local
 npm-debug.log*
@@ -8,3 +9,5 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 .vitepress/
+# Admin broadcast image uploads (persisted on disk, not source)
+uploads/

@@ -37,7 +37,7 @@ function makeRoom(overrides: Partial<BingoRoom> = {}): BingoRoom {
 function makeService({ rooms }: { rooms: BingoRoom[] }) {
   const getByStatus = (status: string) =>
     rooms.filter((r) => r.status === status).sort((a, b) =>
-      a.scheduledStartAt.getTime() - b.scheduledStartAt.getTime()
+      (a.scheduledStartAt?.getTime() ?? 0) - (b.scheduledStartAt?.getTime() ?? 0)
     )[0] ?? null;
 
   const getLastCompleted = () =>
@@ -136,6 +136,8 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     new (require('./bingo-rules.service').BingoRulesService)(),
     { drawUniqueNumbers: jest.fn() } as any,
     { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
+    { safeCreate: jest.fn(), create: jest.fn() } as any,
+    { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
   );
 
   return { service, mockRoomRepo };
@@ -196,7 +198,131 @@ describe('BingoService.getCurrentRoom — unit (mocked repos)', () => {
   });
 });
 
+// ─── computePrefilledPrizeMinor (derash payout math) ─────────────────────────
+
+describe('BingoService.computePrefilledPrizeMinor — derash payout', () => {
+  const cfg = (overrides: any = {}) => ({
+    prefilledFirstPlacePct: 80,
+    prefilledSecondPlaceEnabled: false,
+    prefilledSecondPlacePct: 0,
+    prefilledThirdPlaceEnabled: false,
+    prefilledThirdPlacePct: 0,
+    ...overrides,
+  });
+
+  it('pays the FULL house-adjusted pool to a single 1st-place winner (no double fee)', () => {
+    const { service } = makeService({ rooms: [] });
+    // pot 40, 20% house edge → pool 32. Regression: must be 32, NOT 32*0.8 = 25.
+    expect(service.computePrefilledPrizeMinor(40, '1st', 20, cfg() as any)).toBe(32);
+    // pot 100 → pool 80. Regression: must be 80, NOT 64.
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg() as any)).toBe(80);
+  });
+
+  it('is independent of the configured 1st-place percentage when it is the only place', () => {
+    const { service } = makeService({ rooms: [] });
+    // Whether the weight is 80 or 100, a single enabled place gets the whole pool.
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 100 }) as any)).toBe(80);
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 50 }) as any)).toBe(80);
+  });
+
+  it('splits the pool by weight across enabled places', () => {
+    const { service } = makeService({ rooms: [] });
+    const c = cfg({ prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20 });
+    // pool 80, weights 80/20 (total 100) → 1st 64, 2nd 16.
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, c as any)).toBe(64);
+    expect(service.computePrefilledPrizeMinor(100, '2nd', 20, c as any)).toBe(16);
+  });
+
+  it('returns 0 when no enabled place has any weight', () => {
+    const { service } = makeService({ rooms: [] });
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 0 }) as any)).toBe(0);
+  });
+
+  it('splits the pool across all five enabled places by weight', () => {
+    const { service } = makeService({ rooms: [] });
+    // No house edge → pool == pot. Weights 50/25/15/6/4 (total 100).
+    const c = cfg({
+      prefilledFirstPlacePct: 50,
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 25,
+      prefilledThirdPlaceEnabled: true,  prefilledThirdPlacePct: 15,
+      prefilledFourthPlaceEnabled: true, prefilledFourthPlacePct: 6,
+      prefilledFifthPlaceEnabled: true,  prefilledFifthPlacePct: 4,
+    });
+    expect(service.computePrefilledPrizeMinor(100, '1st', 0, c as any)).toBe(50);
+    expect(service.computePrefilledPrizeMinor(100, '2nd', 0, c as any)).toBe(25);
+    expect(service.computePrefilledPrizeMinor(100, '3rd', 0, c as any)).toBe(15);
+    expect(service.computePrefilledPrizeMinor(100, '4th', 0, c as any)).toBe(6);
+    expect(service.computePrefilledPrizeMinor(100, '5th', 0, c as any)).toBe(4);
+  });
+
+  it('does not let a DISABLED place dilute the enabled places', () => {
+    const { service } = makeService({ rooms: [] });
+    // 4th carries a weight but is NOT enabled, so its 50 must be excluded from the
+    // denominator — the enabled 1st/2nd keep their full 80/20 share of the pool.
+    // (computePrefilledPrizeMinor is only ever called for ENABLED places in the
+    // settlement loop via nextOpenPrefilledPlace, so 4th is never requested here.)
+    const c = cfg({
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20,
+      prefilledFourthPlaceEnabled: false, prefilledFourthPlacePct: 50,
+    });
+    expect(service.computePrefilledPrizeMinor(100, '1st', 20, c as any)).toBe(64); // 80/100 of pool 80
+    expect(service.computePrefilledPrizeMinor(100, '2nd', 20, c as any)).toBe(16); // 20/100 of pool 80
+  });
+});
+
 // ─── findRunningRoomIdsDue ────────────────────────────────────────────────────
+
+// ─── computePrefilledFinalPrizeMinor (end-of-game pool reconciliation) ────────
+
+describe('BingoService.computePrefilledFinalPrizeMinor — filled-place reconciliation', () => {
+  const cfg = (overrides: any = {}) => ({
+    prefilledFirstPlacePct: 80,
+    prefilledSecondPlaceEnabled: false,
+    prefilledSecondPlacePct: 0,
+    prefilledThirdPlaceEnabled: false,
+    prefilledThirdPlacePct: 0,
+    ...overrides,
+  });
+
+  it('a single filled place always takes the whole house-adjusted pool', () => {
+    const { service } = makeService({ rooms: [] });
+    // pot 100, 20% edge → pool 80. Only 1st filled → 1st gets the full 80.
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, ['1st'], cfg() as any)).toBe(80);
+  });
+
+  it('equals the progressive prize when every enabled place is filled', () => {
+    const { service } = makeService({ rooms: [] });
+    const c = cfg({
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20,
+      prefilledThirdPlaceEnabled: true, prefilledThirdPlacePct: 0, // 3rd enabled, weight 0
+    });
+    // Enabled weights 80/20/0 = 100. All three filled → 1st 64, 2nd 16, 3rd 0.
+    const filled = ['1st', '2nd', '3rd'] as any;
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, filled, c as any)).toBe(64);
+    expect(service.computePrefilledFinalPrizeMinor(100, '2nd', 20, filled, c as any)).toBe(16);
+  });
+
+  it('redistributes an UNFILLED place’s share to the filled places (no house leak)', () => {
+    const { service } = makeService({ rooms: [] });
+    // Enabled 1st/2nd/3rd = 50/30/20. But only 1st and 2nd actually filled.
+    const c = cfg({
+      prefilledFirstPlacePct: 50,
+      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 30,
+      prefilledThirdPlaceEnabled: true, prefilledThirdPlacePct: 20,
+    });
+    const filled = ['1st', '2nd'] as any; // 3rd never filled
+    // Pool 80 split by FILLED weights 50/30 (total 80): 1st = 80*50/80 = 50, 2nd = 30.
+    // The unfilled 3rd's 20 share is NOT kept by the house — it lifts 1st+2nd.
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, filled, c as any)).toBe(50);
+    expect(service.computePrefilledFinalPrizeMinor(100, '2nd', 20, filled, c as any)).toBe(30);
+    // Filled prizes sum to the whole pool (50 + 30 = 80).
+  });
+
+  it('returns 0 when there are no filled places', () => {
+    const { service } = makeService({ rooms: [] });
+    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, [], cfg() as any)).toBe(0);
+  });
+});
 
 describe('BingoService.findRunningRoomIdsDue — unit', () => {
   it('returns room IDs whose updatedAt is older than the interval', async () => {
@@ -222,6 +348,8 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
       { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
+      { safeCreate: jest.fn(), create: jest.fn() } as any,
+      { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
     );
 
     const ids = await service.findRunningRoomIdsDue(2);
@@ -252,6 +380,8 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
       { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
+      { safeCreate: jest.fn(), create: jest.fn() } as any,
+      { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
     );
 
     const ids = await service.findRunningRoomIdsDue(2);

@@ -1,4 +1,4 @@
-import { IsString, Matches, MinLength, IsOptional, IsNumber, Min, Max, IsObject } from 'class-validator';
+import { IsString, Matches, MinLength, IsOptional, IsNumber, Min, Max, IsObject, IsArray } from 'class-validator';
 
 export class CreateAgentDto {
   @IsString()
@@ -36,6 +36,14 @@ export class CreateAgentDto {
   @Min(0)
   @Max(59)
   workEndMinute?: number;
+
+  /** Days the agent works (0=Sun..6=Sat). Empty = every day. */
+  @IsOptional()
+  @IsArray()
+  @IsNumber({}, { each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  workDaysOfWeek?: number[];
 
   @IsOptional()
   @IsObject()

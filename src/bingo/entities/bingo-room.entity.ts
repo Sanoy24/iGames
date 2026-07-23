@@ -1,7 +1,15 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
 export type BingoRoomStatus = 'open' | 'running' | 'completed' | 'cancelled';
-export type BingoPrizeTier = 'one_line' | 'two_lines' | 'full_house' | '1st' | '2nd' | '3rd';
+export type BingoPrizeTier =
+  | 'one_line'
+  | 'two_lines'
+  | 'full_house'
+  | '1st'
+  | '2nd'
+  | '3rd'
+  | '4th'
+  | '5th';
 export type BingoWinMode = 'line' | 'pattern' | 'prefilled';
 
 export class BingoPrizeConfig {
@@ -45,9 +53,14 @@ export class BingoRoom {
   @Column({ type: 'json' })
   prizes: BingoPrizeConfig;
 
-  @Column({ type: 'timestamp' })
+  /**
+   * When the buy-window countdown ends and drawing begins. NULL means the room
+   * is IDLE — created but not yet started. It is stamped (now + countdown) only
+   * when the FIRST ticket is sold, so an unplayed room never draws or completes.
+   */
+  @Column({ type: 'timestamp', nullable: true })
   @Index()
-  scheduledStartAt: Date;
+  scheduledStartAt: Date | null;
 
   @Column({ type: 'json' })
   drawnNumbers: number[];
@@ -85,6 +98,14 @@ export class BingoRoom {
   houseEdgePct: number;
 
   /**
+   * Derash place-decision mode, snapshotted from config at creation so a running
+   * room keeps its behaviour even if the admin flips the config mid-game.
+   * `race` = places locked first-come; `leaderboard` = ranks resolved at the end.
+   */
+  @Column({ type: 'varchar', length: 12, default: 'race' })
+  rankingMode: 'race' | 'leaderboard';
+
+  /**
    * DB-level "one active game at a time" guard. Set to 1 while the room is open
    * or running, and NULL once it completes or is cancelled. The UNIQUE index
    * lets MySQL hold at most one non-NULL row (multiple NULLs are allowed), so
@@ -95,6 +116,15 @@ export class BingoRoom {
   @Column({ type: 'tinyint', nullable: true })
   @Index('UQ_bingo_active_game', { unique: true })
   activeGuard?: number | null;
+
+  /**
+   * Owning agent (user id) when per-agent rooms are enabled (Approach B). NULL =
+   * house room. Settlement and performance stats are credited to this agent for
+   * all games played in the room.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  ownerAgentId?: string | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

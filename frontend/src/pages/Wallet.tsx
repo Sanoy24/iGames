@@ -1,42 +1,48 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy, LifeBuoy, ChevronRight } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
+import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
-import { formatCreditsFull, getErrorMessage } from '../lib/utils';
-import { authApi, walletApi, paymentsApi, type TelebirrPreview } from '../lib/api';
+import { formatCreditsFull, formatDateTimeFull, getErrorMessage } from '../lib/utils';
+import { authApi, walletApi, paymentsApi, type TelebirrPreview, type ActiveAgent } from '../lib/api';
 
-const ENTRY_LABELS: Record<string, string> = {
-  ticket_purchase: 'Ticket Purchase',
-  ticket_win: 'Winnings',
-  ticket_refund: 'Ticket Refund',
-  deposit: 'Deposit',
-  withdrawal: 'Withdrawal',
-  bonus: 'Bonus ETBedit',
-  admin_adjustment: 'Balance Adjustment',
-  agent_receipt: 'Agent Transfer',
-  reserve: 'Hold',
-  release: 'Hold Released',
+// Keys are the backend ledger `entryType` values
+// (see LedgerEntryType: stake | win | refund | adjustment | bonus | deposit |
+//  reversal | withdrawal | agent_receipt).
+// Ledger entryType/sourceType → i18n key for the transaction label.
+const ENTRY_KEY: Record<string, string> = {
+  stake: 'wallet.entryTicketPurchase',
+  win: 'wallet.entryWinnings',
+  refund: 'wallet.entryRefund',
+  deposit: 'wallet.entryDeposit',
+  withdrawal: 'wallet.entryWithdrawal',
+  bonus: 'wallet.entryBonus',
+  adjustment: 'wallet.entryAdjustment',
+  agent_receipt: 'wallet.entryAgentTransfer',
+  reversal: 'wallet.entryReversal',
 };
 
 type TxFilter = 'all' | 'wins' | 'purchases' | 'deposits';
 
-const TX_FILTERS: { id: TxFilter; label: string; icon: string }[] = [
-  { id: 'all',       label: 'All',       icon: '📋' },
-  { id: 'wins',      label: 'Wins',      icon: '🏆' },
-  { id: 'purchases', label: 'Purchases', icon: '🎟' },
-  { id: 'deposits',  label: 'Deposits',  icon: '💰' },
+const TX_FILTERS: { id: TxFilter; labelKey: string; icon: string }[] = [
+  { id: 'all',       labelKey: 'wallet.filterAll',       icon: '📋' },
+  { id: 'wins',      labelKey: 'wallet.filterWins',      icon: '🏆' },
+  { id: 'purchases', labelKey: 'wallet.filterPurchases', icon: '🎟' },
+  { id: 'deposits',  labelKey: 'wallet.filterDeposits',  icon: '💰' },
 ];
 
-function formatLedgerTitle(entry: LedgerEntry): string {
-  return ENTRY_LABELS[entry.entryType] ?? ENTRY_LABELS[entry.sourceType] ?? 'Transaction';
+function formatLedgerTitle(entry: LedgerEntry, t: (k: string) => string): string {
+  const key = ENTRY_KEY[entry.entryType] ?? ENTRY_KEY[entry.sourceType];
+  return key ? t(key) : t('wallet.entryTransaction');
 }
 
 function matchesTxFilter(entry: LedgerEntry, filter: TxFilter): boolean {
   if (filter === 'all') return true;
   const type = entry.entryType ?? entry.sourceType ?? '';
-  if (filter === 'wins')      return type === 'ticket_win' || type === 'bonus';
-  if (filter === 'purchases') return type === 'ticket_purchase';
+  if (filter === 'wins')      return type === 'win' || type === 'bonus';
+  if (filter === 'purchases') return type === 'stake';
   if (filter === 'deposits')  return type === 'deposit' || type === 'agent_receipt';
   return true;
 }
@@ -68,7 +74,7 @@ function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
       const w = await walletApi.getWallet();
       setWallet(w);
       await onSuccess();
-      addToast('success', `Added ${amountMinor / 100} credits to your wallet.`);
+      addToast('success', `Added ${amountMinor} ETB to your wallet.`);
     } catch (e) {
       addToast('error', getErrorMessage(e));
     } finally {
@@ -78,11 +84,11 @@ function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
 
   return (
     <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(250,204,21,0.08)', border: '1px dashed rgba(250,204,21,0.3)', borderRadius: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>DEV — add test credits:</span>
-      {[1000, 10000, 100000].map((amt) => (
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1 }}>DEV — add test ETB:</span>
+      {[10, 100, 1000].map((amt) => (
         <button key={amt} className="btn btn-ghost" disabled={loading} onClick={() => topup(amt)}
           style={{ fontSize: '0.75rem', padding: '4px 10px', border: '1px solid rgba(250,204,21,0.4)' }}>
-          +{amt / 100}
+          +{amt}
         </button>
       ))}
     </div>
@@ -98,7 +104,8 @@ const listItem = {
   show:   { opacity: 1, x: 0, transition: { type: 'spring' as const, stiffness: 300, damping: 28 } },
 };
 
-export function Wallet() {
+export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
+  const { t } = useTranslation();
   const wallet    = useStore((state) => state.wallet);
   const setWallet = useStore((state) => state.setWallet);
   const addToast  = useStore((state) => state.addToast);
@@ -112,6 +119,10 @@ export function Wallet() {
   const [isPreviewing,   setIsPreviewing]   = useState(false);
   const [preview,        setPreview]        = useState<TelebirrPreview | null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
+  const [activeAgent,    setActiveAgent]    = useState<ActiveAgent | null>(null);
+  const [agentList,      setAgentList]      = useState<ActiveAgent[]>([]);
+  const [agentLoading,   setAgentLoading]   = useState(false);
+  const [minDepositMinor, setMinDepositMinor] = useState(0);
 
   const [showWithdraw,   setShowWithdraw]   = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -136,6 +147,31 @@ export function Wallet() {
   }, [addToast, setWallet]);
 
   useEffect(() => { void loadWallet(); }, [loadWallet]);
+
+  const toggleTopup = () => {
+    setShowTopup((open) => {
+      const next = !open;
+      if (next) {
+        setShowWithdraw(false);
+        setAgentLoading(true);
+        paymentsApi.getActiveAgents()
+          .then((list) => {
+            setAgentList(list);
+            // Default to the primary (first) on-duty agent; the player can switch
+            // when more than one is available.
+            setActiveAgent(list[0] ?? null);
+          })
+          .catch(() => { setAgentList([]); setActiveAgent(null); })
+          .finally(() => setAgentLoading(false));
+        paymentsApi.getConfig()
+          .then((c) => setMinDepositMinor(c.minDepositMinor))
+          .catch(() => setMinDepositMinor(0));
+      } else {
+        resetTopup();
+      }
+      return next;
+    });
+  };
 
   const handlePreview = async () => {
     if (!receiptInput.trim()) return;
@@ -232,15 +268,15 @@ export function Wallet() {
 
         <div className="stats-grid" style={{ marginBottom: 16 }}>
           <div className="stat-card">
-            <span className="stat-label">Available</span>
+            <span className="stat-label">{t('wallet.available')}</span>
             <strong>{formatCreditsFull(wallet?.availableMinor ?? 0)}</strong>
           </div>
           <div className="stat-card">
-            <span className="stat-label">Reserved</span>
+            <span className="stat-label">{t('wallet.reserved')}</span>
             <strong>{formatCreditsFull(wallet?.reservedMinor ?? 0)}</strong>
           </div>
           <div className="stat-card">
-            <span className="stat-label">Status</span>
+            <span className="stat-label">{t('wallet.status')}</span>
             <strong style={{ textTransform: 'capitalize', color: wallet?.status === 'active' ? 'var(--green)' : 'var(--danger)' }}>
               {wallet?.status ?? '—'}
             </strong>
@@ -250,11 +286,11 @@ export function Wallet() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <motion.button
             className="btn btn-primary"
-            onClick={() => { setShowTopup(v => !v); setShowWithdraw(false); if (showTopup) resetTopup(); }}
+            onClick={toggleTopup}
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
-            {showTopup ? <><X size={15} /> Cancel</> : <><ArrowUpToLine size={15} /> Top Up</>}
+            {showTopup ? <><X size={15} /> {t('common.cancel')}</> : <><ArrowUpToLine size={15} /> {t('common.deposit')}</>}
           </motion.button>
           <motion.button
             className="btn btn-secondary"
@@ -262,9 +298,26 @@ export function Wallet() {
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
-            {showWithdraw ? <><X size={15} /> Cancel</> : <><ArrowDownToLine size={15} /> Payout</>}
+            {showWithdraw ? <><X size={15} /> {t('common.cancel')}</> : <><ArrowDownToLine size={15} /> {t('common.withdraw')}</>}
           </motion.button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => onNavigate?.('support')}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%', marginTop: 10, padding: '10px 12px',
+            background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',
+            borderRadius: 10, cursor: 'pointer', color: 'var(--text-secondary)',
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
+            <LifeBuoy size={15} style={{ color: 'var(--accent)' }} />
+            {t('wallet.getHelp')}
+          </span>
+          <ChevronRight size={15} style={{ color: 'var(--text-muted)' }} />
+        </button>
 
         {import.meta.env.DEV && <DevTopup onSuccess={loadWallet} />}
 
@@ -280,9 +333,105 @@ export function Wallet() {
             >
               <div className="admin-form" style={{ marginTop: 16 }}>
                 <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Deposit</h3>
-                <p className="text-muted" style={{ fontSize: 13, marginBottom: 14 }}>
-                  Transfer money via Telebirr, then paste your SMS confirmation message or the receipt link below.
+                <p className="text-muted" style={{ fontSize: 13, marginBottom: minDepositMinor > 0 ? 8 : 14 }}>
+                  Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.
                 </p>
+                {minDepositMinor > 0 && (
+                  <p style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700, margin: '0 0 14px' }}>
+                    Minimum deposit: {new Intl.NumberFormat().format(minDepositMinor)} ETB
+                  </p>
+                )}
+
+                {/* Agent chooser — only when more than one on-duty agent is available */}
+                {!agentLoading && agentList.length > 1 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 8 }}>
+                      Choose an agent to send to
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {agentList.map((a) => {
+                        const selected = activeAgent
+                          ? (a.id ? a.id === activeAgent.id : a.phoneNumber === activeAgent.phoneNumber)
+                          : false;
+                        return (
+                          <button
+                            key={a.id ?? a.phoneNumber ?? a.displayName}
+                            type="button"
+                            onClick={() => setActiveAgent(a)}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 6,
+                              padding: '7px 12px', borderRadius: 999, cursor: 'pointer',
+                              fontSize: 13, fontWeight: 700,
+                              background: selected ? 'rgba(250,204,21,0.14)' : 'rgba(255,255,255,0.03)',
+                              border: `1px solid ${selected ? 'rgba(250,204,21,0.55)' : 'var(--border)'}`,
+                              color: selected ? 'var(--gold)' : 'var(--text-secondary)',
+                            }}
+                          >
+                            <UserIcon size={13} />
+                            {a.displayName}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Active agent — where to send the Telebirr transfer */}
+                {agentLoading ? (
+                  <div className="card-muted" style={{ marginBottom: 14, fontSize: 13 }}>
+                    <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite', marginRight: 6, verticalAlign: 'middle' }} />
+                    Finding the agent on duty…
+                  </div>
+                ) : activeAgent ? (
+                  <div style={{
+                    background: 'rgba(250,204,21,0.07)',
+                    border: '1px solid rgba(250,204,21,0.25)',
+                    borderRadius: 10,
+                    padding: '14px 16px',
+                    marginBottom: 14,
+                  }}>
+                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
+                      Send Telebirr to
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <UserIcon size={14} style={{ color: 'var(--gold)' }} />
+                      <strong style={{ fontSize: 14 }}>{activeAgent.displayName}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Phone size={14} style={{ color: 'var(--gold)' }} />
+                      {activeAgent.phoneNumber ? (
+                        <>
+                          <strong style={{ fontSize: 15, letterSpacing: '0.02em' }}>{activeAgent.phoneNumber}</strong>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => {
+                              void navigator.clipboard?.writeText(activeAgent.phoneNumber!);
+                              addToast('success', 'Phone number copied');
+                            }}
+                            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px' }}
+                          >
+                            <Copy size={12} /> Copy
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-muted" style={{ fontSize: 13 }}>No phone number on file</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{
+                    background: 'rgba(239,68,68,0.07)',
+                    border: '1px solid rgba(239,68,68,0.25)',
+                    borderRadius: 10,
+                    padding: '12px 14px',
+                    marginBottom: 14,
+                    fontSize: 13,
+                    color: 'var(--danger)',
+                  }}>
+                    No agent is on duty right now. Please try again shortly before sending your deposit.
+                  </div>
+                )}
 
                 {/* Step 1 — paste & verify */}
                 {!preview && (
@@ -352,7 +501,7 @@ export function Wallet() {
                         {preview.date && (
                           <div>
                             <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Date</span>
-                            <strong>{new Date(preview.date).toLocaleString()}</strong>
+                            <strong>{formatDateTimeFull(preview.date)}</strong>
                           </div>
                         )}
                       </div>
@@ -396,7 +545,7 @@ export function Wallet() {
               <div className="admin-form" style={{ marginTop: 16 }}>
                 <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Telebirr Cashout Request</h3>
                 <p style={{ fontSize: 12, color: 'var(--green)', margin: '0 0 12px' }}>
-                  Available: <strong>{new Intl.NumberFormat().format(available)} e&#x2011;Birr</strong>
+                  Available: <strong>{new Intl.NumberFormat().format(available)} ETB</strong>
                 </p>
 
                 <div className="preset-amounts" style={{ marginBottom: 12 }}>
@@ -474,7 +623,7 @@ export function Wallet() {
           >
             <div className="section-header">
               <div>
-                <div className="section-title">Withdrawal Requests</div>
+                <div className="section-title">{t('wallet.withdrawals')}</div>
                 <p className="section-copy">Track your Telebirr cashout requests.</p>
               </div>
             </div>
@@ -498,16 +647,16 @@ export function Wallet() {
                         w.status === 'rejected'   ? 'badge-red'    :
                         w.status === 'processing' ? 'badge-violet' : 'badge-gold'
                       }`}>
-                        {w.status === 'pending'    ? 'Pending'    :
-                         w.status === 'processing' ? 'Processing' :
-                         w.status === 'completed'  ? 'Completed'  :
-                         w.status === 'rejected'   ? 'Rejected'   : w.status}
+                        {w.status === 'pending'    ? t('wallet.pending')    :
+                         w.status === 'processing' ? t('wallet.processing') :
+                         w.status === 'completed'  ? t('wallet.completed')  :
+                         w.status === 'rejected'   ? t('wallet.rejected')   : w.status}
                       </span>
                     </div>
                   </div>
                   <div className="ticket-meta">
-                    <span>Requested: {new Date(w.createdAt).toLocaleString()}</span>
-                    {w.processedAt && <span>Processed: {new Date(w.processedAt).toLocaleString()}</span>}
+                    <span>Requested: {formatDateTimeFull(w.createdAt)}</span>
+                    {w.processedAt && <span>Processed: {formatDateTimeFull(w.processedAt)}</span>}
                   </div>
                 </motion.article>
               ))}
@@ -527,8 +676,8 @@ export function Wallet() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <TrendingUp size={16} style={{ color: 'var(--gold)' }} />
             <div>
-              <div className="section-title">Transaction History</div>
-              <p className="section-copy">Your balance activity and game results.</p>
+              <div className="section-title">{t('wallet.transactionHistory')}</div>
+              <p className="section-copy">{t('wallet.balanceActivity')}</p>
             </div>
           </div>
           <motion.button
@@ -537,7 +686,7 @@ export function Wallet() {
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             whileTap={{ scale: 0.9, rotate: 180 }}
           >
-            <RefreshCw size={13} /> Refresh
+            <RefreshCw size={13} /> {t('common.refresh')}
           </motion.button>
         </div>
 
@@ -552,7 +701,7 @@ export function Wallet() {
               style={{ position: 'relative', overflow: 'hidden' }}
             >
               <span style={{ marginRight: 4 }}>{f.icon}</span>
-              {f.label}
+              {t(f.labelKey)}
               {txFilter === f.id && (
                 <motion.span
                   layoutId="tx-pill"
@@ -565,10 +714,10 @@ export function Wallet() {
         </div>
 
         {loading && ledger.length === 0 ? (
-          <div className="card-muted">Loading activity…</div>
+          <div className="card-muted">{t('wallet.loadingActivity')}</div>
         ) : filteredLedger.length === 0 ? (
           <motion.div className="card-muted" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            {txFilter === 'all' ? 'No activity yet. Play a game to get started.' : 'No transactions in this category.'}
+            {txFilter === 'all' ? t('wallet.noActivity') : t('wallet.noTxCategory')}
           </motion.div>
         ) : (
           <motion.div
@@ -591,10 +740,10 @@ export function Wallet() {
                         : <ArrowUpRight  size={14} />}
                     </motion.span>
                     <div>
-                      <h3>{formatLedgerTitle(entry)}</h3>
+                      <h3>{formatLedgerTitle(entry, t)}</h3>
                       {entry.createdAt && (
                         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                          {new Date(entry.createdAt).toLocaleString()}
+                          {formatDateTimeFull(entry.createdAt)}
                         </p>
                       )}
                     </div>
@@ -610,7 +759,7 @@ export function Wallet() {
                   </motion.span>
                 </div>
                 <div className="ticket-meta">
-                  <span>Balance after: {formatCreditsFull(entry.balanceAfterMinor)}</span>
+                  <span>{t('wallet.balanceAfter', { amount: formatCreditsFull(entry.balanceAfterMinor) })}</span>
                 </div>
               </motion.article>
             ))}

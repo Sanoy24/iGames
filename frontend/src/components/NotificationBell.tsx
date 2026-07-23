@@ -1,48 +1,90 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Bell } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useStore } from '../store/useStore';
+import { useStore, type AppNotification, type NotificationKind } from '../store/useStore';
 import { getSocket } from '../hooks/useSocketConnection';
+import { notificationsApi, type ServerNotification } from '../lib/api';
+import { formatDateTimeFull } from '../lib/utils';
+
+const TYPE_ICON: Record<NotificationKind, string> = {
+  win: '🏆',
+  deposit: '💰',
+  withdrawal: '🏧',
+  adjustment: '⚙️',
+  bonus: '🎁',
+  system: '🔔',
+  info: 'ℹ️',
+};
+
+function mapServerNotification(n: ServerNotification): AppNotification {
+  return {
+    id: n.id,
+    type: n.type,
+    title: n.title,
+    message: n.body,
+    timestamp: new Date(n.createdAt).getTime(),
+    read: n.read,
+    data: n.data ?? null,
+  };
+}
+
+const GAME_KEY: Record<string, string> = {
+  bingo: 'notifications.gameBingo',
+  keno: 'notifications.gameKeno',
+  crash: 'notifications.gameCrash',
+};
+
+/**
+ * Notification bodies are stored in English by the backend. Where the payload
+ * carries structured data (win amount + game) we rebuild a localized label;
+ * otherwise we fall back to the stored text.
+ */
+function localizeNotification(n: AppNotification, t: (k: string, o?: Record<string, unknown>) => string) {
+  if (n.type === 'win' && n.data && typeof n.data.amountMinor === 'number') {
+    const game = String(n.data.game ?? '');
+    const gameLabel = GAME_KEY[game] ? t(GAME_KEY[game]) : game ? game.charAt(0).toUpperCase() + game.slice(1) : '';
+    return {
+      title: t('notifications.winTitle'),
+      message: t('notifications.winBody', { amount: new Intl.NumberFormat().format(n.data.amountMinor as number), game: gameLabel }),
+    };
+  }
+  return { title: n.title, message: n.message };
+}
 
 export function NotificationBell() {
+  const { t } = useTranslation();
   const notifications = useStore((s) => s.notifications);
   const unreadCount = useStore((s) => s.unreadCount);
-  const addNotification = useStore((s) => s.addNotification);
+  const setNotifications = useStore((s) => s.setNotifications);
+  const addServerNotification = useStore((s) => s.addServerNotification);
   const markAllNotificationsRead = useStore((s) => s.markAllNotificationsRead);
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const isSocketConnected = useStore((s) => s.isSocketConnected);
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const isSocketConnected = useStore((s) => s.isSocketConnected);
+  // Load the persisted list on login (survives reload, delivers what you missed).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    notificationsApi
+      .list()
+      .then((res) => {
+        if (!cancelled) setNotifications(res.items.map(mapServerNotification), res.unreadCount);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [isAuthenticated, setNotifications]);
 
+  // Live notifications pushed to this user's socket room.
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
-
-    const handleKenoWin = (data: { payoutMinor?: number }) => {
-      if (!data.payoutMinor) return;
-      addNotification({
-        type: 'win',
-        title: 'Keno Win!',
-        message: `You won ${data.payoutMinor} ETB in Keno`,
-      });
-    };
-
-    const handleBingoWin = (data: { payoutMinor?: number; tier?: string }) => {
-      if (!data.payoutMinor) return;
-      addNotification({
-        type: 'win',
-        title: 'Bingo Win!',
-        message: `You won ${data.payoutMinor} ETB — ${data.tier ?? 'Prize'}`,
-      });
-    };
-
-    socket.on('keno.ticket.won', handleKenoWin);
-    socket.on('bingo.ticket.won', handleBingoWin);
-    return () => {
-      socket.off('keno.ticket.won', handleKenoWin);
-      socket.off('bingo.ticket.won', handleBingoWin);
-    };
-  }, [isSocketConnected, addNotification]);
+    const onNew = (payload: ServerNotification) => addServerNotification(mapServerNotification(payload));
+    socket.on('notification.new', onNew);
+    return () => { socket.off('notification.new', onNew); };
+  }, [isSocketConnected, addServerNotification]);
 
   // Close panel on outside click
   useEffect(() => {
@@ -56,10 +98,13 @@ export function NotificationBell() {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const handleToggle = () => {
-    if (!open && unreadCount > 0) markAllNotificationsRead();
+  const handleToggle = useCallback(() => {
+    if (!open && unreadCount > 0) {
+      markAllNotificationsRead();
+      notificationsApi.markRead().catch(() => undefined); // persist read state
+    }
     setOpen((o) => !o);
-  };
+  }, [open, unreadCount, markAllNotificationsRead]);
 
   return (
     <div style={{ position: 'relative' }} ref={panelRef}>
@@ -122,33 +167,36 @@ export function NotificationBell() {
             }}
           >
             <div style={{ padding: '10px 14px 8px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13 }}>
-              Notifications
+              {t('notifications.title')}
             </div>
             {notifications.length === 0 ? (
               <div style={{ padding: '20px 14px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>
-                No notifications yet
+                {t('notifications.empty')}
               </div>
             ) : (
               <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    style={{
-                      padding: '9px 14px',
-                      borderBottom: '1px solid var(--border)',
-                      opacity: n.read ? 0.7 : 1,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      {n.type === 'win' && <span style={{ fontSize: 14 }}>🏆</span>}
-                      <span style={{ fontWeight: 600, fontSize: 12 }}>{n.title}</span>
+                {notifications.map((n) => {
+                  const { title, message } = localizeNotification(n, t);
+                  return (
+                    <div
+                      key={n.id}
+                      style={{
+                        padding: '9px 14px',
+                        borderBottom: '1px solid var(--border)',
+                        opacity: n.read ? 0.7 : 1,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                        <span style={{ fontSize: 14 }}>{TYPE_ICON[n.type] ?? '🔔'}</span>
+                        <span style={{ fontWeight: 600, fontSize: 12 }}>{title}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{message}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {formatDateTimeFull(n.timestamp)}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{n.message}</div>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {new Date(n.timestamp).toLocaleTimeString()}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </motion.div>

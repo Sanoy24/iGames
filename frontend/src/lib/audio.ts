@@ -1,4 +1,3 @@
-import { Howl } from 'howler';
 import { useStore } from '../store/useStore';
 
 // Web Audio API context for real-time synthesizer
@@ -118,9 +117,12 @@ export const soundEngine = {
       playTone(110, 'sawtooth', 0.2, 0.25);
     }, 120);
   },
-  // Howler integration stub in case we decide to load actual audio file maps
-  loadCustomSound: (name: string, url: string) => {
+  // Howler integration stub in case we decide to load actual audio file maps.
+  // Howler is dynamically imported so it stays out of the initial bundle — every
+  // in-app sound above uses the Web Audio API, so nothing pulls Howler on load.
+  loadCustomSound: async (name: string, url: string) => {
     try {
+      const { Howl } = await import('howler');
       return new Howl({
         src: [url],
         volume: useStore.getState().soundVolume,

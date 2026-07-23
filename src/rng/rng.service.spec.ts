@@ -24,6 +24,34 @@ describe('RngService', () => {
     service = module.get(RngService);
   });
 
+  // ─── drawSeed ─────────────────────────────────────────────────────────────
+  describe('drawSeed', () => {
+    it('returns a single seed within [1, max] for a huge range without hanging', async () => {
+      // A 2-billion range would OOM if the range were materialised as an array;
+      // drawSeed must complete instantly and stay in range.
+      const result = await service.drawSeed({ max: 2_000_000_000 });
+      expect(result.numbers).toHaveLength(1);
+      expect(result.numbers[0]).toBeGreaterThanOrEqual(1);
+      expect(result.numbers[0]).toBeLessThanOrEqual(2_000_000_000);
+    });
+
+    it('writes an audit row when gameType + gameReference are supplied', async () => {
+      const result = await service.drawSeed({ gameType: 'pool', gameReference: 'match-1' });
+      expect(auditLogRepository.save).toHaveBeenCalled();
+      expect(result.auditLogId).toBe('audit-id-123');
+      expect(result.algorithmVersion).toBe(RNG_ALGORITHM_VERSION);
+    });
+
+    it('does not audit when no game reference is given', async () => {
+      await service.drawSeed({});
+      expect(auditLogRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a gameType without a gameReference', async () => {
+      await expect(service.drawSeed({ gameType: 'pool' })).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   // ─── drawUniqueNumbers ────────────────────────────────────────────────────
   describe('drawUniqueNumbers', () => {
     it('returns the requested count of numbers', async () => {

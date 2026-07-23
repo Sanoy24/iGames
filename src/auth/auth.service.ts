@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   UnauthorizedException
 } from '@nestjs/common';
@@ -50,7 +51,7 @@ export class AuthService {
     const validatedTelegramData = this.telegramMiniAppAuthService.validateInitData(initData);
 
     return this.dataSource.transaction(async (manager) => {
-      const { user, created } = await this.usersService.findOrCreateTelegramUser(
+      const { user } = await this.usersService.findOrCreateTelegramUser(
         {
           telegramUserId: String(validatedTelegramData.user.id),
           username: validatedTelegramData.user.username,
@@ -63,21 +64,47 @@ export class AuthService {
         manager
       );
 
+      // A phone number is mandatory before the Mini App may be used — it is the
+      // Telebirr payout destination and the account's identity anchor. Telegram
+      // initData never carries a phone, so it must have been shared in the bot
+      // first. Block here (the frontend routes PHONE_REQUIRED to a "share your
+      // number in the bot" screen) instead of creating a half-onboarded account.
+      if (!user.phoneNumber) {
+        throw new ForbiddenException({
+          code: 'PHONE_REQUIRED',
+          message: 'Please open our Telegram bot and share your phone number to continue.',
+        });
+      }
+
       await this.walletService.ensureDefaultWallet(user.id, manager);
-      
-      if (created) {
+
+      // Grant the welcome bonus once, on the first fully-onboarded login. Keyed
+      // off a persistent flag (not the transient `created`) because the user row
+      // is usually created earlier, when the phone is shared in the bot. The
+      // idempotency key is a second guard against a double credit.
+      const alreadyGranted = !!(user.productMetadata as Record<string, unknown> | undefined)?.welcomeBonusGranted;
+      if (!alreadyGranted) {
         const config = await this.adminService.getSystemConfig();
         if (config.welcomeBonusMinor > 0) {
-          await this.walletService.creditInSession({
-            userId: user.id,
-            amountMinor: config.welcomeBonusMinor,
-            entryType: 'bonus',
-            sourceType: 'welcome_bonus',
-            sourceId: user.id,
-            idempotencyKey: `welcome-bonus-${user.id}`,
-            metadata: { reason: 'welcome_bonus' }
-          }, manager);
+          try {
+            await this.walletService.creditInSession({
+              userId: user.id,
+              amountMinor: config.welcomeBonusMinor,
+              entryType: 'bonus',
+              sourceType: 'welcome_bonus',
+              sourceId: user.id,
+              idempotencyKey: `welcome-bonus-${user.id}`,
+              metadata: { reason: 'welcome_bonus' }
+            }, manager);
+          } catch {
+            // Never let a welcome-bonus hiccup block login. The credit is
+            // idempotency-keyed, so a legacy user who already received it (before
+            // this flag existed, possibly at a different configured amount) is
+            // simply not re-credited — we still mark it done below.
+          }
         }
+        user.productMetadata = { ...(user.productMetadata ?? {}), welcomeBonusGranted: true };
+        await manager.getRepository(User).save(user);
       }
 
       return await this.issueTokens({

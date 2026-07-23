@@ -7,7 +7,8 @@ const ICONS: Record<string, string> = {
 };
 
 export function Toasts() {
-  const { toasts, removeToast } = useStore();
+  const toasts = useStore((s) => s.toasts);
+  const removeToast = useStore((s) => s.removeToast);
   return (
     <div className="toast-container" role="region" aria-label="Notifications" aria-live="polite">
       {toasts.map((t) => (

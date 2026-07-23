@@ -139,6 +139,40 @@
 .game-banner-crash .game-banner-tag { color: #fca5a5; }
 .game-banner-crash .game-banner-title { color: #fca5a5; }
 
+@keyframes pool-pop {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Pool control buttons (fine-aim +/-) */
+.pool-ctl-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #222834; border: 1px solid #39424f; color: #e6e9ef;
+  cursor: pointer; user-select: none; touch-action: none;
+  transition: background 0.12s, transform 0.08s;
+}
+.pool-ctl-btn:active { background: #2d3746; transform: scale(0.92); }
+.pool-ctl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.game-banner-pool {
+  background: linear-gradient(130deg, #04140c 0%, #06251a 55%, #04140c 100%);
+  border-color: rgba(16, 185, 129, 0.22);
+  box-shadow: 0 6px 28px rgba(0, 40, 24, 0.6);
+}
+.game-banner-pool::after {
+  content: '';
+  position: absolute;
+  top: -40px; right: -30px;
+  width: 180px; height: 180px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.game-banner-pool:hover { box-shadow: 0 12px 40px rgba(16, 185, 129, 0.3); }
+.game-banner-pool .game-banner-tag { color: #6ee7b7; }
+.game-banner-pool .game-banner-title { color: #a7f3d0; }
+
 /* Banner text */
 .game-banner-content { display: flex; flex-direction: column; gap: 6px; z-index: 1; min-width: 0; flex: 1; }
 .game-banner-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }

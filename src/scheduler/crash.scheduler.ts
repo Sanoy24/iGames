@@ -3,6 +3,7 @@ import { CrashService } from '../crash/crash.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { BotsService } from '../bots/bots.service';
+import { GamesService } from '../games/games.service';
 
 const CRASH_LOCK_KEY = 'igames:crash:scheduler-lock';
 const CRASH_LOCK_TTL_MS = 30_000;
@@ -33,6 +34,7 @@ export class CrashScheduler implements OnApplicationBootstrap, OnApplicationShut
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly lockService: RedisLockService,
     private readonly botsService: BotsService,
+    private readonly gamesService: GamesService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -89,6 +91,9 @@ export class CrashScheduler implements OnApplicationBootstrap, OnApplicationShut
 
       const cfg = await this.crashService.getConfig();
       if (!cfg.enabled) return;
+      // Paused by admin (maintenance/hidden): don't create new rounds. Any
+      // in-flight round already past IDLE continues to settle normally.
+      if (!(await this.gamesService.isPlayable('crash'))) return;
       this.waitingDurationMs = cfg.waitingDurationSeconds * 1000;
       this.tickIntervalMs = cfg.tickIntervalMs;
 

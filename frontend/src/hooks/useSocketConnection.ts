@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useStore, type LiveCounts } from '../store/useStore';
 import type { Wallet } from '../lib/models';
+import { gamesApi, type GameCatalogEntry } from '../lib/api';
 
 let socketInstance: Socket | null = null;
 
@@ -30,9 +31,19 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Freshest access token available. localStorage is authoritative: both the login
+ * path and the socket's own silent refresh write it, whereas the store's
+ * accessToken is only updated on auth — so localStorage is never staler.
+ */
+function currentToken(): string | null {
+  return localStorage.getItem('accessToken') ?? useStore.getState().accessToken;
+}
+
 export function useSocketConnection() {
   const setSocketConnected = useStore((s) => s.setSocketConnected);
   const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const accessToken = useStore((s) => s.accessToken);
   const addToast = useStore((s) => s.addToast);
   const setWallet = useStore((s) => s.setWallet);
 
@@ -40,7 +51,7 @@ export function useSocketConnection() {
     if (!isAuthenticated) return;
 
     if (!socketInstance) {
-      const token = localStorage.getItem('accessToken');
+      const token = currentToken();
       // Empty string = connect to the current page origin.
       // In dev, Vite proxies /socket.io → localhost:3000 so this works through
       // ngrok and any other tunnel without exposing localhost to the client.
@@ -60,6 +71,8 @@ export function useSocketConnection() {
         setSocketConnected(true);
         // Pull live counts immediately so the UI doesn't wait for the next heartbeat.
         socketInstance?.emit('request.counts');
+        // Refresh the game availability catalog on (re)connect.
+        gamesApi.getCatalog().then((c) => useStore.getState().setGameCatalog(c)).catch(() => {});
       });
       socketInstance.on('disconnect', () => setSocketConnected(false));
 
@@ -88,9 +101,33 @@ export function useSocketConnection() {
       socketInstance.on('live.counts', (counts: LiveCounts) => {
         useStore.getState().setLiveCounts(counts);
       });
+
+      // Admin toggled a game on/off/maintenance — update the catalog live.
+      socketInstance.on('games.catalog.updated', (catalog: GameCatalogEntry[]) => {
+        useStore.getState().setGameCatalog(catalog);
+      });
     }
 
+    // ── Foreground recovery ──────────────────────────────────────────────
+    // Telegram Mini Apps (and mobile browser tabs) freeze the webview while
+    // backgrounded, which silently kills the socket's transport. socket.io can
+    // take tens of seconds to notice, so the online count looks frozen/absent
+    // until a manual reload. When the app returns to the foreground we make sure
+    // the token is fresh, force a reconnect if the transport is down, and always
+    // re-pull counts so the number is live again immediately — no reload needed.
+    const onForeground = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (!socketInstance) return;
+      socketInstance.auth = { token: currentToken() };
+      if (!socketInstance.connected) socketInstance.connect();
+      socketInstance.emit('request.counts');
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
+
     return () => {
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
       if (socketInstance) {
         socketInstance.disconnect();
         socketInstance = null;
@@ -98,6 +135,17 @@ export function useSocketConnection() {
       }
     };
   }, [isAuthenticated, setSocketConnected, addToast, setWallet]);
+
+  // ── Keep the socket's auth token fresh ───────────────────────────────────
+  // The socket captures the access token once at creation. When a re-auth rotates
+  // the token (Telegram initData login, silent refresh), push the new one onto the
+  // existing socket and reconnect if it had dropped — otherwise a stale token can
+  // lock the socket out of reconnecting, and counts never arrive until a reload.
+  useEffect(() => {
+    if (!socketInstance || !accessToken) return;
+    socketInstance.auth = { token: accessToken };
+    if (!socketInstance.connected) socketInstance.connect();
+  }, [accessToken]);
 
   return socketInstance;
 }

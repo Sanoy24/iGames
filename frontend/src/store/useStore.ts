@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { User, Wallet } from '../lib/models';
+import type { GameCatalogEntry } from '../lib/api';
 
 export type Toast = {
   id: string;
@@ -7,21 +8,35 @@ export type Toast = {
   message: string;
 };
 
+export type NotificationKind = 'win' | 'deposit' | 'withdrawal' | 'adjustment' | 'bonus' | 'system' | 'info';
+
 export type AppNotification = {
   id: string;
-  type: 'win' | 'info';
+  type: NotificationKind;
   title: string;
   message: string;
   timestamp: number;
   read: boolean;
+  /** Structured payload (amountMinor, game, …) used to render a localized label. */
+  data?: Record<string, unknown> | null;
 };
 
 export type LiveCounts = {
   kenoOnline: number;
   bingoOnline: number;
+  crashOnline?: number;
   totalOnline: number;
   totalPlaying: number;
   totalConnections: number;
+  /** Players currently waiting in the two-player Pool matchmaking queue. */
+  poolWaiting?: number;
+  /** House bot breakdown folded into the *Online numbers above (for admin/insight). */
+  bots?: {
+    kenoBots: number;
+    bingoBots: number;
+    crashBots: number;
+    totalBots: number;
+  };
 };
 
 type AppState = {
@@ -53,6 +68,10 @@ type AppState = {
   liveCounts: LiveCounts | null;
   setLiveCounts: (counts: LiveCounts) => void;
 
+  // Game availability catalog (admin-controlled). null = not loaded yet.
+  gameCatalog: GameCatalogEntry[] | null;
+  setGameCatalog: (catalog: GameCatalogEntry[]) => void;
+
   // Audio settings
   soundVolume: number;
   soundMuted: boolean;
@@ -63,6 +82,8 @@ type AppState = {
   notifications: AppNotification[];
   unreadCount: number;
   addNotification: (n: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => void;
+  setNotifications: (items: AppNotification[], unreadCount: number) => void;
+  addServerNotification: (n: AppNotification) => void;
   markAllNotificationsRead: () => void;
 };
 
@@ -154,7 +175,9 @@ export const useStore = create<AppState>((set) => ({
   toasts: [],
   addToast: (type, message) => {
     const id = Math.random().toString(36).slice(2);
-    set((s) => ({ toasts: [...s.toasts, { id, type, message }] }));
+    // Dedupe: if the same message is already showing, one is enough — don't
+    // stack a second identical toast (e.g. repeated taps on a capped action).
+    set((s) => (s.toasts.some((t) => t.message === message) ? s : { toasts: [...s.toasts, { id, type, message }] }));
     setTimeout(() => {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
     }, 3500);
@@ -164,6 +187,9 @@ export const useStore = create<AppState>((set) => ({
   // Live counts
   liveCounts: null,
   setLiveCounts: (counts) => set({ liveCounts: counts }),
+
+  gameCatalog: null,
+  setGameCatalog: (catalog) => set({ gameCatalog: catalog }),
 
   // Audio settings
   soundVolume: typeof window !== 'undefined' ? Number(localStorage.getItem('soundVolume') ?? '0.5') : 0.5,
@@ -192,6 +218,18 @@ export const useStore = create<AppState>((set) => ({
       unreadCount: s.unreadCount + 1,
     }));
   },
+  // Replace the list from the server (initial load).
+  setNotifications: (items, unreadCount) =>
+    set({ notifications: items.slice(0, 50), unreadCount }),
+  // A live notification pushed over the socket — prepend, de-duplicate by id.
+  addServerNotification: (n) =>
+    set((s) => {
+      if (s.notifications.some((x) => x.id === n.id)) return s;
+      return {
+        notifications: [n, ...s.notifications].slice(0, 50),
+        unreadCount: s.unreadCount + (n.read ? 0 : 1),
+      };
+    }),
   markAllNotificationsRead: () =>
     set((s) => ({
       notifications: s.notifications.map((n) => ({ ...n, read: true })),

@@ -1,6 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
-export type RngGameType = 'keno' | 'bingo' | 'crash';
+export type RngGameType = 'keno' | 'bingo' | 'crash' | 'pool' | 'werk';
 
 @Entity({ name: 'rng_audit_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['gameType', 'gameReference'])
@@ -9,7 +9,7 @@ export class RngAuditLog {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'enum', enum: ['keno', 'bingo', 'crash'] })
+  @Column({ type: 'enum', enum: ['keno', 'bingo', 'crash', 'pool', 'werk'] })
   @Index()
   gameType: RngGameType;
 

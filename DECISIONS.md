@@ -91,3 +91,77 @@
 **Decided**: 2026-06-29  
 **Decision**: All admin UI uses shared `adm-*` CSS classes defined in `App.css`. No inline styles or component-level CSS modules for admin.  
 **Why**: One restyle of `App.css` propagates to all 10 admin tabs. Consistent visual language without duplicating styles.
+
+---
+
+## Auth (continued)
+
+### D-14: OptionalJwtAuthGuard for read endpoints that serve both players and spectators
+**Decided**: 2026-07-05
+**Decision**: `src/auth/guards/optional-jwt-auth.guard.ts` — a guard that **extends** `JwtAuthGuard` and wraps `super.canActivate()` in try/catch, returning `true` on any auth failure. It populates `request.user` when a valid Bearer token is present, else lets the request continue anonymously. Applied to `GET /bingo/current`, `/bingo/rooms/:id/state`, `/bingo/rooms/:id/sync`.
+**Why**: Those endpoints read `request.user?.id` to return the caller's own tickets, but had **no guard**, so `request.user` was always undefined and a logged-in player's cartelas never came back from the server — they only survived in client memory and vanished on tab switch/reload. This makes the server authoritative for "my tickets" without blocking anonymous spectators.
+**Constraint**: A guard that `extends` another **must declare an explicit constructor** that calls `super(...)` with the same `@Inject`-decorated params — otherwise NestJS loses the DI param metadata and injects `undefined`. When adding a similar mixed-auth endpoint, reuse `OptionalJwtAuthGuard`, don't hand-roll token parsing.
+
+---
+
+## Notifications & Messaging
+
+### D-15: Durable notifications table + socket push (bell); toasts stay transient
+**Decided**: 2026-07-05
+**Decision**: The bell is backed by a `notifications` table (`src/notifications/`). `NotificationsService.create()` **persists then** pushes live via `GameEventsGateway.emitUserNotification(userId, payload)` → `notification.new` on the `user_{id}` socket room. The frontend store loads the list on login (`GET /notifications`), listens for `notification.new`, and persists read state (`POST /notifications/read`). Transient in-context feedback stays as **toasts** (`addToast`), not notifications.
+**Why**: Money events (withdrawal approved/rejected, deposit credited) are asynchronous — the user is usually not watching — so they need delivery-on-next-open, reload-surviving unread counts, and read state. An in-memory-only bell fails exactly there.
+**Constraints**:
+- Notifications are created **post-commit, best-effort** via `NotificationsService.safeCreate()` (never throws) — a notification failure must never roll back the money operation that triggered it. Hook points: `WalletService.processWithdrawal`/agent settle paths, `PaymentsService.submitTelebirrReceipt` (only on a genuinely new credit, not duplicate submits), `AdminService.adjustUserWallet`.
+- **Wins are server-emitted** at settlement (`BingoService.notifyRoomWinners` / `KenoService.notifyDrawWinners`), called once at the completion point (scheduler + admin controller), aggregated per user, **skipping bot accounts** (`user.productMetadata?.botPolicy != null`). The old client-side win `addNotification` was removed to avoid a duplicate; confetti/sound stay for instant feedback.
+- Any module that raises notifications imports `NotificationsModule`; direction is one-way (Wallet/Payments/Admin/Bingo/Keno → Notifications → Events) so there is **no DI cycle** — do not make `NotificationsModule` import a game/wallet module.
+
+### D-16: Admin Telegram broadcast — disk images, file_id reuse, DB-guarded scheduler
+**Decided**: 2026-07-04
+**Decision**: `src/broadcast/` lets an admin send one message (text + optional image + inline URL buttons) to **all Telegram-linked users**, immediately / once at a scheduled time / recurring (daily|weekly). Images upload via multer to `uploads/broadcasts/` (served at `/uploads/**` by `useStaticAssets`), stored by relative path. `TelegramBotService.sendBroadcastMessage` sends serially (~25 msg/s, honours 429 `retry_after`, skips blocked users) and **uploads the photo once then reuses the returned `file_id`** for all remaining recipients. `BroadcastScheduler` (`@Cron` every 30s, Redis-locked) claims due rows with an **atomic status-guarded UPDATE** (`scheduled → sending`) so delivery is exactly-once; a long fan-out runs in the background (lock released immediately) and stale `sending` rows are recovered after 45 min.
+**Why**: cPanel gives a persistent disk (no S3 needed); `file_id` reuse makes an 18k-user image broadcast upload the image a single time; the DB status guard + Redis lock make it multi-instance and restart safe.
+**Constraints**: Recurring/once wall-clock times are interpreted in a **fixed +180 min (Ethiopia UTC+3) offset** — no DST. Deploy needs `npm install` for the added `@types/multer` (dev) and a writable, gitignored `uploads/` dir.
+
+### D-17: `utf8mb4` on user-facing free-text columns (emoji-safe)
+**Decided**: 2026-07-04
+**Decision**: Columns storing admin/user free text that may contain 4-byte characters (emoji 💸🎉) declare `charset: 'utf8mb4', collation: 'utf8mb4_unicode_ci'` explicitly (e.g. `broadcast_messages.title/text`, `notifications.title/body`).
+**Why**: A plain `utf8`/`utf8mb3` column silently replaces 4-byte characters with `?` at insert time (3-byte scripts like Amharic store fine, which hides the bug). Add this to any new column that holds arbitrary user/admin text.
+
+---
+
+## Derash / Bingo (continued)
+
+### D-18: Derash places — per-place patterns, up to 5 places, and two ranking modes
+**Decided**: 2026-07-08
+**Decision**: A derash room awards up to **5 places** (`1st..5th`), each with **its own winning pattern** (`BingoConfig.prefilledFirst..FifthPatternId`, falling back to `prefilledWinPatternId` → built-in "Any Line"). New line-count patterns `any_two_lines` / `any_three_lines` (via `BingoRulesService.countCompletedLines`). A room carries `rankingMode` (snapshotted from `BingoConfig.prefilledRankingMode`):
+- **`race`** (default, original): each enabled place is an **independent** "first cartela to complete THIS place's pattern" race, awarded incrementally as draws land; the pool is reconciled across FILLED places at the end (`reconcileDerashPool`), so unfilled places don't leak to the house.
+- **`leaderboard`**: nobody is paid during play. The round runs until a cartela completes the **1st-place pattern** (or the pool is exhausted / no cards remain), then `settleDerashLeaderboard` builds a queue ordered by **hardest place-pattern reached → earliest to reach it → purchase order** and assigns ranks by **position** (queue #1 → 1st, …). A card can be **promoted into a higher empty slot** than the pattern it completed; each card wins exactly one place.
+**Why**: Race is a fast "first to bingo" feel; leaderboard reflects final achievement and lets standings reshuffle (the user's explicit design). Both are DB-config selectable, so neither is lost.
+**Constraints**: For leaderboard mode set **distinct patterns hardest (1st) → easiest (last)** — if every place is "Any Line" the round ends on the first single line with no leaderboard. Leaderboard settlement **reuses `awardDerashPlace` + `reconcileDerashPool`** — do not fork the payout math. `claimBingo` (manual "Bingo") is a **no-op in leaderboard mode**. Both modes are snapshotted onto the room at creation so a running room ignores a mid-game config flip.
+
+### D-20: Instant-buy cartelas + tap-to-refund (no Pay button)
+**Decided**: 2026-07-08
+**Decision**: In derash, tapping an available cartela **buys it immediately** (single-cartela purchase); tapping a cartela you own **refunds it** while the room is `open` via `DELETE /bingo/rooms/:id/cartelas/:cartelaNumber` → `BingoService.releaseCartela` (refund ledger `bingo-cartela-refund:{ticketId}` in one transaction, frees the pool `BingoCard`, decrements `soldTickets`). The client uses a per-cartela pending guard; the Pay bar is gone.
+**Why**: A one-tap buy/undo is simpler than select-then-pay; refund-anytime-while-open (the user's choice) is the most forgiving.
+**Constraint**: Refund is allowed **only while `status === 'open'`** and only for the caller's own `active` ticket; the idempotency key makes a double-tap safe. Available grid cells render as a **black tile + muted number** (`#8f9db0`) with the group colour kept as a thin accent border — legible on big 200/300 grids.
+
+### D-22: Staged end-of-round reveal (now-calling → board → ticket → win window)
+**Decided**: 2026-07-08
+**Decision**: The reveal cascades across three trailing cursors so a called number is **seen in "now calling" first**, then marks on the **board** (`NOW_CALLING_LEAD_MS` later), then on the **tickets** (`BOARD_TO_TICKET_MS` later): `revealedCount` (announce, + pop sound) → `boardCount` → `ticketCount`. The per-place 5×5 win popup is held behind `NOW_CALLING_HOLD_MS` (`popupArmed`) so the winning ball is seen before the card pops, and the result-display **countdown only starts once the live-win queue drains** (so a multi-place leaderboard round never burns its whole result window on the live popups).
+**Why**: Previously every surface read one cursor, so numbers lit up on the board/cards at the same instant they entered "now calling" — and the caller's entrance animation made it look last. The user wanted a clear now-calling → grid → ticket → window order.
+**Constraint**: Each trailing cursor **snaps backwards instantly** (room switch/reset) but lags going forward. Don't collapse the board/ticket back onto `revealedNumbers`. All three delays sit comfortably inside the `REVEAL_BASE_MS` (1.5s) per-ball cadence.
+
+---
+
+## Wallet / Agents (continued)
+
+### D-19: Withdrawal deductions — service fee → super-admin wallet, commission → agent
+**Decided**: 2026-07-08
+**Decision**: On withdrawal completion, two cuts come out of the **gross**: a **service fee** (`system_configs.withdrawalServiceChargePct`) credited to a **designated super-admin's wallet** (`superAdminUserId`), and a **commission** (`withdrawalCommissionPct`) credited to the **processing agent** as a distinct `agent_receipt` earning. The user nets `gross − serviceFee − commission`; the agent also receives that net as payout custody. `withdrawals` stores `serviceFeeMinor` + `commissionMinor` (and `serviceChargeMinor` = their sum). Ledger keys: `platform-service-fee:{id}`, `agent-commission:{id}`, `agent-receipt:{id}`.
+**Why**: The platform (super-admin) and the agent both earn a share of the withdrawal; the super-admin fee lands in a real, auditable wallet instead of only the `platform_stats` counter (which is still incremented for reporting).
+**Constraints**: `serviceFee + commission < gross` (else `BadRequestException`). All credits happen inside the same transaction as the reservation settle; total credited (net + commission + serviceFee) = gross. The super-admin credit is skipped if `superAdminUserId` is unset or equals the agent.
+
+### D-21: Agent on-duty is the single signal; working hours are Ethiopia-time
+**Decided**: 2026-07-08
+**Decision**: An agent's availability is governed by **`User.onDutyMode`** (`auto` | `on` | `off`) plus a per-agent **working window** (`workDaysOfWeek` + existing `workStartHour/Minute/workEndHour/Minute`). **Effective on-duty** = `on`, or (`auto` **and** inside the window). Force-`on` is single-primary (setting one demotes other `on` agents to `auto`). The **deposit destination** (`getActiveAgentDepositInfo`) is the one effectively-on-duty agent (respecting deposit permission), and the **withdrawal/claim gate** (`verifyAgentWorkingHoursAndPermission`) requires effective-on-duty. All time math lives in `src/common/agent-duty.util.ts` and is evaluated in **Ethiopia time (+180 min, no DST)** by shifting the instant then reading its UTC wall clock. Admin sets mode via `PATCH /admin/agents/:id/on-duty`.
+**Why**: The old routing read the **server clock** (`new Date().getHours()`), so on a UTC host an Ethiopia 9–21 shift was effectively 12–24 → "No agent is on duty right now" during real working hours. Collapsing to one flag + a fixed-offset schedule removes both the timezone bug and the duplicate `AgentShift`/`workStartHour` gate.
+**Constraints**: The `agent_shifts` table + its admin Shift UI and the per-agent `workStartHour/End` window are **retained but dormant** (they no longer route) — the user may revisit; don't delete them. `agentPermissions.{deposit,withdraw}` still apply on top of on-duty. Any new "is this agent available" check must use `isAgentEffectivelyOnDuty` — never a raw `new Date()` hour.

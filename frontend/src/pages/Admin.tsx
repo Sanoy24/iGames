@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
-  Activity, Bot, ChevronDown, ChevronUp, CircleDot, Coins, Dices,
-  Play, Plus, RefreshCw, Settings, Shield, Users, Wallet, X,
+  Activity, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
+  Image as ImageIcon, LifeBuoy, Megaphone, Play, Plus, RefreshCw, Send, Settings,
+  Shield, Trash2, Users, Wallet, X,
 } from 'lucide-react';
 import {
   adminAgentsApi,
@@ -11,18 +13,32 @@ import {
   adminApi,
   adminWithdrawalsApi,
   adminUsersApi,
+  broadcastApi,
+  broadcastImageUrl,
   walletApi,
+  type AdminGameStat,
+  type AdminUserActivity,
+  type AgentPerformance,
   type AgentLedgerAction,
   type AgentWithdrawalAction,
+  type BingoRoundDetails,
+  type BingoRoundTicket,
   type BotUser,
+  type BroadcastButton,
+  type BroadcastMessage,
+  type CreateBroadcastInput,
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
 import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
+import { SupportConsole } from '../components/SupportConsole';
+import { GamesAdmin } from '../components/GamesAdmin';
+import { PoolAdmin } from '../components/PoolAdmin';
+import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'bots' | 'withdrawals' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -31,12 +47,30 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'agent-actions', label: 'Agent Actions', icon: <Activity size={15} /> },
   { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
   { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
+  { id: 'pool',        label: 'Pool',        icon: <Circle size={15} /> },
+  { id: 'werk',        label: 'Werk Flega',  icon: <span style={{ fontSize: 14, lineHeight: 1 }}>⛏️</span> },
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
+  { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
+  { id: 'support',     label: 'Support',     icon: <LifeBuoy size={15} /> },
+  { id: 'games',       label: 'Games',       icon: <Dices size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
-  { id: 'emoney',      label: 'E-Money',     icon: <Coins size={15} /> },
+  { id: 'emoney',      label: 'ETB',         icon: <Coins size={15} /> },
   { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
 ];
+
+// Internal staff tool — labels stay in English by default; translated only
+// where a key exists (see locales' `admin` namespace), falling back to TABS.label.
+const TAB_LABEL_KEY: Partial<Record<AdminTab, string>> = {
+  overview: 'admin.tabOverview',
+  players: 'admin.tabPlayers',
+  agents: 'admin.tabAgents',
+  withdrawals: 'admin.tabWithdrawals',
+  support: 'nav.support',
+  games: 'admin.tabGames',
+  config: 'admin.tabConfig',
+  account: 'admin.tabAccount',
+};
 
 // ── Shared helpers ────────────────────────────────────────────────
 
@@ -241,6 +275,9 @@ function PlayersAdmin() {
   const [adjustReason, setAdjustReason] = useState('');
   const [submittingAdjustment, setSubmittingAdjustment] = useState(false);
 
+  // Player detail drill-down
+  const [detailUser, setDetailUser] = useState<User | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -257,6 +294,12 @@ function PlayersAdmin() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Keep the "Online" column reasonably live without a full manual refresh.
+  useEffect(() => {
+    const id = setInterval(() => { void load(); }, 15000);
+    return () => clearInterval(id);
   }, [load]);
 
   const handleUpdateStatus = async (userId: string, newStatus: 'active' | 'suspended') => {
@@ -323,17 +366,17 @@ function PlayersAdmin() {
                   value={adjustDirection}
                   onChange={(e) => setAdjustDirection(e.target.value as 'credit' | 'debit')}
                 >
-                  <option value="credit">Credit (+) Add Credits</option>
-                  <option value="debit">Debit (-) Deduct Credits</option>
+                  <option value="credit">Credit (+) Add ETB</option>
+                  <option value="debit">Debit (-) Deduct ETB</option>
                 </select>
               </div>
               <div className="adm-field">
-                <label>Amount (Credits / Minor Units — 100 Credits = 1 Birr)</label>
+                <label>Amount (ETB)</label>
                 <input
                   className="input"
                   type="number"
                   min="1"
-                  placeholder="e.g. 50000 for 500 Credits"
+                  placeholder="e.g. 500"
                   value={adjustAmount}
                   onChange={(e) => setAdjustAmount(e.target.value)}
                 />
@@ -406,6 +449,7 @@ function PlayersAdmin() {
                 <th>Contact info</th>
                 <th>Wallet Balance</th>
                 <th>Status</th>
+                <th>Online</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -442,7 +486,22 @@ function PlayersAdmin() {
                       </span>
                     </td>
                     <td>
+                      <span className={`badge ${u.online ? 'badge-green' : 'badge-gray'}`}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
+                          background: u.online ? 'var(--green)' : 'var(--text-muted)',
+                        }} />
+                        {u.online ? 'Online' : 'Offline'}
+                      </span>
+                    </td>
+                    <td>
                       <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          className="adm-btn adm-btn-secondary adm-btn-xs"
+                          onClick={() => setDetailUser(u)}
+                        >
+                          View
+                        </button>
                         <button
                           className="adm-btn adm-btn-secondary adm-btn-xs"
                           onClick={() => { setAdjustingUser(u); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
@@ -500,6 +559,135 @@ function PlayersAdmin() {
           </div>
         )}
       </div>
+
+      {detailUser && (
+        <PlayerDetailModal user={detailUser} onClose={() => setDetailUser(null)} />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Player detail drill-down (games played, deposits, withdrawals, wins)
+// ══════════════════════════════════════════════════════════════════
+function PlayerDetailModal({ user, onClose }: { user: User; onClose: () => void }) {
+  const addToast = useStore((s) => s.addToast);
+  const [activity, setActivity] = useState<AdminUserActivity | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    adminUsersApi
+      .getUserActivity(user.id, 30)
+      .then((a) => { if (alive) setActivity(a); })
+      .catch((e) => addToast('error', getErrorMessage(e)))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [user.id, addToast]);
+
+  const gs = activity?.gameStats;
+  const gameRows: Array<{ label: string; color: string; s?: AdminGameStat }> = [
+    { label: 'Bingo', color: '#ec4899', s: gs?.bingo },
+    { label: 'Keno', color: '#8b5cf6', s: gs?.keno },
+    { label: 'Crash', color: '#f59e0b', s: gs?.crash },
+  ];
+
+  return (
+    <div className="adm-modal-overlay" onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}>
+      <div className="adm-panel" onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 860, width: '100%', margin: 'auto', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="adm-panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Player — {user.displayName}{user.phoneNumber ? ` · ${user.phoneNumber}` : ''}</span>
+          <button className="adm-icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+
+        {loading || !activity ? (
+          <div className="adm-empty">Loading player activity…</div>
+        ) : (
+          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Headline KPIs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+              <Kpi label="Games Played" value={String(gs?.totalGamesPlayed ?? 0)} color="#6366f1" icon={<Dices size={16} />} />
+              <Kpi label="Total Wins" value={String(gs?.totalWins ?? 0)} color="#22c55e" icon={<Activity size={16} />} />
+              <Kpi label="Total Staked" value={formatCreditsFull(gs?.totalStakedMinor ?? 0)} color="#f59e0b" icon={<Coins size={16} />} />
+              <Kpi label="Total Won" value={formatCreditsFull(gs?.totalWinMinor ?? 0)} color="#10b981" icon={<Wallet size={16} />} />
+              <Kpi label="Deposits (credited)" value={formatCreditsFull(activity.totals.depositMinor)} color="#3b82f6" icon={<Wallet size={16} />} />
+              <Kpi label="Withdrawn (completed)" value={formatCreditsFull(activity.totals.completedWithdrawalMinor)} color="#ef4444" icon={<Wallet size={16} />} />
+              <Kpi label="Balance" value={formatCreditsFull(activity.totals.walletAvailableMinor)} color="#8b5cf6" icon={<Wallet size={16} />} />
+            </div>
+
+            {/* Per-game breakdown */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Games by type</div>
+              <table className="adm-table">
+                <thead>
+                  <tr className="adm-tr">
+                    <th>Game</th><th>Tickets / Bets</th><th>Rounds</th><th>Staked</th><th>Wins</th><th>Won</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gameRows.map(({ label, color, s }) => (
+                    <tr key={label} className="adm-tr">
+                      <td><span className="badge" style={{ background: `${color}22`, color }}>{label}</span></td>
+                      <td><strong>{s?.tickets ?? 0}</strong></td>
+                      <td className="adm-td-muted">{s?.rounds ?? 0}</td>
+                      <td>{formatCreditsFull(s?.stakedMinor ?? 0)}</td>
+                      <td style={{ color: (s?.wins ?? 0) > 0 ? 'var(--green)' : undefined }}>{s?.wins ?? 0}</td>
+                      <td>{formatCreditsFull(s?.winMinor ?? 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Deposits */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Deposits ({activity.deposits.length})</div>
+              {activity.deposits.length === 0 ? (
+                <div className="adm-empty">No deposits.</div>
+              ) : (
+                <table className="adm-table">
+                  <thead><tr className="adm-tr"><th>When</th><th>Amount</th><th>Status</th><th>Agent</th></tr></thead>
+                  <tbody>
+                    {activity.deposits.map((d) => (
+                      <tr key={d.id} className="adm-tr">
+                        <td className="adm-td-muted">{formatDateTime(d.createdAt)}</td>
+                        <td><strong>{formatCreditsFull(Number(d.amountMinor))}</strong></td>
+                        <td><span className={`badge ${d.status === 'credited' ? 'badge-green' : 'badge-gold'}`}>{d.status}</span></td>
+                        <td className="adm-td-muted">{d.agent?.displayName ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Withdrawals */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Withdrawal requests ({activity.withdrawals.length})</div>
+              {activity.withdrawals.length === 0 ? (
+                <div className="adm-empty">No withdrawal requests.</div>
+              ) : (
+                <table className="adm-table">
+                  <thead><tr className="adm-tr"><th>When</th><th>Amount</th><th>Status</th><th>Agent</th></tr></thead>
+                  <tbody>
+                    {activity.withdrawals.map((w) => (
+                      <tr key={w.id} className="adm-tr">
+                        <td className="adm-td-muted">{formatDateTime(w.createdAt)}</td>
+                        <td><strong>{formatCreditsFull(Number(w.amountMinor))}</strong></td>
+                        <td><span className={`badge ${w.status === 'completed' ? 'badge-green' : w.status === 'rejected' ? 'badge-red' : 'badge-gold'}`}>{w.status}</span></td>
+                        <td className="adm-td-muted">{w.agent?.displayName ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -507,6 +695,30 @@ function PlayersAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Agents
 // ══════════════════════════════════════════════════════════════════
+const AGENT_WEEKDAYS: { d: number; label: string }[] = [
+  { d: 1, label: 'Mon' }, { d: 2, label: 'Tue' }, { d: 3, label: 'Wed' },
+  { d: 4, label: 'Thu' }, { d: 5, label: 'Fri' }, { d: 6, label: 'Sat' }, { d: 0, label: 'Sun' },
+];
+
+function DaysPicker({ value, onChange }: { value: number[]; onChange: (v: number[]) => void }) {
+  const toggle = (d: number) => onChange(value.includes(d) ? value.filter((x) => x !== d) : [...value, d]);
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      {AGENT_WEEKDAYS.map(({ d, label }) => (
+        <button
+          key={d}
+          type="button"
+          onClick={() => toggle(d)}
+          className={`adm-btn adm-btn-xs ${value.includes(d) ? 'adm-btn-primary' : 'adm-btn-secondary'}`}
+          style={{ minWidth: 42 }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function AgentsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [agents, setAgents] = useState<User[]>([]);
@@ -523,6 +735,7 @@ function AgentsAdmin() {
     workStartMinute: 0,
     workEndHour: 17,
     workEndMinute: 0,
+    workDaysOfWeek: [] as number[],
     deposit: true,
     withdraw: true,
   });
@@ -536,10 +749,13 @@ function AgentsAdmin() {
     workStartMinute: 0,
     workEndHour: 17,
     workEndMinute: 0,
+    workDaysOfWeek: [] as number[],
     deposit: true,
     withdraw: true,
     status: 'active'
   });
+
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -549,6 +765,20 @@ function AgentsAdmin() {
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Set an agent's duty mode: 'auto' follows their working hours, 'on'/'off' are
+  // manual overrides. Force-'on' is single-primary (backend demotes other pins).
+  const setDutyMode = async (agent: User, mode: 'auto' | 'on' | 'off') => {
+    setTogglingId(agent.id);
+    try {
+      await adminAgentsApi.setAgentOnDuty(agent.id, mode);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setTogglingId(null); }
+  };
+
+  // The agent players actually deposit to right now (server-computed, Ethiopia time).
+  const onDutyAgent = agents.find((a) => a.effectiveOnDuty) ?? null;
 
   const createAgent = async () => {
     if (!form.displayName.trim() || !form.phoneNumber.trim() || form.password.length < 8) {
@@ -565,6 +795,7 @@ function AgentsAdmin() {
         workStartMinute: form.workStartMinute,
         workEndHour: form.workEndHour,
         workEndMinute: form.workEndMinute,
+        workDaysOfWeek: form.workDaysOfWeek,
         agentPermissions: {
           deposit: form.deposit,
           withdraw: form.withdraw,
@@ -579,6 +810,7 @@ function AgentsAdmin() {
         workStartMinute: 0,
         workEndHour: 17,
         workEndMinute: 0,
+        workDaysOfWeek: [],
         deposit: true,
         withdraw: true,
       });
@@ -598,6 +830,7 @@ function AgentsAdmin() {
       workStartMinute: agent.workStartMinute !== undefined ? agent.workStartMinute : 0,
       workEndHour: agent.workEndHour !== undefined ? agent.workEndHour : 17,
       workEndMinute: agent.workEndMinute !== undefined ? agent.workEndMinute : 0,
+      workDaysOfWeek: agent.workDaysOfWeek ?? [],
       deposit: agent.agentPermissions ? agent.agentPermissions.deposit : true,
       withdraw: agent.agentPermissions ? agent.agentPermissions.withdraw : true,
       status: agent.status || 'active'
@@ -623,6 +856,7 @@ function AgentsAdmin() {
         workStartMinute: editForm.workStartMinute,
         workEndHour: editForm.workEndHour,
         workEndMinute: editForm.workEndMinute,
+        workDaysOfWeek: editForm.workDaysOfWeek,
         agentPermissions: {
           deposit: editForm.deposit,
           withdraw: editForm.withdraw,
@@ -670,7 +904,7 @@ function AgentsAdmin() {
                 onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
             </label>
             <label className="adm-field">
-              <span>Work Hours Timeframe</span>
+              <span>Work Hours Timeframe <em className="adm-field-hint">— Ethiopia time (UTC+3)</em></span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="input" type="number" min={0} max={23} placeholder="Start Hr" value={form.workStartHour} style={{ width: 80 }}
                   onChange={(e) => setForm((f) => ({ ...f, workStartHour: Number(e.target.value) }))} />
@@ -684,6 +918,10 @@ function AgentsAdmin() {
                 <input className="input" type="number" min={0} max={59} placeholder="Min" value={form.workEndMinute} style={{ width: 80 }}
                   onChange={(e) => setForm((f) => ({ ...f, workEndMinute: Number(e.target.value) }))} />
               </div>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Working Days <em className="adm-field-hint">— none selected = every day</em></span>
+              <DaysPicker value={form.workDaysOfWeek} onChange={(v) => setForm((f) => ({ ...f, workDaysOfWeek: v }))} />
             </label>
             <div className="adm-field" style={{ flexDirection: 'row', gap: 16, alignItems: 'center', gridColumn: 'span 2' }}>
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
@@ -736,7 +974,7 @@ function AgentsAdmin() {
               </select>
             </label>
             <label className="adm-field">
-              <span>Work Hours Timeframe</span>
+              <span>Work Hours Timeframe <em className="adm-field-hint">— Ethiopia time (UTC+3)</em></span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="input" type="number" min={0} max={23} placeholder="Start Hr" value={editForm.workStartHour} style={{ width: 80 }}
                   onChange={(e) => setEditForm((f) => ({ ...f, workStartHour: Number(e.target.value) }))} />
@@ -750,6 +988,10 @@ function AgentsAdmin() {
                 <input className="input" type="number" min={0} max={59} placeholder="Min" value={editForm.workEndMinute} style={{ width: 80 }}
                   onChange={(e) => setEditForm((f) => ({ ...f, workEndMinute: Number(e.target.value) }))} />
               </div>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Working Days <em className="adm-field-hint">— none selected = every day</em></span>
+              <DaysPicker value={editForm.workDaysOfWeek} onChange={(v) => setEditForm((f) => ({ ...f, workDaysOfWeek: v }))} />
             </label>
             <div className="adm-field" style={{ flexDirection: 'row', gap: 16, alignItems: 'center', gridColumn: 'span 2' }}>
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
@@ -775,6 +1017,26 @@ function AgentsAdmin() {
         </div>
       )}
 
+      {/* On-duty coverage — the single agent players deposit to right now. */}
+      <div
+        className="adm-panel"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+          borderColor: onDutyAgent ? 'rgba(52,211,153,0.5)' : 'rgba(248,113,113,0.4)',
+        }}
+      >
+        <span style={{
+          width: 9, height: 9, borderRadius: '50%',
+          background: onDutyAgent ? '#34d399' : '#f87171',
+          boxShadow: onDutyAgent ? '0 0 8px #34d399' : 'none',
+        }} />
+        <span style={{ fontSize: 13, fontWeight: 700 }}>
+          {onDutyAgent
+            ? <>On duty: <span style={{ color: '#34d399' }}>{onDutyAgent.displayName}</span>{onDutyAgent.phoneNumber ? ` · ${onDutyAgent.phoneNumber}` : ''}</>
+            : <span style={{ color: '#f87171' }}>Nobody is on duty — players can&apos;t deposit right now.</span>}
+        </span>
+      </div>
+
       <div className="adm-panel">
         {loading && agents.length === 0 ? (
           <div className="adm-empty">Loading agents…</div>
@@ -787,6 +1049,7 @@ function AgentsAdmin() {
                 <th>Name</th>
                 <th>Phone</th>
                 <th>Working Hours</th>
+                <th>On Duty</th>
                 <th>Permissions</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -794,21 +1057,49 @@ function AgentsAdmin() {
             </thead>
             <tbody>
               {agents.map((a) => {
-                const pad = (n?: number) => n !== undefined ? String(n).padStart(2, '0') : '--';
-                const timeStr = a.workStartHour !== undefined && a.workEndHour !== undefined
-                  ? `${pad(a.workStartHour)}:${pad(a.workStartMinute)} - ${pad(a.workEndHour)}:${pad(a.workEndMinute)}`
-                  : 'All day';
-                
                 const permissionsList: string[] = [];
                 if (a.agentPermissions?.deposit !== false) permissionsList.push('Deposit');
                 if (a.agentPermissions?.withdraw !== false) permissionsList.push('Withdraw');
                 const permStr = permissionsList.length > 0 ? permissionsList.join(', ') : 'None';
 
+                const pad = (n?: number) => n !== undefined ? String(n).padStart(2, '0') : '00';
+                const hoursStr = a.workStartHour !== undefined && a.workEndHour !== undefined
+                  ? `${pad(a.workStartHour)}:${pad(a.workStartMinute)}–${pad(a.workEndHour)}:${pad(a.workEndMinute)}`
+                  : 'All day';
+                const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+                const daysStr = a.workDaysOfWeek && a.workDaysOfWeek.length > 0
+                  ? [...a.workDaysOfWeek].sort((x, y) => x - y).map((d) => DAY_LABELS[d]).join(' ')
+                  : 'Every day';
+                const mode = a.onDutyMode ?? 'auto';
+
                 return (
                   <tr key={a.id} className="adm-tr">
                     <td><strong>{a.displayName}</strong></td>
                     <td className="adm-td-muted">{a.phoneNumber ?? '—'}</td>
-                    <td className="adm-td-muted">{timeStr}</td>
+                    <td className="adm-td-muted">
+                      <div style={{ fontSize: 12 }}>{hoursStr}</div>
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>{daysStr} · Ethiopia</div>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                          background: a.effectiveOnDuty ? '#34d399' : '#64748b',
+                          boxShadow: a.effectiveOnDuty ? '0 0 6px #34d399' : 'none',
+                        }} title={a.effectiveOnDuty ? 'On duty now' : 'Off duty now'} />
+                        <select
+                          className="input"
+                          style={{ width: 90, padding: '4px 6px', fontSize: 12 }}
+                          value={mode}
+                          disabled={togglingId === a.id}
+                          onChange={(e) => void setDutyMode(a, e.target.value as 'auto' | 'on' | 'off')}
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="on">Force On</option>
+                          <option value="off">Force Off</option>
+                        </select>
+                      </div>
+                    </td>
                     <td className="adm-td-muted">{permStr}</td>
                     <td>
                       <span className={`badge ${a.status === 'active' || !a.status ? 'badge-green' : 'badge-red'}`}>
@@ -838,20 +1129,30 @@ function ConfigAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
-    telebirrCreditMinorPerBirr: 100, welcomeBonusMinor: 0,
-    withdrawalServiceChargePct: 0, withdrawalMinAmountMinor: 0,
+    telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
+    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, superAdminUserId: null,
+    minDepositMinor: 0,
+    withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
+    agentRoomsEnabled: false, agentRoomCommissionPct: 0,
   });
+  const [admins, setAdmins] = useState<User[]>([]);
+  const [perf, setPerf] = useState<AgentPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const toFormValues = (c: SystemConfig) => ({
+  const toFormValues = (c: SystemConfig): SystemConfig => ({
     telebirrCreditMinorPerBirr: c.telebirrCreditMinorPerBirr,
     welcomeBonusMinor: c.welcomeBonusMinor,
     withdrawalServiceChargePct: c.withdrawalServiceChargePct,
+    withdrawalCommissionPct: c.withdrawalCommissionPct ?? 0,
+    superAdminUserId: c.superAdminUserId ?? null,
+    minDepositMinor: c.minDepositMinor ?? 0,
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
     withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
+    agentRoomsEnabled: c.agentRoomsEnabled ?? false,
+    agentRoomCommissionPct: c.agentRoomCommissionPct ?? 0,
   });
 
   useEffect(() => {
@@ -859,6 +1160,13 @@ function ConfigAdmin() {
       .then((c) => { setConfig(c); setForm(toFormValues(c)); })
       .catch((e) => addToast('error', getErrorMessage(e)))
       .finally(() => setLoading(false));
+    // Load admins for the super-admin (service-fee recipient) picker.
+    adminUsersApi.listUsers(1, 100, 'admin')
+      .then((r) => setAdmins(r.data))
+      .catch(() => undefined);
+    adminApi.getAgentPerformance()
+      .then(setPerf)
+      .catch(() => undefined);
   }, [addToast]);
 
   const save = async () => {
@@ -874,7 +1182,7 @@ function ConfigAdmin() {
   const field = (key: keyof SystemConfig, label: string, hint?: string) => (
     <label className="adm-field" key={key}>
       <span>{label}{hint && <em className="adm-field-hint"> — {hint}</em>}</span>
-      <input className="input" type="number" min={0} value={form[key]}
+      <input className="input" type="number" min={0} value={Number(form[key] ?? 0)}
         onChange={(e) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }))} />
     </label>
   );
@@ -886,21 +1194,101 @@ function ConfigAdmin() {
       <SectionHead title="System Configuration" sub="Platform-wide game and payment settings." />
 
       <div className="adm-panel">
-        <div className="adm-panel-head">Payments & Credits</div>
+        <div className="adm-panel-head">Payments & Wallet</div>
         <div className="adm-field-grid">
-          {field('telebirrCreditMinorPerBirr', 'Credits per Birr', '100 = 1 Birr → 100 credits')}
-          {field('welcomeBonusMinor', 'Welcome Bonus (credits)', '0 = disabled')}
+          {field('telebirrCreditMinorPerBirr', 'ETB per Birr deposited', '1 = flat (10 Birr → 10 ETB)')}
+          {field('minDepositMinor', 'Minimum Deposit (ETB)', '0 = no minimum')}
+          {field('welcomeBonusMinor', 'Welcome Bonus (ETB)', '0 = disabled')}
         </div>
       </div>
 
       <div className="adm-panel">
         <div className="adm-panel-head">Withdrawal Rules</div>
         <div className="adm-field-grid">
-          {field('withdrawalServiceChargePct', 'Service Charge %', 'deducted from gross withdrawal')}
-          {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (credits)', '0 = no minimum')}
-          {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (credits)', '0 = no limit')}
+          {field('withdrawalServiceChargePct', 'Service Fee % → Super-Admin', 'platform cut, credited to the super-admin wallet')}
+          {field('withdrawalCommissionPct', 'Commission % → Agent', 'earned by the agent who processes the withdrawal')}
+          <label className="adm-field">
+            <span>Super-Admin (service-fee recipient)<em className="adm-field-hint"> — wallet that receives service fees</em></span>
+            <select
+              className="input"
+              value={form.superAdminUserId ?? ''}
+              onChange={(e) => setForm((f) => ({ ...f, superAdminUserId: e.target.value || null }))}
+            >
+              <option value="">None (track in stats only)</option>
+              {admins.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.displayName ?? 'Admin'}{a.phoneNumber ? ` · ${a.phoneNumber}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (ETB)', '0 = no minimum')}
+          {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (ETB)', '0 = no limit')}
           {field('maxPendingWithdrawalsPerUser', 'Max Pending per User')}
         </div>
+        <p className="adm-field-hint" style={{ marginTop: 8 }}>
+          Both cuts come out of the gross withdrawal — the user receives gross minus service fee minus commission.
+        </p>
+      </div>
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Bingo — Agent-owned Rooms</div>
+        <div style={{ padding: 16 }}>
+          <label className="adm-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!form.agentRoomsEnabled}
+              onClick={() => setForm((f) => ({ ...f, agentRoomsEnabled: !f.agentRoomsEnabled }))}
+              style={{
+                position: 'relative', width: 44, height: 24, borderRadius: 999, flexShrink: 0, cursor: 'pointer',
+                background: form.agentRoomsEnabled ? 'var(--green, #10b981)' : 'var(--border)',
+                border: 'none', transition: 'background .15s',
+              }}
+            >
+              <span style={{
+                position: 'absolute', top: 2, left: form.agentRoomsEnabled ? 22 : 2,
+                width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .15s',
+              }} />
+            </button>
+            <span>
+              <strong>Per-agent rooms</strong>
+              <em className="adm-field-hint"> — OFF = one shared room (current). ON = each agent owns a room; customers pick from a lobby; settlement/stats credit the room owner.</em>
+            </span>
+          </label>
+          <div className="adm-field-grid" style={{ marginTop: 12 }}>
+            {field('agentRoomCommissionPct', 'Agent Commission % of GGR', 'paid to the room owner on completion (of real-player staked − paid out). 0 = stats only')}
+          </div>
+        </div>
+
+        <div className="adm-panel-head" style={{ marginTop: 4 }}>Agent Performance (Bingo)</div>
+        {perf.length === 0 ? (
+          <div className="adm-empty">No agent activity yet.</div>
+        ) : (
+          <table className="adm-table">
+            <thead>
+              <tr className="adm-tr">
+                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Commission</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perf.map((p) => (
+                <tr key={p.agentId} className="adm-tr">
+                  <td><strong>{p.displayName}</strong></td>
+                  <td className="adm-td-muted">{p.customersBrought}</td>
+                  <td>{p.tickets}</td>
+                  <td className="adm-td-muted">{p.players}</td>
+                  <td>{formatCreditsFull(p.stakedMinor)}</td>
+                  <td>{formatCreditsFull(p.payoutMinor)}</td>
+                  <td style={{ color: p.ggrMinor >= 0 ? 'var(--green)' : 'var(--danger)' }}>
+                    {formatCreditsFull(p.ggrMinor)}
+                  </td>
+                  <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.commissionEarnedMinor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <button className="adm-btn adm-btn-primary adm-btn-full" disabled={saving} onClick={save}>
@@ -908,7 +1296,7 @@ function ConfigAdmin() {
       </button>
       {config && (
         <p className="adm-save-note">
-          Current: {config.withdrawalServiceChargePct}% charge · min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} credits
+          Current: {config.withdrawalServiceChargePct}% charge · min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} ETB
         </p>
       )}
     </div>
@@ -981,7 +1369,7 @@ function WithdrawalsAdmin() {
                   <div key={w.id} className="adm-w-row">
                     <div className="adm-w-main" onClick={() => setExpanded(expanded === w.id ? null : w.id)}>
                       <div className="adm-w-info">
-                        <strong>{formatCredits(w.amountMinor)} credits</strong>
+                        <strong>{formatCredits(w.amountMinor)} ETB</strong>
                         <span className="adm-td-muted">{w.destinationAccount}</span>
                         <span className="adm-td-muted">{formatDateTime(w.createdAt)}</span>
                       </div>
@@ -1207,7 +1595,7 @@ function KenoAdmin() {
       {config && (
         <div className="adm-info-strip">
           <span>v{config.version}</span>
-          <span>{formatCredits(config.ticketPriceMinor)} credits/ticket</span>
+          <span>{formatCredits(config.ticketPriceMinor)} ETB/ticket</span>
           <span>{config.numberMin}–{config.numberMax}, draw {config.drawSize}</span>
           <span>Draw interval: {formatKenoInterval(config)}</span>
           <span>Bot interval: {config.globalBotWinInterval || 'off'}</span>
@@ -1220,7 +1608,7 @@ function KenoAdmin() {
           <div className="adm-panel-head">{config ? 'New Config Version' : 'Create Initial Config'}</div>
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>Ticket Price (credits)</span>
+              <span>Ticket Price (ETB)</span>
               <input className="input" type="number" value={cfgForm.ticketPriceMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, ticketPriceMinor: Number(e.target.value) }))} />
             </label>
@@ -1334,6 +1722,7 @@ type PatternPrizeEntry = { patternId: string; name: string; prizeMinor: number }
 
 function BingoAdmin() {
   const addToast = useStore((s) => s.addToast);
+  const liveCounts = useStore((s) => s.liveCounts);
   const [rooms, setRooms] = useState<BingoRoom[]>([]);
   const [cfg, setCfg] = useState<BingoConfig | null>(null);
   const [patterns, setPatterns] = useState<BingoPattern[]>([]);
@@ -1342,6 +1731,22 @@ function BingoAdmin() {
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPatterns, setShowPatterns] = useState(false);
+
+  // Round details modal (traceability)
+  const [details, setDetails] = useState<BingoRoundDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  const openDetails = async (roomId: string) => {
+    setDetailsLoading(true);
+    setDetails(null);
+    try {
+      setDetails(await adminBingoApi.getRoomDetails(roomId));
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
 
   // Room creation form
   const [winMode, setWinMode] = useState<'line' | 'pattern'>('line');
@@ -1354,6 +1759,7 @@ function BingoAdmin() {
     autoRepeatIntervalMinutes: 0,
     defaultTicketPriceMinor: 500,
     defaultMaxTickets: 200,
+    maxCartelasPerUser: 0,
     defaultOneLineMinor: 20000,
     defaultTwoLinesMinor: 50000,
     defaultFullHouseMinor: 100000,
@@ -1367,12 +1773,24 @@ function BingoAdmin() {
     minTicketsToStart: 0,
     houseEdgePct: 20,
     globalBingoBotWinInterval: 0,
+    botMaxRealPlayers: 10,
+    botWinMode: 'statistical' as 'off' | 'statistical' | 'guaranteed' | 'hybrid',
+    prefilledRankingMode: 'race' as 'race' | 'leaderboard',
     prefilledFirstPlacePct: 80,
     prefilledSecondPlaceEnabled: false,
     prefilledSecondPlacePct: 0,
     prefilledThirdPlaceEnabled: false,
     prefilledThirdPlacePct: 0,
+    prefilledFourthPlaceEnabled: false,
+    prefilledFourthPlacePct: 0,
+    prefilledFifthPlaceEnabled: false,
+    prefilledFifthPlacePct: 0,
     prefilledWinPatternId: null as string | null,
+    prefilledFirstPatternId: null as string | null,
+    prefilledSecondPatternId: null as string | null,
+    prefilledThirdPatternId: null as string | null,
+    prefilledFourthPatternId: null as string | null,
+    prefilledFifthPatternId: null as string | null,
   });
 
   const load = useCallback(async () => {
@@ -1391,6 +1809,7 @@ function BingoAdmin() {
         autoRepeatIntervalMinutes: c.autoRepeatIntervalMinutes,
         defaultTicketPriceMinor: c.defaultTicketPriceMinor,
         defaultMaxTickets: c.defaultMaxTickets,
+        maxCartelasPerUser: c.maxCartelasPerUser ?? 0,
         defaultOneLineMinor: c.defaultOneLineMinor,
         defaultTwoLinesMinor: c.defaultTwoLinesMinor,
         defaultFullHouseMinor: c.defaultFullHouseMinor,
@@ -1404,12 +1823,24 @@ function BingoAdmin() {
         minTicketsToStart: c.minTicketsToStart ?? 0,
         houseEdgePct: c.houseEdgePct ?? 20,
         globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
+        botMaxRealPlayers: c.botMaxRealPlayers ?? 10,
+        botWinMode: (c.botWinMode ?? 'statistical') as 'off' | 'statistical' | 'guaranteed' | 'hybrid',
+        prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as 'race' | 'leaderboard',
         prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
         prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
         prefilledSecondPlacePct: c.prefilledSecondPlacePct ?? 0,
         prefilledThirdPlaceEnabled: c.prefilledThirdPlaceEnabled ?? false,
         prefilledThirdPlacePct: c.prefilledThirdPlacePct ?? 0,
+        prefilledFourthPlaceEnabled: c.prefilledFourthPlaceEnabled ?? false,
+        prefilledFourthPlacePct: c.prefilledFourthPlacePct ?? 0,
+        prefilledFifthPlaceEnabled: c.prefilledFifthPlaceEnabled ?? false,
+        prefilledFifthPlacePct: c.prefilledFifthPlacePct ?? 0,
         prefilledWinPatternId: c.prefilledWinPatternId ?? null,
+        prefilledFirstPatternId: c.prefilledFirstPatternId ?? null,
+        prefilledSecondPatternId: c.prefilledSecondPatternId ?? null,
+        prefilledThirdPatternId: c.prefilledThirdPatternId ?? null,
+        prefilledFourthPatternId: c.prefilledFourthPatternId ?? null,
+        prefilledFifthPatternId: c.prefilledFifthPatternId ?? null,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -1618,7 +2049,7 @@ function BingoAdmin() {
                 onChange={(e) => setCfgForm((f) => ({ ...f, resultDisplaySeconds: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default Ticket Price (credits)</span>
+              <span>Default Ticket Price (ETB)</span>
               <input className="input" type="number" min={1} value={cfgForm.defaultTicketPriceMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultTicketPriceMinor: Number(e.target.value) }))} />
             </label>
@@ -1628,17 +2059,22 @@ function BingoAdmin() {
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultMaxTickets: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default One-Line Prize (credits)</span>
+              <span>Max Cartelas Per User (0 = unlimited)</span>
+              <input className="input" type="number" min={0} value={cfgForm.maxCartelasPerUser ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, maxCartelasPerUser: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Default One-Line Prize (ETB)</span>
               <input className="input" type="number" min={0} value={cfgForm.defaultOneLineMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultOneLineMinor: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default Two-Lines Prize (credits)</span>
+              <span>Default Two-Lines Prize (ETB)</span>
               <input className="input" type="number" min={0} value={cfgForm.defaultTwoLinesMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultTwoLinesMinor: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
-              <span>Default Full-House Prize (credits)</span>
+              <span>Default Full-House Prize (ETB)</span>
               <input className="input" type="number" min={0} value={cfgForm.defaultFullHouseMinor}
                 onChange={(e) => setCfgForm((f) => ({ ...f, defaultFullHouseMinor: Number(e.target.value) }))} />
             </label>
@@ -1672,61 +2108,186 @@ function BingoAdmin() {
             </label>
           </div>
 
-          <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
+          <div className="adm-panel-head" style={{ marginTop: 12 }}>Bot Liquidity (low-player rooms)</div>
+          {liveCounts && (
+            <div className="adm-field-hint" style={{ marginBottom: 8 }}>
+              Live now (incl. bots): Bingo <b>{liveCounts.bingoOnline}</b>
+              {liveCounts.bots ? <> ({liveCounts.bots.bingoBots} bots)</> : null}
+              {' · '}Total online <b>{liveCounts.totalOnline}</b>
+              {liveCounts.bots ? <> ({liveCounts.bots.totalBots} bots)</> : null}
+              {' · '}Playing <b>{liveCounts.totalPlaying}</b>
+            </div>
+          )}
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>Winning Pattern</span>
+              <span>Activate Bots Below N Real Players (0 = never)</span>
+              <input className="input" type="number" min={0} value={cfgForm.botMaxRealPlayers ?? 10}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botMaxRealPlayers: Number(e.target.value) }))} />
+              <span className="adm-field-hint">While a room has fewer than this many REAL players, bots join to fill/steer it. At or above it, bots stay out and real players compete on a fair draw.</span>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Bot Win Mode (below threshold)</span>
+              <select
+                className="input"
+                value={cfgForm.botWinMode ?? 'statistical'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botWinMode: e.target.value as 'off' | 'statistical' | 'guaranteed' | 'hybrid' }))}
+              >
+                <option value="off">Off — bots only fill the room, fully fair draw (no win steering)</option>
+                <option value="statistical">Statistical — bots buy most cartelas, so a bot wins most rounds on a fair draw (least detectable)</option>
+                <option value="guaranteed">Guaranteed — a real user's win is redirected to a bot (deterministic; overrides a fair result)</option>
+                <option value="hybrid">Hybrid — flood cartelas AND redirect any real-user win to a bot</option>
+              </select>
+              <span className="adm-field-hint">
+                Applies only while real players are below the threshold above. Statistical is recommended: it stays genuinely fair (bots just hold more cartelas), so it is undetectable. Guaranteed/Hybrid override a real winner and are easier for a suspicious player to notice.
+              </span>
+            </label>
+          </div>
+
+          <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
+          <div className="adm-field-grid">
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Ranking Mode</span>
+              <select
+                className="input"
+                value={cfgForm.prefilledRankingMode ?? 'race'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledRankingMode: e.target.value as 'race' | 'leaderboard' }))}
+              >
+                <option value="race">Race — first to complete each place's pattern locks that place</option>
+                <option value="leaderboard">Leaderboard — round runs to the 1st-place pattern, then ranks by final standing</option>
+              </select>
+              <span className="adm-field-hint">
+                Leaderboard mode reshuffles ranks as cards progress and settles everyone at the end. Set distinct patterns per place (1st hardest → last easiest) for it to be meaningful.
+              </span>
+            </label>
+            <label className="adm-field">
+              <span>Default Winning Pattern</span>
               <select
                 className="input"
                 value={cfgForm.prefilledWinPatternId ?? ''}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledWinPatternId: e.target.value || null }))}
               >
-                <option value="">Any Line (default)</option>
+                <option value="">Any Line (built-in default)</option>
                 {patterns.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
-              <span className="adm-field-hint">The pattern a cartela card must complete to win a place. Seed patterns below if empty.</span>
+              <span className="adm-field-hint">Fallback pattern for any place that doesn&apos;t set its own below. Seed patterns below if empty.</span>
             </label>
+          </div>
+
+          {/* Per-place: enable, prize %, and the specific pattern that wins it. */}
+          <div className="adm-field-grid">
             <label className="adm-field">
-              <span>1st Place Prize (% of pot after house edge)</span>
+              <span>1st Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={1} max={100} value={cfgForm.prefilledFirstPlacePct ?? 80}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPlacePct: Math.min(100, Number(e.target.value)) }))} />
-              <span className="adm-field-hint">The first cartela to complete the winning pattern takes this % of the prize pool.</span>
+              <span className="adm-field-hint">
+                These are <strong>relative weights</strong>, not literal percentages. Each place gets weight ÷ (sum of the weights of the places actually won) of the after-house-edge pool. So with 1st=80 alone the winner takes the whole pool; with 1st=80/2nd=20 they split 80%/20%; an enabled place that no one wins has its share redistributed to the actual winners (never kept by the house). A card can win more than one place.
+              </span>
             </label>
             <label className="adm-field">
+              <span>1st Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledFirstPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFirstPatternId: e.target.value || null }))}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
               <span>2nd Place Enabled</span>
-              <select
-                className="input"
-                value={cfgForm.prefilledSecondPlaceEnabled ? 'true' : 'false'}
-                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlaceEnabled: e.target.value === 'true' }))}
-              >
+              <select className="input" value={cfgForm.prefilledSecondPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlaceEnabled: e.target.value === 'true' }))}>
                 <option value="false">Disabled</option>
                 <option value="true">Enabled</option>
               </select>
             </label>
             <label className="adm-field">
-              <span>2nd Place Prize (% of pot)</span>
+              <span>2nd Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledSecondPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledSecondPlaceEnabled} />
             </label>
             <label className="adm-field">
+              <span>2nd Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledSecondPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledSecondPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledSecondPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
               <span>3rd Place Enabled</span>
-              <select
-                className="input"
-                value={cfgForm.prefilledThirdPlaceEnabled ? 'true' : 'false'}
-                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlaceEnabled: e.target.value === 'true' }))}
-              >
+              <select className="input" value={cfgForm.prefilledThirdPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlaceEnabled: e.target.value === 'true' }))}>
                 <option value="false">Disabled</option>
                 <option value="true">Enabled</option>
               </select>
             </label>
             <label className="adm-field">
-              <span>3rd Place Prize (% of pot)</span>
+              <span>3rd Place Prize weight (share of pool)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledThirdPlacePct ?? 0}
                 onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPlacePct: Math.min(100, Number(e.target.value)) }))}
                 disabled={!cfgForm.prefilledThirdPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>3rd Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledThirdPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledThirdPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledThirdPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
+              <span>4th Place Enabled</span>
+              <select className="input" value={cfgForm.prefilledFourthPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPlaceEnabled: e.target.value === 'true' }))}>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>4th Place Prize weight (share of pool)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledFourthPlacePct ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPlacePct: Math.min(100, Number(e.target.value)) }))}
+                disabled={!cfgForm.prefilledFourthPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>4th Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledFourthPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFourthPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledFourthPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
+            </label>
+
+            <label className="adm-field">
+              <span>5th Place Enabled</span>
+              <select className="input" value={cfgForm.prefilledFifthPlaceEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPlaceEnabled: e.target.value === 'true' }))}>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>5th Place Prize weight (share of pool)</span>
+              <input className="input" type="number" min={0} max={100} value={cfgForm.prefilledFifthPlacePct ?? 0}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPlacePct: Math.min(100, Number(e.target.value)) }))}
+                disabled={!cfgForm.prefilledFifthPlaceEnabled} />
+            </label>
+            <label className="adm-field">
+              <span>5th Place Pattern</span>
+              <select className="input" value={cfgForm.prefilledFifthPatternId ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, prefilledFifthPatternId: e.target.value || null }))}
+                disabled={!cfgForm.prefilledFifthPlaceEnabled}>
+                <option value="">Use default pattern</option>
+                {patterns.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+              </select>
             </label>
           </div>
 
@@ -1743,7 +2304,7 @@ function BingoAdmin() {
           <div className="adm-panel-head">Create Bingo Room</div>
           <div className="adm-field-grid">
             <label className="adm-field"><span>Room Name</span><input className="input" {...f('name')} /></label>
-            <label className="adm-field"><span>Ticket Price (credits)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
+            <label className="adm-field"><span>Ticket Price (ETB)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
             <label className="adm-field"><span>Max Tickets</span><input className="input" type="number" min={1} {...f('maxTickets')} /></label>
             <label className="adm-field"><span>Starts In (minutes)</span><input className="input" type="number" min={1} {...f('minutesFromNow')} /></label>
             <label className="adm-field" style={{ gridColumn: '1 / -1' }}>
@@ -1838,15 +2399,19 @@ function BingoAdmin() {
                       <td className="adm-td-muted">{formatRelativeTime(room.scheduledStartAt)}</td>
                       <td className="adm-td-muted">{room.drawnNumbers?.length ?? 0}/{maxNum}</td>
                       <td>
-                        {isActive && (
-                          <div className="adm-cell-actions">
+                        <div className="adm-cell-actions">
+                          <button className="adm-btn adm-btn-secondary adm-btn-xs"
+                            onClick={() => void openDetails(room.id)}>
+                            Details
+                          </button>
+                          {isActive && (
                             <button className="adm-btn adm-btn-danger adm-btn-xs"
                               disabled={!!busy}
                               onClick={async () => { setBusy(`c-${room.id}`); try { await adminBingoApi.cancelRoom(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
                               <X size={11} />Cancel
                             </button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1855,14 +2420,267 @@ function BingoAdmin() {
             </table>
           )}
       </div>
+
+      {(details || detailsLoading) && (
+        <BingoRoundDetailsModal
+          details={details}
+          loading={detailsLoading}
+          onClose={() => { setDetails(null); setDetailsLoading(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Bingo round details (traceability) ────────────────────────────
+const ROUND_TICKET_BADGE: Record<string, string> = {
+  won: 'badge-green', lost: 'badge-red', disqualified: 'badge-red',
+  cancelled: 'badge-gold', active: 'badge-violet',
+};
+
+// Rank/tier presentation for the round-details winners. Places sort in award order;
+// line/pattern tiers come after the numeric places.
+const BINGO_PLACE_META: Record<string, { label: string; medal: string; order: number }> = {
+  '1st': { label: '1st place', medal: '🥇', order: 0 },
+  '2nd': { label: '2nd place', medal: '🥈', order: 1 },
+  '3rd': { label: '3rd place', medal: '🥉', order: 2 },
+  '4th': { label: '4th place', medal: '🏅', order: 3 },
+  '5th': { label: '5th place', medal: '🎖️', order: 4 },
+  full_house: { label: 'Full house', medal: '🏆', order: 5 },
+  two_lines: { label: 'Two lines', medal: '🎯', order: 6 },
+  one_line: { label: 'One line', medal: '➖', order: 7 },
+};
+const placeMeta = (place: string) => BINGO_PLACE_META[place] ?? { label: place, medal: '🏆', order: 99 };
+
+function RoundCardMini({ grid, marked }: { grid: Array<Array<number | null>>; marked: number[] }) {
+  const markedSet = new Set(marked);
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 2, width: 120 }}>
+      {grid.flat().map((cell, i) => {
+        const isFree = cell === null;
+        const hit = isFree || markedSet.has(cell as number);
+        return (
+          <div key={i} style={{
+            aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 9, fontWeight: 800, borderRadius: 3,
+            background: isFree ? 'rgba(239,68,68,0.25)' : hit ? 'rgba(16,185,129,0.85)' : 'rgba(255,255,255,0.05)',
+            color: hit && !isFree ? '#000' : isFree ? '#fca5a5' : 'var(--text-muted)',
+            border: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            {isFree ? '★' : cell}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BingoRoundDetailsModal({ details, loading, onClose }: {
+  details: BingoRoundDetails | null; loading: boolean; onClose: () => void;
+}) {
+  const room = details?.room;
+  const summary = (room?.settlementSummary ?? {}) as Record<string, {
+    winnerDisplayName?: string; winnerPhoneLast4?: string; winnerCartelaNumber?: number;
+    patternName?: string; prizeMinor?: number; winnerGrid?: Array<Array<number | null>>;
+    winnerMarkedNumbers?: number[];
+  }>;
+  const winnerPlaces = room ? Object.keys(summary) : [];
+  const winners = details?.tickets.filter((t) => t.payoutMinor > 0 || t.wonTiers.length > 0) ?? [];
+  const [openCard, setOpenCard] = useState<string | null>(null);
+
+  return (
+    <div className="adm-modal-overlay" onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}>
+      <div className="adm-panel" onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 900, width: '100%', margin: 'auto', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="adm-panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Round details {room ? `— ${room.name}` : ''}</span>
+          <button className="adm-icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+
+        {loading || !details || !room ? (
+          <div className="adm-empty">Loading round…</div>
+        ) : (
+          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* KPIs */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+              <Kpi label="Status" value={room.status} color="#6366f1" />
+              <Kpi
+                label="Ranking"
+                value={room.winMode === 'prefilled'
+                  ? (room.rankingMode === 'leaderboard' ? 'Leaderboard' : 'Race')
+                  : (room.winMode ?? '—')}
+                color="#a855f7"
+              />
+              <Kpi label="Cartelas Sold" value={String(details.totals.soldTickets)} color="#3b82f6" />
+              <Kpi label="Total Pot" value={formatCreditsFull(details.totals.totalPotMinor)} color="#f59e0b" />
+              <Kpi label="Prize Pool" value={formatCreditsFull(details.totals.prizePoolMinor)} color="#10b981" />
+              <Kpi label="Paid Out" value={formatCreditsFull(details.totals.totalPaidOutMinor)} color="#22c55e" />
+              <Kpi label="House Edge" value={`${details.totals.houseEdgePct}%`} color="#8b5cf6" />
+            </div>
+
+            {/* Drawn numbers */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                Drawn numbers ({room.drawnNumbers?.length ?? 0}) — in call order
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {(room.drawnNumbers ?? []).map((n, i) => (
+                  <span key={i} title={`Call #${i + 1}`} style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 26, height: 26, borderRadius: '50%', fontSize: 11, fontWeight: 800,
+                    background: i === (room.drawnNumbers!.length - 1) ? 'rgba(245,158,11,0.85)' : 'rgba(255,255,255,0.07)',
+                    color: i === (room.drawnNumbers!.length - 1) ? '#000' : 'var(--text)',
+                  }}>{n}</span>
+                ))}
+                {(room.drawnNumbers?.length ?? 0) === 0 && <span className="adm-td-muted">No numbers drawn.</span>}
+              </div>
+            </div>
+
+            {/* Winners — ranked (1st → 5th, then line/pattern tiers), each with its 5×5 */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                Winners &amp; ranks ({winnerPlaces.length})
+              </div>
+              {winnerPlaces.length === 0 && winners.length === 0 ? (
+                <div className="adm-empty">No winners recorded for this round.</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  {[...winnerPlaces]
+                    .sort((a, b) => placeMeta(a).order - placeMeta(b).order)
+                    .map((place) => {
+                      const w = summary[place];
+                      const meta = placeMeta(place);
+                      return (
+                        <div key={place} style={{ border: '1px solid rgba(16,185,129,0.3)', borderRadius: 10, padding: 12, minWidth: 190, background: 'rgba(16,185,129,0.05)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: 13 }}>
+                              <span style={{ fontSize: 16 }}>{meta.medal}</span>{meta.label}
+                            </span>
+                            <strong style={{ color: '#10b981' }}>{formatCreditsFull(w.prizeMinor ?? 0)} ETB</strong>
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>
+                            {w.winnerDisplayName ?? 'Player'}
+                            {w.winnerPhoneLast4 ? <span className="adm-td-muted" style={{ fontWeight: 400 }}> · ••{w.winnerPhoneLast4}</span> : null}
+                          </div>
+                          <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            <span>Cartela <strong>#{w.winnerCartelaNumber ?? '—'}</strong></span>
+                            <span>·</span>
+                            <span>Pattern: <strong>{w.patternName ?? 'Any Line'}</strong></span>
+                          </div>
+                          {w.winnerGrid
+                            ? <RoundCardMini grid={w.winnerGrid} marked={w.winnerMarkedNumbers ?? []} />
+                            : <span className="adm-td-muted" style={{ fontSize: 11 }}>Card not recorded.</span>}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* All cartelas */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                All cartelas ({details.tickets.length})
+              </div>
+              <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 6 }}>Click a row to show that cartela&apos;s 5×5 card (marked = called numbers).</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="adm-table">
+                  <thead><tr><th></th><th>Cartela</th><th>Player</th><th>Mode</th><th>Status</th><th>Stake</th><th>Payout</th><th>Won</th></tr></thead>
+                  <tbody>
+                    {details.tickets.map((t: BingoRoundTicket) => {
+                      const isOpen = openCard === t.id;
+                      return (
+                        <Fragment key={t.id}>
+                          <tr className="adm-tr" style={{ cursor: 'pointer' }}
+                            onClick={() => setOpenCard(isOpen ? null : t.id)}>
+                            <td style={{ width: 18, color: 'var(--text-muted)' }}>{isOpen ? '▾' : '▸'}</td>
+                            <td><strong>#{t.cartelaNumber ?? '—'}</strong></td>
+                            <td>
+                              {t.userName}
+                              {t.isBot && <span className="badge badge-violet" style={{ marginLeft: 6, fontSize: 9 }}>BOT</span>}
+                              {t.phoneLast4 && <span className="adm-td-muted" style={{ fontSize: 10, display: 'block' }}>••{t.phoneLast4}</span>}
+                            </td>
+                            <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.autoClaim ? 'Auto' : 'Manual'}</td>
+                            <td><span className={`badge ${ROUND_TICKET_BADGE[t.status] ?? 'badge-gold'}`}>{t.status}</span></td>
+                            <td className="adm-td-muted">{formatCredits(t.stakeMinor)}</td>
+                            <td>{t.payoutMinor > 0 ? <strong style={{ color: '#10b981' }}>{formatCredits(t.payoutMinor)}</strong> : <span className="adm-td-muted">—</span>}</td>
+                            <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.wonTiers.length > 0 ? t.wonTiers.join(', ') : '—'}</td>
+                          </tr>
+                          {isOpen && (
+                            <tr>
+                              <td colSpan={8} style={{ padding: '8px 12px 14px', background: 'rgba(255,255,255,0.02)' }}>
+                                <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                                  <RoundCardMini grid={t.grid} marked={t.markedNumbers} />
+                                  <div className="adm-td-muted" style={{ fontSize: 11, lineHeight: 1.7 }}>
+                                    <div>Marked: <strong>{t.markedNumbers.length}</strong> numbers</div>
+                                    <div>Cartela #{t.cartelaNumber ?? '—'} · {t.wonTiers.length > 0 ? `won ${t.wonTiers.join(', ')}` : 'no win'}</div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* RNG audit trail */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>RNG audit log IDs</div>
+              {(room.rngAuditLogIds?.length ?? 0) === 0 ? (
+                <div className="adm-td-muted" style={{ fontSize: 12 }}>None recorded.</div>
+              ) : (
+                <div className="adm-td-muted" style={{ fontSize: 11, wordBreak: 'break-all', lineHeight: 1.6 }}>
+                  {room.rngAuditLogIds!.join(', ')}
+                </div>
+              )}
+              <div className="adm-td-muted" style={{ fontSize: 11, marginTop: 6 }}>Room ID: {room.id}</div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 
 // ══════════════════════════════════════════════════════════════════
-// Bots
+// Bots hub — one place for every game's bots (models differ underneath):
+//   • Liquidity: funded player accounts that fake Keno/Bingo/Crash activity.
+//   • Werk Flega: cosmetic AI maze opponents (name/colour/skill, no wallet).
 // ══════════════════════════════════════════════════════════════════
+type BotsSubTab = 'liquidity' | 'werk';
+const BOTS_SUBTABS: Array<{ id: BotsSubTab; label: string }> = [
+  { id: 'liquidity', label: 'Liquidity (Keno/Bingo/Crash)' },
+  { id: 'werk', label: '⛏️ Werk Flega' },
+];
+
+function BotsHub() {
+  const [sub, setSub] = useState<BotsSubTab>('liquidity');
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {BOTS_SUBTABS.map((s) => (
+          <button key={s.id} className={`btn btn-sm ${sub === s.id ? 'btn-primary' : ''}`} onClick={() => setSub(s.id)}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {sub === 'liquidity' && <BotsAdmin />}
+      {sub === 'werk' && (
+        <div>
+          <SectionHead title="Werk Flega bots" sub="Cosmetic AI opponents drawn into each maze game. Edit / add / disable — the next game reflects it." />
+          <WerkBotManager />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BotsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [bots, setBots]           = useState<BotUser[]>([]);
@@ -1920,7 +2738,7 @@ function BotsAdmin() {
   };
 
   const handleTopup = async (bot: BotUser) => {
-    const minor = Math.round(parseFloat(topupAmount) * 100);
+    const minor = Math.round(parseFloat(topupAmount));
     if (!minor || minor <= 0) { addToast('error', 'Enter a valid amount'); return; }
     setBusy(bot.id + '-topup');
     try {
@@ -2026,7 +2844,7 @@ function BotsAdmin() {
 
                       <div style={{ textAlign: 'right', minWidth: 90 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold)' }}>
-                          {formatCreditsFull(bot.walletBalanceMinor ?? 0)} Cr
+                          {formatCreditsFull(bot.walletBalanceMinor ?? 0)} ETB
                         </div>
                         <span className={`badge ${bot.botPolicy?.active ? 'badge-green' : 'badge-red'}`}
                           style={{ fontSize: 9, marginTop: 2 }}>
@@ -2101,7 +2919,7 @@ function BotsAdmin() {
                     {isTopping && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                         <label className="adm-field" style={{ flex: 1, minWidth: 160 }}>
-                          <span>Add credits (ETB)</span>
+                          <span>Add funds (ETB)</span>
                           <input className="input" type="number" min={1}
                             placeholder="e.g. 500"
                             value={topupAmount}
@@ -2119,7 +2937,7 @@ function BotsAdmin() {
                           disabled={busy === bot.id + '-topup'}
                           onClick={() => handleTopup(bot)}
                           style={{ alignSelf: 'flex-end', marginBottom: 2 }}>
-                          {busy === bot.id + '-topup' ? 'Adding…' : 'Add Credits'}
+                          {busy === bot.id + '-topup' ? 'Adding…' : 'Add ETB'}
                         </button>
                       </div>
                     )}
@@ -2305,7 +3123,9 @@ function AgentActionsAdmin() {
                         <div><strong>Agent:</strong> {w.agentName || w.agentId?.slice(-8) || '—'}</div>
                         <div><strong>Amount:</strong> {formatCreditsFull(w.amountMinor)}</div>
                         <div><strong>Service Charge:</strong> {w.serviceChargeMinor ? formatCreditsFull(w.serviceChargeMinor) : '—'}</div>
-                        <div><strong>Net Amount:</strong> {w.netAmountMinor ? formatCreditsFull(w.netAmountMinor) : '—'}</div>
+                        <div><strong>Service Fee → Super-Admin:</strong> {w.serviceFeeMinor ? formatCreditsFull(w.serviceFeeMinor) : '—'}</div>
+                        <div><strong>Commission → Agent:</strong> {w.commissionMinor ? formatCreditsFull(w.commissionMinor) : '—'}</div>
+                        <div><strong>Net Amount (user):</strong> {w.netAmountMinor ? formatCreditsFull(w.netAmountMinor) : '—'}</div>
                         <div><strong>Destination:</strong> {w.destinationAccount}</div>
                         <div><strong>Telebirr Ref:</strong> {w.telebirrReference || '—'}</div>
                         <div><strong>Status:</strong> {w.status}</div>
@@ -2416,26 +3236,26 @@ function EMoneyAdmin() {
 
   return (
     <div className="stack-lg">
-      <SectionHead title="E-Money Management" sub="Top-up your system balance and distribute e-money to agents.">
+      <SectionHead title="ETB Management" sub="Top-up your system balance and distribute ETB to agents.">
         <button className="adm-icon-btn" onClick={refreshWallet} title="Refresh Balance"><RefreshCw size={14} /></button>
       </SectionHead>
 
       <div className="adm-kpi-grid" style={{ gridTemplateColumns: '1fr' }}>
-        <Kpi label="Admin E-Money Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
+        <Kpi label="Admin ETB Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
         {/* Top-up Panel */}
         <div className="adm-panel">
-          <div className="adm-panel-head">Top-up E-Money</div>
+          <div className="adm-panel-head">Top-up ETB</div>
           <form onSubmit={handleTopup} className="stack-md p-lg">
             <div className="adm-field">
-              <label>Amount (Credits / Minor Units)</label>
+              <label>Amount (ETB)</label>
               <input
                 className="input"
                 type="number"
                 min="1"
-                placeholder="e.g. 100000 for 1000 ETB"
+                placeholder="e.g. 1000"
                 value={topupAmount}
                 onChange={(e) => setTopupAmount(e.target.value)}
                 required
@@ -2476,12 +3296,12 @@ function EMoneyAdmin() {
               )}
             </div>
             <div className="adm-field">
-              <label>Amount (Credits / Minor Units)</label>
+              <label>Amount (ETB)</label>
               <input
                 className="input"
                 type="number"
                 min="1"
-                placeholder="e.g. 50000 for 500 ETB"
+                placeholder="e.g. 500"
                 value={transferAmount}
                 onChange={(e) => setTransferAmount(e.target.value)}
                 required
@@ -2491,7 +3311,7 @@ function EMoneyAdmin() {
               </span>
             </div>
             <button className="adm-btn adm-btn-primary" type="submit" disabled={submittingTransfer || !selectedAgentId}>
-              {submittingTransfer ? 'Transferring...' : 'Transfer E-Money'}
+              {submittingTransfer ? 'Transferring...' : 'Transfer ETB'}
             </button>
           </form>
         </div>
@@ -2539,7 +3359,7 @@ function AccountAdmin() {
     if (!cr || cr <= 0) { addToast('info', 'Enter a valid amount.'); return; }
     setBusy('topup');
     try {
-      const w = await adminApi.topupWallet(Math.round(cr * 100), createIdempotencyKey('admin-topup'));
+      const w = await adminApi.topupWallet(Math.round(cr), createIdempotencyKey('admin-topup'));
       setLocalWallet(w);
       setWallet(w);
       setTopupCr('');
@@ -2554,7 +3374,7 @@ function AccountAdmin() {
     if (!cr || cr <= 0) { addToast('info', 'Enter a valid amount.'); return; }
     setBusy('transfer');
     try {
-      const { adminWallet } = await adminApi.transferToAgent(transferAgentId, Math.round(cr * 100), createIdempotencyKey('admin-transfer'));
+      const { adminWallet } = await adminApi.transferToAgent(transferAgentId, Math.round(cr), createIdempotencyKey('admin-transfer'));
       setLocalWallet(adminWallet);
       setWallet(adminWallet);
       setTransferCr('');
@@ -2596,7 +3416,7 @@ function AccountAdmin() {
 
       {/* Transfer to agent */}
       <div className="adm-panel">
-        <div className="adm-panel-head">Transfer Credits to Agent</div>
+        <div className="adm-panel-head">Transfer ETB to Agent</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', padding: 16 }}>
           <label className="adm-field" style={{ flex: 1, minWidth: 180 }}>
             <span>Agent</span>
@@ -2624,7 +3444,377 @@ function AccountAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Root Admin
 // ══════════════════════════════════════════════════════════════════
+// ── Broadcast (Telegram) ──────────────────────────────────────────
+// Ethiopia has no DST — a fixed +03:00 offset is safe. All wall-clock times the
+// admin enters (once + recurring) are interpreted in this zone by the backend.
+const BROADCAST_TZ_OFFSET = 180;
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function broadcastStatusStyle(status: BroadcastMessage['status']): { label: string; color: string; bg: string } {
+  switch (status) {
+    case 'sending':   return { label: 'Sending',   color: '#38bdf8', bg: 'rgba(56,189,248,0.12)' };
+    case 'scheduled': return { label: 'Scheduled', color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' };
+    case 'sent':      return { label: 'Sent',      color: '#34d399', bg: 'rgba(52,211,153,0.12)' };
+    case 'failed':    return { label: 'Failed',    color: '#f87171', bg: 'rgba(248,113,113,0.12)' };
+    case 'cancelled': return { label: 'Cancelled', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' };
+    default:          return { label: 'Draft',     color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' };
+  }
+}
+
+function describeBroadcastSchedule(b: BroadcastMessage): string {
+  if (b.scheduleType === 'now') return 'Immediate';
+  if (b.scheduleType === 'once') return b.nextRunAt ? `Once · ${formatDateTime(b.nextRunAt)}` : 'Once';
+  if (b.recurrence) {
+    const when = b.recurrence.frequency === 'weekly'
+      ? `Weekly · ${WEEKDAYS[b.recurrence.dayOfWeek ?? 0]}`
+      : 'Daily';
+    return `${when} at ${b.recurrence.time}`;
+  }
+  return 'Recurring';
+}
+
+function TelegramPreview({ imagePath, text, buttons }: {
+  imagePath: string | null;
+  text: string;
+  buttons: BroadcastButton[];
+}) {
+  const url = broadcastImageUrl(imagePath);
+  const validButtons = buttons.filter((b) => b.text.trim() && b.url.trim());
+  return (
+    <div style={{
+      maxWidth: 320, borderRadius: 14, overflow: 'hidden',
+      background: '#17212b', border: '1px solid rgba(255,255,255,0.08)',
+      boxShadow: '0 8px 30px rgba(0,0,0,0.35)',
+    }}>
+      {url && <img src={url} alt="" style={{ display: 'block', width: '100%', maxHeight: 300, objectFit: 'cover' }} />}
+      {(text.trim() || validButtons.length === 0) && (
+        <div style={{ padding: '10px 12px', color: '#e9edf0', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.45 }}>
+          {text.trim() ? text : <span style={{ color: '#5b6b78' }}>Your message preview…</span>}
+        </div>
+      )}
+      {validButtons.length > 0 && (
+        <div style={{ padding: '0 8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {validButtons.map((b, i) => (
+            <div key={i} style={{
+              textAlign: 'center', padding: '8px', borderRadius: 8,
+              background: 'rgba(43,130,201,0.22)', color: '#5eb5f7', fontSize: 12, fontWeight: 700,
+            }}>
+              {b.text}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BroadcastAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [list, setList] = useState<BroadcastMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Compose state
+  const [title, setTitle] = useState('');
+  const [text, setText] = useState('');
+  const [image, setImage] = useState<{ imageFilename: string; imagePath: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [buttons, setButtons] = useState<BroadcastButton[]>([]);
+  const [parseMode, setParseMode] = useState<'none' | 'HTML'>('none');
+  const [scheduleType, setScheduleType] = useState<'now' | 'once' | 'recurring'>('now');
+  const [scheduledAtLocal, setScheduledAtLocal] = useState('');
+  const [freq, setFreq] = useState<'daily' | 'weekly'>('daily');
+  const [recTime, setRecTime] = useState('20:00');
+  const [dow, setDow] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setList(await broadcastApi.list());
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Poll for live delivery progress while anything is sending.
+  useEffect(() => {
+    if (!list.some((b) => b.status === 'sending')) return;
+    const id = setInterval(() => { void load(); }, 3000);
+    return () => clearInterval(id);
+  }, [list, load]);
+
+  const captionLimit = image ? 1024 : 4096;
+  const overLimit = text.length > captionLimit;
+  const canSubmit =
+    !!title.trim() &&
+    (!!text.trim() || !!image) &&
+    !overLimit &&
+    (scheduleType !== 'once' || !!scheduledAtLocal) &&
+    !submitting;
+
+  const onPickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      setImage(await broadcastApi.uploadImage(file));
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const resetForm = () => {
+    setTitle(''); setText(''); setImage(null); setButtons([]); setParseMode('none');
+    setScheduleType('now'); setScheduledAtLocal(''); setFreq('daily'); setRecTime('20:00'); setDow(1);
+  };
+
+  const submit = async (asDraft = false) => {
+    if (!title.trim() || (!text.trim() && !image)) return;
+    if (!asDraft && scheduleType === 'now' &&
+        !window.confirm('Send this broadcast to ALL Telegram users now?')) return;
+    setSubmitting(true);
+    try {
+      const dto: CreateBroadcastInput = {
+        title: title.trim(),
+        text: text.trim() || undefined,
+        imageFilename: image?.imageFilename,
+        buttons: buttons.filter((b) => b.text.trim() && b.url.trim()),
+        parseMode,
+        scheduleType,
+        timezoneOffsetMinutes: BROADCAST_TZ_OFFSET,
+        asDraft: asDraft || undefined,
+      };
+      if (scheduleType === 'once') dto.scheduledAtLocal = scheduledAtLocal;
+      if (scheduleType === 'recurring') {
+        dto.recurrence = { frequency: freq, time: recTime, dayOfWeek: freq === 'weekly' ? dow : undefined };
+      }
+      await broadcastApi.create(dto);
+      addToast('success', asDraft ? 'Saved as draft' : scheduleType === 'now' ? 'Broadcast started' : 'Broadcast scheduled');
+      resetForm();
+      await load();
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const doSend = async (id: string) => {
+    if (!window.confirm('Send this broadcast to ALL Telegram users now?')) return;
+    try { await broadcastApi.sendNow(id); addToast('success', 'Sending…'); await load(); }
+    catch (err) { addToast('error', getErrorMessage(err)); }
+  };
+  const doCancel = async (id: string) => {
+    try { await broadcastApi.cancel(id); addToast('success', 'Cancelled'); await load(); }
+    catch (err) { addToast('error', getErrorMessage(err)); }
+  };
+  const doDelete = async (id: string) => {
+    if (!window.confirm('Delete this broadcast permanently?')) return;
+    try { await broadcastApi.remove(id); addToast('success', 'Deleted'); await load(); }
+    catch (err) { addToast('error', getErrorMessage(err)); }
+  };
+
+  const inputCls = 'w-full rounded-lg bg-white/[0.04] border border-white/10 px-3 py-2 text-sm text-slate-200 outline-none focus:border-blue-500/50';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-black text-slate-100 flex items-center gap-2"><Megaphone size={16} /> Telegram Broadcast</h2>
+          <p className="text-[11px] text-slate-500">Send a message — with an optional image and link buttons — to every Telegram user. Times are Ethiopia (UTC+3).</p>
+        </div>
+        <button className="adm-icon-btn" onClick={() => void load()} title="Refresh"><RefreshCw size={14} /></button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        {/* ── Compose ── */}
+        <div className="card space-y-3">
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Title (internal only)</label>
+            <input className={inputCls} value={title} maxLength={200} placeholder="e.g. Bingo promo — July"
+              onChange={(e) => setTitle(e.target.value)} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Message {image ? '/ caption' : ''}</label>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-md overflow-hidden border border-white/10">
+                  {(['none', 'HTML'] as const).map((m) => (
+                    <button key={m} onClick={() => setParseMode(m)}
+                      className={`px-2 py-0.5 text-[10px] font-bold ${parseMode === m ? 'bg-blue-500/20 text-blue-300' : 'bg-white/[0.03] text-slate-500'}`}>
+                      {m === 'none' ? 'Plain' : 'HTML'}
+                    </button>
+                  ))}
+                </div>
+                <span className={`text-[10px] font-mono ${overLimit ? 'text-red-400' : 'text-slate-600'}`}>{text.length}/{captionLimit}</span>
+              </div>
+            </div>
+            <textarea className={`${inputCls} min-h-[120px] resize-y`} value={text}
+              placeholder={parseMode === 'HTML'
+                ? 'Write your announcement… <b>bold</b>, <i>italic</i>, <a href="url">links</a> supported'
+                : 'Write your announcement… links become clickable automatically'}
+              onChange={(e) => setText(e.target.value)} />
+            {parseMode === 'HTML' && (
+              <p className="text-[10px] text-amber-400/70 mt-1">HTML mode: unescaped &lt; or &amp; will fail the send. Use plain unless you need formatting.</p>
+            )}
+          </div>
+
+          {/* Image */}
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Image (optional)</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onPickImage} className="hidden" />
+              <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                {uploading ? <><RefreshCw size={12} className="animate-spin" /> Uploading…</> : <><ImageIcon size={12} /> {image ? 'Replace image' : 'Upload image'}</>}
+              </button>
+              {image && (
+                <button className="adm-btn adm-btn-danger adm-btn-xs" onClick={() => setImage(null)}><X size={12} /> Remove</button>
+              )}
+            </div>
+          </div>
+
+          {/* Buttons */}
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Link buttons (optional)</label>
+              {buttons.length < 6 && (
+                <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => setButtons((b) => [...b, { text: '', url: '' }])}>
+                  <Plus size={12} /> Add button
+                </button>
+              )}
+            </div>
+            <div className="space-y-2 mt-1">
+              {buttons.map((b, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input className={inputCls} style={{ flex: '0 0 34%' }} placeholder="Label" value={b.text}
+                    onChange={(e) => setButtons((prev) => prev.map((x, j) => j === i ? { ...x, text: e.target.value } : x))} />
+                  <input className={inputCls} placeholder="https://…" value={b.url}
+                    onChange={(e) => setButtons((prev) => prev.map((x, j) => j === i ? { ...x, url: e.target.value } : x))} />
+                  <button className="adm-btn adm-btn-danger adm-btn-xs" onClick={() => setButtons((prev) => prev.filter((_, j) => j !== i))}><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Schedule */}
+          <div>
+            <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">When to send</label>
+            <div className="flex gap-2 mt-1">
+              {(['now', 'once', 'recurring'] as const).map((t) => (
+                <button key={t} onClick={() => setScheduleType(t)}
+                  className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold capitalize border transition-colors ${
+                    scheduleType === t ? 'bg-blue-500/15 border-blue-500/50 text-blue-300' : 'bg-white/[0.03] border-white/10 text-slate-400'
+                  }`}>
+                  {t === 'now' ? 'Send now' : t}
+                </button>
+              ))}
+            </div>
+
+            {scheduleType === 'once' && (
+              <input type="datetime-local" className={`${inputCls} mt-2`} value={scheduledAtLocal}
+                onChange={(e) => setScheduledAtLocal(e.target.value)} />
+            )}
+            {scheduleType === 'recurring' && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                <select className={inputCls} style={{ flex: '0 0 30%' }} value={freq} onChange={(e) => setFreq(e.target.value as 'daily' | 'weekly')}>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                </select>
+                {freq === 'weekly' && (
+                  <select className={inputCls} style={{ flex: '0 0 30%' }} value={dow} onChange={(e) => setDow(Number(e.target.value))}>
+                    {WEEKDAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                  </select>
+                )}
+                <input type="time" className={inputCls} style={{ flex: 1 }} value={recTime} onChange={(e) => setRecTime(e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button className="adm-btn adm-btn-primary" disabled={!canSubmit} onClick={() => void submit(false)}>
+              {submitting ? <RefreshCw size={13} className="animate-spin" /> : <Send size={13} />}
+              {scheduleType === 'now' ? 'Send now' : 'Schedule'}
+            </button>
+            <button className="adm-btn adm-btn-secondary" disabled={!title.trim() || submitting} onClick={() => void submit(true)}>
+              Save draft
+            </button>
+            <span className="text-[10px] text-amber-400/80 ml-auto">Sends to all Telegram users</span>
+          </div>
+        </div>
+
+        {/* ── Preview ── */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Preview</label>
+          <TelegramPreview imagePath={image?.imagePath ?? null} text={text} buttons={buttons} />
+        </div>
+      </div>
+
+      {/* ── History ── */}
+      <div className="space-y-2">
+        <h3 className="text-[11px] font-black uppercase tracking-wider text-slate-500">History</h3>
+        {loading ? (
+          <div className="centered-loader py-8"><div className="spinner" /></div>
+        ) : list.length === 0 ? (
+          <div className="card text-center py-8 text-slate-500 text-sm">No broadcasts yet.</div>
+        ) : (
+          <div className="space-y-2">
+            {list.map((b) => {
+              const st = broadcastStatusStyle(b.status);
+              const pct = b.totalRecipients > 0 ? Math.round(((b.sentCount + b.failedCount) / b.totalRecipients) * 100) : 0;
+              return (
+                <div key={b.id} className="card flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="badge" style={{ color: st.color, background: st.bg }}>{st.label}</span>
+                      <span className="text-sm font-bold text-slate-200 truncate">{b.title}</span>
+                      {b.imagePath && <ImageIcon size={12} className="text-slate-500 flex-shrink-0" />}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">
+                      {describeBroadcastSchedule(b)}
+                      {b.runCount > 0 && ` · ${b.sentCount.toLocaleString()} sent`}
+                      {b.failedCount > 0 && `, ${b.failedCount.toLocaleString()} failed`}
+                      {b.totalRecipients > 0 && ` of ${b.totalRecipients.toLocaleString()}`}
+                    </div>
+                    {b.status === 'sending' && (
+                      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden mt-1.5 max-w-xs">
+                        <div className="h-full rounded-full bg-sky-400 transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                    {b.status === 'failed' && b.lastError && (
+                      <div className="text-[10px] text-red-400/80 mt-0.5 truncate">{b.lastError}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {(b.status === 'draft' || b.status === 'scheduled' || b.status === 'failed' || b.status === 'cancelled') && (
+                      <button className="adm-btn adm-btn-primary adm-btn-xs" onClick={() => void doSend(b.id)}><Send size={11} /> Send now</button>
+                    )}
+                    {(b.status === 'scheduled' || b.status === 'draft' || b.status === 'sending') && (
+                      <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => void doCancel(b.id)}>Cancel</button>
+                    )}
+                    {b.status !== 'sending' && (
+                      <button className="adm-btn adm-btn-danger adm-btn-xs" onClick={() => void doDelete(b.id)}><Trash2 size={11} /></button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Admin() {
+  const { t } = useTranslation();
   const user = useStore((s) => s.user);
   const setAuth = useStore((s) => s.setAuth);
   const setWallet = useStore((s) => s.setWallet);
@@ -2638,15 +3828,15 @@ export function Admin() {
         const data = await authApi.devSeedAdmin();
         setAuth(data.user, data.accessToken);
         setWallet(await walletApi.getWallet());
-        addToast('success', 'Logged in as Dev Admin');
+        addToast('success', t('admin.loggedInDev'));
       } catch (err) { addToast('error', getErrorMessage(err)); }
     };
     return (
       <div className="centered-loader" style={{ flex: 1, gap: 16 }}>
         <Shield size={32} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-        <p style={{ color: 'var(--text-muted)' }}>Admin access required.</p>
+        <p style={{ color: 'var(--text-muted)' }}>{t('admin.accessRequired')}</p>
         {import.meta.env.DEV && (
-          <button className="btn btn-primary" onClick={handleDevLogin}>Login as Dev Admin</button>
+          <button className="btn btn-primary" onClick={handleDevLogin}>{t('admin.loginAsDevAdmin')}</button>
         )}
       </div>
     );
@@ -2658,7 +3848,7 @@ export function Admin() {
       <div className="adm-header">
         <Shield size={18} strokeWidth={1.8} />
         <div>
-          <span className="adm-header-title">Admin Panel</span>
+          <span className="adm-header-title">{t('admin.panelTitle')}</span>
           <span className="adm-header-sub">iGames Platform</span>
         </div>
       </div>
@@ -2666,10 +3856,10 @@ export function Admin() {
       {/* Body: sidebar nav + content */}
       <div className="adm-body">
         <nav className="adm-tab-bar">
-          {TABS.map((t) => (
-            <button key={t.id} className={`adm-tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
-              {t.icon}
-              <span>{t.label}</span>
+          {TABS.map((tabItem) => (
+            <button key={tabItem.id} className={`adm-tab${tab === tabItem.id ? ' active' : ''}`} onClick={() => setTab(tabItem.id)}>
+              {tabItem.icon}
+              <span>{TAB_LABEL_KEY[tabItem.id] ? t(TAB_LABEL_KEY[tabItem.id]!) : tabItem.label}</span>
             </button>
           ))}
         </nav>
@@ -2681,8 +3871,13 @@ export function Admin() {
           {tab === 'agent-actions' && <AgentActionsAdmin />}
           {tab === 'keno'          && <KenoAdmin />}
           {tab === 'bingo'         && <BingoAdmin />}
-          {tab === 'bots'          && <BotsAdmin />}
+          {tab === 'pool'          && <PoolAdmin />}
+          {tab === 'werk'          && <WerkAdmin embedded />}
+          {tab === 'bots'          && <BotsHub />}
+          {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
+          {tab === 'support'       && <SupportConsole />}
+          {tab === 'games'         && <GamesAdmin />}
           {tab === 'config'        && <ConfigAdmin />}
           {tab === 'emoney'        && <EMoneyAdmin />}
           {tab === 'account'       && <AccountAdmin />}

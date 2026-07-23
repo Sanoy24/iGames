@@ -6,6 +6,7 @@ import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
+import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
 
 @Injectable()
 export class AgentsService {
@@ -20,9 +21,12 @@ export class AgentsService {
 
   // ── Config (agent-accessible) ────────────────────────────────────
 
-  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number }> {
+  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }> {
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    return { withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0 };
+    return {
+      withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0,
+      withdrawalCommissionPct: config?.withdrawalCommissionPct ?? 0,
+    };
   }
 
   // ── Withdrawals ────────────────────────────────────────────────────
@@ -44,30 +48,21 @@ export class AgentsService {
     return { ledger, withdrawals };
   }
 
+  /**
+   * Unified agent gate: an agent may only act while **effectively on duty** — i.e.
+   * inside their working window (Ethiopia time) or manually pinned on — and only
+   * for actions their permissions allow. All time math is Ethiopia-based, so it no
+   * longer depends on the server clock.
+   */
   verifyAgentWorkingHoursAndPermission(agent: any, permission: 'deposit' | 'withdraw') {
-    // 1. Check permission
-    if (agent.agentPermissions && agent.agentPermissions[permission] === false) {
-      throw new BadRequestException(`Agent does not have ${permission} permission`);
+    // 1. Must be on duty (scheduled window or admin override).
+    if (!isAgentEffectivelyOnDuty(agent)) {
+      throw new BadRequestException('You are off duty right now (outside your working hours).');
     }
 
-    // 2. Check working hours if they are set
-    if (agent.workStartHour !== undefined && agent.workEndHour !== undefined) {
-      const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      const startMinutes = agent.workStartHour * 60 + (agent.workStartMinute || 0);
-      const endMinutes = agent.workEndHour * 60 + (agent.workEndMinute || 0);
-
-      const isOvernight = endMinutes <= startMinutes;
-      const inWindow = isOvernight
-        ? currentMinutes >= startMinutes || currentMinutes < endMinutes
-        : currentMinutes >= startMinutes && currentMinutes < endMinutes;
-
-      if (!inWindow) {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        throw new BadRequestException(
-          `Action outside working hours (${pad(agent.workStartHour)}:${pad(agent.workStartMinute || 0)} - ${pad(agent.workEndHour)}:${pad(agent.workEndMinute || 0)})`
-        );
-      }
+    // 2. Must have permission for this action.
+    if (agent.agentPermissions && agent.agentPermissions[permission] === false) {
+      throw new BadRequestException(`Agent does not have ${permission} permission`);
     }
   }
 
@@ -86,15 +81,19 @@ export class AgentsService {
   async completeWithdrawal(withdrawalId: string, agentId: string, telebirrReference: string) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
-    // Read service charge from system config directly
+    // Read fee/commission split and the designated super-admin from system config.
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    const serviceChargePct = config?.withdrawalServiceChargePct ?? 0;
+    const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
+    const commissionPct = config?.withdrawalCommissionPct ?? 0;
+    const superAdminUserId = config?.superAdminUserId ?? null;
 
     return this.walletService.completeWithdrawalByAgent({
       withdrawalId,
       agentId,
       telebirrReference,
-      serviceChargePct,
+      serviceFeePct,
+      commissionPct,
+      superAdminUserId,
     });
   }
 
@@ -214,6 +213,86 @@ export class AgentsService {
     }
 
     return null;
+  }
+
+  /**
+   * Player-facing: the Telebirr deposit details of the agent currently on
+   * shift. Returns only the public info a depositing user needs
+   * (full name + Telebirr phone number). Null when nobody is on shift.
+   */
+  async getActiveAgentDepositInfo(): Promise<{ displayName: string; phoneNumber: string | null } | null> {
+    // The deposit destination is simply whichever agent the admin has on duty
+    // (single primary). No timezone / schedule math — it's an explicit switch.
+    const agent = await this.usersService.findOnDutyAgent();
+    if (!agent) return null;
+
+    // An on-duty agent still needs the deposit permission to receive deposits.
+    if (agent.agentPermissions && agent.agentPermissions.deposit === false) return null;
+
+    return {
+      displayName: agent.displayName,
+      phoneNumber: agent.phoneNumber ?? null,
+    };
+  }
+
+  /**
+   * Player-facing: ALL agents currently on duty that can receive deposits — so the
+   * player can CHOOSE who to send their Telebirr transfer to when more than one is
+   * available. Returns public info only (id + name + Telebirr phone). Empty when
+   * nobody is on duty. Deposit attribution is still driven by the receipt itself
+   * (the verifier matches the recipient name/phone), so this is purely a chooser.
+   */
+  async getActiveAgentsDepositInfo(): Promise<Array<{ id: string; displayName: string; phoneNumber: string | null }>> {
+    const agents = await this.usersService.findOnDutyAgents();
+    return agents
+      .filter((a) => !(a.agentPermissions && a.agentPermissions.deposit === false))
+      .map((a) => ({
+        id: a.id,
+        displayName: a.displayName,
+        phoneNumber: a.phoneNumber ?? null,
+      }));
+  }
+
+  /**
+   * The requesting agent's own Bingo performance (Approach B): customers brought,
+   * real-player activity in their rooms (bots excluded), GGR, and commission earned.
+   */
+  async getPerformance(agentId: string): Promise<{
+    customersBrought: number;
+    tickets: number;
+    players: number;
+    stakedMinor: number;
+    payoutMinor: number;
+    ggrMinor: number;
+    commissionEarnedMinor: number;
+  }> {
+    const q = (sql: string, params: unknown[]) => this.systemConfigRepository.query(sql, params);
+    const [play] = await q(
+      `SELECT COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
+              COALESCE(SUM(t.stakeMinor),0) staked, COALESCE(SUM(t.payoutMinor),0) payout
+         FROM bingo_tickets t JOIN users pu ON pu.id = t.userId
+        WHERE t.agentId = ? AND t.status <> 'cancelled'
+          AND JSON_EXTRACT(pu.productMetadata, '$.botPolicy') IS NULL`,
+      [agentId],
+    );
+    const [comm] = await q(
+      `SELECT COALESCE(SUM(amountMinor),0) commission FROM ledger_entries
+        WHERE userId = ? AND entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'`,
+      [agentId],
+    );
+    const [cust] = await q(`SELECT COUNT(*) customers FROM users WHERE referredByAgentId = ?`, [agentId]);
+
+    const stakedMinor = Number(play?.staked ?? 0);
+    const payoutMinor = Number(play?.payout ?? 0);
+    return {
+      customersBrought: Number(cust?.customers ?? 0),
+      tickets: Number(play?.tickets ?? 0),
+      players: Number(play?.players ?? 0),
+      stakedMinor,
+      payoutMinor,
+      ggrMinor: stakedMinor - payoutMinor,
+      commissionEarnedMinor: Number(comm?.commission ?? 0),
+    };
   }
 
   private toShiftResponse(shift: AgentShift) {

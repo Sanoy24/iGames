@@ -8,6 +8,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager, In, LessThanOrEqual } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { GamesService } from '../games/games.service';
+import { User } from '../users/entities/user.entity';
 import { CreateKenoConfigDto } from './dto/create-keno-config.dto';
 import { KenoRulesService } from './keno-rules.service';
 import { KenoConfig } from './entities/keno-config.entity';
@@ -53,7 +56,9 @@ export class KenoService {
     private readonly kenoTicketRepository: Repository<KenoTicket>,
     private readonly kenoRulesService: KenoRulesService,
     private readonly rngService: RngService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
+    private readonly notificationsService: NotificationsService,
+    private readonly gamesService: GamesService
   ) {}
 
   async getActiveConfig(): Promise<KenoConfig> {
@@ -117,6 +122,7 @@ export class KenoService {
     overrideDrawId?: string;
     isForcedWin?: boolean;
   }): Promise<KenoTicketResponse> {
+    await this.gamesService.assertPlayable('keno');
     return this.dataSource.transaction(async (manager) => {
       const ticketRepo = manager.getRepository(KenoTicket);
       const existingTicket = await ticketRepo.findOneBy({ userId: input.userId, idempotencyKey: input.idempotencyKey });
@@ -241,6 +247,37 @@ export class KenoService {
       where: { drawId, status: 'won', settlementStatus: 'settled' },
       select: ['userId', 'payoutMinor'],
     });
+  }
+
+  /**
+   * Persist an in-app "win" notification per (human) winner of a settled draw,
+   * aggregating multiple winning tickets into one total. Bot accounts are
+   * skipped. Called once, right after the draw settles.
+   */
+  async notifyDrawWinners(drawId: string): Promise<void> {
+    const winners = await this.getDrawWinners(drawId);
+    const totalByUser = new Map<string, number>();
+    for (const w of winners) {
+      if (w.payoutMinor > 0) totalByUser.set(w.userId, (totalByUser.get(w.userId) ?? 0) + w.payoutMinor);
+    }
+    if (totalByUser.size === 0) return;
+
+    const users = await this.dataSource.getRepository(User).find({
+      where: { id: In([...totalByUser.keys()]) },
+      select: ['id', 'productMetadata'],
+    });
+    const isBot = new Map(users.map((u) => [u.id, u.productMetadata?.botPolicy != null]));
+
+    for (const [userId, payoutMinor] of totalByUser) {
+      if (isBot.get(userId)) continue; // don't notify bot accounts
+      await this.notificationsService.safeCreate({
+        userId,
+        type: 'win',
+        title: 'Keno win! 🎉',
+        body: `You won ${payoutMinor.toLocaleString()} ETB in Keno.`,
+        data: { game: 'keno', drawId, amountMinor: payoutMinor },
+      });
+    }
   }
 
   async listDraws(input: { limit: number }): Promise<KenoDrawResponse[]> {

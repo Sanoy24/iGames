@@ -5,6 +5,8 @@ export type User = {
   email?: string;
   phoneNumber?: string;
   status?: string;
+  /** Server-computed — true when the user has a live socket connection right now. */
+  online?: boolean;
   lastLoginAt?: string;
   workStartHour?: number;
   workStartMinute?: number;
@@ -14,6 +16,11 @@ export type User = {
     deposit: boolean;
     withdraw: boolean;
   };
+  workDaysOfWeek?: number[];
+  onDutyMode?: 'auto' | 'on' | 'off';
+  /** Server-computed (Ethiopia time) — read-only annotations from listAgents. */
+  effectiveOnDuty?: boolean;
+  withinWorkingWindow?: boolean;
   wallets?: Wallet[];
   createdAt?: string;
   updatedAt?: string;
@@ -164,6 +171,7 @@ export type BingoTicket = {
   payoutMinor: number;
   status: string;
   settlementStatus: string;
+  autoClaim?: boolean;
 };
 
 export type BingoRoomState = BingoRoom & {
@@ -176,6 +184,7 @@ export type BingoConfig = {
   autoRepeatIntervalMinutes: number;
   defaultTicketPriceMinor: number;
   defaultMaxTickets: number;
+  maxCartelasPerUser?: number;
   defaultOneLineMinor: number;
   defaultTwoLinesMinor: number;
   defaultFullHouseMinor: number;
@@ -189,12 +198,26 @@ export type BingoConfig = {
   minTicketsToStart?: number;
   houseEdgePct?: number;
   globalBingoBotWinInterval?: number;
+  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  botMaxRealPlayers?: number;
+  /** How bots steer a below-threshold room. */
+  botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid';
+  prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;
   prefilledSecondPlacePct?: number;
   prefilledThirdPlaceEnabled?: boolean;
   prefilledThirdPlacePct?: number;
+  prefilledFourthPlaceEnabled?: boolean;
+  prefilledFourthPlacePct?: number;
+  prefilledFifthPlaceEnabled?: boolean;
+  prefilledFifthPlacePct?: number;
   prefilledWinPatternId?: string | null;
+  prefilledFirstPatternId?: string | null;
+  prefilledSecondPatternId?: string | null;
+  prefilledThirdPatternId?: string | null;
+  prefilledFourthPatternId?: string | null;
+  prefilledFifthPatternId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -255,8 +278,11 @@ export type Withdrawal = {
   status: 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
   destinationAccount: string;
   agentId?: string;
+  agent?: User;
   claimedAt?: string;
   serviceChargeMinor?: number;
+  serviceFeeMinor?: number;
+  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
   adminNotes?: string;

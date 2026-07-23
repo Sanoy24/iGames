@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } fro
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { BotsService } from '../bots/bots.service';
+import { GamesService } from '../games/games.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { RedisLockService } from '../redis/redis-lock.service';
 import { TelegramBotService } from '../telegram/telegram-bot.service';
@@ -21,6 +22,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly lockService: RedisLockService,
     private readonly telegramBotService: TelegramBotService,
+    private readonly gamesService: GamesService,
   ) {}
 
   /**
@@ -28,7 +30,15 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
    */
   async onApplicationBootstrap(): Promise<void> {
     try {
-      await this.bingoService.autoCreateNextRoom();
+      // Relax scheduledStartAt to NULLable on legacy DBs so rooms can idle.
+      await this.bingoService.ensureRoomSchema();
+      if (await this.gamesService.isPlayable('bingo')) {
+        if (await this.bingoService.isAgentRoomsEnabled()) {
+          await this.bingoService.ensureAgentRooms();
+        } else {
+          await this.bingoService.autoCreateNextRoom();
+        }
+      }
     } catch (error) {
       this.logger.error(
         'Bootstrap: Failed to ensure initial Bingo room',
@@ -64,15 +74,22 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
 
     try {
       const cfg = await this.bingoService.getBingoConfig();
+      // When paused by admin (maintenance/hidden), keep drawing for running rooms
+      // so in-flight games finish, but don't start or create any new rooms.
+      const bingoPlayable = await this.gamesService.isPlayable('bingo');
+      // Per-agent room mode (Approach B) — many rooms (one per agent + house) run
+      // concurrently; the single-room reconcile/create paths are bypassed.
+      const agentRooms = await this.bingoService.isAgentRoomsEnabled();
 
-      // First thing every tick: collapse to a single well-formed active room.
-      // This cancels stale/duplicate rooms — including a leftover running room
-      // with the wrong ball pool (e.g. DERASH 1-200) — before it can draw again,
-      // which is what caused "two games at once" and the count reaching /200.
-      try {
-        await this.bingoService.reconcileActiveRooms(cfg);
-      } catch (err) {
-        this.logger.error('Bingo reconcile failed', err instanceof Error ? err.stack : err);
+      // Single shared-room mode: collapse to one well-formed active room. This
+      // cancels stale/duplicate rooms before they can draw ("two games at once").
+      // Skipped in per-agent mode, where concurrent rooms are the whole point.
+      if (!agentRooms) {
+        try {
+          await this.bingoService.reconcileActiveRooms(cfg);
+        } catch (err) {
+          this.logger.error('Bingo reconcile failed', err instanceof Error ? err.stack : err);
+        }
       }
 
       const intervalSeconds = Math.max(1, cfg.drawIntervalSeconds ?? 2);
@@ -87,6 +104,10 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           if (updated.status === 'completed') {
             this.logger.log(`Bingo room ${updated.id} completed`);
             this.gameEventsGateway.emitBingoRoomCompleted(updated);
+            // Per-agent mode: pay the room owner their commission (no-op otherwise).
+            await this.bingoService.settleAgentRoomCommission(updated.id).catch((err) =>
+              this.logger.error('Agent room commission failed', err instanceof Error ? err.stack : err),
+            );
             try {
               await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
             } catch (err) {
@@ -98,6 +119,8 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
                 this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
               }
             }).catch(() => {});
+            // Persist in-app win notifications (survive leaving the game screen)
+            void this.bingoService.notifyRoomWinners(updated.id).catch(() => {});
           }
         } catch (error) {
           this.logger.error(
@@ -107,8 +130,13 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         }
       }
 
-      // Auto-start rooms whose scheduledStartAt has passed
-      const roomsToStart = await this.bingoService.findRoomsToStart();
+      // Auto-start rooms whose scheduledStartAt has passed (skipped while paused).
+      // Per-agent mode starts one game per owner; shared mode starts one globally.
+      const roomsToStart = bingoPlayable
+        ? agentRooms
+          ? await this.bingoService.findAgentRoomsToStart()
+          : await this.bingoService.findRoomsToStart()
+        : [];
       for (const room of roomsToStart) {
         if (this.shuttingDown) break;
         try {
@@ -132,17 +160,25 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       // it only here — inside the Redis lock + isRunning guard — makes room
       // creation single-writer, which prevents the duplicate/concurrent rooms
       // that arose when the client-polled getCurrentRoom created rooms.
-      if (!this.shuttingDown) {
+      if (!this.shuttingDown && bingoPlayable) {
         try {
-          const newRoom = await this.bingoService.autoCreateNextRoom();
-          if (newRoom) {
-            this.gameEventsGateway.emitBingoRoomUpdated(newRoom);
-            this.logger.log(`Auto-created next Bingo room: ${newRoom.id}`);
-            await this.botsService.buyTicketsForBingoRoom(newRoom.id);
+          if (agentRooms) {
+            // One idle room per agent + house; created idle (no pre-buy) so each
+            // only starts once a real player buys into it.
+            await this.bingoService.ensureAgentRooms(cfg);
+          } else {
+            const newRoom = await this.bingoService.autoCreateNextRoom();
+            if (newRoom) {
+              this.gameEventsGateway.emitBingoRoomUpdated(newRoom);
+              this.logger.log(`Auto-created next Bingo room: ${newRoom.id}`);
+              // No bot pre-buy here: the room must stay IDLE (no countdown, no draws)
+              // until a real player buys the first ticket. Bots fill in last-minute
+              // in the auto-start path once the countdown a purchase started expires.
+            }
           }
         } catch (error) {
           this.logger.error(
-            'Error auto-creating next Bingo room',
+            'Error ensuring next Bingo room(s)',
             error instanceof Error ? error.stack : error
           );
         }

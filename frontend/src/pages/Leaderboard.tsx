@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy } from 'lucide-react';
 import { walletApi } from '../lib/api';
@@ -6,10 +7,10 @@ import type { LeaderboardEntry } from '../lib/models';
 
 type Period = 'all' | 'monthly' | 'weekly';
 
-const PERIOD_LABELS: Record<Period, string> = {
-  all: 'All Time',
-  monthly: 'Monthly',
-  weekly: 'Weekly',
+const PERIOD_KEY: Record<Period, string> = {
+  all: 'leaderboard.all',
+  monthly: 'leaderboard.monthly',
+  weekly: 'leaderboard.weekly',
 };
 
 const MEDAL: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
@@ -21,6 +22,7 @@ function formatMinor(minor: number) {
 }
 
 export function Leaderboard() {
+  const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>('all');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +40,7 @@ export function Leaderboard() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
         <Trophy size={22} strokeWidth={1.8} style={{ color: 'var(--accent)' }} />
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Leaderboard</h2>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{t('leaderboard.title')}</h2>
       </div>
 
       {/* Period switcher */}
@@ -69,7 +71,7 @@ export function Leaderboard() {
               transition: 'all 0.18s',
             }}
           >
-            {PERIOD_LABELS[p]}
+            {t(PERIOD_KEY[p])}
           </button>
         ))}
       </div>
@@ -80,7 +82,7 @@ export function Leaderboard() {
         </div>
       ) : entries.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)', fontSize: 14 }}>
-          No winners yet for this period
+          {t('leaderboard.empty')}
         </div>
       ) : (
         <AnimatePresence mode="wait">
@@ -126,7 +128,7 @@ export function Leaderboard() {
                     {entry.displayName}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                    {entry.winCount} win{entry.winCount !== 1 ? 's' : ''}
+                    {entry.winCount} {t('leaderboard.wins')}
                   </div>
                 </div>
 
@@ -135,7 +137,7 @@ export function Leaderboard() {
                   <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent)' }}>
                     {formatMinor(entry.totalWinMinor)}
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Credits</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>ETB</div>
                 </div>
               </motion.div>
             ))}

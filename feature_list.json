@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0",
-    "updated": "2026-06-29",
+    "updated": "2026-07-08",
     "schema": "Each feature: id, area, title, behavior, status, verification, evidence, notes",
     "statuses": ["not_started", "in_progress", "blocked", "passing"],
     "rule": "Status only moves to 'passing' when verification command exits 0 and output matches expected. Agent cannot self-declare passing."
@@ -46,11 +46,29 @@
     {
       "id": "BE-05",
       "area": "bingo",
-      "title": "90-ball Bingo room lifecycle (open → running → settled)",
-      "behavior": "Rooms auto-advance. Scheduler draws 1 ball per drawIntervalSeconds. One-line / two-line / full-house tiers settled. Self-healing guard for stuck rooms.",
+      "title": "Bingo room lifecycle (open → running → completed) with multiple win modes",
+      "behavior": "Rooms auto-advance. Scheduler draws 1 ball per drawIntervalSeconds from a numberRange pool. winMode ∈ {line (90-ball, one/two/full tiers), pattern (5×5 patternPrizes), prefilled/derash (cartela grid)}. Self-healing guard settles remaining tiers and completes stuck rooms.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npm run test:unit",
+      "evidence": "src/bingo/. Configurable: salesWindowSeconds, drawIntervalSeconds, resultDisplaySeconds, houseEdgePct. See .harness/topics/bingo-reveal.md."
+    },
+    {
+      "id": "BE-13",
+      "area": "bingo",
+      "title": "Prefilled / derash mode with cartela cards and DB-backed patterns",
+      "behavior": "winMode='prefilled' (default). gridSize (default 75) cartela cards pre-generated into the BingoCard pool. Purchase DTO accepts cartelaNumbers[]; BingoTicket.cartelaNumber records the pick. Winning patterns are DB config (seed:bingo-patterns). Derash settlement splits pot by houseEdgePct and records winner's last-4 phone digits.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npm run test:unit",
+      "evidence": "src/bingo/entities/bingo-card.entity.ts, bingo.service.ts, scripts/seed-bingo-patterns.ts. Added 2026-07-02."
+    },
+    {
+      "id": "BE-14",
+      "area": "bingo",
+      "title": "One-active-game guard (DB UNIQUE index)",
+      "behavior": "BingoRoom.activeGuard is a nullable tinyint under UNIQUE index UQ_bingo_active_game — set to 1 while open/running, NULL on completion. Prevents two concurrent creators (even across instances or with Redis lock down) from opening two active rooms; second INSERT fails with duplicate-key error.",
       "status": "passing",
       "verification": "npx tsc --noEmit",
-      "evidence": "src/bingo/. Configurable: salesWindowSeconds, drawIntervalSeconds, resultDisplaySeconds."
+      "evidence": "src/bingo/entities/bingo-room.entity.ts, bingo.service.ts active-game guard. Added 2026-07-02."
     },
     {
       "id": "BE-06",
@@ -136,11 +154,20 @@
     {
       "id": "FE-03",
       "area": "frontend/bingo",
-      "title": "Bingo: auto-join, phase machine (buy/playing/result), no lobby",
-      "behavior": "Loads current room via GET /bingo/current. Phases: buy (40s window) → playing (ball-by-ball) → result (10s display). Confetti on win. Back goes to Home.",
+      "title": "Bingo: auto-join, phase machine (buy/playing/result), cartela grid, no lobby",
+      "behavior": "Loads current room via GET /bingo/current. Phases: buy (40s window) → playing (ball-by-ball) → result (10s display). Renders per winMode: line card, 5×5 pattern card, or prefilled cartela grid. Confetti on win. Back goes to Home.",
       "status": "passing",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
-      "evidence": "frontend/src/pages/Bingo.tsx. Completely rewritten."
+      "evidence": "frontend/src/pages/Bingo.tsx. Rewritten for prefilled/derash mode 2026-07-02."
+    },
+    {
+      "id": "FE-11",
+      "area": "frontend/bingo",
+      "title": "Bingo paced ball reveal (shared cursor)",
+      "behavior": "A single revealedCount cursor paces balls one at a time (~1.5s each, min 0.65s when far behind) so caller, board and all cards advance together even when a 5s poll delivers a batch. Snaps to full on room switch and completion; clamps overshoot; reveal sound synced to cursor tick; cards mark from revealedSet not raw drawnNumbers.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (revealedCount). Commits f79a386, 6ea4123. Documented in .harness/topics/bingo-reveal.md."
     },
     {
       "id": "FE-04",
@@ -208,6 +235,153 @@
       "notes": "Basic profile page exists; full stats/history view not confirmed."
     },
     {
+      "id": "BE-15",
+      "area": "broadcast",
+      "title": "Admin Telegram broadcast (send-now / scheduled / recurring)",
+      "behavior": "Admin composes text + optional uploaded image + inline URL buttons and sends to all Telegram-linked users. scheduleType ∈ {now, once (scheduledAtLocal), recurring (daily|weekly, HH:mm, Ethiopia +180min)}. Multer upload to uploads/broadcasts (served /uploads/**). TelegramBotService.sendBroadcastMessage throttles ~25 msg/s, honours 429 retry_after, skips blocked users, reuses the photo file_id after the first send. BroadcastScheduler (@Cron 30s, Redis-locked) claims due rows with an atomic scheduled->sending status guard; background dispatch; 45-min stale recovery.",
+      "status": "passing",
+      "verification": "npx nest build && npx jest",
+      "evidence": "src/broadcast/, src/telegram/telegram-bot.service.ts, src/scheduler/broadcast.scheduler.ts. Commits 19baa9b, 2848de1. See DECISIONS D-16.",
+      "notes": "Deploy needs writable uploads/ dir + npm install (@types/multer). Live blast not exercised."
+    },
+    {
+      "id": "BE-16",
+      "area": "notifications",
+      "title": "Durable per-user notifications (bell) + socket push",
+      "behavior": "notifications table + NotificationsService.create() persists then emits notification.new on the user_{id} socket room. GET /notifications returns {items, unreadCount}; POST /notifications/read marks read. safeCreate() is called post-commit best-effort from: withdrawal settle (admin + both agent paths), deposit credit (new credits only), admin adjustment, and bingo/keno win at settlement (notifyRoomWinners/notifyDrawWinners, aggregated per user, bot accounts skipped).",
+      "status": "passing",
+      "verification": "npx nest build && npx jest",
+      "evidence": "src/notifications/, gateway.emitUserNotification, wallet/payments/admin/bingo/keno hooks. Commits 405d50f, 3c49b64. See DECISIONS D-15.",
+      "notes": "Crash wins not yet wired (crash.bet.cashedout already targets user_{id})."
+    },
+    {
+      "id": "BE-17",
+      "area": "auth",
+      "title": "OptionalJwtAuthGuard on Bingo read endpoints",
+      "behavior": "Reusable guard extends JwtAuthGuard; populates request.user when a valid Bearer token is present, allows anonymous otherwise (never rejects). Applied to GET /bingo/current, /bingo/rooms/:id/state, /bingo/rooms/:id/sync so a logged-in player's own tickets are returned by the server (fixes cartelas vanishing on tab switch/reload) without blocking spectators.",
+      "status": "passing",
+      "verification": "npx nest build && npx jest",
+      "evidence": "src/auth/guards/optional-jwt-auth.guard.ts (+ .spec, 4 cases), src/bingo/bingo.controller.ts. Commit 2272c8b. See DECISIONS D-14.",
+      "notes": "Guard that extends another must declare an explicit constructor (DI metadata)."
+    },
+    {
+      "id": "FE-12",
+      "area": "frontend/notifications",
+      "title": "Server-backed notification bell",
+      "behavior": "NotificationBell loads GET /notifications on login (survives reload, shows what was missed), listens for notification.new over the socket, persists read state via POST /notifications/read on open, and renders per-type icons (win/deposit/withdrawal/adjustment/bonus). Store gained setNotifications + addServerNotification (dedupe by id). Dead *.ticket.won listeners removed.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/components/NotificationBell.tsx, frontend/src/store/useStore.ts, frontend/src/lib/api.ts (notificationsApi)."
+    },
+    {
+      "id": "FE-13",
+      "area": "frontend/admin",
+      "title": "Admin Broadcast tab with live Telegram preview",
+      "behavior": "Compose title + message (Plain/HTML) + uploaded image + up to 6 link buttons; choose send-now / once (datetime) / recurring (daily|weekly). Live Telegram-style preview mirrors the sent message. History list shows status, delivery progress bar (polls while sending), and send-now/cancel/delete actions.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Admin.tsx (BroadcastAdmin), broadcastApi in api.ts, /uploads dev proxy in vite.config.ts."
+    },
+    {
+      "id": "FE-14",
+      "area": "frontend/bingo",
+      "title": "Bingo live-draw polish + derash win dialog 5x5 + cartela font",
+      "behavior": "Calm constant ~1.5s reveal cadence (no 250ms bursts); now-calling uses mode=wait + breathing glow; recent-calls strip keyed by number with enter animation; current ball ringed on the board. Derash win dialog renders the winner's 5x5 for every player via settlementSummary.winnerGrid (+ fallbacks) and authoritative winnerMarkedNumbers. CartelaGrid numbers 7px->11px, font-black, tight leading/tracking (layout unchanged).",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx. Commits f79a386, 6ea4123, a0cc833, 9d3fa4d. Keeps iGames' own visual identity."
+    },
+    {
+      "id": "FE-15",
+      "area": "frontend/wallet",
+      "title": "Transaction history filter + labels fix",
+      "behavior": "Wins/Purchases/Deposits filters and row labels matched non-existent entryType values (ticket_win/ticket_purchase) and always showed empty. Corrected to the real ledger enum: wins=win|bonus, purchases=stake, deposits=deposit|agent_receipt; labels map stake/win/refund/deposit/withdrawal/bonus/adjustment/agent_receipt.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Wallet.tsx (ENTRY_LABELS, matchesTxFilter). Commit 405d50f."
+    },
+    {
+      "id": "BE-18",
+      "area": "bingo",
+      "title": "Winning patterns: any_two_lines / any_three_lines",
+      "behavior": "PatternType widened with any_two_lines/any_three_lines; BingoRulesService.countCompletedLines counts full rows+cols+2 diagonals on a 5x5; isPatternCompleted returns true at >=2 / >=3. Seeded as built-in patterns (auto-seed by name on boot). DTO accepts the new types.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest bingo-rules",
+      "evidence": "src/bingo/bingo-rules.service.ts, entities/bingo-pattern.entity.ts, dto/create-bingo-pattern.dto.ts. Unit tests added (bingo-rules 29 cases). See D-18."
+    },
+    {
+      "id": "BE-19",
+      "area": "bingo",
+      "title": "Derash up to 5 places, each with its own pattern",
+      "behavior": "BingoConfig adds prefilledFourth/FifthPlaceEnabled+Pct and prefilledFirst..FifthPatternId; BingoPrizeTier +4th/5th. Settlement resolves each place's own pattern (resolvePrefilledPlacePattern, falling back to prefilledWinPatternId -> Any Line). Weights/prize math extended to 5 places.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/bingo/entities/bingo-config.entity.ts, bingo-room.entity.ts, bingo.service.ts, dto/update-bingo-config.dto.ts. See D-18."
+    },
+    {
+      "id": "BE-20",
+      "area": "bingo",
+      "title": "Cartela release + refund endpoint",
+      "behavior": "DELETE /bingo/rooms/:id/cartelas/:cartelaNumber -> releaseCartela: refunds the stake (refund ledger bingo-cartela-refund:{ticketId}) in one transaction, frees the pool BingoCard, decrements soldTickets. Only while room.status==='open' and only the caller's own active ticket. Idempotent per ticket.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/bingo/bingo.service.ts (releaseCartela), bingo.controller.ts (DELETE route). See D-20."
+    },
+    {
+      "id": "BE-21",
+      "area": "wallet",
+      "title": "Withdrawal service fee -> super-admin, commission -> agent",
+      "behavior": "completeWithdrawalByAgent takes serviceFeePct + commissionPct + superAdminUserId. Service fee credits the designated super-admin wallet (platform-service-fee:{id}), commission credits the agent (agent-commission:{id}), net credits the agent as payout custody (agent-receipt:{id}); user nets gross - fee - commission. withdrawals stores serviceFeeMinor/commissionMinor. Guards fee+commission < gross.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/wallet/wallet.service.ts, entities/withdrawal.entity.ts; src/admin/entities/system-config.entity.ts (+withdrawalCommissionPct, superAdminUserId); src/agents/agents.service.ts. See D-19."
+    },
+    {
+      "id": "BE-22",
+      "area": "agents",
+      "title": "Agent on-duty + Ethiopia-time working schedule",
+      "behavior": "User.onDutyMode (auto|on|off) + workDaysOfWeek. src/common/agent-duty.util.ts evaluates the working window and effective-on-duty in Ethiopia time (+180, no DST). getActiveAgentDepositInfo returns the effectively-on-duty agent; verifyAgentWorkingHoursAndPermission gates on it. PATCH /admin/agents/:id/on-duty sets mode (force-on is single-primary). Fixes the server-clock 'No agent on duty' bug. AgentShift/workStartHour left dormant.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/common/agent-duty.util.ts, src/users/users.service.ts (setAgentOnDutyMode, findOnDutyAgent), src/agents/agents.service.ts, src/admin/admin.controller.ts. See D-21."
+    },
+    {
+      "id": "BE-23",
+      "area": "bingo",
+      "title": "Derash leaderboard ranking mode",
+      "behavior": "BingoConfig.prefilledRankingMode + BingoRoom.rankingMode (race|leaderboard, snapshotted). Leaderboard: no incremental payout; progressDerashLeaderboard ends the round on the 1st-place pattern (or pool exhaustion / no cards), then settleDerashLeaderboard ranks a queue by hardest place-pattern reached -> earliest -> purchase order and assigns ranks by position (promotion into empty slots). Reuses awardDerashPlace + reconcileDerashPool. claimBingo is a no-op in leaderboard mode.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest",
+      "evidence": "src/bingo/bingo.service.ts (progressDerashLeaderboard, settleDerashLeaderboard, computeDerashCompletionIndex). See D-18."
+    },
+    {
+      "id": "FE-16",
+      "area": "frontend/bingo",
+      "title": "Instant-buy + tap-to-refund cartelas; grid restyle",
+      "behavior": "Tapping an available cartela buys it immediately; tapping your own (while open) refunds it (bingoApi.releaseCartela); per-cartela pending guard; Pay bar removed. CartelaGrid available cells render as a black tile + muted number (#8f9db0) with the group colour as a thin accent border; owned=green, taken=red.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (CartelaGrid, handleCartelaTap), lib/api.ts (releaseCartela). See D-20."
+    },
+    {
+      "id": "FE-17",
+      "area": "frontend/bingo",
+      "title": "Sequential place reveal + standings + staged reveal cascade",
+      "behavior": "Result overlay reveals winners one place at a time (medal + name + last-4 phone) then a Final Standings list. Reveal is staged across trailing cursors: now-calling -> board (NOW_CALLING_LEAD_MS) -> ticket (BOARD_TO_TICKET_MS); the 5x5 win popup is held behind NOW_CALLING_HOLD_MS (popupArmed); the result-display countdown starts only after the live-win queue drains.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (RoomResultOverlay, boardCount/ticketCount, popupArmed, result-hold effect). See D-18, D-22."
+    },
+    {
+      "id": "FE-18",
+      "area": "frontend/admin",
+      "title": "Admin config UI: ranking mode, per-place patterns, fee/commission, super-admin, agent on-duty/hours",
+      "behavior": "Bingo settings: Ranking Mode dropdown, 4th/5th place enable+pct, per-place pattern selectors. System config: commission %, super-admin picker (admin users). Agents: On-Duty selector (Auto/Force On/Force Off) + coverage banner + Working-Days picker (Ethiopia). Agent page shows the fee + commission net breakdown.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Admin.tsx (AgentsAdmin, ConfigAdmin, bingo cfgForm), Agent.tsx, lib/api.ts, lib/models.ts. See D-18, D-19, D-21."
+    },
+    {
       "id": "OPS-01",
       "area": "ops",
       "title": "Docker Compose production deployment",
@@ -224,8 +398,8 @@
       "behavior": "All 25 tables use ROW_FORMAT=DYNAMIC to avoid 8126-byte InnoDB inline limit.",
       "status": "in_progress",
       "verification": "SELECT TABLE_NAME, ROW_FORMAT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND ROW_FORMAT != 'Dynamic';",
-      "evidence": "ALTER TABLE statements provided. Must be run on production DB.",
-      "notes": "Run the 25 ALTER TABLE statements provided in session 2026-06-29."
+      "evidence": "Entities now declare engine 'InnoDB ROW_FORMAT=DYNAMIC' (commit e608f21), so fresh schemas are correct. Existing production tables still need the ALTER.",
+      "notes": "Run the 25 ALTER TABLE statements from session 2026-06-29 on any pre-existing production DB."
     }
   ]
 }

@@ -41,6 +41,12 @@ export class AgentsController {
     return this.agentsService.getActiveShift();
   }
 
+  /** The requesting agent's own Bingo performance (customers, GGR, commission). */
+  @Get('performance')
+  getMyPerformance(@CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.getPerformance(agent.id);
+  }
+
   /**
    * List pending withdrawals available to claim.
    */

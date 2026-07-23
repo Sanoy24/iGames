@@ -23,6 +23,14 @@ export class BingoConfig {
   @Column({ type: 'int', default: 200 })
   defaultMaxTickets: number;
 
+  /**
+   * Maximum number of cartelas (tickets) a single user may buy in one bingo
+   * room/game. 0 = unlimited. Enforced across all purchases in the room, not
+   * just per transaction.
+   */
+  @Column({ type: 'int', default: 0 })
+  maxCartelasPerUser: number;
+
   @Column({ type: 'int', default: 20000 })
   defaultOneLineMinor: number;
 
@@ -53,6 +61,18 @@ export class BingoConfig {
   @Column({ type: 'int', default: 75 })
   defaultGridSize: number;
 
+  /**
+   * How derash places are decided:
+   * - `race`: each place is locked to the first cartela to complete that place's
+   *   pattern, in order (the original behaviour).
+   * - `leaderboard`: the round runs until a cartela completes the 1st-place
+   *   pattern (or the pool is exhausted); ranks are then assigned by a live queue
+   *   ordered by best pattern reached, ties by who reached it first. Patterns
+   *   should be configured hardest (1st) → easiest (last) for this to be meaningful.
+   */
+  @Column({ type: 'varchar', length: 12, default: 'race' })
+  prefilledRankingMode: 'race' | 'leaderboard';
+
   /** % of prize pool awarded to 1st place in prefilled mode. */
   @Column({ type: 'int', default: 80 })
   prefilledFirstPlacePct: number;
@@ -73,12 +93,50 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   prefilledThirdPlacePct: number;
 
+  /** Enable 4th place prize in prefilled mode. */
+  @Column({ type: 'boolean', default: false })
+  prefilledFourthPlaceEnabled: boolean;
+
+  /** % of prize pool awarded to 4th place (only when enabled). */
+  @Column({ type: 'int', default: 0 })
+  prefilledFourthPlacePct: number;
+
+  /** Enable 5th place prize in prefilled mode. */
+  @Column({ type: 'boolean', default: false })
+  prefilledFifthPlaceEnabled: boolean;
+
+  /** % of prize pool awarded to 5th place (only when enabled). */
+  @Column({ type: 'int', default: 0 })
+  prefilledFifthPlacePct: number;
+
   /**
    * Winning pattern for prefilled/derash mode — the BingoPattern a cartela card
    * must complete to win a place. Null falls back to the built-in "Any Line".
+   * Legacy field: used as the default pattern for any place whose own
+   * per-place pattern is unset (and specifically the 1st-place default).
    */
   @Column({ type: 'varchar', length: 36, nullable: true })
   prefilledWinPatternId?: string | null;
+
+  /**
+   * Per-place winning patterns. Each place may require a DIFFERENT pattern to win
+   * (e.g. 1st = Any Line, 2nd = Any Two Lines, 3rd = L Shape). Null on a place
+   * falls back to `prefilledWinPatternId`, then to the built-in "Any Line".
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledFirstPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledSecondPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledThirdPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledFourthPatternId?: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  prefilledFifthPatternId?: string | null;
 
   /** Minimum balls drawn before any prize tier can be settled (0 = immediate). */
   @Column({ type: 'int', default: 0 })
@@ -95,6 +153,27 @@ export class BingoConfig {
   /** Every N bingo rooms a randomly chosen active bot receives a guaranteed win. 0 = disabled. */
   @Column({ type: 'int', default: 0 })
   globalBingoBotWinInterval: number;
+
+  /**
+   * Bot liquidity threshold. While a room has FEWER than this many REAL (non-bot)
+   * players, bots join to fill/steer the room. At or above it, bots stay out and
+   * real players compete on a fair draw. 0 = bots never auto-join.
+   */
+  @Column({ type: 'int', default: 10 })
+  botMaxRealPlayers: number;
+
+  /**
+   * How bots influence a below-threshold room:
+   *  - `off`         — bots just fill the room; fully fair draw, no win steering.
+   *  - `statistical` — bots buy most free cartelas so a bot wins the majority of
+   *                    rounds on a genuinely fair draw (a real user still wins
+   *                    occasionally — which is what keeps it undetectable).
+   *  - `guaranteed`  — if a real user would win, the win is redirected to a bot
+   *                    (deterministic house retention; overrides a fair result).
+   *  - `hybrid`      — statistical flooding PLUS the real-user→bot win redirect.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'statistical' })
+  botWinMode: string;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

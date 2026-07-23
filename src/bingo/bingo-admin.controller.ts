@@ -49,8 +49,15 @@ export class BingoAdminController {
     this.gameEventsGateway.emitBingoNumberDrawn(room);
     if (room.status === 'completed') {
       this.gameEventsGateway.emitBingoRoomCompleted(room);
+      void this.bingoService.notifyRoomWinners(room.id).catch(() => undefined);
     }
     return room;
+  }
+
+  @Get('rooms/:id/details')
+  @ApiOkResponse({ description: 'Full round detail for traceability: room, winners, and every cartela/card.' })
+  getRoomDetails(@Param('id') roomId: string) {
+    return this.bingoService.getRoomAdminDetails(roomId);
   }
 
   @Post('rooms/:id/cancel')

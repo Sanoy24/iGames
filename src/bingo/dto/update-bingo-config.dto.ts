@@ -13,6 +13,10 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(1)
   defaultMaxTickets?: number;
 
+  /** Max cartelas one user may buy per bingo room/game. 0 = unlimited. */
+  @IsOptional() @IsInt() @Min(0)
+  maxCartelasPerUser?: number;
+
   @IsOptional() @IsInt() @Min(0)
   defaultOneLineMinor?: number;
 
@@ -52,6 +56,17 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0)
   globalBingoBotWinInterval?: number;
 
+  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  @IsOptional() @IsInt() @Min(0)
+  botMaxRealPlayers?: number;
+
+  /** How bots steer a below-threshold room. */
+  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid'])
+  botWinMode?: string;
+
+  @IsOptional() @IsIn(['race', 'leaderboard'])
+  prefilledRankingMode?: 'race' | 'leaderboard';
+
   @IsOptional() @IsInt() @Min(1) @Max(100)
   prefilledFirstPlacePct?: number;
 
@@ -67,7 +82,35 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0) @Max(100)
   prefilledThirdPlacePct?: number;
 
+  @IsOptional() @IsBoolean()
+  prefilledFourthPlaceEnabled?: boolean;
+
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  prefilledFourthPlacePct?: number;
+
+  @IsOptional() @IsBoolean()
+  prefilledFifthPlaceEnabled?: boolean;
+
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  prefilledFifthPlacePct?: number;
+
   /** BingoPattern id that wins a place in prefilled/derash mode (null = Any Line). */
   @IsOptional() @IsString()
   prefilledWinPatternId?: string | null;
+
+  /** Per-place winning patterns (null = fall back to prefilledWinPatternId → Any Line). */
+  @IsOptional() @IsString()
+  prefilledFirstPatternId?: string | null;
+
+  @IsOptional() @IsString()
+  prefilledSecondPatternId?: string | null;
+
+  @IsOptional() @IsString()
+  prefilledThirdPatternId?: string | null;
+
+  @IsOptional() @IsString()
+  prefilledFourthPatternId?: string | null;
+
+  @IsOptional() @IsString()
+  prefilledFifthPatternId?: string | null;
 }

@@ -7,7 +7,7 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, Not } from 'typeorm';
+import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, MoreThan, Not, FindOptionsWhere } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
 import { BingoRulesService, BUILT_IN_PATTERNS } from './bingo-rules.service';
@@ -21,6 +21,89 @@ import { BingoCard } from './entities/bingo-card.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { User } from '../users/entities/user.entity';
 
+/** Prefilled/derash finishing places, in award order. */
+export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
+export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
+import { NotificationsService } from '../notifications/notifications.service';
+import { GamesService } from '../games/games.service';
+
+// ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
+
+export type DerashLeaderboardCard = {
+  /** Caller-chosen identifier (e.g. cartela number or an index into the ticket list). */
+  key: number;
+  grid: (number | null)[][];
+  /** Purchase-order tiebreak — lower = bought earlier. */
+  order: number;
+};
+
+export type DerashLeaderboardRank = {
+  key: number;
+  /** Index into `places` of the hardest place-pattern reached (0 = 1st/hardest). */
+  bestRank: number;
+  /** 1-based draw index at which that hardest pattern was reached. */
+  reachedAt: number;
+  order: number;
+};
+
+/**
+ * Pure: the 1-based draw index at which `grid` FIRST completes each place's pattern
+ * (absent = never completed within `drawnNumbers`). No DB, no side effects.
+ */
+export function derashCompletionIndex(
+  bingoRules: BingoRulesService,
+  grid: (number | null)[][],
+  drawnNumbers: number[],
+  placePattern: Map<PrefilledPlace, BingoPattern>,
+): Map<PrefilledPlace, number> {
+  const completion = new Map<PrefilledPlace, number>();
+  const partial: number[] = [];
+  for (let k = 0; k < drawnNumbers.length; k += 1) {
+    partial.push(drawnNumbers[k]);
+    for (const [place, pattern] of placePattern) {
+      if (completion.has(place)) continue;
+      const state = bingoRules.evaluatePatternTicket(grid, partial, [pattern]);
+      if (state.completedPatternIds.includes(pattern.id)) completion.set(place, k + 1);
+    }
+    if (completion.size === placePattern.size) break;
+  }
+  return completion;
+}
+
+/**
+ * Pure leaderboard ranking. Orders cards by **hardest place-pattern reached** →
+ * **earliest to reach it** → **purchase order**, and returns them in queue order
+ * (best first). The caller assigns `places[i]` to `result[i]` up to `places.length`.
+ * Cards that completed no pattern are omitted (they win nothing). This is the exact
+ * logic `settleDerashLeaderboard` uses — extracted so it can be tested without a DB.
+ */
+export function rankDerashLeaderboard(
+  bingoRules: BingoRulesService,
+  cards: DerashLeaderboardCard[],
+  drawnNumbers: number[],
+  places: PrefilledPlace[],
+  placePattern: Map<PrefilledPlace, BingoPattern>,
+): DerashLeaderboardRank[] {
+  const ranked: DerashLeaderboardRank[] = [];
+  for (const card of cards) {
+    const completion = derashCompletionIndex(bingoRules, card.grid, drawnNumbers, placePattern);
+    let bestRank = Number.POSITIVE_INFINITY;
+    let reachedAt = Number.POSITIVE_INFINITY;
+    places.forEach((place, idx) => {
+      const at = completion.get(place);
+      if (at !== undefined && idx < bestRank) {
+        bestRank = idx;
+        reachedAt = at;
+      }
+    });
+    if (bestRank !== Number.POSITIVE_INFINITY) {
+      ranked.push({ key: card.key, bestRank, reachedAt, order: card.order });
+    }
+  }
+  ranked.sort((a, b) => a.bestRank - b.bestRank || a.reachedAt - b.reachedAt || a.order - b.order);
+  return ranked;
+}
+
 export type BingoRoomResponse = {
   id: string;
   name: string;
@@ -33,7 +116,7 @@ export type BingoRoomResponse = {
   numberRange: number;
   gridSize: number;
   patternPrizes: Array<{ patternId: string; name: string; prizeMinor: number }>;
-  scheduledStartAt: Date;
+  scheduledStartAt: Date | null;
   drawnNumbers: number[];
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
@@ -58,6 +141,11 @@ export type BingoTicketResponse = {
   payoutMinor: number;
   status: string;
   settlementStatus: string;
+  autoClaim: boolean;
+  /** Manual-mode disqualification audit (null/false/0 when not disqualified). */
+  disqualifiedReason?: string | null;
+  disqualifiedWonRound?: boolean;
+  forfeitedWinMinor?: number;
 };
 
 const MIN_BINGO_SALES_WINDOW_MS = 15_000;
@@ -80,7 +168,9 @@ export class BingoService implements OnModuleInit {
     private readonly bingoPatternRepository: Repository<BingoPattern>,
     private readonly bingoRulesService: BingoRulesService,
     private readonly rngService: RngService,
-    private readonly walletService: WalletService
+    private readonly walletService: WalletService,
+    private readonly notificationsService: NotificationsService,
+    private readonly gamesService: GamesService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -143,6 +233,7 @@ export class BingoService implements OnModuleInit {
         autoRepeatIntervalMinutes: 0,
         defaultTicketPriceMinor: 500,
         defaultMaxTickets: 200,
+        maxCartelasPerUser: 0,
         defaultOneLineMinor: 20000,
         defaultTwoLinesMinor: 50000,
         defaultFullHouseMinor: 100000,
@@ -152,16 +243,104 @@ export class BingoService implements OnModuleInit {
         defaultWinMode: 'prefilled',
         defaultNumberRange: 75,
         defaultGridSize: 75,
+        prefilledRankingMode: 'race',
         prefilledFirstPlacePct: 80,
         prefilledSecondPlaceEnabled: false,
         prefilledSecondPlacePct: 0,
         prefilledThirdPlaceEnabled: false,
         prefilledThirdPlacePct: 0,
+        prefilledFourthPlaceEnabled: false,
+        prefilledFourthPlacePct: 0,
+        prefilledFifthPlaceEnabled: false,
+        prefilledFifthPlacePct: 0,
         prefilledWinPatternId: null,
+        prefilledFirstPatternId: null,
+        prefilledSecondPatternId: null,
+        prefilledThirdPatternId: null,
+        prefilledFourthPatternId: null,
+        prefilledFifthPatternId: null,
       });
       await this.bingoConfigRepository.save(cfg);
     }
     return cfg;
+  }
+
+  /**
+   * Buy-window countdown length, in ms — identical to the delay the room used to
+   * be created with. Floored to a sane minimum and never shorter than the
+   * configured auto-repeat interval. Stamped onto scheduledStartAt when the FIRST
+   * ticket of an idle room is sold, so the countdown length is unchanged; only
+   * the moment it STARTS moves from room-creation to first-purchase.
+   */
+  private startCountdownDelayMs(cfg: BingoConfig): number {
+    const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
+    return Math.max((cfg.autoRepeatIntervalMinutes ?? 0) * 60_000, salesWindowMs);
+  }
+
+  /**
+   * Kick off the buy-window countdown the moment the FIRST ticket of an idle room
+   * is sold. `wasEmpty` = the room had zero sold tickets before this purchase, so
+   * the countdown is stamped exactly once (fixed window); later purchases pass
+   * false and never move the start time. It OVERWRITES any pre-existing value so a
+   * stale creation-time default (from a legacy DEFAULT CURRENT_TIMESTAMP column)
+   * is corrected to "now + window" from the real first-sale moment. MUST be called
+   * while the room row is locked FOR UPDATE (as in purchaseTickets) so concurrent
+   * first sales can't double-stamp.
+   */
+  private startCountdownOnFirstSale(room: BingoRoom, cfg: BingoConfig, wasEmpty: boolean): void {
+    if (wasEmpty) {
+      room.scheduledStartAt = new Date(Date.now() + this.startCountdownDelayMs(cfg));
+    }
+  }
+
+  /**
+   * One-time, idempotent self-heal: relax bingo_rooms.scheduledStartAt to NULLable
+   * so a room can be created IDLE (no countdown) until its first ticket is sold.
+   * The additive schema-sync only adds new columns; it never alters an existing
+   * NOT NULL column, so this bridges live databases created before idle rooms.
+   * Safe to run every boot — it only ALTERs when the column is still NOT NULL.
+   */
+  async ensureRoomSchema(): Promise<void> {
+    try {
+      const rows: Array<{ IS_NULLABLE: string; COLUMN_DEFAULT: string | null; EXTRA: string }> =
+        await this.bingoRoomRepository.query(
+          `SELECT IS_NULLABLE, COLUMN_DEFAULT, EXTRA FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bingo_rooms' AND COLUMN_NAME = 'scheduledStartAt'`,
+        );
+      const col = rows[0];
+      // Re-write the column definition whenever it is NOT NULL, carries a
+      // CURRENT_TIMESTAMP default, or has ON UPDATE CURRENT_TIMESTAMP. The last two
+      // are the real culprits behind "countdown starts on its own": a bare
+      // `timestamp` column silently defaults to NOW() on insert AND resets to NOW()
+      // on every row update, so an idle room's start time appears out of nowhere.
+      const needsFix =
+        !col ||
+        col.IS_NULLABLE === 'NO' ||
+        (col.COLUMN_DEFAULT != null && /current_timestamp/i.test(col.COLUMN_DEFAULT)) ||
+        /on update/i.test(col.EXTRA ?? '');
+      if (needsFix) {
+        await this.bingoRoomRepository.query(
+          `ALTER TABLE bingo_rooms MODIFY COLUMN scheduledStartAt timestamp NULL DEFAULT NULL`,
+        );
+        this.logger.log(
+          'Schema self-heal: bingo_rooms.scheduledStartAt is now NULLable with no auto CURRENT_TIMESTAMP (idle rooms)',
+        );
+      }
+      // Clean up legacy idle rooms: any OPEN room that has sold nothing must have no
+      // countdown. This clears a stale start time left by the old behaviour so the
+      // current idle room stops showing a timer the moment the fix boots.
+      const cleared: { affectedRows?: number } = await this.bingoRoomRepository.query(
+        `UPDATE bingo_rooms SET scheduledStartAt = NULL WHERE status = 'open' AND soldTickets = 0`,
+      );
+      if (cleared?.affectedRows) {
+        this.logger.log(`Schema self-heal: reset ${cleared.affectedRows} idle open Bingo room(s) to no-countdown`);
+      }
+    } catch (err) {
+      this.logger.error(
+        'Schema self-heal for bingo_rooms.scheduledStartAt failed',
+        err instanceof Error ? err.stack : err,
+      );
+    }
   }
 
   async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
@@ -236,9 +415,6 @@ export class BingoService implements OnModuleInit {
     const cfg = await this.getBingoConfig();
     if (!cfg.enabled) return null;
 
-    const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
-    const gridSize = cfg.defaultGridSize ?? 75;
-
     // Collapse to a single well-formed active room. If one already exists (open
     // or running) we do not create another — one game at a time.
     const kept = await this.reconcileActiveRooms(cfg);
@@ -253,16 +429,34 @@ export class BingoService implements OnModuleInit {
       `UPDATE bingo_rooms SET activeGuard = NULL WHERE activeGuard IS NOT NULL AND status IN ('completed','cancelled')`,
     );
 
-    const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
-    const delayMs = Math.max(cfg.autoRepeatIntervalMinutes * 60_000, salesWindowMs);
-    const scheduledStartAt = new Date(Date.now() + delayMs);
+    const created = await this.createIdleRoom(cfg, null, 1);
+    if (created) {
+      this.logger.log(`Auto-created idle Bingo room "${created.name}" — countdown starts on first ticket sale`);
+    }
+    return created;
+  }
 
-    const timestamp = scheduledStartAt.toLocaleTimeString('en-ET', {
-      hour: '2-digit',
+  /**
+   * Build + persist one IDLE room (scheduledStartAt NULL — never draws until the
+   * first ticket is sold). `ownerAgentId` NULL = house room. `activeGuard` = 1
+   * claims the global single-active-game slot (shared-room mode); NULL opts out of
+   * that guard (per-agent mode, where many rooms run concurrently).
+   */
+  private async createIdleRoom(
+    cfg: BingoConfig,
+    ownerAgentId: string | null,
+    activeGuard: number | null,
+    ownerName?: string,
+  ): Promise<BingoRoomResponse | null> {
+    const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
+    const gridSize = cfg.defaultGridSize ?? 75;
+    const timestamp = new Date().toLocaleTimeString('en-US', {
+      timeZone: 'Africa/Addis_Ababa', // room name shows Ethiopia time (12h) regardless of server TZ
+      hour: 'numeric',
       minute: '2-digit',
-      hour12: false,
+      hour12: true,
     });
-    const name = `Bingo ${timestamp}`;
+    const name = ownerName ? `${ownerName} · Bingo` : `Bingo ${timestamp}`;
 
     const room = this.bingoRoomRepository.create({
       name,
@@ -275,38 +469,215 @@ export class BingoService implements OnModuleInit {
         fullHouseMinor: cfg.defaultFullHouseMinor,
       },
       winMode,
-      // Ball pool: derash fixed 75-ball, line 90, pattern configurable.
       numberRange: this.ballPoolFor(winMode, cfg),
       gridSize,
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
-      scheduledStartAt,
+      rankingMode: cfg.prefilledRankingMode ?? 'race',
+      scheduledStartAt: null,
       drawnNumbers: [],
       rngAuditLogIds: [],
       settledTiers: [],
       winnersByTier: {},
       settlementSummary: {},
-      activeGuard: 1, // claims the single "active game" slot (unique index)
+      activeGuard,
+      ownerAgentId,
     });
 
     try {
-      // Room + its card pool are created atomically, so a room never becomes
-      // visible without its full pre-generated pool of cards.
       await this.dataSource.transaction(async (manager) => {
         await manager.save(room);
         await this.generateCardPoolForRoom(room, manager);
       });
     } catch (err) {
-      // Another creator (concurrent request or separate instance) already holds
-      // the active-game slot. Treat as "a room already exists" and back off.
       if (this.isDuplicateKeyError(err)) {
         this.logger.warn('Active Bingo room already exists (activeGuard conflict) — skipping creation');
         return null;
       }
       throw err;
     }
-    this.logger.log(`Auto-created Bingo room "${room.name}" (${winMode}) starting at ${scheduledStartAt.toISOString()}`);
     return this.toRoomResponse(room, 0, []);
+  }
+
+  /** Is per-agent room mode (Approach B) enabled by the admin? */
+  async isAgentRoomsEnabled(): Promise<boolean> {
+    try {
+      const rows: Array<{ v: number | boolean | null }> = await this.bingoRoomRepository.query(
+        "SELECT agentRoomsEnabled v FROM system_configs WHERE `key` = 'global' LIMIT 1",
+      );
+      return !!rows[0]?.v;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Per-agent mode: make sure the house AND every active agent each have exactly
+   * one active (open/running) idle room. Creates missing ones and de-dupes extras
+   * (keeps a running room, else the earliest, cancels the rest). Runs each tick
+   * inside the scheduler's Redis lock, so creation is single-writer.
+   */
+  async ensureAgentRooms(cfg?: BingoConfig): Promise<void> {
+    const config = cfg ?? (await this.getBingoConfig());
+    if (!config.enabled) return;
+
+    const agents: Array<{ id: string; displayName: string }> = await this.bingoRoomRepository.query(
+      `SELECT id, displayName FROM users WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"')`,
+    );
+    const owners: Array<{ ownerAgentId: string | null; name?: string }> = [
+      { ownerAgentId: null }, // house room
+      ...agents.map((a) => ({ ownerAgentId: a.id, name: a.displayName })),
+    ];
+
+    for (const owner of owners) {
+      const active = await this.bingoRoomRepository.find({
+        where: { ownerAgentId: owner.ownerAgentId ?? IsNull(), status: In(['open', 'running']) },
+        order: { scheduledStartAt: 'ASC' },
+      });
+      if (active.length === 0) {
+        await this.createIdleRoom(config, owner.ownerAgentId, null, owner.name).catch((err) =>
+          this.logger.error('ensureAgentRooms create failed', err instanceof Error ? err.stack : err),
+        );
+      } else if (active.length > 1) {
+        const keep = active.find((r) => r.status === 'running') ?? active[0];
+        for (const r of active) {
+          if (r.id !== keep.id) await this.cancelRoom(r.id).catch(() => undefined);
+        }
+      }
+    }
+  }
+
+  /**
+   * Per-agent mode version of findRoomsToStart: returns EVERY open room that is due
+   * and has tickets, as long as its owner has no game already running (one live
+   * game per owner, but many owners run concurrently).
+   */
+  async findAgentRoomsToStart(): Promise<BingoRoomResponse[]> {
+    const dueOpen = await this.bingoRoomRepository.find({
+      where: { status: 'open', soldTickets: MoreThan(0), scheduledStartAt: LessThanOrEqual(new Date()) },
+      order: { scheduledStartAt: 'ASC' },
+    });
+    const out: BingoRoomResponse[] = [];
+    for (const room of dueOpen) {
+      const runningForOwner = await this.bingoRoomRepository.countBy({
+        ownerAgentId: room.ownerAgentId ?? IsNull(),
+        status: 'running',
+      });
+      if (runningForOwner > 0) continue;
+      const sold = await this.countSoldTickets(room.id);
+      if (sold <= 0) continue;
+      out.push(this.toRoomResponse(room, sold));
+    }
+    return out;
+  }
+
+  /**
+   * Lobby of joinable rooms (per-agent mode). Every active (open/running) room with
+   * its owner-agent name, price, players and pot — so a customer can pick which
+   * agent's room to play. `enabled` reflects the admin toggle so the client knows
+   * whether to show the lobby at all.
+   */
+  async getLobby(): Promise<{
+    enabled: boolean;
+    rooms: Array<{
+      id: string;
+      name: string;
+      status: string;
+      ownerAgentId: string | null;
+      ownerName: string;
+      ticketPriceMinor: number;
+      players: number;
+      potMinor: number;
+      scheduledStartAt: Date | null;
+    }>;
+  }> {
+    const enabled = await this.isAgentRoomsEnabled();
+    const rows: Array<{
+      id: string;
+      name: string;
+      status: string;
+      ownerAgentId: string | null;
+      ownerName: string | null;
+      ticketPriceMinor: number;
+      soldTickets: number;
+      scheduledStartAt: Date | null;
+    }> = await this.bingoRoomRepository.query(
+      `SELECT r.id, r.name, r.status, r.ownerAgentId, u.displayName ownerName,
+              r.ticketPriceMinor, r.soldTickets, r.scheduledStartAt
+         FROM bingo_rooms r
+         LEFT JOIN users u ON u.id = r.ownerAgentId
+        WHERE r.status IN ('open','running')
+        ORDER BY (r.ownerAgentId IS NULL) DESC, u.displayName ASC, r.scheduledStartAt ASC`,
+    );
+    return {
+      enabled,
+      rooms: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        status: r.status,
+        ownerAgentId: r.ownerAgentId,
+        ownerName: r.ownerAgentId ? (r.ownerName ?? 'Agent') : 'House',
+        ticketPriceMinor: Number(r.ticketPriceMinor),
+        players: Number(r.soldTickets ?? 0),
+        potMinor: Number(r.soldTickets ?? 0) * Number(r.ticketPriceMinor),
+        scheduledStartAt: r.scheduledStartAt,
+      })),
+    };
+  }
+
+  /**
+   * Credit the room-owning agent their commission when an agent room completes
+   * (Approach B). Commission = agentRoomCommissionPct % of the room's REAL-player
+   * GGR (staked − paid out, bots excluded — bot money isn't real revenue). Idempotent
+   * per room (`bingo-room-commission:<roomId>`), so it's safe to call once at
+   * completion. No-op for house rooms (null owner), when the pct is 0, or GGR ≤ 0.
+   */
+  async settleAgentRoomCommission(roomId: string): Promise<void> {
+    try {
+      const room = await this.bingoRoomRepository.findOneBy({ id: roomId });
+      if (!room || !room.ownerAgentId || room.status !== 'completed') return;
+
+      const cfgRows: Array<{ pct: number | string | null }> = await this.bingoRoomRepository.query(
+        "SELECT agentRoomCommissionPct pct FROM system_configs WHERE `key` = 'global' LIMIT 1",
+      );
+      const pct = Number(cfgRows[0]?.pct ?? 0);
+      if (pct <= 0) return;
+
+      const ggrRows: Array<{ staked: number | string; payout: number | string }> =
+        await this.bingoRoomRepository.query(
+          `SELECT COALESCE(SUM(t.stakeMinor),0) staked, COALESCE(SUM(t.payoutMinor),0) payout
+             FROM bingo_tickets t
+             JOIN users u ON u.id = t.userId
+            WHERE t.roomId = ? AND t.status <> 'cancelled'
+              AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL`,
+          [roomId],
+        );
+      const ggrMinor = Number(ggrRows[0]?.staked ?? 0) - Number(ggrRows[0]?.payout ?? 0);
+      if (ggrMinor <= 0) return;
+
+      const commissionMinor = Math.floor((ggrMinor * pct) / 100);
+      if (commissionMinor <= 0) return;
+
+      await this.dataSource.transaction(async (manager) => {
+        await this.walletService.creditInSession(
+          {
+            userId: room.ownerAgentId!,
+            amountMinor: commissionMinor,
+            entryType: 'agent_receipt',
+            sourceType: 'bingo_room_commission',
+            sourceId: room.id,
+            idempotencyKey: `bingo-room-commission:${room.id}`,
+            metadata: { roomId: room.id, ggrMinor, commissionPct: pct, kind: 'bingo_room_commission' },
+          },
+          manager,
+        );
+      });
+      this.logger.log(
+        `Agent room commission: room ${roomId} → agent ${room.ownerAgentId} credited ${commissionMinor} (${pct}% of real GGR ${ggrMinor})`,
+      );
+    } catch (err) {
+      this.logger.error('settleAgentRoomCommission failed', err instanceof Error ? err.stack : err);
+    }
   }
 
   /**
@@ -435,13 +806,20 @@ export class BingoService implements OnModuleInit {
     const runningCount = await this.bingoRoomRepository.countBy({ status: 'running' });
     if (runningCount > 0) return [];
 
+    // A room is IDLE until its FIRST ticket is sold. Requiring soldTickets > 0 here
+    // is the hard guard that keeps an unplayed room from ever starting — no draws,
+    // no "player win window" — even if scheduledStartAt was populated by a legacy
+    // `DEFAULT CURRENT_TIMESTAMP` column instead of our first-sale stamp.
     const room = await this.bingoRoomRepository.findOne({
-      where: { status: 'open', scheduledStartAt: LessThanOrEqual(new Date()) },
+      where: { status: 'open', soldTickets: MoreThan(0), scheduledStartAt: LessThanOrEqual(new Date()) },
       order: { scheduledStartAt: 'ASC' },
     });
     if (!room) return [];
 
-    const soldTickets = await this.bingoTicketRepository.countBy({ roomId: room.id });
+    // Belt-and-suspenders: trust the authoritative ticket count, not just the
+    // denormalised counter, so a drifted soldTickets can't start an empty game.
+    const soldTickets = await this.countSoldTickets(room.id);
+    if (soldTickets <= 0) return [];
     return [this.toRoomResponse(room, soldTickets)];
   }
 
@@ -462,6 +840,7 @@ export class BingoService implements OnModuleInit {
       gridSize,
       patternPrizes: dto.patternPrizes ?? [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
+      rankingMode: cfg.prefilledRankingMode ?? 'race',
       scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : new Date(),
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -524,7 +903,7 @@ export class BingoService implements OnModuleInit {
   }): Promise<BingoRoomResponse & { tickets?: BingoTicketResponse[] }> {
     this.validateUuid(input.roomId, 'roomId');
     const room = await this.findRoom(input.roomId);
-    const soldTickets = await this.bingoTicketRepository.countBy({ roomId: room.id });
+    const soldTickets = await this.countSoldTickets(room.id);
 
     let takenSpots: number[] | undefined;
     if (room.winMode === 'prefilled') {
@@ -535,14 +914,82 @@ export class BingoService implements OnModuleInit {
 
     if (input.userId) {
       this.validateUuid(input.userId, 'userId');
+      // Exclude cancelled (refunded) tickets — a released cartela must stop
+      // counting as owned so its grid cell reverts to the available style.
       const tickets = await this.bingoTicketRepository.find({
-        where: { roomId: room.id, userId: input.userId },
+        where: { roomId: room.id, userId: input.userId, status: Not('cancelled') },
         order: { createdAt: 'DESC' },
       });
       response.tickets = tickets.map((ticket) => this.toTicketResponse(ticket));
     }
 
     return response;
+  }
+
+  /**
+   * Full round detail for the admin — everything needed to audit/trace a game:
+   * the room (with drawn numbers, settled places, per-place winner summary, and
+   * RNG audit log ids), pot/prize totals, and EVERY cartela in the round with
+   * its owner, status (won/lost/disqualified/cancelled), payout, and card grid.
+   */
+  async getRoomAdminDetails(roomId: string) {
+    const validId = this.validateUuid(roomId, 'roomId');
+    const room = await this.bingoRoomRepository.findOneBy({ id: validId });
+    if (!room) throw new NotFoundException('Bingo room not found');
+
+    const soldTickets = await this.countSoldTickets(room.id);
+    const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(room.id) : undefined;
+    const roomResponse = this.toRoomResponse(room, soldTickets, takenSpots);
+
+    const tickets = await this.bingoTicketRepository.find({
+      where: { roomId: room.id },
+      relations: ['user'],
+      order: { createdAt: 'ASC' },
+    });
+
+    const houseEdgePct = room.houseEdgePct ?? 20;
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const totalPaidOutMinor = tickets.reduce((sum, t) => sum + Number(t.payoutMinor), 0);
+
+    return {
+      room: {
+        ...roomResponse,
+        rankingMode: room.rankingMode,
+        rngAuditLogIds: room.rngAuditLogIds ?? [],
+        createdAt: room.createdAt,
+      },
+      totals: {
+        soldTickets,
+        totalPotMinor,
+        prizePoolMinor,
+        totalPaidOutMinor,
+        houseEdgePct,
+      },
+      tickets: tickets.map((t) => ({
+        id: t.id,
+        userId: t.userId,
+        userName: t.user?.displayName ?? 'Player',
+        phoneLast4: (t.user?.phoneNumber ?? '').replace(/\D/g, '').slice(-4),
+        isBot: !!(t.user?.productMetadata as Record<string, unknown> | undefined)?.botPolicy,
+        cartelaNumber: t.cartelaNumber ?? null,
+        status: t.status,
+        settlementStatus: t.settlementStatus,
+        autoClaim: t.autoClaim ?? true,
+        stakeMinor: t.stakeMinor,
+        payoutMinor: Number(t.payoutMinor),
+        wonTiers: t.wonTiers ?? [],
+        // Manual-mode disqualification audit — lets an agent answer "why wasn't I
+        // paid?": the card won but a premature BINGO call forfeited it to the house.
+        disqualifiedReason: t.disqualifiedReason ?? null,
+        disqualifiedWonRound: t.disqualifiedWonRound ?? false,
+        forfeitedWinMinor: Number(t.forfeitedWinMinor ?? 0),
+        forfeitedPlaces: t.forfeitedPlaces ?? [],
+        grid: t.grid,
+        markedNumbers: t.markedNumbers ?? [],
+        createdAt: t.createdAt,
+      })),
+    };
   }
 
   // ── Ticket purchase ──────────────────────────────────────────────────────────
@@ -555,6 +1002,7 @@ export class BingoService implements OnModuleInit {
     idempotencyKey: string;
     selectedNumbers?: number[];
   }): Promise<BingoTicketResponse[]> {
+    await this.gamesService.assertPlayable('bingo');
     const userId = this.validateUuid(input.userId, 'userId');
     const roomId = this.validateUuid(input.roomId, 'roomId');
 
@@ -573,6 +1021,31 @@ export class BingoService implements OnModuleInit {
 
       if (!room) throw new NotFoundException('Bingo room not found');
       if (room.status !== 'open') throw new ConflictException('Bingo room is not open for ticket sales');
+
+      // ── Per-user cartela cap (admin config; 0 = unlimited) ───────────────────
+      // Counts how many cartelas this purchase adds and rejects if it would push
+      // the user past the configured limit for this room. Counted across all of
+      // the user's non-cancelled tickets in the room, not just this transaction.
+      const cfg = await this.getBingoConfig();
+      const maxPerUser = cfg.maxCartelasPerUser ?? 0;
+      const requestedCartelas = room.winMode === 'prefilled'
+        ? new Set(input.cartelaNumbers ?? []).size
+        : (input.count ?? 1);
+      if (maxPerUser > 0) {
+        const alreadyOwned = await manager.countBy(BingoTicket, {
+          userId,
+          roomId,
+          status: Not('cancelled'),
+        });
+        if (alreadyOwned + requestedCartelas > maxPerUser) {
+          const remaining = Math.max(0, maxPerUser - alreadyOwned);
+          throw new ConflictException(
+            remaining === 0
+              ? `You have reached the limit of ${maxPerUser} cartela${maxPerUser === 1 ? '' : 's'} for this game`
+              : `You can buy at most ${maxPerUser} cartela${maxPerUser === 1 ? '' : 's'} in this game — ${remaining} remaining`,
+          );
+        }
+      }
 
       // ── Prefilled / derash mode: buy one or more cartela cards ───────────────
       if (room.winMode === 'prefilled') {
@@ -629,6 +1102,7 @@ export class BingoService implements OnModuleInit {
           const ticket = manager.create(BingoTicket, {
             userId,
             roomId,
+            agentId: room.ownerAgentId ?? null, // per-agent settlement snapshot
             cartelaNumber,
             cardId: card.id,
             // Immutable snapshot of the assigned pool card — settlement/winner
@@ -671,7 +1145,9 @@ export class BingoService implements OnModuleInit {
           createdTickets.push(ticket);
         }
 
+        const wasEmpty = room.soldTickets === 0;
         room.soldTickets += cartelaNumbers.length;
+        this.startCountdownOnFirstSale(room, cfg, wasEmpty);
         await manager.save(room);
 
         return createdTickets.map((ticket) => this.toTicketResponse(ticket));
@@ -686,7 +1162,9 @@ export class BingoService implements OnModuleInit {
         throw new ConflictException('Bingo room is full for ticket sales');
       }
 
+      const wasEmpty = room.soldTickets === 0;
       room.soldTickets += count;
+      this.startCountdownOnFirstSale(room, cfg, wasEmpty);
       await manager.save(room);
 
       const createdTickets: BingoTicket[] = [];
@@ -704,6 +1182,7 @@ export class BingoService implements OnModuleInit {
         const ticket = manager.create(BingoTicket, {
           userId,
           roomId,
+          agentId: room.ownerAgentId ?? null, // per-agent settlement snapshot
           grid,
           markedNumbers: [],
           completedLines: [],
@@ -741,6 +1220,78 @@ export class BingoService implements OnModuleInit {
     });
   }
 
+  /**
+   * Release a derash cartela the caller owns and refund its stake. Only allowed
+   * while the room is still `open` (sales window). Frees the pool card so the
+   * cartela can be bought again, refunds the stake with a `refund` ledger entry in
+   * the same transaction, and decrements the sold counter. Idempotent per ticket:
+   * the refund idempotency key guarantees a double-tap cannot double-credit.
+   */
+  async releaseCartela(input: {
+    userId: string;
+    roomId: string;
+    cartelaNumber: number;
+  }): Promise<{ cartelaNumber: number; refundedMinor: number }> {
+    const userId = this.validateUuid(input.userId, 'userId');
+    const roomId = this.validateUuid(input.roomId, 'roomId');
+
+    return await this.dataSource.transaction(async (manager) => {
+      const room = await manager.findOne(BingoRoom, {
+        where: { id: roomId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!room) throw new NotFoundException('Bingo room not found');
+      if (room.winMode !== 'prefilled') {
+        throw new BadRequestException('Cartela refunds apply to derash rooms only');
+      }
+      if (room.status !== 'open') {
+        throw new ConflictException('Sales are closed — this cartela can no longer be refunded');
+      }
+
+      const ticket = await manager.findOne(BingoTicket, {
+        where: { roomId, userId, cartelaNumber: input.cartelaNumber, status: 'active' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!ticket) {
+        throw new NotFoundException('You do not hold an active cartela with that number in this room');
+      }
+
+      const refundCredit = await this.walletService.creditInSession(
+        {
+          userId,
+          amountMinor: ticket.stakeMinor,
+          entryType: 'refund',
+          sourceType: 'bingo_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `bingo-cartela-refund:${ticket.id}`,
+          metadata: { roomId, cartelaNumber: input.cartelaNumber, reason: 'cartela_released' },
+        },
+        manager,
+      );
+
+      ticket.status = 'cancelled';
+      ticket.settlementStatus = 'settled';
+      ticket.walletCredits = [...(ticket.walletCredits ?? []), refundCredit];
+      await manager.save(ticket);
+
+      // Free the pool card so the cartela number returns to the available set.
+      if (ticket.cardId) {
+        await manager.update(BingoCard, { id: ticket.cardId }, { assignedTicketId: null, assignedUserId: null });
+      } else {
+        await manager.update(
+          BingoCard,
+          { roomId, cartelaNumber: input.cartelaNumber },
+          { assignedTicketId: null, assignedUserId: null },
+        );
+      }
+
+      room.soldTickets = Math.max(0, room.soldTickets - 1);
+      await manager.save(room);
+
+      return { cartelaNumber: input.cartelaNumber, refundedMinor: ticket.stakeMinor };
+    });
+  }
+
   // ── Draw ─────────────────────────────────────────────────────────────────────
 
   async drawNextNumber(roomId: string): Promise<BingoRoomResponse> {
@@ -757,9 +1308,23 @@ export class BingoService implements OnModuleInit {
       if (!room) throw new NotFoundException('Bingo room not found');
 
       if (room.status === 'completed' || room.status === 'cancelled') {
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        const soldTickets = await this.countSoldTickets(validRoomId, manager);
         const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
         return this.toRoomResponse(room, soldTickets, takenSpots);
+      }
+
+      // Empty-round cleanup: a RUNNING room with no tickets sold — e.g. a legacy
+      // room that began before the "idle until first ticket" guard existed — is
+      // cancelled QUIETLY (no completion event, no "no players" result overlay)
+      // instead of drawing out an empty game. New rooms can't reach here: they only
+      // start via findRoomsToStart, which requires soldTickets > 0.
+      if (room.status === 'running' && (await this.countSoldTickets(validRoomId, manager)) === 0) {
+        room.status = 'cancelled';
+        room.activeGuard = null;
+        await manager.save(room);
+        this.logger.warn(`Cancelled empty running Bingo room ${validRoomId} (no tickets sold)`);
+        const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
+        return this.toRoomResponse(room, 0, takenSpots);
       }
 
       // Ball pool drawn from: line is fixed 90-ball, derash is fixed 75-ball
@@ -770,10 +1335,17 @@ export class BingoService implements OnModuleInit {
 
       // All numbers drawn but room still running — complete it.
       if (room.drawnNumbers.length >= maxNumber) {
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        const soldTickets = await this.countSoldTickets(validRoomId, manager);
         if (soldTickets > 0) {
           if (room.winMode === 'prefilled') {
-            // No more draws possible — mark all remaining active tickets as lost.
+            // All balls drawn → resolve the room. Leaderboard mode ranks the whole
+            // queue at once; race mode fills any still-open places then reconciles.
+            if (room.rankingMode === 'leaderboard') {
+              await this.settleDerashLeaderboard(room, cfg, manager);
+            } else {
+              await this.evaluateAndSettleDerash(room, cfg, manager);
+              await this.reconcileDerashPool(room, cfg, manager);
+            }
           } else if (room.winMode === 'pattern') {
             const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
             const patterns =
@@ -781,10 +1353,11 @@ export class BingoService implements OnModuleInit {
                 ? await manager.find(BingoPattern, { where: { id: In(patternIds) } })
                 : [];
             await this.evaluateAndSettlePatterns(room, patterns, manager);
+            await this.markRemainingTicketsLost(room, manager);
           } else {
             await this.evaluateAndSettleTiers(room, manager);
+            await this.markRemainingTicketsLost(room, manager);
           }
-          await this.markRemainingTicketsLost(room, manager);
         }
         room.status = 'completed';
         // Release the active-game slot so the next room can be created.
@@ -821,29 +1394,13 @@ export class BingoService implements OnModuleInit {
       if (rngResult.auditLogId) room.rngAuditLogIds = [...room.rngAuditLogIds, rngResult.auditLogId];
 
       if (room.winMode === 'prefilled') {
-        if (room.drawnNumbers.length >= minDrawsBeforeWin) {
-          await this.evaluateAndSettleDerash(room, cfg, manager);
-        }
-
-        const totalPlaces = 1
-          + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
-          + (cfg.prefilledThirdPlaceEnabled ? 1 : 0);
-        // End the game as soon as there is nothing left to draw for: all enabled
-        // places filled, the pool is exhausted, OR no still-eligible cartelas
-        // remain. The last case is what stops a game from "continuing to count"
-        // after the winner has been decided — e.g. a single player wins 1st while
-        // 2nd/3rd are enabled but no other cards exist to fill those places.
-        const remainingActive = await manager.countBy(BingoTicket, {
-          roomId: room.id,
-          status: 'active',
-        });
-        if (
-          room.settledTiers.length >= totalPlaces ||
-          remainingActive === 0 ||
-          room.drawnNumbers.length >= maxNumber
-        ) {
-          room.status = 'completed';
-          await this.markRemainingTicketsLost(room, manager);
+        if (room.rankingMode === 'leaderboard') {
+          await this.progressDerashLeaderboard(room, cfg, maxNumber, minDrawsBeforeWin, manager);
+        } else {
+          if (room.drawnNumbers.length >= minDrawsBeforeWin) {
+            await this.evaluateAndSettleDerash(room, cfg, manager);
+          }
+          await this.finalizeDerashIfDone(room, cfg, maxNumber, manager);
         }
       } else if (room.winMode === 'pattern') {
         const patternIds = (room.patternPrizes ?? []).map((pp) => pp.patternId);
@@ -877,7 +1434,7 @@ export class BingoService implements OnModuleInit {
       if (room.status === 'completed') room.activeGuard = null;
 
       await manager.save(room);
-      const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+      const soldTickets = await this.countSoldTickets(validRoomId, manager);
       const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
       return this.toRoomResponse(room, soldTickets, takenSpots);
     });
@@ -899,7 +1456,7 @@ export class BingoService implements OnModuleInit {
         throw new ConflictException('Completed Bingo rooms cannot be cancelled');
       }
       if (room.status === 'cancelled') {
-        const soldTickets = await manager.countBy(BingoTicket, { roomId: validRoomId });
+        const soldTickets = await this.countSoldTickets(validRoomId, manager);
         return this.toRoomResponse(room, soldTickets);
       }
 
@@ -946,135 +1503,860 @@ export class BingoService implements OnModuleInit {
   // ── Private settlement helpers ────────────────────────────────────────────────
 
   /**
-   * Derash settlement. Each cartela is a mapped 5×5 card; a card wins by
-   * completing the configured winning pattern. On every draw all active cards
-   * are re-marked; each card that newly completes the pattern takes the next
-   * open place (1st → 2nd → 3rd) in completion order — one winner per place.
-   * When 2nd/3rd are disabled there is exactly one winner and the room ends.
-   * Each place pays a configured % of the (house-adjusted) pot.
+   * Derash settlement. Each cartela is a mapped 5×5 card; a card wins a place by
+   * completing THAT place's configured winning pattern (places may each require a
+   * different pattern — e.g. 1st = Any Line, 2nd = Any Two Lines, 3rd = L Shape).
+   * On every draw all active cards are re-marked, then each still-open place
+   * (1st → 2nd → 3rd → 4th → 5th, only the enabled ones) is awarded to the
+   * earliest-purchased active card that completes that place's pattern — one card
+   * per place, one place per card. When only 1st is enabled there is exactly one
+   * winner and the room ends. Each place pays a configured % of the pot.
    */
   private async evaluateAndSettleDerash(
     room: BingoRoom,
     cfg: BingoConfig,
     manager: EntityManager,
   ): Promise<void> {
-    const winPattern = await this.resolvePrefilledWinPattern(cfg, manager);
-    if (!winPattern) return;
-
-    const activeTickets = await manager.find(BingoTicket, {
-      where: { roomId: room.id, status: 'active' },
+    // In-play cards = still eligible to win. NON-EXCLUSIVE model: a card that has
+    // already won a (lower) place stays in the running for higher places, so we
+    // include `won` cards, not just `active` ones. This is why the strongest card
+    // is never locked out of the jackpot — winning the one-line tier does not
+    // remove it from the three-line tier.
+    const inPlayTickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
       order: { createdAt: 'ASC' },
     });
-    if (activeTickets.length === 0) return;
+    if (inPlayTickets.length === 0) return;
 
-    // Re-mark every active card and collect those that now complete the pattern,
-    // ordered by purchase time so the earliest buyer wins on a same-draw tie.
-    const completers: BingoTicket[] = [];
-    for (const ticket of activeTickets) {
-      const state = this.bingoRulesService.evaluatePatternTicket(
-        ticket.grid,
-        room.drawnNumbers,
-        [winPattern],
-      );
-      ticket.markedNumbers = state.markedNumbers;
-      if (state.completedPatternIds.includes(winPattern.id)) {
-        completers.push(ticket);
-      }
+    // Re-mark every in-play card against the current draw (marking is independent
+    // of any win pattern, so cards light up as numbers are called).
+    const drawn = new Set(room.drawnNumbers);
+    for (const ticket of inPlayTickets) {
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawn.has(v))
+        .sort((a, b) => a - b);
       await manager.save(ticket);
     }
-    if (completers.length === 0) return;
 
-    const totalPotMinor = room.soldTickets * room.ticketPriceMinor;
-    const prizePoolMinor = Math.floor(totalPotMinor * (1 - (room.houseEdgePct ?? 20) / 100));
+    // Pot from the live, non-cancelled ticket rows — never the room.soldTickets
+    // counter — so the settled pot always equals the advertised pot.
+    const soldTickets = await this.countSoldTickets(room.id, manager);
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const houseEdgePct = room.houseEdgePct ?? 20;
 
-    // Award one winner per still-open place, in completion order.
-    for (const ticket of completers) {
-      const place = this.nextOpenPrefilledPlace(room, cfg);
-      if (!place) break;
+    // Bot win-steering (house liquidity). While a room has fewer than
+    // botMaxRealPlayers REAL players, guaranteed/hybrid modes redirect a real
+    // user's win to a bot so the house keeps the prize. `statistical`/`off` never
+    // redirect here — statistical relies purely on bots holding most cartelas (a
+    // fair draw), which is the least detectable. See botWinMode config.
+    const botIds = await this.getActiveBotUserIds(manager);
+    const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
+    const belowThreshold =
+      (cfg.botMaxRealPlayers ?? 0) > 0 && realPlayers < (cfg.botMaxRealPlayers ?? 0);
+    const redirectRealWinsToBot =
+      belowThreshold && (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid');
 
-      const pct =
-        place === '1st'
-          ? (cfg.prefilledFirstPlacePct ?? 80)
-          : place === '2nd'
-          ? (cfg.prefilledSecondPlacePct ?? 0)
-          : (cfg.prefilledThirdPlacePct ?? 0);
-      const prizeMinor = Math.floor(prizePoolMinor * pct / 100);
+    // Each ENABLED, still-open place is an INDEPENDENT "first card to complete this
+    // place's pattern" race, evaluated every draw. Independent → not blocked by an
+    // earlier unfilled place (so with 1st=Any Three Lines / 3rd=Any Line, 3rd fills
+    // on the first single line, 1st on the first three lines — progressive reveal).
+    // Non-exclusive → the same card may win several places over the game (it just
+    // can't win the same place twice). Prizes here are the progressive lower bound
+    // (weight / enabled-total); the pool is topped up to weight / FILLED-total at
+    // completion by reconcileDerashPool, so unfilled places never leak to the house.
+    for (const place of this.openPrefilledPlaces(room, cfg)) {
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      if (!pattern) continue;
 
-      ticket.wonTiers = [...(ticket.wonTiers ?? []), place];
-      ticket.payoutMinor += prizeMinor;
-      ticket.status = 'won';
-      ticket.settlementStatus = 'settled';
+      const winner = inPlayTickets.find(
+        (t) =>
+          // Manual-mode cards (owner turned Auto OFF) are never auto-awarded —
+          // they can only win via an explicit "Bingo" claim (claimBingo).
+          t.autoClaim !== false &&
+          this.bingoRulesService
+            .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
+            .completedPatternIds.includes(pattern.id),
+      );
+      // No eligible card completes THIS place's pattern yet — try the next place;
+      // a later draw may fill this one.
+      if (!winner) continue;
 
-      if (prizeMinor > 0) {
-        const winCredit = await this.walletService.creditInSession(
-          {
-            userId: ticket.userId,
-            amountMinor: prizeMinor,
-            entryType: 'win',
-            sourceType: 'bingo_ticket',
-            sourceId: ticket.id,
-            idempotencyKey: `bingo-settlement:${place}:${ticket.id}`,
-            metadata: {
-              roomId: room.id,
-              place,
-              cartelaNumber: ticket.cartelaNumber,
-              patternId: winPattern.id,
-              totalPotMinor,
-              prizePoolMinor,
-            },
-          },
-          manager,
-        );
-        ticket.walletCredits = [...(ticket.walletCredits ?? []), winCredit];
+      // House-retention redirect: if the natural winner is a REAL player and the
+      // mode calls for it, hand the place to a bot instead (prefer a bot whose
+      // card also completes the pattern so the revealed winner looks legitimate).
+      let awardee = winner;
+      if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
+        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers);
+        if (botAwardee) {
+          awardee = botAwardee;
+          this.logger.log(
+            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
+          );
+        }
       }
 
-      await manager.save(ticket);
+      await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+    }
 
-      const winnerUser = await manager.findOne(User, {
-        where: { id: ticket.userId },
-        select: ['displayName', 'phoneNumber'],
-      });
-      const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
-
-      room.settledTiers = [...room.settledTiers, place];
-      room.winnersByTier = { ...room.winnersByTier, [place]: [ticket.id] };
-      room.settlementSummary = {
-        ...room.settlementSummary,
-        [place]: {
-          winnerCount: 1,
-          winnerId: ticket.id,
-          winnerDisplayName: winnerUser?.displayName ?? 'Player',
-          winnerPhoneLast4: phoneLast4,
-          winnerCartelaNumber: ticket.cartelaNumber,
-          // Winner card so every client in the room can render the result.
-          winnerGrid: ticket.grid,
-          winnerMarkedNumbers: ticket.markedNumbers,
-          patternName: winPattern.name,
-          prizeMinor,
+    // ── House-win for disqualified cards ─────────────────────────────────────────
+    // A card disqualified for a premature "Bingo" call still races for the win. For
+    // any place STILL open after the honest cards had their chance this draw, if a
+    // pending-disqualified card completes the pattern it was the (first) winning
+    // card — but the false call voids the payout, so the HOUSE takes the prize and
+    // we record the forfeit on the card + room summary for audit ("why wasn't I
+    // paid?"). Honest cards are evaluated first (above), so a legit card completing
+    // the same draw always beats the house claim.
+    const pendingDq = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: 'disqualified', settlementStatus: 'pending' },
+      order: { createdAt: 'ASC' },
+    });
+    if (pendingDq.length > 0) {
+      for (const dq of pendingDq) {
+        dq.markedNumbers = dq.grid
+          .flat()
+          .filter((v): v is number => v !== null && drawn.has(v))
+          .sort((a, b) => a - b);
+      }
+      for (const place of this.openPrefilledPlaces(room, cfg)) {
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+        if (!pattern) continue;
+        const dqWinner = pendingDq.find((t) =>
+          this.bingoRulesService
+            .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
+            .completedPatternIds.includes(pattern.id),
+        );
+        if (!dqWinner) continue;
+        await this.awardDerashPlaceToHouse({
+          room,
+          dqTicket: dqWinner,
+          place,
+          pattern,
           totalPotMinor,
-          prizePoolMinor,
-        },
-      };
+          houseEdgePct,
+          cfg,
+          manager,
+        });
+      }
     }
   }
 
-  /** Resolve the configured derash winning pattern, defaulting to "Any Line". */
-  private async resolvePrefilledWinPattern(
+  /**
+   * Leaderboard mode per-draw progression. Nobody is paid during play; the room
+   * simply runs until a card completes the **1st-place pattern** (or the ball pool
+   * is exhausted, or no cards remain), then the whole queue is settled at once by
+   * `settleDerashLeaderboard`. Cards are re-marked every draw so the UI stays live.
+   */
+  private async progressDerashLeaderboard(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    maxNumber: number,
+    minDrawsBeforeWin: number,
+    manager: EntityManager,
+  ): Promise<void> {
+    const inPlay = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
+      order: { createdAt: 'ASC' },
+    });
+
+    // Re-mark every in-play card so boards/cartelas light up as numbers are called.
+    const drawn = new Set(room.drawnNumbers);
+    for (const ticket of inPlay) {
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawn.has(v))
+        .sort((a, b) => a - b);
+      await manager.save(ticket);
+    }
+
+    // Nothing left to play for → close and reconcile (refunds if truly empty).
+    if (inPlay.length === 0) {
+      room.status = 'completed';
+      room.activeGuard = null;
+      await this.reconcileDerashPool(room, cfg, manager);
+      return;
+    }
+
+    let ended = room.drawnNumbers.length >= maxNumber;
+    if (!ended && room.drawnNumbers.length >= minDrawsBeforeWin) {
+      const firstPattern = await this.resolvePrefilledPlacePattern(cfg, '1st', manager);
+      if (firstPattern) {
+        ended = inPlay.some((t) =>
+          this.bingoRulesService
+            .evaluatePatternTicket(t.grid, room.drawnNumbers, [firstPattern])
+            .completedPatternIds.includes(firstPattern.id),
+        );
+      }
+    }
+
+    if (ended) {
+      await this.settleDerashLeaderboard(room, cfg, manager);
+      room.status = 'completed';
+      room.activeGuard = null;
+    }
+  }
+
+  /**
+   * Leaderboard settlement — called once at round end. Builds a queue of cards
+   * ordered by the **hardest place-pattern each completed** (1st is hardest), ties
+   * broken by **who reached that pattern first**, then assigns ranks by POSITION:
+   * queue #1 → 1st, #2 → 2nd, … through the enabled places. A card can be promoted
+   * into a higher empty slot than the pattern it actually completed. Cards that
+   * completed no pattern are unranked (win nothing). Reuses `awardDerashPlace` +
+   * `reconcileDerashPool`, so the money math is identical to race mode.
+   */
+  private async settleDerashLeaderboard(
+    room: BingoRoom,
     cfg: BingoConfig,
     manager: EntityManager,
+  ): Promise<void> {
+    const inPlay = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
+      order: { createdAt: 'ASC' },
+    });
+    if (inPlay.length === 0) return;
+
+    const drawnSet = new Set(room.drawnNumbers);
+    for (const ticket of inPlay) {
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawnSet.has(v))
+        .sort((a, b) => a - b);
+      await manager.save(ticket);
+    }
+
+    // Enabled places in order 1st→…→5th (hardest→easiest by convention). Nothing is
+    // settled yet in leaderboard mode, so this is the full enabled list.
+    const places = this.openPrefilledPlaces(room, cfg);
+    if (places.length === 0) return;
+
+    const placePattern = new Map<PrefilledPlace, BingoPattern>();
+    for (const place of places) {
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      if (pattern) placePattern.set(place, pattern);
+    }
+    if (placePattern.size === 0) return;
+
+    // Rank the queue with the exact pure logic the leaderboard spec tests. `key`
+    // is the index into `inPlay` so we can map a rank back to its ticket.
+    const ranked = rankDerashLeaderboard(
+      this.bingoRulesService,
+      inPlay.map((ticket, i) => ({ key: i, grid: ticket.grid, order: i })),
+      room.drawnNumbers,
+      places,
+      placePattern,
+    );
+
+    const soldTickets = await this.countSoldTickets(room.id, manager);
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const houseEdgePct = room.houseEdgePct ?? 20;
+
+    // Assign ranks strictly by queue position, capped at the enabled place count.
+    for (let i = 0; i < ranked.length && i < places.length; i++) {
+      const place = places[i];
+      const pattern = placePattern.get(place);
+      if (!pattern) continue;
+      await this.awardDerashPlace({
+        room,
+        winner: inPlay[ranked[i].key],
+        place,
+        pattern,
+        totalPotMinor,
+        houseEdgePct,
+        cfg,
+        manager,
+      });
+    }
+
+    // Top up filled places to share the whole pool and mark non-winners lost.
+    await this.reconcileDerashPool(room, cfg, manager);
+  }
+
+  /** Enabled derash places (1st always) that are not yet settled, in place order. */
+  private openPrefilledPlaces(room: BingoRoom, cfg: BingoConfig): PrefilledPlace[] {
+    const enabled: Record<PrefilledPlace, boolean> = {
+      '1st': true,
+      '2nd': !!cfg.prefilledSecondPlaceEnabled,
+      '3rd': !!cfg.prefilledThirdPlaceEnabled,
+      '4th': !!cfg.prefilledFourthPlaceEnabled,
+      '5th': !!cfg.prefilledFifthPlaceEnabled,
+    };
+    return (['1st', '2nd', '3rd', '4th', '5th'] as PrefilledPlace[]).filter(
+      (place) => enabled[place] && !room.settledTiers.includes(place),
+    );
+  }
+
+  /**
+   * Award a single derash place to a winning card: pays the place's prize into
+   * the winner's wallet (with an idempotent ledger credit), flips the ticket to
+   * `won`/`settled`, and records the winner on the room so every client can
+   * render the result. Shared by the settlement tick (auto) and the manual
+   * "Bingo" claim (claimBingo) so both paths pay identically.
+   */
+  private async awardDerashPlace(input: {
+    room: BingoRoom;
+    winner: BingoTicket;
+    place: PrefilledPlace;
+    pattern: BingoPattern;
+    totalPotMinor: number;
+    houseEdgePct: number;
+    cfg: BingoConfig;
+    manager: EntityManager;
+  }): Promise<void> {
+    const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager } = input;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+
+    winner.wonTiers = [...(winner.wonTiers ?? []), place];
+    winner.payoutMinor += prizeMinor;
+    winner.status = 'won';
+    winner.settlementStatus = 'settled';
+
+    if (prizeMinor > 0) {
+      const winCredit = await this.walletService.creditInSession(
+        {
+          userId: winner.userId,
+          amountMinor: prizeMinor,
+          entryType: 'win',
+          sourceType: 'bingo_ticket',
+          sourceId: winner.id,
+          idempotencyKey: `bingo-settlement:${place}:${winner.id}`,
+          metadata: {
+            roomId: room.id,
+            place,
+            cartelaNumber: winner.cartelaNumber,
+            patternId: pattern.id,
+            totalPotMinor,
+            prizePoolMinor,
+          },
+        },
+        manager,
+      );
+      winner.walletCredits = [...(winner.walletCredits ?? []), winCredit];
+    }
+
+    await manager.save(winner);
+
+    const winnerUser = await manager.findOne(User, {
+      where: { id: winner.userId },
+      select: ['displayName', 'phoneNumber'],
+    });
+    const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+
+    room.settledTiers = [...room.settledTiers, place];
+    room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
+    room.settlementSummary = {
+      ...room.settlementSummary,
+      [place]: {
+        winnerCount: 1,
+        winnerId: winner.id,
+        winnerDisplayName: winnerUser?.displayName ?? 'Player',
+        winnerPhoneLast4: phoneLast4,
+        winnerCartelaNumber: winner.cartelaNumber,
+        // Winner card so every client in the room can render the result.
+        winnerGrid: winner.grid,
+        winnerMarkedNumbers: winner.markedNumbers,
+        patternName: pattern.name,
+        prizeMinor,
+        totalPotMinor,
+        prizePoolMinor,
+      },
+    };
+  }
+
+  /**
+   * Award a derash place to the HOUSE because the (first) card to complete it was
+   * DISQUALIFIED for a premature "Bingo" call. No wallet is credited — the prize is
+   * retained by the house. The card is stamped with the forfeited amount + place
+   * (audit), and the room summary records the disqualified winning card (grid,
+   * cartela, owner, `disqualified`/`houseWon` flags) so every client renders the
+   * reveal flagged "disqualified" and support can later explain the non-payment.
+   * The place is CLOSED — no other player can win it (the winning card was this one).
+   */
+  private async awardDerashPlaceToHouse(input: {
+    room: BingoRoom;
+    dqTicket: BingoTicket;
+    place: PrefilledPlace;
+    pattern: BingoPattern;
+    totalPotMinor: number;
+    houseEdgePct: number;
+    cfg: BingoConfig;
+    manager: EntityManager;
+  }): Promise<void> {
+    const { room, dqTicket, place, pattern, totalPotMinor, houseEdgePct, cfg, manager } = input;
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const forfeitedMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+
+    // Record the forfeit on the card — the audit trail behind the unpaid win.
+    dqTicket.disqualifiedWonRound = true;
+    dqTicket.forfeitedWinMinor = (dqTicket.forfeitedWinMinor ?? 0) + forfeitedMinor;
+    dqTicket.forfeitedPlaces = [...(dqTicket.forfeitedPlaces ?? []), place];
+    dqTicket.settlementStatus = 'settled';
+    await manager.save(dqTicket);
+
+    const dqUser = await manager.findOne(User, {
+      where: { id: dqTicket.userId },
+      select: ['displayName', 'phoneNumber'],
+    });
+    const phoneLast4 = (dqUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+
+    // Close the place to everyone (settled) but with NO paying winner.
+    room.settledTiers = [...room.settledTiers, place];
+    room.winnersByTier = { ...room.winnersByTier, [place]: [] };
+    room.settlementSummary = {
+      ...room.settlementSummary,
+      [place]: {
+        winnerCount: 0,
+        disqualified: true,
+        houseWon: true,
+        // The disqualified winning card — shown in the reveal, flagged.
+        winnerId: dqTicket.id,
+        winnerUserId: dqTicket.userId,
+        winnerDisplayName: dqUser?.displayName ?? 'Player',
+        winnerPhoneLast4: phoneLast4,
+        winnerCartelaNumber: dqTicket.cartelaNumber,
+        winnerGrid: dqTicket.grid,
+        winnerMarkedNumbers: dqTicket.markedNumbers,
+        patternName: pattern.name,
+        // What the player forfeited = what the house kept for this place.
+        prizeMinor: forfeitedMinor,
+        forfeitedWinMinor: forfeitedMinor,
+        disqualifiedReason: dqTicket.disqualifiedReason ?? 'premature_claim',
+        totalPotMinor,
+        prizePoolMinor,
+      },
+    };
+    this.logger.log(
+      `Derash house-win: room ${room.id} place ${place} — disqualified cartela #${dqTicket.cartelaNumber} ` +
+        `(ticket ${dqTicket.id}, user ${dqTicket.userId}) forfeited ${forfeitedMinor} to house`,
+    );
+  }
+
+  /**
+   * Ends a derash room once there is nothing left to play for: every enabled place
+   * is filled, the ball pool is exhausted, or literally no cards remain in play.
+   * Shared by the draw tick and the manual claim so a claim that fills the last
+   * place closes the game immediately. On completion it reconciles the prize pool.
+   * Returns whether the room was completed.
+   */
+  private async finalizeDerashIfDone(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    maxNumber: number,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const totalPlaces = 1
+      + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledThirdPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledFourthPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledFifthPlaceEnabled ? 1 : 0);
+    // A card that has already won a lower tier is STILL in play for higher tiers
+    // (non-exclusive), so "in play" counts active AND won cards. We therefore only
+    // end when every enabled place is filled, the pool is exhausted, or no cards
+    // remain at all (e.g. everyone was refunded) — never merely because the
+    // not-yet-winning cards are gone.
+    const inPlay = await manager.countBy(BingoTicket, {
+      roomId: room.id,
+      status: In(['active', 'won']),
+    });
+    // A disqualified card awaiting resolution keeps the game alive: it may still
+    // complete the winning pattern and hand the prize to the house. Only end when
+    // there are neither in-play cards NOR any unresolved disqualified ones.
+    const pendingDq = await manager.countBy(BingoTicket, {
+      roomId: room.id,
+      status: 'disqualified',
+      settlementStatus: 'pending',
+    });
+    if (
+      room.settledTiers.length >= totalPlaces ||
+      (inPlay === 0 && pendingDq === 0) ||
+      room.drawnNumbers.length >= maxNumber
+    ) {
+      room.status = 'completed';
+      room.activeGuard = null;
+      await this.reconcileDerashPool(room, cfg, manager);
+      return true;
+    }
+    return false;
+  }
+
+  /** The derash place keys, hardest→easiest by convention (1st is the top prize). */
+  private static readonly PREFILLED_PLACE_KEYS: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
+
+  /**
+   * Final money settlement for a completed derash room. Distributes the WHOLE
+   * house-adjusted pool across the places that were ACTUALLY filled, in proportion
+   * to their configured weights (normalise by FILLED weights, not enabled). During
+   * play each winner was credited the progressive lower bound
+   * (weight / enabled-total); here we credit the top-up so the filled places share
+   * the entire pool and the house keeps exactly its edge — no enabled-but-unfilled
+   * share is silently retained. If NO place filled (nobody completed even the
+   * easiest pattern — only possible in a degenerate/empty room), every in-play
+   * stake is refunded. Finally, cards that won nothing are marked lost.
+   */
+  private async reconcileDerashPool(
+    room: BingoRoom,
+    cfg: BingoConfig,
+    manager: EntityManager,
+  ): Promise<void> {
+    const filledPlaces = BingoService.PREFILLED_PLACE_KEYS.filter((p) => room.settledTiers.includes(p));
+
+    // Resolve any disqualified card that never became the house-winner so it stops
+    // keeping the game alive. It stays 'disqualified' for audit (never flipped to
+    // 'lost', never refunded — a false call forfeits the stake).
+    await manager.update(
+      BingoTicket,
+      { roomId: room.id, status: 'disqualified', settlementStatus: 'pending' },
+      { settlementStatus: 'settled' },
+    );
+
+    if (filledPlaces.length === 0) {
+      // No winner at all — refund every in-play stake (house takes nothing when
+      // there was no outcome), then there is nothing left to mark lost.
+      await this.refundInPlayDerashTickets(room, manager);
+      return;
+    }
+
+    const soldTickets = await this.countSoldTickets(room.id, manager);
+    const totalPotMinor = soldTickets * room.ticketPriceMinor;
+    const houseEdgePct = room.houseEdgePct ?? 20;
+
+    for (const place of filledPlaces) {
+      // Final = the place's share of the whole pool among the FILLED places.
+      // Progressive = what awardDerashPlace already credited (weight / enabled).
+      const finalPrize = this.computePrefilledFinalPrizeMinor(totalPotMinor, place, houseEdgePct, filledPlaces, cfg);
+      const progressivePrize = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+      const topUpMinor = finalPrize - progressivePrize;
+
+      // Reflect the FINAL amount in the summary the clients read at completion.
+      this.setDerashSummaryPrize(room, place, finalPrize);
+
+      const winnerId = room.winnersByTier[place]?.[0];
+      if (!winnerId || topUpMinor <= 0) continue;
+
+      const ticket = await manager.findOne(BingoTicket, { where: { id: winnerId } });
+      if (!ticket) continue;
+
+      const topUpCredit = await this.walletService.creditInSession(
+        {
+          userId: ticket.userId,
+          amountMinor: topUpMinor,
+          entryType: 'win',
+          sourceType: 'bingo_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `bingo-reconcile:${place}:${ticket.id}`,
+          metadata: {
+            roomId: room.id,
+            place,
+            kind: 'pool_redistribution',
+            progressivePrizeMinor: progressivePrize,
+            finalPrizeMinor: finalPrize,
+          },
+        },
+        manager,
+      );
+      ticket.payoutMinor += topUpMinor;
+      ticket.walletCredits = [...(ticket.walletCredits ?? []), topUpCredit];
+      await manager.save(ticket);
+    }
+
+    // Cards that never won any place → lost (won cards keep their 'won' status).
+    await this.markRemainingTicketsLost(room, manager);
+  }
+
+  /** Overwrite a place's prizeMinor in the settlement summary (final reconciled value). */
+  private setDerashSummaryPrize(room: BingoRoom, place: PrefilledPlace, prizeMinor: number): void {
+    const entry = (room.settlementSummary ?? {})[place] as Record<string, unknown> | undefined;
+    if (!entry) return;
+    room.settlementSummary = {
+      ...room.settlementSummary,
+      [place]: { ...entry, prizeMinor },
+    };
+  }
+
+  /** Refund every still-in-play cartela's stake — used when a room ends with no winner. */
+  private async refundInPlayDerashTickets(room: BingoRoom, manager: EntityManager): Promise<void> {
+    const tickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, status: In(['active', 'won']) },
+    });
+    for (const ticket of tickets) {
+      const refundCredit = await this.walletService.creditInSession(
+        {
+          userId: ticket.userId,
+          amountMinor: ticket.stakeMinor,
+          entryType: 'refund',
+          sourceType: 'bingo_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `bingo-noresult-refund:${ticket.id}`,
+          metadata: { roomId: room.id, reason: 'derash_no_winner' },
+        },
+        manager,
+      );
+      ticket.status = 'cancelled';
+      ticket.settlementStatus = 'settled';
+      ticket.walletCredits = [...(ticket.walletCredits ?? []), refundCredit];
+      await manager.save(ticket);
+    }
+  }
+
+  /**
+   * Manual "Bingo" claim (derash only). When a player has turned Auto OFF their
+   * cards are skipped by the settlement tick, so they must tap "Bingo" on a card
+   * to win — racing the tick and every other player for the next open place.
+   *
+   * Outcomes (see the auto-toggle feature): the room row is locked FOR UPDATE so
+   * this races the draw tick and other claims deterministically —
+   *  - `won`         — the card completes the next open place's pattern and gets it.
+   *  - `disqualified` — the card DID complete a winning pattern but the place was
+   *                     already awarded to someone else (they were too slow).
+   *  - `ignored`      — the card has no bingo yet (a harmless early tap).
+   */
+  async claimBingo(input: {
+    userId: string;
+    roomId: string;
+    ticketId: string;
+  }): Promise<{ result: 'won' | 'disqualified' | 'ignored'; ticket: BingoTicketResponse; room: BingoRoomResponse }> {
+    const userId = this.validateUuid(input.userId, 'userId');
+    const roomId = this.validateUuid(input.roomId, 'roomId');
+    const ticketId = this.validateUuid(input.ticketId, 'ticketId');
+    const cfg = await this.getBingoConfig();
+
+    return await this.dataSource.transaction(async (manager) => {
+      const room = await manager.findOne(BingoRoom, {
+        where: { id: roomId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!room) throw new NotFoundException('Bingo room not found');
+      if (room.winMode !== 'prefilled') {
+        throw new BadRequestException('Manual Bingo claims are only available in derash rooms');
+      }
+      if (room.status !== 'running') {
+        throw new ConflictException('Bingo can only be called while the game is drawing');
+      }
+
+      const ticket = await manager.findOne(BingoTicket, {
+        where: { id: ticketId, roomId, userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!ticket) throw new NotFoundException('Cartela not found for this player in this room');
+
+      const finish = async (result: 'won' | 'disqualified' | 'ignored') => {
+        const soldTickets = await this.countSoldTickets(roomId, manager);
+        const takenSpots = await this.getTakenSpots(roomId);
+        return {
+          result,
+          ticket: this.toTicketResponse(ticket),
+          room: this.toRoomResponse(room, soldTickets, takenSpots),
+        };
+      };
+
+      // In-play = can still claim. A card that already won a lower tier stays
+      // eligible for higher tiers (non-exclusive), so 'won' is claimable too.
+      if (ticket.status !== 'active' && ticket.status !== 'won') return finish('ignored');
+
+      // Refresh this card's marks against the current draw before evaluating.
+      const drawn = new Set(room.drawnNumbers);
+      ticket.markedNumbers = ticket.grid
+        .flat()
+        .filter((v): v is number => v !== null && drawn.has(v))
+        .sort((a, b) => a - b);
+
+      const completesPattern = (pattern: BingoPattern | null): boolean =>
+        !!pattern &&
+        this.bingoRulesService
+          .evaluatePatternTicket(ticket.grid, room.drawnNumbers, [pattern])
+          .completedPatternIds.includes(pattern.id);
+
+      // Does the card complete ANY enabled winning pattern right now?
+      const cardHasBingo = async (): Promise<boolean> => {
+        for (const place of this.openPrefilledPlaces(room, cfg)) {
+          const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+          if (completesPattern(pattern)) return true;
+        }
+        return false;
+      };
+
+      // Leaderboard mode has no per-place claiming — ranks resolve once at round
+      // end by final achievement, so a VALID "Bingo" tap is a harmless no-op. But a
+      // PREMATURE tap (no bingo on the card yet) is still DISQUALIFIED, exactly like
+      // race mode — tapping early must be penalised. A disqualified card is excluded
+      // from the end-of-round ranking (settlement queries only active/won cards).
+      if (room.rankingMode === 'leaderboard') {
+        if ((ticket.wonTiers ?? []).length > 0 || (await cardHasBingo())) {
+          return finish('ignored');
+        }
+        ticket.status = 'disqualified';
+        ticket.disqualifiedReason = 'premature_claim';
+        ticket.disqualifiedAt = new Date();
+        ticket.settlementStatus = 'settled';
+        await manager.save(ticket);
+        this.logger.log(`Bingo (leaderboard): disqualified premature claim on cartela ${ticket.id}`);
+        return finish('disqualified');
+      }
+
+      // Claim EVERY still-open place this card qualifies for (best/hardest first).
+      // Non-exclusive: one tap grabs all the tiers the card currently completes and
+      // that no one has taken yet — e.g. a card with three lines claims 1st (and
+      // 2nd/3rd too if they are somehow still open).
+      let awardedAny = false;
+      for (const place of this.openPrefilledPlaces(room, cfg)) {
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+        if (!completesPattern(pattern)) continue;
+        const soldTickets = await this.countSoldTickets(roomId, manager);
+        const totalPotMinor = soldTickets * room.ticketPriceMinor;
+        const houseEdgePct = room.houseEdgePct ?? 20;
+        await this.awardDerashPlace({
+          room,
+          winner: ticket,
+          place,
+          pattern: pattern as BingoPattern,
+          totalPotMinor,
+          houseEdgePct,
+          cfg,
+          manager,
+        });
+        awardedAny = true;
+      }
+
+      if (awardedAny) {
+        // Filling the last place can end the game (and reconcile the pool).
+        await this.finalizeDerashIfDone(room, cfg, 75, manager);
+        await manager.save(room);
+        return finish('won');
+      }
+
+      // Nothing to claim. A card that already won something isn't punished for a
+      // redundant tap; a card that has never won and calls a false Bingo (tapped
+      // BINGO before its winning pattern actually completed) is disqualified, the
+      // way a false call is penalised in hall bingo.
+      if ((ticket.wonTiers ?? []).length > 0) return finish('ignored');
+      ticket.status = 'disqualified';
+      ticket.disqualifiedReason = 'premature_claim';
+      ticket.disqualifiedAt = new Date();
+      // Stays PENDING (not settled) on purpose: the settlement tick keeps watching
+      // this card. If it turns out to be the round's winning card, the prize goes to
+      // the HOUSE (awardDerashPlaceToHouse) and the forfeit is recorded — never paid.
+      ticket.settlementStatus = 'pending';
+      await manager.save(ticket);
+      // A pending-disqualified card that could still complete a winning pattern keeps
+      // the game alive (finalizeDerashIfDone counts pending-DQ cards as in play).
+      await this.finalizeDerashIfDone(room, cfg, 75, manager);
+      await manager.save(room);
+      return finish('disqualified');
+    });
+  }
+
+  /**
+   * Set the caller's Auto preference for a room. OFF flips every one of their
+   * still-active cards to manual (settlement tick skips them; they must claim);
+   * ON restores auto-award. Returns the applied value and how many cards changed.
+   */
+  async setAutoClaim(input: {
+    userId: string;
+    roomId: string;
+    auto: boolean;
+  }): Promise<{ autoClaim: boolean; updated: number }> {
+    const userId = this.validateUuid(input.userId, 'userId');
+    const roomId = this.validateUuid(input.roomId, 'roomId');
+    const result = await this.bingoTicketRepository.update(
+      { userId, roomId, status: 'active' },
+      { autoClaim: input.auto },
+    );
+    return { autoClaim: input.auto, updated: result.affected ?? 0 };
+  }
+
+  /**
+   * Resolve the winning pattern for a specific derash place. Falls back from the
+   * per-place pattern → the legacy shared `prefilledWinPatternId` → "Any Line".
+   */
+  private async resolvePrefilledPlacePattern(
+    cfg: BingoConfig,
+    place: PrefilledPlace,
+    manager: EntityManager,
   ): Promise<BingoPattern | null> {
-    if (cfg.prefilledWinPatternId) {
-      const chosen = await manager.findOne(BingoPattern, { where: { id: cfg.prefilledWinPatternId } });
+    const perPlaceId: Record<PrefilledPlace, string | null | undefined> = {
+      '1st': cfg.prefilledFirstPatternId,
+      '2nd': cfg.prefilledSecondPatternId,
+      '3rd': cfg.prefilledThirdPatternId,
+      '4th': cfg.prefilledFourthPatternId,
+      '5th': cfg.prefilledFifthPatternId,
+    };
+    const id = perPlaceId[place] ?? cfg.prefilledWinPatternId ?? null;
+    if (id) {
+      const chosen = await manager.findOne(BingoPattern, { where: { id } });
       if (chosen) return chosen;
     }
     return manager.findOne(BingoPattern, { where: { name: 'Any Line' } });
   }
 
-  private nextOpenPrefilledPlace(room: BingoRoom, cfg: BingoConfig): '1st' | '2nd' | '3rd' | null {
-    if (!room.settledTiers.includes('1st')) return '1st';
-    if (cfg.prefilledSecondPlaceEnabled && !room.settledTiers.includes('2nd')) return '2nd';
-    if (cfg.prefilledThirdPlaceEnabled && !room.settledTiers.includes('3rd')) return '3rd';
-    return null;
+  /**
+   * Prize a derash/prefilled place pays out, in minor units.
+   *
+   * The whole house-adjusted pool is distributed across the ENABLED places by
+   * weight (their configured percentages), normalised by the sum of enabled
+   * weights. So with only 1st place enabled (the default) the winner takes the
+   * FULL pool and `houseEdgePct` is the only deduction. Dividing by a hardcoded
+   * 100 would cut a SECOND time whenever the enabled weights sum to < 100 (e.g.
+   * the default 1st=80) — the "service fee taken twice" bug where a pot of 40
+   * yielded a pool of 32 but paid the winner only 32*0.8 = 25.
+   */
+  computePrefilledPrizeMinor(
+    totalPotMinor: number,
+    place: PrefilledPlace,
+    houseEdgePct: number,
+    cfg: BingoConfig,
+  ): number {
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const placeWeight = this.prefilledPlaceWeight(place, cfg);
+    const enabledWeightTotal = this.enabledPrefilledWeightTotal(cfg);
+    return enabledWeightTotal > 0
+      ? Math.floor((prizePoolMinor * placeWeight) / enabledWeightTotal)
+      : 0;
+  }
+
+  /**
+   * FINAL derash prize for a place after the game ends, distributing the whole
+   * house-adjusted pool across the places that were ACTUALLY FILLED (normalise by
+   * filled weights, not enabled). This is what a winner ends up with once
+   * `reconcileDerashPool` tops up the progressive credit — so an enabled place that
+   * nobody filled has its share redistributed to the real winners instead of being
+   * silently kept by the house. With every enabled place filled it equals
+   * `computePrefilledPrizeMinor`; with a single filled place it is the full pool.
+   */
+  computePrefilledFinalPrizeMinor(
+    totalPotMinor: number,
+    place: PrefilledPlace,
+    houseEdgePct: number,
+    filledPlaces: PrefilledPlace[],
+    cfg: BingoConfig,
+  ): number {
+    const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
+    const placeWeight = this.prefilledPlaceWeight(place, cfg);
+    const filledWeightTotal = filledPlaces.reduce((sum, p) => sum + this.prefilledPlaceWeight(p, cfg), 0);
+    return filledWeightTotal > 0
+      ? Math.floor((prizePoolMinor * placeWeight) / filledWeightTotal)
+      : 0;
+  }
+
+  /** Configured payout weight for a prefilled place (raw %, used as a weight). */
+  private prefilledPlaceWeight(place: PrefilledPlace, cfg: BingoConfig): number {
+    switch (place) {
+      case '1st': return cfg.prefilledFirstPlacePct ?? 80;
+      case '2nd': return cfg.prefilledSecondPlacePct ?? 0;
+      case '3rd': return cfg.prefilledThirdPlacePct ?? 0;
+      case '4th': return cfg.prefilledFourthPlacePct ?? 0;
+      case '5th': return cfg.prefilledFifthPlacePct ?? 0;
+    }
+  }
+
+  /** Sum of payout weights across the places that are actually enabled. */
+  private enabledPrefilledWeightTotal(cfg: BingoConfig): number {
+    let total = cfg.prefilledFirstPlacePct ?? 80; // 1st place is always active
+    if (cfg.prefilledSecondPlaceEnabled) total += cfg.prefilledSecondPlacePct ?? 0;
+    if (cfg.prefilledThirdPlaceEnabled) total += cfg.prefilledThirdPlacePct ?? 0;
+    if (cfg.prefilledFourthPlaceEnabled) total += cfg.prefilledFourthPlacePct ?? 0;
+    if (cfg.prefilledFifthPlaceEnabled) total += cfg.prefilledFifthPlacePct ?? 0;
+    return total;
   }
 
   private async evaluateAndSettleTiers(room: BingoRoom, manager: EntityManager): Promise<void> {
@@ -1259,6 +2541,38 @@ export class BingoService implements OnModuleInit {
     });
   }
 
+  /**
+   * Persist an in-app "win" notification per (human) winner of a completed room,
+   * aggregating multiple winning cartelas into one total. Bot accounts are
+   * skipped. Called once, at completion — so the win reaches a player even if
+   * they had left the game screen.
+   */
+  async notifyRoomWinners(roomId: string): Promise<void> {
+    const winners = await this.getRoomWinners(roomId);
+    const totalByUser = new Map<string, number>();
+    for (const w of winners) {
+      if (w.payoutMinor > 0) totalByUser.set(w.userId, (totalByUser.get(w.userId) ?? 0) + w.payoutMinor);
+    }
+    if (totalByUser.size === 0) return;
+
+    const users = await this.dataSource.getRepository(User).find({
+      where: { id: In([...totalByUser.keys()]) },
+      select: ['id', 'productMetadata'],
+    });
+    const isBot = new Map(users.map((u) => [u.id, u.productMetadata?.botPolicy != null]));
+
+    for (const [userId, payoutMinor] of totalByUser) {
+      if (isBot.get(userId)) continue; // don't notify bot accounts
+      await this.notificationsService.safeCreate({
+        userId,
+        type: 'win',
+        title: 'Bingo win! 🎉',
+        body: `You won ${payoutMinor.toLocaleString()} ETB in Bingo.`,
+        data: { game: 'bingo', roomId, amountMinor: payoutMinor },
+      });
+    }
+  }
+
   async getSpectatorView(roomId: string): Promise<Array<{
     grid: BingoGrid;
     markedNumbers: number[];
@@ -1294,6 +2608,75 @@ export class BingoService implements OnModuleInit {
       BingoTicket,
       { roomId: room.id, status: 'active' },
       { status: 'lost', settlementStatus: 'settled' },
+    );
+  }
+
+  /**
+   * Live count of tickets that count toward the pot — every row that is NOT
+   * cancelled (active/won/lost are all paid stakes; cancelled were refunded).
+   * Both the advertised prize (toRoomResponse) and settlement use THIS single
+   * source, so the paid pot can never drift from the advertised pot the way the
+   * persisted `room.soldTickets` counter could if an increment/decrement was
+   * ever missed.
+   */
+  private async countSoldTickets(roomId: string, manager?: EntityManager): Promise<number> {
+    const where: FindOptionsWhere<BingoTicket> = { roomId, status: Not('cancelled') };
+    return manager
+      ? manager.countBy(BingoTicket, where)
+      : this.bingoTicketRepository.countBy(where);
+  }
+
+  /** Distinct REAL (non-bot) players holding a non-cancelled ticket in the room. */
+  async countRealPlayersInRoom(roomId: string, manager?: EntityManager): Promise<number> {
+    const runner = manager ?? this.bingoTicketRepository.manager;
+    const rows: Array<{ c: number | string }> = await runner.query(
+      `SELECT COUNT(DISTINCT t.userId) AS c
+         FROM bingo_tickets t
+         JOIN users u ON u.id = t.userId
+        WHERE t.roomId = ? AND t.status <> 'cancelled'
+          AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL`,
+      [roomId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  /** Set of active (house-controlled) bot userIds. */
+  private async getActiveBotUserIds(manager: EntityManager): Promise<Set<string>> {
+    const rows: Array<{ id: string }> = await manager.query(
+      `SELECT id FROM users
+        WHERE JSON_EXTRACT(productMetadata, '$.botPolicy') IS NOT NULL
+          AND JSON_EXTRACT(productMetadata, '$.botPolicy.active') = true`,
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Pick the bot cartela to hand a redirected win to. Prefers a bot whose card
+   * actually completes the pattern (so the revealed winner card looks legitimate);
+   * otherwise the in-play bot card closest to completing (most marked cells).
+   */
+  private pickBotRedirectWinner(
+    inPlay: BingoTicket[],
+    botIds: Set<string>,
+    pattern: BingoPattern,
+    drawnNumbers: number[],
+  ): BingoTicket | null {
+    const botTickets = inPlay.filter((t) => botIds.has(t.userId));
+    if (botTickets.length === 0) return null;
+    const drawnSet = new Set(drawnNumbers);
+    const completing = botTickets.find((t) =>
+      this.bingoRulesService
+        .evaluatePatternTicket(t.grid, drawnNumbers, [pattern])
+        .completedPatternIds.includes(pattern.id),
+    );
+    if (completing) return completing;
+    return (
+      botTickets
+        .map((t) => ({
+          t,
+          marks: t.grid.flat().filter((v): v is number => v !== null && drawnSet.has(v)).length,
+        }))
+        .sort((a, b) => b.marks - a.marks)[0]?.t ?? null
     );
   }
 
@@ -1349,6 +2732,10 @@ export class BingoService implements OnModuleInit {
       payoutMinor: ticket.payoutMinor,
       status: ticket.status,
       settlementStatus: ticket.settlementStatus,
+      autoClaim: ticket.autoClaim ?? true,
+      disqualifiedReason: ticket.disqualifiedReason ?? null,
+      disqualifiedWonRound: ticket.disqualifiedWonRound ?? false,
+      forfeitedWinMinor: ticket.forfeitedWinMinor ?? 0,
     };
   }
 

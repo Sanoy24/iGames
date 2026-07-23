@@ -155,12 +155,29 @@ function extractTelebirrReceiptBody(rawText: string): { receiptUrl: string } | {
   return { receiptNo: trimmed };
 }
 
+export type ActiveAgent = {
+  id?: string;
+  displayName: string;
+  phoneNumber: string | null;
+};
+
 export const paymentsApi = {
+  // Receipt verification fetches an external page (Ethiotelecom, via the proxy),
+  // so it can take longer than the 15s global default — give it 45s.
   previewTelebirrReceipt: (rawText: string) =>
-    api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
+    api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
 
   submitTelebirrReceipt: (rawText: string) =>
-    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText)).then((r) => r.data),
+    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
+
+  getActiveAgent: () =>
+    api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
+
+  getActiveAgents: () =>
+    api.get<ActiveAgent[]>('/payments/active-agents').then((r) => r.data),
+
+  getConfig: () =>
+    api.get<{ minDepositMinor: number }>('/payments/config').then((r) => r.data),
 };
 
 // ── Keno ──────────────────────────────────────────────────────────
@@ -179,9 +196,22 @@ export const kenoApi = {
 };
 
 // ── Bingo ─────────────────────────────────────────────────────────
+export type BingoLobbyRoom = {
+  id: string;
+  name: string;
+  status: string;
+  ownerAgentId: string | null;
+  ownerName: string;
+  ticketPriceMinor: number;
+  players: number;
+  potMinor: number;
+  scheduledStartAt: string | null;
+};
+
 export const bingoApi = {
   listRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
   getCurrentRoom: () => api.get<BingoRoomState | null>('/bingo/current').then((r) => r.data),
+  getLobby: () => api.get<{ enabled: boolean; rooms: BingoLobbyRoom[] }>('/bingo/lobby').then((r) => r.data),
   getRoomState: (roomId: string) => api.get<BingoRoomState>(`/bingo/rooms/${roomId}/state`).then((r) => r.data),
   spectateRoom: (roomId: string) => api.get<SpectatorCard[]>(`/bingo/rooms/${roomId}/spectate`).then((r) => r.data),
   purchaseTickets: (roomId: string, count: number, idempotencyKey: string, selectedNumbers?: number[]) =>
@@ -200,6 +230,18 @@ export const bingoApi = {
         { headers: { 'Idempotency-Key': idempotencyKey } }
       )
       .then((r) => r.data as BingoTicket[]),
+  releaseCartela: (roomId: string, cartelaNumber: number) =>
+    api
+      .delete(`/bingo/rooms/${roomId}/cartelas/${cartelaNumber}`)
+      .then((r) => r.data as { cartelaNumber: number; refundedMinor: number }),
+  setAuto: (roomId: string, auto: boolean) =>
+    api
+      .post(`/bingo/rooms/${roomId}/auto`, { auto })
+      .then((r) => r.data as { autoClaim: boolean; updated: number }),
+  claimBingo: (roomId: string, ticketId: string) =>
+    api
+      .post(`/bingo/rooms/${roomId}/tickets/${ticketId}/claim`)
+      .then((r) => r.data as { result: 'won' | 'disqualified' | 'ignored'; ticket: BingoTicket; room: BingoRoomState }),
 };
 
 // ── Crash ─────────────────────────────────────────────────────────
@@ -240,19 +282,132 @@ export type SystemConfig = {
   telebirrCreditMinorPerBirr: number;
   welcomeBonusMinor: number;
   withdrawalServiceChargePct: number;
+  withdrawalCommissionPct: number;
+  superAdminUserId?: string | null;
+  minDepositMinor: number;
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
   maxPendingWithdrawalsPerUser: number;
+  /** Approach B: per-agent Bingo rooms on/off. */
+  agentRoomsEnabled?: boolean;
+  /** % of a room's real-player GGR paid to the owning agent on completion. */
+  agentRoomCommissionPct?: number;
+};
+
+export type AgentPerformance = {
+  agentId: string;
+  displayName: string;
+  customersBrought: number;
+  tickets: number;
+  players: number;
+  stakedMinor: number;
+  payoutMinor: number;
+  ggrMinor: number;
+  commissionEarnedMinor: number;
+};
+
+export type AgentSelfPerformance = {
+  customersBrought: number;
+  tickets: number;
+  players: number;
+  stakedMinor: number;
+  payoutMinor: number;
+  ggrMinor: number;
+  commissionEarnedMinor: number;
 };
 
 export const adminApi = {
   getOverview: () => api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
   getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
   updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
+  getAgentPerformance: () => api.get<AgentPerformance[]>('/admin/agents/performance').then((r) => r.data),
   topupWallet: (amountMinor: number, idempotencyKey?: string) =>
     api.post<Wallet>('/admin/wallet/topup', { amountMinor, idempotencyKey }).then((r) => r.data),
   transferToAgent: (agentId: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ adminWallet: Wallet; agentWallet: Wallet }>('/admin/wallet/transfer-to-agent', { agentId, amountMinor, idempotencyKey }).then((r) => r.data),
+};
+
+// ── Notifications (per-user bell) ─────────────────────────────────
+export type ServerNotification = {
+  id: string;
+  type: 'win' | 'deposit' | 'withdrawal' | 'adjustment' | 'bonus' | 'system';
+  title: string;
+  body: string;
+  data: Record<string, unknown> | null;
+  read: boolean;
+  createdAt: string;
+};
+
+export const notificationsApi = {
+  list: () =>
+    api.get<{ items: ServerNotification[]; unreadCount: number }>('/notifications').then((r) => r.data),
+  markRead: (ids?: string[]) =>
+    api.post<{ unreadCount: number }>('/notifications/read', ids && ids.length ? { ids } : {}).then((r) => r.data),
+};
+
+// ── Admin: Broadcast (Telegram) ───────────────────────────────────
+export type BroadcastButton = { text: string; url: string };
+export type BroadcastRecurrence = { frequency: 'daily' | 'weekly'; time: string; dayOfWeek?: number };
+export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+
+export type BroadcastMessage = {
+  id: string;
+  title: string;
+  text: string | null;
+  imagePath: string | null;
+  buttons: BroadcastButton[] | null;
+  parseMode: 'none' | 'HTML' | 'MarkdownV2';
+  audience: string;
+  scheduleType: 'now' | 'once' | 'recurring';
+  recurrence: BroadcastRecurrence | null;
+  timezoneOffsetMinutes: number;
+  nextRunAt: string | null;
+  status: BroadcastStatus;
+  totalRecipients: number;
+  sentCount: number;
+  failedCount: number;
+  runCount: number;
+  lastRunAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateBroadcastInput = {
+  title: string;
+  text?: string;
+  imageFilename?: string;
+  buttons?: BroadcastButton[];
+  parseMode?: 'none' | 'HTML' | 'MarkdownV2';
+  scheduleType: 'now' | 'once' | 'recurring';
+  scheduledAtLocal?: string;
+  recurrence?: BroadcastRecurrence;
+  timezoneOffsetMinutes?: number;
+  asDraft?: boolean;
+};
+
+// Uploaded broadcast images are served at the backend root (/uploads), not under
+// the /api prefix. In prod VITE_API_URL is the backend origin; in dev it's unset
+// and Vite proxies /uploads to localhost:3000 (see vite.config).
+export const ASSET_BASE = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '');
+export const broadcastImageUrl = (imagePath: string | null | undefined): string | null =>
+  imagePath ? `${ASSET_BASE}/uploads/${imagePath}` : null;
+
+export const broadcastApi = {
+  list: () => api.get<BroadcastMessage[]>('/admin/broadcasts').then((r) => r.data),
+  get: (id: string) => api.get<BroadcastMessage>(`/admin/broadcasts/${id}`).then((r) => r.data),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append('image', file);
+    return api
+      .post<{ imageFilename: string; imagePath: string }>('/admin/broadcasts/upload', form)
+      .then((r) => r.data);
+  },
+  create: (dto: CreateBroadcastInput) =>
+    api.post<BroadcastMessage>('/admin/broadcasts', dto).then((r) => r.data),
+  sendNow: (id: string) => api.post<BroadcastMessage>(`/admin/broadcasts/${id}/send`).then((r) => r.data),
+  cancel: (id: string) => api.post<BroadcastMessage>(`/admin/broadcasts/${id}/cancel`).then((r) => r.data),
+  remove: (id: string) => api.delete(`/admin/broadcasts/${id}`).then((r) => r.data),
 };
 
 // ── Admin: Keno ───────────────────────────────────────────────────
@@ -270,8 +425,40 @@ export const adminKenoApi = {
 };
 
 // ── Admin: Bingo ──────────────────────────────────────────────────
+export type BingoRoundTicket = {
+  id: string;
+  userId: string;
+  userName: string;
+  phoneLast4: string;
+  isBot: boolean;
+  cartelaNumber: number | null;
+  status: string;
+  settlementStatus: string;
+  autoClaim: boolean;
+  stakeMinor: number;
+  payoutMinor: number;
+  wonTiers: string[];
+  grid: Array<Array<number | null>>;
+  markedNumbers: number[];
+  createdAt: string;
+};
+
+export type BingoRoundDetails = {
+  room: BingoRoom & { rankingMode?: string; rngAuditLogIds?: string[]; createdAt?: string };
+  totals: {
+    soldTickets: number;
+    totalPotMinor: number;
+    prizePoolMinor: number;
+    totalPaidOutMinor: number;
+    houseEdgePct: number;
+  };
+  tickets: BingoRoundTicket[];
+};
+
 export const adminBingoApi = {
   getConfig: () => api.get<BingoConfig>('/admin/bingo/config').then((r) => r.data),
+  getRoomDetails: (roomId: string) =>
+    api.get<BingoRoundDetails>(`/admin/bingo/rooms/${roomId}/details`).then((r) => r.data),
   updateConfig: (dto: Partial<BingoConfig>) =>
     api.post<BingoConfig>('/admin/bingo/config', dto).then((r) => r.data),
   listAllRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
@@ -279,7 +466,7 @@ export const adminBingoApi = {
     name: string;
     ticketPriceMinor: number;
     maxTickets: number;
-    scheduledStartAt: string;
+    scheduledStartAt: string | null;
     prizes: Record<string, number>;
     winMode?: string;
     numberRange?: number;
@@ -350,6 +537,8 @@ export type AgentWithdrawalAction = {
   status: string;
   destinationAccount: string;
   serviceChargeMinor?: number;
+  serviceFeeMinor?: number;
+  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
   adminNotes?: string;
@@ -413,11 +602,31 @@ export type AdminUserDeposit = {
   createdAt: string;
 };
 
+export type AdminGameStat = {
+  tickets: number;
+  rounds: number;
+  stakedMinor: number;
+  wins: number;
+  winMinor: number;
+};
+
+export type AdminUserGameStats = {
+  bingo: AdminGameStat;
+  keno: AdminGameStat;
+  crash: AdminGameStat;
+  totalGamesPlayed: number;
+  totalRoundsPlayed: number;
+  totalStakedMinor: number;
+  totalWins: number;
+  totalWinMinor: number;
+};
+
 export type AdminUserActivity = {
   user: User;
   ledger: LedgerEntry[];
   withdrawals: Withdrawal[];
   deposits: AdminUserDeposit[];
+  gameStats: AdminUserGameStats;
   totals: {
     walletAvailableMinor: number;
     walletReservedMinor: number;
@@ -434,6 +643,8 @@ export const adminAgentsApi = {
     api.post<User>('/admin/agents', dto).then((r) => r.data),
   updateAgent: (id: string, dto: Partial<User & { password?: string }>) =>
     api.patch<User>(`/admin/agents/${id}`, dto).then((r) => r.data),
+  setAgentOnDuty: (id: string, mode: 'auto' | 'on' | 'off') =>
+    api.patch<User>(`/admin/agents/${id}/on-duty`, { mode }).then((r) => r.data),
   listActions: (limit = 100) =>
     api.get<{
       events: AgentActionEvent[];
@@ -453,7 +664,8 @@ export const adminWithdrawalsApi = {
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
-  getConfig: () => api.get<{ withdrawalServiceChargePct: number }>('/agent/config').then((r) => r.data),
+  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
+  getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
   getTransactions: () => api.get<{ ledger: LedgerEntry[]; withdrawals: Withdrawal[] }>('/agent/transactions').then((r) => r.data),
@@ -480,6 +692,193 @@ export const adminUsersApi = {
     api.post<User>(`/admin/users/${userId}/wallet/adjust`, { amountMinor, direction, reason }).then((r) => r.data),
   getUserActivity: (userId: string, limit = 20) =>
     api.get<AdminUserActivity>(`/admin/users/${userId}/activity?limit=${limit}`).then((r) => r.data),
+};
+
+// ── Support (tickets, complaints, disputes, refunds, live chat) ───
+export type SupportTicketCategory = 'general' | 'complaint' | 'dispute' | 'refund' | 'live_chat';
+export type SupportTicketStatus = 'open' | 'pending_agent' | 'pending_user' | 'resolved' | 'closed';
+export type SupportTicketPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type SupportResolutionType = 'resolved' | 'rejected' | 'refunded';
+
+export type SupportTicket = {
+  id: string;
+  userId: string;
+  category: SupportTicketCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  priority: SupportTicketPriority;
+  assignedAgentId: string | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  requestedAmountMinor: number | null;
+  resolutionType: SupportResolutionType | null;
+  resolutionNote: string | null;
+  refundLedgerEntryId: string | null;
+  refundedAmountMinor: number | null;
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SupportRequestType = 'complaint' | 'dispute' | 'refund';
+export type SupportRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export type SupportMessage = {
+  id: string;
+  authorId: string | null;
+  authorRole: 'user' | 'agent' | 'system';
+  body: string;
+  attachments: Record<string, unknown>[] | null;
+  internal: boolean;
+  createdAt: string;
+  // Present only when the message is a tagged request.
+  requestType: SupportRequestType | null;
+  requestStatus: SupportRequestStatus | null;
+  requestedAmountMinor: number | null;
+  relatedType: string | null;
+  relatedId: string | null;
+  refundedAmountMinor: number | null;
+  resolutionNote: string | null;
+  decidedAt: string | null;
+};
+
+export type SupportConversation = { ticket: SupportTicket; messages: SupportMessage[] };
+
+export type PostMessageInput = {
+  body: string;
+  requestType?: SupportRequestType;
+  requestedAmountMinor?: number;
+  relatedType?: string;
+  relatedId?: string;
+};
+
+export const supportApi = {
+  /** The user's single support conversation. */
+  getConversation: () =>
+    api.get<SupportConversation>('/support/conversation').then((r) => r.data),
+  /** Post a message, optionally as a tagged refund/dispute/complaint request. */
+  postMessage: (input: PostMessageInput) =>
+    api.post<SupportMessage>('/support/messages', input).then((r) => r.data),
+};
+
+export type SupportTicketFilter = {
+  status?: SupportTicketStatus;
+  category?: SupportTicketCategory;
+  assignedAgentId?: string; // or 'me'
+  limit?: number;
+  offset?: number;
+};
+
+export const supportAgentApi = {
+  list: (filter: SupportTicketFilter = {}) => {
+    const params = new URLSearchParams();
+    if (filter.status) params.set('status', filter.status);
+    if (filter.category) params.set('category', filter.category);
+    if (filter.assignedAgentId) params.set('assignedAgentId', filter.assignedAgentId);
+    params.set('limit', String(filter.limit ?? 30));
+    params.set('offset', String(filter.offset ?? 0));
+    return api
+      .get<{ items: SupportTicket[]; total: number }>(`/agent/support/tickets?${params.toString()}`)
+      .then((r) => r.data);
+  },
+  get: (id: string) =>
+    api.get<SupportConversation>(`/agent/support/tickets/${id}`).then((r) => r.data),
+  reply: (id: string, body: string, internal = false) =>
+    api.post<SupportMessage>(`/agent/support/tickets/${id}/messages`, { body, internal }).then((r) => r.data),
+  update: (id: string, dto: { status?: SupportTicketStatus; priority?: SupportTicketPriority; assignedAgentId?: string | null }) =>
+    api.patch<SupportTicket>(`/agent/support/tickets/${id}`, dto).then((r) => r.data),
+  claim: (id: string) =>
+    api.post<SupportTicket>(`/agent/support/tickets/${id}/claim`).then((r) => r.data),
+  // Request actions are message-level now (a request is a tagged message).
+  approveRefund: (messageId: string, dto: { amountMinor?: number; note?: string }) =>
+    api.post<SupportMessage>(`/agent/support/messages/${messageId}/refund/approve`, dto).then((r) => r.data),
+  reject: (messageId: string, reason: string) =>
+    api.post<SupportMessage>(`/agent/support/messages/${messageId}/reject`, { reason }).then((r) => r.data),
+};
+
+// ── Games catalog + admin availability control ───────────────────
+export type GameCode = 'keno' | 'bingo' | 'crash' | 'pool';
+export type GameState = 'enabled' | 'maintenance' | 'hidden';
+
+export type GameCatalogEntry = {
+  code: GameCode;
+  name: string;
+  state: GameState;
+  maintenanceMessage: string | null;
+  playable: boolean;
+  displayOrder: number;
+};
+
+export const gamesApi = {
+  getCatalog: () => api.get<GameCatalogEntry[]>('/games/catalog').then((r) => r.data),
+};
+
+export const adminGamesApi = {
+  list: () => api.get<GameCatalogEntry[]>('/admin/games').then((r) => r.data),
+  update: (code: GameCode, dto: { state?: GameState; maintenanceMessage?: string | null; displayOrder?: number }) =>
+    api.patch<GameCatalogEntry>(`/admin/games/${code}`, dto).then((r) => r.data),
+};
+
+// ── Pool admin ───────────────────────────────────────────────────────────────
+export type PoolBotDifficulty = 'easy' | 'medium' | 'hard';
+
+/** Full editable Pool config (admin view) — mirrors PoolConfig entity + DTO. */
+export type AdminPoolConfig = {
+  // Single player
+  singlePlayerEnabled: boolean;
+  singlePlayerStakeMinor: number;
+  botDifficulty: PoolBotDifficulty;
+  // Two player
+  twoPlayerEnabled: boolean;
+  minStakeMinor: number;
+  maxStakeMinor: number;
+  rakePct: number;
+  shotClockSeconds: number;
+  maxTimeoutFouls: number;
+  // Tournament
+  tournamentEnabled: boolean;
+  tournamentEntryFeeMinor: number;
+  tournamentSize: number;
+  tournamentRakePct: number;
+  tournamentPrize1Weight: number;
+  tournamentPrize2Weight: number;
+  tournamentPrize34Weight: number;
+  // Physics tuning (integers)
+  slidingFrictionX100: number;
+  rollingFrictionX1000: number;
+  cushionReboundPct: number;
+  ballReboundPct: number;
+  pocketSizePct: number;
+  cueMaxSpeedX100: number;
+  maxSideSpin: number;
+  maxRollSpin: number;
+  // Rules
+  strictCallShot: boolean;
+  // Global
+  rulesetVersion: number;
+  engineVersion: number;
+};
+
+export type AdminPoolTournament = {
+  id: string;
+  name: string;
+  status: 'registering' | 'active' | 'completed' | 'cancelled';
+  size: number;
+  rounds: number;
+  entryFeeMinor: number;
+  rakePct: number;
+  prizePoolMinor: number;
+  winnerUserId: string | null;
+};
+
+export const adminPoolApi = {
+  getConfig: () => api.get<AdminPoolConfig>('/admin/pool/config').then((r) => r.data),
+  updateConfig: (dto: Partial<AdminPoolConfig>) =>
+    api.patch<AdminPoolConfig>('/admin/pool/config', dto).then((r) => r.data),
+  createTournament: (name?: string) =>
+    api.post<AdminPoolTournament>('/admin/pool/tournaments', { name }).then((r) => r.data),
+  startTournament: (id: string) =>
+    api.post<AdminPoolTournament>(`/admin/pool/tournaments/${id}/start`, {}).then((r) => r.data),
 };
 
 export default api;

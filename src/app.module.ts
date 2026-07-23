@@ -22,7 +22,13 @@ import { UsersModule } from "./users/users.module";
 import { WalletModule } from "./wallet/wallet.module";
 import { AdminModule } from "./admin/admin.module";
 import { AgentsModule } from "./agents/agents.module";
+import { BroadcastModule } from "./broadcast/broadcast.module";
 import { CrashModule } from "./crash/crash.module";
+import { NotificationsModule } from "./notifications/notifications.module";
+import { SupportModule } from "./support/support.module";
+import { GamesModule } from "./games/games.module";
+import { PoolModule } from "./pool/pool.module";
+import { WerkModule } from "./werk/werk.module";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -42,7 +48,12 @@ const isDev = process.env.NODE_ENV !== "production";
                 password: configService.get<string>('DB_PASSWORD', ''),
                 database: configService.getOrThrow<string>('DB_DATABASE'),
                 autoLoadEntities: true,
-                synchronize: true,
+                // Schema is managed by the idempotent `npm run schema:sync` tool
+                // (src/scripts/ensure-schema.ts), NOT by TypeORM's synchronize —
+                // synchronize churns/recreates indexes on MySQL and aborts, which
+                // left new columns unapplied in production. Opt back in for a
+                // throwaway dev DB with DB_SYNCHRONIZE=true.
+                synchronize: process.env.DB_SYNCHRONIZE === 'true',
                 timezone: 'Z',
                 charset: 'utf8mb4_unicode_ci',
             }),
@@ -79,7 +90,13 @@ const isDev = process.env.NODE_ENV !== "production";
         BotsModule,
         AdminModule,
         AgentsModule,
+        BroadcastModule,
         CrashModule,
+        NotificationsModule,
+        SupportModule,
+        GamesModule,
+        PoolModule,
+        WerkModule,
         ...(isDev ? [DevModule] : []),
     ],
     providers: [

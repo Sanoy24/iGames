@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { LogIn } from 'lucide-react';
 import { authApi } from '../lib/api';
 import type { AuthTokenResponse } from '../lib/models';
@@ -8,6 +9,7 @@ type Props = {
 };
 
 export function CredentialsLogin({ onSuccess }: Props) {
+  const { t } = useTranslation();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -37,13 +39,13 @@ export function CredentialsLogin({ onSuccess }: Props) {
           <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
             <LogIn size={22} style={{ color: 'var(--accent)' }} />
           </div>
-          <h1 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 4 }}>Agent / Admin Login</h1>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Sign in with your credentials</p>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: 4 }}>{t('login.title')}</h1>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{t('login.subtitle')}</p>
         </div>
 
         <form onSubmit={login} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6 }}>Phone Number</label>
+            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6 }}>{t('login.phoneNumber')}</label>
             <input
               className="input"
               type="tel"
@@ -56,7 +58,7 @@ export function CredentialsLogin({ onSuccess }: Props) {
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6 }}>Password</label>
+            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6 }}>{t('login.password')}</label>
             <input
               className="input"
               type="password"
@@ -80,12 +82,12 @@ export function CredentialsLogin({ onSuccess }: Props) {
             disabled={loading || !phone.trim() || !password}
             style={{ marginTop: 4 }}
           >
-            {loading ? 'Signing in…' : 'Sign In'}
+            {loading ? t('login.loggingIn') : t('login.signIn')}
           </button>
         </form>
 
         <p style={{ textAlign: 'center', fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 24 }}>
-          Players open this app via the Telegram bot.
+          {t('login.footer')}
         </p>
       </div>
     </div>

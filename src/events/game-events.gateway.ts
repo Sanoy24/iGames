@@ -13,6 +13,8 @@ import { BingoRoomResponse } from '../bingo/bingo.service';
 import { WalletSummary } from '../wallet/wallet.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { User } from '../users/entities/user.entity';
+import { PoolQueueEntry } from '../pool/entities/pool-queue-entry.entity';
+import { PresenceService } from './presence.service';
 
 export type KenoDrawStartedPayload = {
   drawId: string;
@@ -30,7 +32,7 @@ export type BingoRoomUpdatedPayload = {
   roomId: string;
   status: string;
   soldTickets: number;
-  scheduledStartAt: Date;
+  scheduledStartAt: Date | null;
 };
 
 export type BingoNumberDrawnPayload = {
@@ -38,6 +40,10 @@ export type BingoNumberDrawnPayload = {
   number: number;
   drawIndex: number;
   totalDrawn: number;
+  // Carried on every draw so clients can announce a place the instant it is won
+  // (derash), rather than only learning the winners at room completion.
+  winnersByTier: Record<string, string[]>;
+  settlementSummary: Record<string, unknown>;
 };
 
 export type BingoRoomCompletedPayload = {
@@ -81,8 +87,11 @@ export class GameEventsGateway
     @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(PoolQueueEntry)
+    private readonly poolQueueRepo: Repository<PoolQueueEntry>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly presenceService: PresenceService,
   ) {}
 
   async onApplicationShutdown(signal?: string) {
@@ -144,40 +153,78 @@ export class GameEventsGateway
     void this.broadcastLiveCounts();
   }
 
-  getLiveCounts() {
+  /** Distinct user IDs with at least one live socket connection right now (room-scoped when given). */
+  private getDistinctUsers(roomName?: string): Set<string> {
     const socketMap = this.server?.sockets.sockets;
-    const getDistinctUsers = (roomName?: string) => {
-      const socketIds = roomName
-        ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
-        : Array.from(socketMap?.keys() ?? []);
-      const users = new Set<string>();
-      for (const socketId of socketIds) {
-        const socket = socketMap?.get(socketId);
-        const userId = socket?.data?.user?.sub;
-        if (typeof userId === 'string' && userId) {
-          users.add(userId);
-        }
+    const socketIds = roomName
+      ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
+      : Array.from(socketMap?.keys() ?? []);
+    const users = new Set<string>();
+    for (const socketId of socketIds) {
+      const socket = socketMap?.get(socketId);
+      const userId = socket?.data?.user?.sub;
+      if (typeof userId === 'string' && userId) {
+        users.add(userId);
       }
-      return users;
-    };
+    }
+    return users;
+  }
 
-    const kenoUsers = getDistinctUsers('game_keno');
-    const bingoUsers = getDistinctUsers('game_bingo');
-    const crashUsers = getDistinctUsers('game_crash');
-    const totalUsers = getDistinctUsers();
+  /** Currently-connected user IDs — lets admin views flag a player "online" right now. */
+  getOnlineUserIds(): Set<string> {
+    return this.getDistinctUsers();
+  }
+
+  getLiveCounts() {
+    const kenoUsers = this.getDistinctUsers('game_keno');
+    const bingoUsers = this.getDistinctUsers('game_bingo');
+    const crashUsers = this.getDistinctUsers('game_crash');
+    const totalUsers = this.getDistinctUsers();
     const playingUsers = new Set<string>([...kenoUsers, ...bingoUsers, ...crashUsers]);
 
     return {
       kenoOnline: kenoUsers.size,
       bingoOnline: bingoUsers.size,
+      crashOnline: crashUsers.size,
       totalOnline: totalUsers.size,
       totalPlaying: playingUsers.size,
-      totalConnections: socketMap?.size || 0,
+      totalConnections: this.server?.sockets.sockets.size || 0,
+    };
+  }
+
+  /**
+   * Real socket counts (above) MERGED with house bot presence so the numbers shown
+   * to players include bots — per game (participating bots) and total (all active
+   * bots are "online"). The raw `bots` breakdown is included for the admin panel.
+   */
+  async getLiveCountsWithBots() {
+    const real = this.getLiveCounts();
+    const bots = await this.presenceService.getBotCounts().catch(() => ({
+      kenoBots: 0,
+      bingoBots: 0,
+      crashBots: 0,
+      totalBots: 0,
+    }));
+    // Players actively waiting in the two-player Pool queue. DB-sourced (shared
+    // across instances) so any node's heartbeat reports the true figure. Powers
+    // the Home "someone's waiting for a Pool match" banner.
+    const poolWaiting = await this.poolQueueRepo.count().catch(() => 0);
+    return {
+      kenoOnline: real.kenoOnline + bots.kenoBots,
+      bingoOnline: real.bingoOnline + bots.bingoBots,
+      crashOnline: real.crashOnline + bots.crashBots,
+      // Total online = real distinct users online + every active bot (bots count as online).
+      totalOnline: real.totalOnline + bots.totalBots,
+      // Playing = real players in a game + bots participating in a game.
+      totalPlaying: real.totalPlaying + bots.kenoBots + bots.bingoBots + bots.crashBots,
+      totalConnections: real.totalConnections,
+      poolWaiting,
+      bots,
     };
   }
 
   async broadcastLiveCounts() {
-    const counts = this.getLiveCounts();
+    const counts = await this.getLiveCountsWithBots();
     this.server?.emit('live.counts', counts);
   }
 
@@ -192,8 +239,8 @@ export class GameEventsGateway
 
   /** On-demand pull — clients emit this on connect to populate counts immediately. */
   @SubscribeMessage('request.counts')
-  handleRequestCounts(client: Socket) {
-    client.emit('live.counts', this.getLiveCounts());
+  async handleRequestCounts(client: Socket) {
+    client.emit('live.counts', await this.getLiveCountsWithBots());
   }
 
   @SubscribeMessage('enter.game')
@@ -230,9 +277,19 @@ export class GameEventsGateway
     this.server.to(`user_${userId}`).emit('wallet.updated', wallet);
   }
 
+  /** Push a durable notification live to a single user's socket room (bell). */
+  emitUserNotification(userId: string, payload: Record<string, unknown>): void {
+    this.server.to(`user_${userId}`).emit('notification.new', payload);
+  }
+
   /** Notify all connected agents that a new withdrawal is waiting. */
   emitWithdrawalPending(payload: WithdrawalPendingPayload): void {
     this.server.to('agents').emit('withdrawal.pending', payload);
+  }
+
+  /** Broadcast the updated public game catalog so clients hide/reveal games live. */
+  emitGamesCatalogUpdated(catalog: unknown): void {
+    this.server.emit('games.catalog.updated', catalog);
   }
 
   emitKenoDrawStarted(payload: KenoDrawStartedPayload): void {
@@ -267,7 +324,9 @@ export class GameEventsGateway
       roomId: room.id,
       number: latestNumber,
       drawIndex: drawnNumbers.length - 1,
-      totalDrawn: drawnNumbers.length
+      totalDrawn: drawnNumbers.length,
+      winnersByTier: room.winnersByTier,
+      settlementSummary: room.settlementSummary
     };
     this.server.emit('bingo.number.drawn', payload);
   }
@@ -306,6 +365,15 @@ export class GameEventsGateway
     this.server.to(`user_${userId}`).emit('crash.bet.cashedout', payload);
   }
 
+  /** Public live "All Bets" feed — broadcast to everyone watching the crash room. */
+  emitCrashBetPublic(payload: Record<string, unknown>): void {
+    this.server.to('game_crash').emit('crash.bet.public', payload);
+  }
+
+  emitCrashCashoutPublic(payload: Record<string, unknown>): void {
+    this.server.to('game_crash').emit('crash.cashout.public', payload);
+  }
+
   @SubscribeMessage('enter.crash')
   async handleEnterCrash(client: Socket) {
     await client.join('game_crash');
@@ -332,5 +400,120 @@ export class GameEventsGateway
       text,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // ── Pool ────────────────────────────────────────────────────────────────────
+
+  /** Spectators/players subscribe to a match's room to receive live state. */
+  @SubscribeMessage('pool.join')
+  async handlePoolJoin(client: Socket, payload: { matchId: string }) {
+    if (payload?.matchId) await client.join(`pool_match_${payload.matchId}`);
+  }
+
+  @SubscribeMessage('pool.leave')
+  async handlePoolLeave(client: Socket, payload: { matchId: string }) {
+    if (payload?.matchId) await client.leave(`pool_match_${payload.matchId}`);
+  }
+
+  /** Whitelist of predefined quick-chat emote ids — keep in sync with the client's
+   * POOL_EMOTES. Only these ids are relayed; no free text is ever accepted. */
+  private static readonly POOL_EMOTES = new Set([
+    'tooEasy', 'bestShot', 'watchLearn', 'warmingUp', 'luckNextTime', 'feelingLucky',
+    'niceShot', 'wellPlayed', 'gg', 'respect', 'rematch', 'goodLuck',
+  ]);
+  private readonly lastEmoteAt = new Map<string, number>();
+
+  /**
+   * Relay a predefined quick-chat emote to everyone in the match room. Only a
+   * whitelisted id crosses the wire (each client localizes it), and each user is
+   * rate-limited so the taunts can't be spammed. Non-players are naturally
+   * filtered client-side (the bubble only renders for the two seat users).
+   */
+  @SubscribeMessage('pool.emote')
+  handlePoolEmote(client: Socket, payload: { matchId?: string; id?: string }) {
+    const matchId = payload?.matchId;
+    const id = payload?.id;
+    if (!matchId || typeof id !== 'string' || !GameEventsGateway.POOL_EMOTES.has(id)) return;
+    const userId: string | undefined = client.data?.user?.sub;
+    if (!userId) return;
+    const now = Date.now();
+    if (now - (this.lastEmoteAt.get(userId) ?? 0) < 1500) return; // ~1 per 1.5s
+    this.lastEmoteAt.set(userId, now);
+    this.server.to(`pool_match_${matchId}`).emit('pool.emote', { matchId, userId, id, ts: now });
+  }
+
+  /** Authoritative board/turn state after any change. */
+  emitPoolMatchUpdated(matchId: string, payload: unknown): void {
+    this.server.to(`pool_match_${matchId}`).emit('pool.match.updated', payload);
+  }
+
+  /** A resolved shot (for animation + the shot feed). */
+  emitPoolShotResolved(matchId: string, payload: unknown): void {
+    this.server.to(`pool_match_${matchId}`).emit('pool.shot.resolved', payload);
+  }
+
+  emitPoolMatchEnded(matchId: string, payload: unknown): void {
+    this.server.to(`pool_match_${matchId}`).emit('pool.match.ended', payload);
+  }
+
+  /** Direct notification to a user that matchmaking paired them. */
+  emitPoolMatchFound(userId: string, payload: unknown): void {
+    this.server.to(`user_${userId}`).emit('pool.match.found', payload);
+  }
+
+  // ── Werk Flega (shared server-authoritative round) ───────────────────────────
+
+  /**
+   * Runtime-registered handler so the gateway can forward player input to the
+   * WerkRoundManager without a circular module import. The manager registers
+   * itself on bootstrap.
+   */
+  private werkInputHandler?: (userId: string, input: unknown) => void;
+
+  registerWerkInputHandler(fn: (userId: string, input: unknown) => void): void {
+    this.werkInputHandler = fn;
+  }
+
+  /** Distinct users currently on the Werk screen (in the lobby room). */
+  werkPresenceCount(): number {
+    return this.getDistinctUsers('game_werk').size;
+  }
+
+  /** Join the shared lobby room + a specific round's room to play/spectate. */
+  @SubscribeMessage('werk.join')
+  async handleWerkJoin(client: Socket, payload: { roundId?: string }) {
+    await client.join('game_werk');
+    if (payload?.roundId) await client.join(`werk_round_${payload.roundId}`);
+  }
+
+  @SubscribeMessage('werk.leave')
+  async handleWerkLeave(client: Socket, payload: { roundId?: string }) {
+    if (payload?.roundId) await client.leave(`werk_round_${payload.roundId}`);
+    await client.leave('game_werk');
+  }
+
+  /** A player's per-tick input (analog move vector + sprint + power). */
+  @SubscribeMessage('werk.input')
+  handleWerkInput(client: Socket, payload: unknown) {
+    const userId: string | undefined = client.data?.user?.sub;
+    if (!userId || !this.werkInputHandler) return;
+    this.werkInputHandler(userId, payload);
+  }
+
+  /** High-frequency authoritative snapshot of the running round. */
+  emitWerkSnapshot(roundId: string, snapshot: unknown): void {
+    this.server.to(`werk_round_${roundId}`).emit('werk.snapshot', snapshot);
+  }
+
+  /** Round lifecycle transition (lobby opened, countdown, started). */
+  emitWerkRoundState(view: { id: string } & Record<string, unknown>): void {
+    this.server.to('game_werk').emit('werk.round.state', view);
+    this.server.to(`werk_round_${view.id}`).emit('werk.round.state', view);
+  }
+
+  /** Final standings when a round settles. */
+  emitWerkRoundCompleted(view: { id: string } & Record<string, unknown>): void {
+    this.server.to('game_werk').emit('werk.round.completed', view);
+    this.server.to(`werk_round_${view.id}`).emit('werk.round.completed', view);
   }
 }

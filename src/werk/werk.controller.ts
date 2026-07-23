@@ -1,21 +1,25 @@
-import { Body, Controller, Get, Logger, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Post, UseGuards } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/decorators/public.decorator';
+import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { WerkService } from './werk.service';
+import { WerkRoundManager } from './round/werk-round-manager.service';
 import { StartWerkGameDto } from './dto/start-werk-game.dto';
-import { SettleWerkGameDto } from './dto/settle-werk-game.dto';
 
-/** Player-facing Werk Flega: read config, start a game, settle / abort it. */
+/** Player-facing Werk Flega: read config, view/join the shared round, leave it. */
 @ApiTags('werk')
 @Controller('werk')
 export class WerkController {
   private readonly logger = new Logger(WerkController.name);
 
-  constructor(private readonly werkService: WerkService) {}
+  constructor(
+    private readonly werkService: WerkService,
+    private readonly roundManager: WerkRoundManager,
+  ) {}
 
   @Public()
   @SkipThrottle({ default: true })
@@ -25,56 +29,39 @@ export class WerkController {
     return this.werkService.getConfigView();
   }
 
-  @Post('start')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @Throttle({ strict: { ttl: 60_000, limit: 20 } })
-  @ApiOkResponse({ description: 'Start a game: debits the entry stake and returns the layout seed' })
-  async start(@CurrentUser() user: AuthenticatedUser, @Body() dto: StartWerkGameDto) {
-    try {
-      return await this.werkService.startGame(user.id, dto);
-    } catch (err) {
-      this.logger.error(
-        `start failed for user ${user.id}: ${err instanceof Error ? err.message : err}`,
-        err instanceof Error ? err.stack : undefined,
-      );
-      throw err;
-    }
-  }
-
-  @Get(':id')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
+  /** The round to render right now (lobby countdown, live game to spectate, or results). */
+  @Get('current')
+  @UseGuards(OptionalJwtAuthGuard)
   @SkipThrottle({ default: true })
-  getSession(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.werkService.getSession(user.id, id);
+  @ApiOkResponse({ description: 'Current shared round state for the lobby/spectator view' })
+  getCurrent(@CurrentUser() user?: AuthenticatedUser) {
+    return this.roundManager.getCurrentView(user?.id) ?? { status: 'none' };
   }
 
-  @Post(':id/settle')
+  /** Join the open lobby round (debits the entry stake). */
+  @Post('join')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOkResponse({ description: 'Report final standings; credits any prize' })
-  async settle(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-    @Body() dto: SettleWerkGameDto,
-  ) {
+  @Throttle({ strict: { ttl: 60_000, limit: 30 } })
+  @ApiOkResponse({ description: 'Join the current lobby round; debits the entry stake' })
+  async join(@CurrentUser() user: AuthenticatedUser, @Body() dto: StartWerkGameDto) {
     try {
-      return await this.werkService.settle(user.id, id, dto);
+      return await this.roundManager.join(user.id, dto.stakeMinor);
     } catch (err) {
       this.logger.error(
-        `settle failed for user ${user.id} game ${id}: ${err instanceof Error ? err.message : err}`,
+        `join failed for user ${user.id}: ${err instanceof Error ? err.message : err}`,
         err instanceof Error ? err.stack : undefined,
       );
       throw err;
     }
   }
 
-  @Post(':id/abort')
+  /** Leave the current round; refunds the stake only while still in the lobby. */
+  @Post('leave')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @ApiOkResponse({ description: 'Abandon an unfinished game; refunds the stake' })
-  abort(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
-    return this.werkService.abort(user.id, id);
+  @ApiOkResponse({ description: 'Leave the current round; refunds the stake if still in the lobby' })
+  leave(@CurrentUser() user: AuthenticatedUser) {
+    return this.roundManager.leave(user.id);
   }
 }

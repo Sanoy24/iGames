@@ -1,4 +1,3 @@
-import { WerkService } from './werk.service';
 import {
   buildLayout,
   simulateBots,
@@ -6,8 +5,16 @@ import {
   SIM_DT,
   type BotResult,
   type Layout,
+  type WinMode,
 } from './sim';
 import { buildBotRoster, DEFAULT_WERK_BOTS } from './werk-bots';
+import {
+  applyRoundWinControl,
+  rankParticipants,
+  type RoundBot,
+  type RoundHuman,
+  type WinControlOptions,
+} from './round/win-control';
 
 /**
  * Unit coverage for the server-authoritative settle path. Everything money- and
@@ -208,103 +215,93 @@ describe('werk standings (computeStandings)', () => {
   });
 });
 
-describe('werk house win control (applyWinControl)', () => {
-  const drawSeed = jest.fn();
-  const service = new WerkService(
-    {} as never, {} as never, {} as never, {} as never,
-    { drawSeed } as never,
-    {} as never, {} as never,
-  );
-  const apply = (
-    cfg: Record<string, unknown>,
-    s: Record<string, unknown>,
-    humanValue: number,
-    bots: BotResult[],
-    poolTotal: number,
-  ) => (service as unknown as {
-    applyWinControl: (
-      m: unknown, cfg: unknown, s: unknown, hv: number, bots: BotResult[], pool: number,
-    ) => Promise<{ bots: BotResult[]; info: Record<string, unknown>; auditLogId: string | null }>;
-  }).applyWinControl({}, cfg, s, humanValue, bots, poolTotal);
+describe('werk multiplayer win control (applyRoundWinControl)', () => {
+  const rng = () => 0.5; // deterministic margins
 
-  const mkBots = (...vals: number[]): BotResult[] =>
-    vals.map((v, i) => ({ id: i + 1, name: `b${i}`, nameEn: `b${i}`, color: '#000', coinValue: v, reachedCenter: false }));
-
-  beforeEach(() => {
-    drawSeed.mockReset();
-    drawSeed.mockResolvedValue({ numbers: [123456789], auditLogId: 'audit-1' });
+  const mkOpts = (over: Partial<WinControlOptions> = {}): WinControlOptions => ({
+    mode: 'A',
+    botsEnabled: true,
+    realPlayers: 1,
+    payingRanks: 3,
+    poolTotal: 100_000,
+    onboardingEnabled: true,
+    onboardingBotWinGames: 2,
+    onboardingUserWinGames: 1,
+    winControlEnabled: true,
+    houseGuaranteedBelowPlayers: 10,
+    periodicForceLose: false,
+    ...over,
   });
 
-  it('is a no-op when win control is disabled', async () => {
-    const bots = mkBots(1, 2, 3);
-    const out = await apply(
-      { winControlEnabled: false, houseGuaranteedBelowPlayers: 10, botForcedWinEveryNRounds: 4 },
-      { id: 's1', totalPlayers: 4, mode: 'A' },
-      500, bots, 10000,
-    );
-    expect(out.bots).toBe(bots); // untouched reference
-    expect(out.info.forced).toBe(false);
-    expect(drawSeed).not.toHaveBeenCalled();
+  const human = (key: string, coinValue: number, gamesPlayed: number, reachedCenter = true): RoundHuman =>
+    ({ key, coinValue, reachedCenter, gamesPlayed });
+  const bot = (id: number, coinValue: number, reachedCenter = true): RoundBot => ({ id, coinValue, reachedCenter });
+
+  /** Final rank of a specific human key after control + joint ranking. */
+  const rankOfHuman = (mode: WinMode, humans: RoundHuman[], bots: RoundBot[], key: string): number => {
+    const ranked = rankParticipants(mode, [
+      ...humans.map((h) => ({ key: h.key, isHuman: true, coinValue: h.coinValue, reachedCenter: h.reachedCenter })),
+      ...bots.map((b) => ({ key: `bot:${b.id}`, isHuman: false, coinValue: b.coinValue, reachedCenter: b.reachedCenter })),
+    ]);
+    return ranked.find((r) => r.key === key)!.rank;
+  };
+
+  it('is a no-op when bots are disabled (busy round = pure competition)', () => {
+    const bots = [bot(1, 10)];
+    const out = applyRoundWinControl(rng, [human('u1', 50, 0)], bots, mkOpts({ botsEnabled: false }));
+    expect(out.forced).toBe(false);
+    expect(out.perHuman.u1).toBe('neutral');
+    expect(out.bots).toBe(bots);
   });
 
-  it('small games: the house always wins — every bot is pushed above the human', async () => {
-    const humanValue = 200;
-    const out = await apply(
-      { winControlEnabled: true, houseGuaranteedBelowPlayers: 10, botForcedWinEveryNRounds: 4, winControlCounter: 0 },
-      { id: 's2', totalPlayers: 4, mode: 'A' }, // 4 < 10 → small
-      humanValue, mkBots(0, 10, 5), 100000,
-    );
-    expect(out.info.forced).toBe(true);
-    expect(out.info.mode).toBe('all');
-    for (const b of out.bots) expect(b.coinValue).toBeGreaterThan(humanValue);
-    const std = computeStandings(
-      'A', { coinValue: humanValue, reachedCenter: true, name: 'You', color: '#fff' }, out.bots,
-    );
-    expect(std.humanRank).toBe(out.bots.length + 1); // dead last
+  it('onboarding: forces a loss for the first N games (a new user is beaten by bots)', () => {
+    for (const games of [0, 1]) {
+      const humans = [human('u1', 50, games)];
+      const out = applyRoundWinControl(rng, humans, [bot(1, 10), bot(2, 20), bot(3, 30)], mkOpts());
+      expect(out.perHuman.u1).toBe('lose');
+      // payingRanks (3) bots pushed above the human → out of the paying ranks.
+      expect(rankOfHuman('A', humans, out.bots, 'u1')).toBeGreaterThan(3);
+    }
   });
 
-  it('large games: forces exactly one random bot above the human every Nth round', async () => {
-    const cfg = { winControlEnabled: true, houseGuaranteedBelowPlayers: 10, botForcedWinEveryNRounds: 4, winControlCounter: 3 };
-    const humanValue = 300;
-    const out = await apply(
-      cfg, { id: 's3', totalPlayers: 20, mode: 'A' }, humanValue, mkBots(10, 20, 30, 40), 100000,
-    );
-    expect(out.info.forced).toBe(true);
-    expect(out.info.mode).toBe('one');
-    expect(cfg.winControlCounter).toBe(0); // reset after firing
-    const above = out.bots.filter((b) => b.coinValue > humanValue);
-    expect(above).toHaveLength(1);
-    const std = computeStandings(
-      'A', { coinValue: humanValue, reachedCenter: true, name: 'You', color: '#fff' }, out.bots,
-    );
-    expect(std.humanRank).toBeGreaterThan(1); // human denied first place
+  it('onboarding: forces a win after the loss streak (the promised early win)', () => {
+    const humans = [human('u1', 50, 2)]; // games 2 → within [B, B+U)
+    const out = applyRoundWinControl(rng, humans, [bot(1, 100), bot(2, 200), bot(3, 300)], mkOpts());
+    expect(out.perHuman.u1).toBe('win');
+    for (const b of out.bots) expect(b.coinValue).toBeLessThan(50);
+    expect(rankOfHuman('A', humans, out.bots, 'u1')).toBe(1); // beats every bot
   });
 
-  it('large games: only increments the counter on non-firing rounds (human can win)', async () => {
-    const cfg = { winControlEnabled: true, houseGuaranteedBelowPlayers: 10, botForcedWinEveryNRounds: 4, winControlCounter: 0 };
-    const bots = mkBots(10, 20, 30);
-    const out = await apply(cfg, { id: 's4', totalPlayers: 20, mode: 'A' }, 500, bots, 100000);
-    expect(out.info.forced).toBe(false);
-    expect(cfg.winControlCounter).toBe(1);
-    expect(out.bots).toBe(bots); // no boost applied
-    expect(drawSeed).not.toHaveBeenCalled();
+  it('after onboarding: small rounds still let the house win (neutral → forced loss)', () => {
+    const humans = [human('u1', 50, 5)];
+    const out = applyRoundWinControl(rng, humans, [bot(1, 10), bot(2, 20), bot(3, 30)], mkOpts({ realPlayers: 3 }));
+    expect(out.perHuman.u1).toBe('lose');
+    expect(rankOfHuman('A', humans, out.bots, 'u1')).toBeGreaterThan(3);
   });
 
-  it('clamps a forced boost to the coin pool (never mints coins out of thin air)', async () => {
-    const poolTotal = 250;
-    const out = await apply(
-      { winControlEnabled: true, houseGuaranteedBelowPlayers: 10, botForcedWinEveryNRounds: 4, winControlCounter: 3 },
-      { id: 's5', totalPlayers: 20, mode: 'A' }, 240, mkBots(10, 20, 30, 40), poolTotal,
-    );
-    for (const b of out.bots) expect(b.coinValue).toBeLessThanOrEqual(poolTotal);
+  it('after onboarding: large rounds without a periodic trigger do not force (human can win)', () => {
+    const humans = [human('u1', 500, 5)];
+    const out = applyRoundWinControl(rng, humans, [bot(1, 10), bot(2, 20), bot(3, 30)], mkOpts({ realPlayers: 20, periodicForceLose: false }));
+    expect(out.perHuman.u1).toBe('neutral');
+    expect(out.forced).toBe(false);
+    expect(rankOfHuman('A', humans, out.bots, 'u1')).toBe(1);
   });
 
-  it('records an RNG audit id whenever it forces an outcome', async () => {
-    const out = await apply(
-      { winControlEnabled: true, houseGuaranteedBelowPlayers: 10, botForcedWinEveryNRounds: 4, winControlCounter: 0 },
-      { id: 's6', totalPlayers: 4, mode: 'A' }, 100, mkBots(1, 2), 100000,
-    );
-    expect(out.auditLogId).toBe('audit-1');
-    expect(drawSeed).toHaveBeenCalledTimes(1);
+  it('the full onboarding sequence: lose, lose, win, then neutral', () => {
+    const tag = (games: number) =>
+      applyRoundWinControl(rng, [human('u1', 50, games)], [bot(1, 10)], mkOpts({ realPlayers: 20 })).perHuman.u1;
+    expect([tag(0), tag(1), tag(2), tag(3)]).toEqual(['lose', 'lose', 'win', 'neutral']);
+  });
+
+  it('never mints coins: every forced boost is clamped to the pool total', () => {
+    const out = applyRoundWinControl(rng, [human('u1', 55, 0)], [bot(1, 10), bot(2, 20), bot(3, 30)], mkOpts({ poolTotal: 60 }));
+    for (const b of out.bots) expect(b.coinValue).toBeLessThanOrEqual(60);
+  });
+
+  it('win precedence: a win-user still beats bots even alongside a lose-user', () => {
+    const humans = [human('winner', 40, 2), human('loser', 30, 0)];
+    const out = applyRoundWinControl(rng, humans, [bot(1, 100), bot(2, 100)], mkOpts({ realPlayers: 2 }));
+    expect(out.perHuman.winner).toBe('win');
+    expect(rankOfHuman('A', humans, out.bots, 'winner')).toBe(1);
   });
 });

@@ -45,6 +45,24 @@ export class UpdateWerkConfigDto {
   botCount?: number;
 
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  botMaxRealPlayers?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  @Max(120)
+  lobbyCountdownSec?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(2)
+  @Max(60)
+  resultDisplaySec?: number;
+
+  @IsOptional()
   @IsIn(['auto', 'zero', 'custom'])
   botSeedMode?: WerkBotSeedMode;
 
@@ -141,4 +159,20 @@ export class UpdateWerkConfigDto {
   @Min(0)
   @Max(1000)
   botForcedWinEveryNRounds?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  onboardingWinControlEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(50)
+  onboardingBotWinGames?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(50)
+  onboardingUserWinGames?: number;
 }

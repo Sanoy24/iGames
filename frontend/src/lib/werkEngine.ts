@@ -1,26 +1,28 @@
 /**
- * ወርቅ ፍለጋ (Werk Flega — Gold Rush) — client game wrapper.
+ * ወርቅ ፍለጋ (Werk Flega — Gold Rush) — client renderer for the shared, server-
+ * authoritative round.
  *
- * The deterministic core (maze, coins, bot field, ranking) lives in the shared
- * `@werk-sim` module that also runs on the authoritative server, so the live
- * board and the official result are produced by the SAME code. This class adds
- * only the real-time human layer + render state on top:
- *   - bots advance via `BotSim` at a fixed timestep (identical to the server);
- *   - the human moves in real time and we record the coin INDICES they collect;
- *   - on settle the client sends those indices (+ Mode-B centre arrival) and the
- *     server re-derives value + rank, so nothing here is trusted for money.
+ * The server owns the round: the clock, every player's position, the shared coin
+ * pool, and the final standings. This class no longer simulates bots or decides
+ * outcomes. It:
+ *   - builds the maze/coins from the round seed (so it can draw them);
+ *   - renders all other players + bots from the authoritative snapshots (with
+ *     light interpolation for smoothness);
+ *   - predicts ONLY the local avatar from live input for responsiveness, softly
+ *     reconciling it toward the server position on each snapshot.
+ * Nothing here is trusted for money — coin ownership shown for the local player is
+ * optimistic display only; the authoritative result arrives on round completion.
  */
 import {
-  buildLayout, BotSim, computeStandings, moveWithSlide, toCell,
-  CELL, HUMAN_SPEED, COLLECT_RADIUS, SIM_DT, PLAYER_RADIUS,
-  type Layout, type CoinLite, type PowerupLite, type CoinType, type WinMode, type BotConfig,
+  buildLayout, moveWithSlide,
+  CELL, HUMAN_SPEED, COLLECT_RADIUS, PLAYER_RADIUS,
+  type Layout, type CoinLite, type PowerupLite, type CoinType, type WinMode,
 } from '@werk-sim';
+import type { WerkRoundView, WerkSnapshot, WerkInputMsg } from './werkApi';
 
 export { CELL };
 export type { WinMode };
 export type MazeTheme = 'adwa' | 'highland' | 'desert';
-export type PlayerState = 'playing' | 'running_to_center' | 'eliminated' | 'finished';
-export type BotSpec = BotConfig;
 
 export const COIN_COLOR: Record<CoinType, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#FFD700' };
 export const COIN_AM: Record<CoinType, string> = { bronze: 'ነሃስ ሳንቲም', silver: 'ብር ሳንቲም', gold: 'ወርቅ ሳንቲም' };
@@ -33,10 +35,15 @@ const STAMINA_REGEN = 20;
 const SPEED_BOOST_MULT = 1.5;
 const SPEED_BOOST_SEC = 5;
 const MAGNET_SEC = 8;
-const MAGNET_RADIUS = CELL * 1.6; // magnet = enlarged auto-collect range
+const MAGNET_RADIUS = CELL * 1.6;
 const SHIELD_SEC = 10;
+/** How fast the predicted local avatar is pulled toward the server position. */
+const RECONCILE_RATE = 6;
+/** How fast remote avatars interpolate toward their latest snapshot position. */
+const INTERP_RATE = 12;
 
-/** Render/HUD view of a participant (human carries the extra live stats). */
+export type PlayerState = 'playing' | 'eliminated' | 'finished';
+
 export interface Player {
   id: number;
   name: string;
@@ -75,64 +82,79 @@ export interface HumanInput {
   right: boolean;
   sprint: boolean;
   usePower: boolean;
-  /**
-   * Analog joystick vector, each component in [-1, 1] (y is down-positive to match
-   * screen space). Its magnitude drives variable speed (small tilt = walk, full
-   * push = run). When it's ~zero the keyboard up/down/left/right booleans are used
-   * instead, so both input methods work.
-   */
   moveX?: number;
   moveY?: number;
 }
 
-export interface WerkGameOptions {
+interface RemotePlayer {
+  id: number;
+  seat?: number;
+  name: string;
+  color: string;
+  isBot: boolean;
+  x: number;
+  y: number;
+  tx: number; // interpolation target
+  ty: number;
+  coinValue: number;
+  magnet: boolean;
+}
+
+export interface WerkRoundOpts {
   seed: number;
   mode: WinMode;
   durationSec: number;
-  totalPlayers: number;
+  maxPlayers: number;
   botCount: number;
   coinDensityX100: number;
   finalSprintWarningSec: number;
   powerupsEnabled: boolean;
   theme: MazeTheme;
-  humanName: string;
-  bots: BotSpec[];
+  /** Your seat in the round, or null if spectating. */
+  yourSeat: number | null;
+  yourName: string;
 }
 
 export class WerkGame {
-  readonly opts: WerkGameOptions;
+  readonly opts: WerkRoundOpts;
   readonly layout: Layout;
-  readonly botSim: BotSim;
-  readonly human: Player;
-  private humanCollected = new Set<number>();
+  /** Own predicted avatar, or null when spectating. */
+  human: Player | null;
+  private remotes = new Map<number, RemotePlayer>();
+  private taken = new Set<number>();       // coins taken by anyone (server truth)
+  private myCollected = new Set<number>(); // optimistic local pickups (own display)
   private takenPowerups = new Set<number>();
-  private acc = 0;
-  elapsed = 0;
-  timeLeft: number;
-  running = true;
-  finished = false;
+  private serverX = 0;
+  private serverY = 0;
+  private ownArbId: number | null = null;
 
-  // Render caches rebuilt lazily each frame.
+  timeLeft: number;
+  finished = false;
+  status: WerkRoundView['status'] = 'running';
+
   onCollect?: (type: CoinType) => void;
   onPower?: () => void;
   onSprintWarn?: () => void;
   private warnedSprint = false;
 
-  constructor(opts: WerkGameOptions) {
+  constructor(opts: WerkRoundOpts) {
     this.opts = opts;
     this.timeLeft = opts.durationSec;
     this.layout = buildLayout(opts.seed, {
-      totalPlayers: opts.totalPlayers,
+      totalPlayers: opts.maxPlayers,
       coinDensityX100: opts.coinDensityX100,
       powerupsEnabled: opts.powerupsEnabled,
-      botCount: opts.bots.length,
+      botCount: opts.botCount,
     });
-    this.botSim = new BotSim(this.layout, opts.bots, {
-      mode: opts.mode, durationSec: opts.durationSec, finalSprintWarningSec: opts.finalSprintWarningSec,
-    });
-    const [hx, hy] = this.layout.humanSpawn;
-    this.human = {
-      id: 0, name: opts.humanName, color: HUMAN_COLOR, isHuman: true, x: hx, y: hy,
+    this.human = opts.yourSeat != null ? this.makeHuman(opts.yourSeat, opts.yourName) : null;
+    if (this.human) { this.serverX = this.human.x; this.serverY = this.human.y; }
+  }
+
+  private makeHuman(seat: number, name: string): Player {
+    const [sx, sy] = this.layout.humanSpawn;
+    const ox = ((seat % 3) - 1) * 8, oy = (Math.floor(seat / 3) - 1) * 8;
+    return {
+      id: 1_000_000 + seat, name, color: HUMAN_COLOR, isHuman: true, x: sx + ox, y: sy + oy,
       coins: 0, coinValue: 0, bronze: 0, silver: 0, gold: 0, state: 'playing',
       stamina: STAMINA_MAX, boost: 0, magnet: 0, shield: 0,
     };
@@ -144,45 +166,140 @@ export class WerkGame {
   get grid() { return this.layout.grid; }
 
   get coins(): RenderCoin[] {
-    return this.layout.coins.map((c) => ({
-      ...c, collected: this.humanCollected.has(c.index) || this.botSim.botTaken[c.index] === 1,
-    }));
+    return this.layout.coins.map((c) => ({ ...c, collected: this.taken.has(c.index) || this.myCollected.has(c.index) }));
   }
 
   get powerups(): RenderPowerup[] {
     return this.layout.powerups.map((p, i) => ({ ...p, taken: this.takenPowerups.has(i) }));
   }
 
-  /** Human + bots as render/HUD players (bot live scores come from BotSim). */
+  /** Own avatar (if any) + every remote player/bot, as render players. */
   get players(): Player[] {
-    const bots: Player[] = this.botSim.bots.map((b) => ({
-      id: b.id, name: b.name, color: b.color, isHuman: false, x: b.x, y: b.y,
-      coins: 0, coinValue: b.coinValue, bronze: 0, silver: 0, gold: 0,
-      state: this.finished && this.opts.mode === 'B' && !b.reachedCenter ? 'eliminated' : 'playing',
-      stamina: 0, boost: 0, magnet: 0, shield: 0,
-    }));
-    return [this.human, ...bots];
+    const out: Player[] = [];
+    if (this.human) out.push(this.human);
+    for (const r of this.remotes.values()) {
+      out.push({
+        id: r.id, name: r.name, color: r.color, isHuman: !r.isBot, x: r.x, y: r.y,
+        coins: 0, coinValue: r.coinValue, bronze: 0, silver: 0, gold: 0, state: 'playing',
+        stamina: 0, boost: 0, magnet: r.magnet ? MAGNET_SEC : 0, shield: 0,
+      });
+    }
+    return out;
   }
 
-  private inCenter(x: number, y: number): boolean {
-    const [cx, cy] = toCell(x, y);
-    return cx === this.layout.center[0] && cy === this.layout.center[1];
+  /** The seat's own arbitration id, so snapshots can be matched to the local avatar. */
+  setOwnSeat(seat: number | null, name?: string) {
+    if (seat == null) { this.human = null; this.ownArbId = null; return; }
+    this.ownArbId = 1_000_000 + seat;
+    if (!this.human) this.human = this.makeHuman(seat, name ?? this.opts.yourName);
+  }
+
+  applyRoundState(view: WerkRoundView) {
+    this.status = view.status;
+    if (typeof view.timeLeft === 'number') this.timeLeft = view.timeLeft;
+    if (view.yourSeat != null && !this.human) this.setOwnSeat(view.yourSeat);
+    if (view.status === 'completed' || view.status === 'cancelled') this.finished = true;
+  }
+
+  applySnapshot(snap: WerkSnapshot) {
+    this.status = snap.status as WerkRoundView['status'];
+    this.timeLeft = snap.timeLeft;
+    for (const i of snap.taken) this.taken.add(i);
+    for (const i of snap.powerupsTaken) this.takenPowerups.add(i);
+    if (this.opts.mode === 'B' && !this.warnedSprint && this.timeLeft <= this.opts.finalSprintWarningSec) {
+      this.warnedSprint = true;
+      this.onSprintWarn?.();
+    }
+
+    const seen = new Set<number>();
+    for (const p of snap.players) {
+      if (this.ownArbId != null && p.id === this.ownArbId) {
+        // Authoritative own position — reconcile the local prediction toward it.
+        this.serverX = p.x; this.serverY = p.y;
+        continue;
+      }
+      seen.add(p.id);
+      const r = this.remotes.get(p.id);
+      if (r) { r.tx = p.x; r.ty = p.y; r.coinValue = p.coinValue; r.magnet = !!p.magnet; r.name = p.name; r.color = p.color; }
+      else this.remotes.set(p.id, { id: p.id, seat: p.seat, name: p.name, color: p.color, isBot: p.isBot, x: p.x, y: p.y, tx: p.x, ty: p.y, coinValue: p.coinValue, magnet: !!p.magnet });
+    }
+    for (const id of [...this.remotes.keys()]) if (!seen.has(id)) this.remotes.delete(id);
+  }
+
+  markCompleted() { this.finished = true; this.status = 'completed'; }
+
+  /** Advance prediction + interpolation by real elapsed time. Returns input to send. */
+  update(dt: number, input: HumanInput): WerkInputMsg {
+    const clamped = Math.min(dt, 0.1);
+    // Local clock ticks smoothly between snapshots; snapshots correct it.
+    if (this.status === 'running') this.timeLeft = Math.max(0, this.timeLeft - clamped);
+
+    // Interpolate remote players toward their latest snapshot position.
+    const k = Math.min(1, INTERP_RATE * clamped);
+    for (const r of this.remotes.values()) { r.x += (r.tx - r.x) * k; r.y += (r.ty - r.y) * k; }
+
+    const msg = this.buildInput(input);
+    if (this.human && this.status === 'running') {
+      this.stepHuman(clamped, input, msg);
+      this.collectHuman();
+      // Soft-reconcile toward the authoritative position.
+      const rc = Math.min(1, RECONCILE_RATE * clamped);
+      this.human.x += (this.serverX - this.human.x) * rc;
+      this.human.y += (this.serverY - this.human.y) * rc;
+    }
+    return msg;
+  }
+
+  private buildInput(input: HumanInput): WerkInputMsg {
+    let mx = input.moveX ?? 0, my = input.moveY ?? 0;
+    if (Math.hypot(mx, my) <= 0.001) {
+      let dxi = 0, dyi = 0;
+      if (input.up) dyi -= 1;
+      if (input.down) dyi += 1;
+      if (input.left) dxi -= 1;
+      if (input.right) dxi += 1;
+      if (dxi !== 0 || dyi !== 0) { const inv = 1 / Math.hypot(dxi, dyi); mx = dxi * inv; my = dyi * inv; }
+    }
+    return { moveX: mx, moveY: my, sprint: !!input.sprint, usePower: !!input.usePower };
   }
 
   private consumePower() {
-    const h = this.human;
+    const h = this.human!;
     if (h.boost <= 0 && h._pendingSpeed) { h.boost = SPEED_BOOST_SEC; h._pendingSpeed = false; }
     else if (h.magnet <= 0 && h._pendingMagnet) { h.magnet = MAGNET_SEC; h._pendingMagnet = false; }
     else if (h.shield <= 0 && h._pendingShield) { h.shield = SHIELD_SEC; h._pendingShield = false; }
   }
 
+  private stepHuman(dt: number, input: HumanInput, msg: WerkInputMsg) {
+    const h = this.human!;
+    if (input.usePower) this.consumePower();
+    h.boost = Math.max(0, h.boost - dt);
+    h.magnet = Math.max(0, h.magnet - dt);
+    h.shield = Math.max(0, h.shield - dt);
+
+    const mag = Math.min(1, Math.hypot(msg.moveX, msg.moveY));
+    if (mag <= 0.001) { h.stamina = Math.min(STAMINA_MAX, h.stamina + STAMINA_REGEN * dt); return; }
+    const dirX = msg.moveX / (Math.hypot(msg.moveX, msg.moveY) || 1);
+    const dirY = msg.moveY / (Math.hypot(msg.moveX, msg.moveY) || 1);
+    const wantSprint = msg.sprint && h.stamina > 0;
+    if (wantSprint) h.stamina = Math.max(0, h.stamina - STAMINA_DRAIN * dt);
+    else h.stamina = Math.min(STAMINA_MAX, h.stamina + STAMINA_REGEN * dt);
+
+    let spd = HUMAN_SPEED * (0.45 + 0.55 * mag);
+    if (wantSprint) spd *= SPRINT_MULT;
+    if (h.boost > 0) spd *= SPEED_BOOST_MULT;
+    const [nx, ny] = moveWithSlide(this.layout, h.x, h.y, dirX * spd * dt, dirY * spd * dt, PLAYER_RADIUS);
+    h.x = nx; h.y = ny;
+  }
+
+  /** Optimistic local pickup for the own avatar — display + SFX only. */
   private collectHuman() {
-    const h = this.human;
+    const h = this.human!;
     const radius = h.magnet > 0 ? MAGNET_RADIUS : COLLECT_RADIUS;
     for (const c of this.layout.coins) {
-      if (this.humanCollected.has(c.index)) continue;
+      if (this.myCollected.has(c.index) || this.taken.has(c.index)) continue;
       if (Math.hypot(c.x - h.x, c.y - h.y) < radius) {
-        this.humanCollected.add(c.index);
+        this.myCollected.add(c.index);
         h.coins++; h.coinValue += c.value; h[c.type]++;
         this.onCollect?.(c.type);
       }
@@ -201,103 +318,21 @@ export class WerkGame {
     }
   }
 
-  private stepHuman(dt: number, input: HumanInput) {
-    const h = this.human;
-    h.boost = Math.max(0, h.boost - dt);
-    h.magnet = Math.max(0, h.magnet - dt);
-    h.shield = Math.max(0, h.shield - dt);
-    // Movement direction + magnitude: the analog stick wins when deflected,
-    // otherwise fall back to 8-way keyboard (which is always full speed).
-    let dirX = 0, dirY = 0, mag = 0;
-    const ax = input.moveX ?? 0, ay = input.moveY ?? 0;
-    const aMag = Math.hypot(ax, ay);
-    if (aMag > 0.001) {
-      mag = Math.min(1, aMag);
-      dirX = ax / aMag; dirY = ay / aMag;
-    } else {
-      let dxi = 0, dyi = 0;
-      if (input.up) dyi -= 1;
-      if (input.down) dyi += 1;
-      if (input.left) dxi -= 1;
-      if (input.right) dxi += 1;
-      if (dxi !== 0 || dyi !== 0) {
-        const inv = 1 / Math.hypot(dxi, dyi);
-        dirX = dxi * inv; dirY = dyi * inv; mag = 1;
-      }
-    }
-    const moving = mag > 0;
-
-    const wantSprint = input.sprint && h.stamina > 0 && moving;
-    if (wantSprint) h.stamina = Math.max(0, h.stamina - STAMINA_DRAIN * dt);
-    else h.stamina = Math.min(STAMINA_MAX, h.stamina + STAMINA_REGEN * dt);
-
-    if (moving) {
-      // Variable speed: 45% (gentle walk) at the deadzone edge → 100% at full push.
-      let spd = HUMAN_SPEED * (0.45 + 0.55 * mag);
-      if (wantSprint) spd *= SPRINT_MULT;
-      if (h.boost > 0) spd *= SPEED_BOOST_MULT;
-      const [nx, ny] = moveWithSlide(this.layout, h.x, h.y, dirX * spd * dt, dirY * spd * dt, PLAYER_RADIUS);
-      h.x = nx; h.y = ny;
-    }
-  }
-
-  /** Advance by real elapsed time, fixed-stepping the deterministic bot field. */
-  update(realDt: number, input: HumanInput) {
-    if (!this.running || this.finished) return;
-    if (input.usePower) this.consumePower();
-    this.acc += Math.min(realDt, 0.1);
-    while (this.acc >= SIM_DT && !this.finished) {
-      this.acc -= SIM_DT;
-      this.botSim.step(SIM_DT);
-      this.stepHuman(SIM_DT, input);
-      this.collectHuman();
-      this.elapsed += SIM_DT;
-      this.timeLeft = Math.max(0, this.opts.durationSec - this.elapsed);
-      if (this.opts.mode === 'B' && !this.warnedSprint && this.timeLeft <= this.opts.finalSprintWarningSec) {
-        this.warnedSprint = true;
-        this.onSprintWarn?.();
-      }
-      if (this.timeLeft <= 0) this.finish();
-    }
-  }
-
-  finish() {
-    if (this.finished) return;
-    this.finished = true;
-    this.running = false;
-    this.botSim.finish();
-    const reached = this.inCenter(this.human.x, this.human.y);
-    this.human.state = this.opts.mode === 'B' && !reached ? 'eliminated' : 'finished';
-  }
-
-  /** Live standings for the in-game leaderboard (final official result is server-computed). */
+  /** Live leaderboard from current coin values (final result is server-computed). */
   standings(): Standing[] {
     const players = this.players;
-    const { rows } = computeStandings(
-      this.opts.mode,
-      { coinValue: this.human.coinValue, reachedCenter: this.inCenter(this.human.x, this.human.y), name: this.human.name, color: this.human.color },
-      this.botSim.bots.map((b) => ({ id: b.id, name: b.name, nameEn: b.nameEn, color: b.color, coinValue: b.coinValue, reachedCenter: b.reachedCenter })),
-    );
-    const byId = new Map(players.map((p) => [p.id, p]));
-    return rows.map((r) => ({ player: byId.get(r.id)!, rank: r.rank, eligible: r.eligible }));
-  }
-
-  /** The client's settlement claim: coin indices collected + Mode-B centre arrival. */
-  humanResult(): { collectedCoinIndices: number[]; reachedCenter: boolean; coinValue: number } {
-    return {
-      collectedCoinIndices: [...this.humanCollected],
-      reachedCenter: this.inCenter(this.human.x, this.human.y),
-      coinValue: this.human.coinValue,
-    };
+    const sorted = [...players].sort((a, b) => b.coinValue - a.coinValue);
+    let rank = 0, seen = 0, lastVal = Infinity;
+    const rankById = new Map<number, number>();
+    for (const p of sorted) {
+      seen++;
+      if (p.coinValue !== lastVal) { rank = seen; lastVal = p.coinValue; }
+      rankById.set(p.id, rank);
+    }
+    return sorted.map((p) => ({ player: p, rank: rankById.get(p.id)!, eligible: true }));
   }
 
   get isFinalSprint(): boolean {
     return this.opts.mode === 'B' && this.timeLeft <= this.opts.finalSprintWarningSec;
-  }
-
-  get coinsLeft(): number {
-    let n = 0;
-    for (const c of this.layout.coins) if (!this.humanCollected.has(c.index) && !this.botSim.botTaken[c.index]) n++;
-    return n;
   }
 }

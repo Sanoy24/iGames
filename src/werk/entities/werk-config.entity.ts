@@ -56,6 +56,22 @@ export class WerkConfig {
   @Column({ type: 'int', default: 9 })
   botCount: number;
 
+  /**
+   * Bots only join/steer a round while it has FEWER than this many REAL players.
+   * At or above it, bots stay out entirely (busy rounds are pure competition).
+   * 0 = bots never auto-join.
+   */
+  @Column({ type: 'int', default: 10 })
+  botMaxRealPlayers: number;
+
+  /** How long the lobby/join countdown lasts before a round starts, seconds. */
+  @Column({ type: 'int', default: 15 })
+  lobbyCountdownSec: number;
+
+  /** How long the results are shown before the next round opens, seconds. */
+  @Column({ type: 'int', default: 8 })
+  resultDisplaySec: number;
+
   // ── Bots (server-generated roster; spec §5.2) ───────────────────────────────
   /** auto = varied personalities; zero = no bots; custom = cycle `botPersonalities`. */
   @Column({ type: 'enum', enum: ['auto', 'zero', 'custom'], default: 'auto' })
@@ -139,6 +155,19 @@ export class WerkConfig {
   /** Internal rolling counter of large-game settlements since the last forced win. */
   @Column({ type: 'int', default: 0 })
   winControlCounter: number;
+
+  // ── Onboarding win sequence (per-user, applies while bots are present) ───────
+  /** Master switch for the scripted first-games sequence below. */
+  @Column({ type: 'boolean', default: true })
+  onboardingWinControlEnabled: boolean;
+
+  /** A user's first N games are forced losses (a bot always beats them). */
+  @Column({ type: 'int', default: 2 })
+  onboardingBotWinGames: number;
+
+  /** The following M games are forced wins (boosted above every bot). */
+  @Column({ type: 'int', default: 1 })
+  onboardingUserWinGames: number;
 
   /** Admin user id who last changed this config. */
   @Column({ type: 'varchar', length: 36, nullable: true })

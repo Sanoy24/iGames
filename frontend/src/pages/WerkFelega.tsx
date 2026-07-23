@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import confetti from 'canvas-confetti';
 import {
-  ArrowLeft, Pause, Play, Settings, Volume2, VolumeX, X, Zap,
+  ArrowLeft, Eye, Play, Settings, Users, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { walletApi } from '../lib/api';
 import { getErrorMessage } from '../lib/utils';
-import { werkApi, type WerkConfig, type WerkSessionView, type WerkStanding } from '../lib/werkApi';
-import { WerkGame, CELL, COIN_COLOR, type HumanInput, type Player } from '../lib/werkEngine';
+import { werkApi, type WerkConfig, type WerkRoundView, type WerkStanding } from '../lib/werkApi';
+import { WerkGame, CELL, COIN_COLOR, type HumanInput, type MazeTheme, type Player } from '../lib/werkEngine';
+import { useWerkSocket, sendWerkInput } from '../hooks/useWerkSocket';
 import {
   resumeWerkAudio, setWerkMuted, coinPickup, goldPickup, powerPickup, sprintHorn, victoryFanfare, lossThud,
 } from '../lib/werkSfx';
@@ -35,14 +36,14 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   const setWallet = useStore((s) => s.setWallet);
 
   const [config, setConfig] = useState<WerkConfig | null>(null);
+  const [round, setRound] = useState<WerkRoundView | null>(null);
   const [screen, setScreen] = useState<Screen>('lobby');
   const [stake, setStake] = useState(10);
   const [busy, setBusy] = useState(false);
   const [showHowTo, setShowHowTo] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [muted, setMutedState] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [session, setSession] = useState<WerkSessionView | null>(null);
+  const [spectating, setSpectating] = useState(false);
   const [result, setResult] = useState<{ standings: WerkStanding[]; prizeMinor: number; rank: number; eliminated: boolean } | null>(null);
   const [, forceHud] = useState(0);
 
@@ -51,90 +52,88 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
   const inputRef = useRef<HumanInput>({ up: false, down: false, left: false, right: false, sprint: false, usePower: false });
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef<number>(0);
-  const pausedRef = useRef(false);
-  const settlingRef = useRef(false);
+  const sendAccRef = useRef<number>(0);
+  const screenRef = useRef<Screen>('lobby');
 
-  useEffect(() => { pausedRef.current = paused; }, [paused]);
-  useEffect(() => { werkApi.getConfig().then((c) => { setConfig(c); setStake(c.entryStakeMinor); }).catch(() => {}); }, []);
-
+  useEffect(() => { screenRef.current = screen; }, [screen]);
   const toggleMute = () => { const n = !muted; setMutedState(n); setWerkMuted(n); };
 
-  // ── Authoritative settlement ────────────────────────────────────────────────
-  const finishGame = useCallback(async () => {
-    const g = gameRef.current;
-    if (!g || settlingRef.current || !session) return;
-    settlingRef.current = true;
-    const res = g.humanResult();
-    try {
-      const settled = await werkApi.settle(session.id, {
-        collectedCoinIndices: res.collectedCoinIndices,
-        reachedCenter: res.reachedCenter,
-      });
-      const rank = settled.humanRank ?? g.players.length;
-      const eliminated = settled.standings.find((s) => s.isHuman && !s.eligible) != null;
-      if (eliminated) lossThud(); else if (rank <= 3) victoryFanfare();
-      setResult({ standings: settled.standings, prizeMinor: settled.prizeMinor, rank, eliminated });
-      if (settled.prizeMinor > 0) confetti({ particleCount: 180, spread: 85, origin: { y: 0.6 }, colors: [C.success, C.coin, C.accent] });
-      walletApi.getWallet().then(setWallet).catch(() => {});
-    } catch (e) {
-      addToast('error', getErrorMessage(e) || t('werk.errSettle'));
-      // Fall back to the client's live board if settlement failed.
-      const local = g.standings().map((s): WerkStanding => ({ id: s.player.id, name: s.player.isHuman ? 'You' : s.player.name, isHuman: s.player.isHuman, color: s.player.color, coinValue: s.player.coinValue, eligible: s.eligible, rank: s.rank }));
-      setResult({ standings: local, prizeMinor: 0, rank: g.humanResult().reachedCenter ? 1 : g.players.length, eliminated: false });
-    } finally {
-      setScreen('result');
+  useEffect(() => {
+    werkApi.getConfig().then((c) => { setConfig(c); setStake(c.entryStakeMinor); }).catch(() => {});
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); }).catch(() => {});
+  }, []);
+
+  const roundId = round && round.status !== 'none' ? round.id : null;
+
+  const startPlaying = useCallback((v: WerkRoundView, asSpectator: boolean) => {
+    if (!config) return;
+    const g = new WerkGame({
+      seed: v.seed, mode: v.mode, durationSec: v.durationSec, maxPlayers: v.maxPlayers,
+      botCount: v.botCount, coinDensityX100: v.coinDensityX100, finalSprintWarningSec: v.finalSprintWarningSec,
+      powerupsEnabled: v.powerupsEnabled, theme: (v.mazeTheme ?? config.mazeTheme) as MazeTheme,
+      yourSeat: asSpectator ? null : v.yourSeat, yourName: user?.displayName ?? 'You',
+    });
+    g.onCollect = (type) => { if (type === 'gold') goldPickup(); else coinPickup(); };
+    g.onPower = () => powerPickup();
+    g.onSprintWarn = () => sprintHorn();
+    g.applyRoundState(v);
+    gameRef.current = g;
+    setSpectating(asSpectator);
+    setResult(null);
+    setScreen('playing');
+  }, [config, user]);
+
+  const handleCompleted = useCallback((v: WerkRoundView) => {
+    gameRef.current?.markCompleted();
+    setRound(v);
+    const mine = v.standings.find((s) => s.participantId && s.participantId === v.yourParticipantId)
+      ?? v.standings.find((s) => s.isHuman && s.userId === user?.id);
+    if (!mine) {
+      // Spectator — return to the lobby to join the next round.
+      gameRef.current = null;
+      setScreen('lobby');
+      return;
     }
-  }, [session, setWallet, addToast, t]);
+    const rank = mine.rank;
+    const eliminated = mine.eligible === false;
+    const prizeMinor = mine.prizeMinor ?? 0;
+    if (eliminated) lossThud(); else if (rank <= 3 && prizeMinor > 0) victoryFanfare();
+    setResult({ standings: v.standings, prizeMinor, rank, eliminated });
+    if (prizeMinor > 0) confetti({ particleCount: 180, spread: 85, origin: { y: 0.6 }, colors: [C.success, C.coin, C.accent] });
+    walletApi.getWallet().then(setWallet).catch(() => {});
+    setScreen('result');
+  }, [user, setWallet]);
+
+  useWerkSocket(roundId, {
+    onRoundState: (v) => {
+      setRound(v);
+      gameRef.current?.applyRoundState(v);
+      if (v.status === 'running' && v.yourParticipantId && screenRef.current !== 'playing') {
+        startPlaying(v, false);
+      }
+    },
+    onSnapshot: (s) => { gameRef.current?.applySnapshot(s); },
+    onCompleted: (v) => { handleCompleted(v); },
+  });
+
+  // ── Foreground resync: server owns the clock, so we just re-pull current state. ──
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      werkApi.getCurrent().then((r) => {
+        if (r.status === 'none') return;
+        setRound(r);
+        gameRef.current?.applyRoundState(r);
+        if (screenRef.current === 'playing' && (r.status === 'completed' || r.status === 'cancelled')) {
+          handleCompleted(r);
+        }
+      }).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [handleCompleted]);
 
   // ── Game loop ───────────────────────────────────────────────────────────────
-  const startLoop = useCallback(() => {
-    let lastHud = 0;
-    const loop = (ts: number) => {
-      const g = gameRef.current;
-      if (!g) return;
-      const last = lastTsRef.current || ts;
-      const dt = (ts - last) / 1000;
-      lastTsRef.current = ts;
-      if (!pausedRef.current) g.update(dt, inputRef.current);
-      inputRef.current.usePower = false;
-      drawWorld(canvasRef.current, g, ts / 1000);
-      if (ts - lastHud > 90) { lastHud = ts; forceHud((h) => h + 1); }
-      if (g.finished) { void finishGame(); return; }
-      rafRef.current = requestAnimationFrame(loop);
-    };
-    lastTsRef.current = 0;
-    rafRef.current = requestAnimationFrame(loop);
-  }, [finishGame]);
-
-  const stopLoop = () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = 0; };
-
-  const startGame = async () => {
-    if (!config) return;
-    setBusy(true);
-    resumeWerkAudio();
-    try {
-      const s = await werkApi.start(stake);
-      setSession(s);
-      const g = new WerkGame({
-        seed: s.seed, mode: s.mode, durationSec: s.durationSec, totalPlayers: s.totalPlayers,
-        botCount: s.botCount, coinDensityX100: s.coinDensityX100, finalSprintWarningSec: s.finalSprintWarningSec,
-        powerupsEnabled: s.powerupsEnabled, theme: s.mazeTheme, humanName: user?.displayName ?? 'You', bots: s.bots,
-      });
-      g.onCollect = (type) => { if (type === 'gold') goldPickup(); else coinPickup(); };
-      g.onPower = () => powerPickup();
-      g.onSprintWarn = () => sprintHorn();
-      gameRef.current = g;
-      settlingRef.current = false;
-      setResult(null);
-      setPaused(false);
-      setScreen('playing');
-    } catch (e) {
-      addToast('error', getErrorMessage(e) || t('werk.errStart'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   useEffect(() => {
     if (screen !== 'playing') return;
     const set = (e: KeyboardEvent, v: boolean) => {
@@ -146,7 +145,6 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
       else if (k === 'd' || k === 'arrowright') i.right = v;
       else if (k === 'shift') i.sprint = v;
       else if (k === ' ' && v) i.usePower = true;
-      else if ((k === 'p' || k === 'escape') && v) setPaused((p) => !p);
       else return;
       e.preventDefault();
     };
@@ -154,24 +152,81 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
     const up = (e: KeyboardEvent) => set(e, false);
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
-    startLoop();
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); stopLoop(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    let lastHud = 0;
+    const loop = (ts: number) => {
+      const g = gameRef.current;
+      if (!g) return;
+      const last = lastTsRef.current || ts;
+      const dt = (ts - last) / 1000;
+      lastTsRef.current = ts;
+      const msg = g.update(dt, inputRef.current);
+      inputRef.current.usePower = false;
+      drawWorld(canvasRef.current, g, ts / 1000);
+      if (g.human) {
+        sendAccRef.current += dt;
+        if (sendAccRef.current >= 0.06) { sendAccRef.current = 0; sendWerkInput(msg); }
+      }
+      if (ts - lastHud > 90) { lastHud = ts; forceHud((h) => h + 1); }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    lastTsRef.current = 0;
+    rafRef.current = requestAnimationFrame(loop);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+    };
   }, [screen]);
 
-  const leaveGame = async () => {
-    stopLoop();
-    const g = gameRef.current;
-    if (g && !g.finished && session) {
-      try { await werkApi.abort(session.id); walletApi.getWallet().then(setWallet).catch(() => {}); addToast('info', t('werk.stakeRefunded')); } catch { /* ignore */ }
+  const joinGame = async () => {
+    if (!config) return;
+    setBusy(true);
+    resumeWerkAudio();
+    try {
+      const v = await werkApi.join(stake);
+      setRound(v);
+      if (v.status === 'running' && v.yourParticipantId) startPlaying(v, false);
+    } catch (e) {
+      addToast('error', getErrorMessage(e) || t('werk.errStart'));
+    } finally {
+      setBusy(false);
     }
-    gameRef.current = null; setSession(null); setScreen('lobby');
   };
-  const backToLobby = () => { gameRef.current = null; setSession(null); setResult(null); setScreen('lobby'); };
+
+  const spectate = () => { if (round && round.status !== 'none') startPlaying(round, true); };
+
+  const leaveGame = async () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const wasPlayer = !!gameRef.current?.human;
+    gameRef.current = null;
+    setSpectating(false);
+    if (wasPlayer) {
+      try { await werkApi.leave(); walletApi.getWallet().then(setWallet).catch(() => {}); } catch { /* ignore */ }
+    }
+    setScreen('lobby');
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); else setRound(null); }).catch(() => {});
+  };
+
+  const backToLobby = () => {
+    gameRef.current = null;
+    setResult(null);
+    setScreen('lobby');
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); else setRound(null); }).catch(() => {});
+  };
+
+  const leaveLobby = async () => {
+    try { await werkApi.leave(); walletApi.getWallet().then(setWallet).catch(() => {}); } catch { /* ignore */ }
+    werkApi.getCurrent().then((r) => { if (r.status !== 'none') setRound(r); else setRound(null); }).catch(() => {});
+  };
 
   // ── LOBBY ─────────────────────────────────────────────────────────────────
   if (screen === 'lobby') {
     const mults = config?.payoutMultsX100 ?? [];
+    const status = round?.status ?? 'none';
+    const inProgress = status === 'running' || status === 'settling';
+    const iAmInLobby = status === 'lobby' && !!round?.yourParticipantId;
     return (
       <div style={{ minHeight: '70vh', background: `radial-gradient(1200px 600px at 50% -10%, rgba(124,92,255,0.14), transparent), radial-gradient(900px 500px at 50% 120%, rgba(0,212,255,0.10), transparent), ${C.bg}`, borderRadius: 20, padding: '14px 14px 28px', maxWidth: 680, margin: '0 auto', color: C.text }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
@@ -193,31 +248,60 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
           <div style={{ ...glass, padding: 14, marginBottom: 16, fontSize: 13, borderColor: 'rgba(255,92,92,0.35)', color: C.danger }}>{t('werk.unavailable')}</div>
         )}
 
-        <div style={{ ...glass, padding: 18, marginBottom: 14 }}>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-            <Stat label={t('werk.mode')} value={config?.winningMode === 'B' ? t('werk.modeB') : t('werk.modeA')} />
-            <Stat label={t('werk.players')} value={`${config?.totalPlayers ?? '–'}`} sub={`${config?.botCount ?? 0} 🤖`} />
-            <Stat label={t('werk.duration')} value={`${config?.gameDurationSec ?? '–'}s`} />
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-            {mults.map((m, i) => m > 0 && (
-              <span key={i} style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 999, background: 'rgba(0,212,255,0.08)', border: '1px solid rgba(0,212,255,0.25)', color: C.accent }}>
-                #{i + 1} · {Math.floor((stake * m) / 100)}
-              </span>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-            <div style={{ flex: '0 0 auto' }}>
-              <div style={{ fontSize: 10.5, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 3 }}>{t('werk.stake')}</div>
-              <input type="number" value={stake} min={config?.minStakeMinor ?? 1} max={config?.maxStakeMinor ?? 1000}
-                onChange={(e) => setStake(parseInt(e.target.value, 10) || 0)}
-                style={{ width: 92, padding: '10px 12px', borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: 'ui-monospace, monospace', fontSize: 15 }} />
+        {/* A round is live — spectate now, join the next one. */}
+        {inProgress && !iAmInLobby && (
+          <div style={{ ...glass, padding: 18, marginBottom: 14, textAlign: 'center' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '4px 12px', borderRadius: 999, background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.35)', color: C.success, fontSize: 12.5, fontWeight: 700, marginBottom: 12 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: C.success }} /> {t('werk.roundInProgress')}
             </div>
-            <button disabled={busy || !config?.enabled} onClick={startGame} style={{ ...primaryBtn, flex: 1, opacity: busy || !config?.enabled ? 0.6 : 1 }}>
-              <Play size={17} /> {busy ? '…' : t('werk.startGame')}
-            </button>
+            <div style={{ fontSize: 13.5, color: C.dim, marginBottom: 14 }}>
+              <Users size={14} style={{ verticalAlign: -2, marginRight: 4 }} />{round?.playerCount ?? 0} · {Math.ceil(round?.timeLeft ?? 0)}s {t('werk.left')}
+            </div>
+            <button onClick={spectate} style={{ ...primaryBtn, width: '100%', justifyContent: 'center' }}><Eye size={16} /> {t('werk.spectate')}</button>
+            <div style={{ fontSize: 11.5, color: C.dim, marginTop: 10 }}>{t('werk.joinNextHint')}</div>
           </div>
-        </div>
+        )}
+
+        {/* Waiting in the lobby after joining. */}
+        {iAmInLobby && (
+          <div style={{ ...glass, padding: 18, marginBottom: 14, textAlign: 'center' }}>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{t('werk.youreIn')}</div>
+            <div style={{ fontSize: 34, fontWeight: 900, color: C.accent, fontFamily: 'ui-monospace, monospace' }}>{round?.countdown != null ? round.countdown : '…'}</div>
+            <div style={{ fontSize: 12, color: C.dim, marginBottom: 12 }}>{t('werk.startingSoon')}</div>
+            <PlayerChips round={round} youId={user?.id} t={t} />
+            <button onClick={leaveLobby} style={{ ...ghostBtn, width: '100%', justifyContent: 'center', marginTop: 12 }}>{t('werk.leave')}</button>
+          </div>
+        )}
+
+        {/* Open lobby — join panel. */}
+        {!inProgress && !iAmInLobby && (
+          <div style={{ ...glass, padding: 18, marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+              <Stat label={t('werk.mode')} value={config?.winningMode === 'B' ? t('werk.modeB') : t('werk.modeA')} />
+              <Stat label={t('werk.players')} value={`${round?.playerCount ?? 0}/${config?.totalPlayers ?? '–'}`} />
+              <Stat label={t('werk.duration')} value={`${config?.gameDurationSec ?? '–'}s`} />
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+              {mults.map((m, i) => m > 0 && (
+                <span key={i} style={{ fontSize: 11.5, padding: '4px 10px', borderRadius: 999, background: 'rgba(0,212,255,0.08)', border: '1px solid rgba(0,212,255,0.25)', color: C.accent }}>
+                  #{i + 1} · {Math.floor((stake * m) / 100)}
+                </span>
+              ))}
+            </div>
+            {(round?.playerCount ?? 0) > 0 && <div style={{ marginBottom: 12 }}><PlayerChips round={round} youId={user?.id} t={t} /></div>}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+              <div style={{ flex: '0 0 auto' }}>
+                <div style={{ fontSize: 10.5, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 3 }}>{t('werk.stake')}</div>
+                <input type="number" value={stake} min={config?.minStakeMinor ?? 1} max={config?.maxStakeMinor ?? 1000}
+                  onChange={(e) => setStake(parseInt(e.target.value, 10) || 0)}
+                  style={{ width: 92, padding: '10px 12px', borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface2, color: C.text, fontFamily: 'ui-monospace, monospace', fontSize: 15 }} />
+              </div>
+              <button disabled={busy || !config?.enabled} onClick={joinGame} style={{ ...primaryBtn, flex: 1, opacity: busy || !config?.enabled ? 0.6 : 1 }}>
+                <Play size={17} /> {busy ? '…' : t('werk.joinRound')}
+              </button>
+            </div>
+          </div>
+        )}
 
         <button onClick={() => setShowHowTo(true)} style={{ ...ghostBtn, width: '100%', justifyContent: 'center', padding: '11px' }}>{t('werk.howToPlay')}</button>
 
@@ -229,42 +313,57 @@ export function WerkFelega({ onBack }: { onBack: () => void }) {
 
   if (screen === 'result' && result) return <ResultScreen result={result} onNewGame={backToLobby} onMenu={onBack} />;
 
-  // ── PLAYING ─────────────────────────────────────────────────────────────────
-  // Portrait layout: a fixed top HUD bar, a flexible maze viewport that the canvas
-  // fills (nothing overlaps it but the transient sprint countdown), and a bottom
-  // control deck holding the live board + D-pad + action buttons.
+  // ── PLAYING / SPECTATING ─────────────────────────────────────────────────────
   const g = gameRef.current;
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: C.bg, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {g && <TopHud game={g} name={user?.displayName ?? t('werk.you')} muted={muted} paused={paused} onLeave={leaveGame} onPause={() => setPaused((p) => !p)} onMute={toggleMute} />}
+      {g && <TopHud game={g} name={user?.displayName ?? t('werk.you')} muted={muted} spectating={spectating} onLeave={leaveGame} onMute={toggleMute} />}
 
       <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none' }} />
         {g && <SprintOverlay game={g} />}
+        {spectating && (
+          <div style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', padding: '5px 14px', borderRadius: 999, background: 'rgba(0,212,255,0.16)', border: '1px solid rgba(0,212,255,0.4)', color: C.accent, fontSize: 12.5, fontWeight: 700, pointerEvents: 'none' }}>
+            <Eye size={13} style={{ verticalAlign: -2, marginRight: 5 }} />{t('werk.spectating')}
+          </div>
+        )}
       </div>
 
-      {g && <ControlDeck game={g} inputRef={inputRef} />}
-
-      {paused && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(11,15,20,0.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}>
-          <div style={{ ...glass, padding: 26, textAlign: 'center', minWidth: 220 }}>
-            <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 18, color: C.text }}>{t('werk.paused')}</div>
-            <button onClick={() => setPaused(false)} style={{ ...primaryBtn, width: '100%', marginBottom: 10, justifyContent: 'center' }}><Play size={15} /> {t('werk.resume')}</button>
-            <button onClick={leaveGame} style={{ ...ghostBtn, width: '100%', justifyContent: 'center' }}>{t('werk.leave')}</button>
-          </div>
+      {g && !spectating && <ControlDeck game={g} inputRef={inputRef} />}
+      {g && spectating && (
+        <div style={{ ...glass, borderRadius: 0, borderInline: 'none', borderBottomWidth: 0, padding: '12px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>
+          <Minimap game={g} size={54} />
+          <div style={{ flex: 1, fontSize: 12.5, color: C.dim }}>{t('werk.joinNextHint')}</div>
+          <button onClick={leaveGame} style={{ ...primaryBtn, justifyContent: 'center' }}>{t('werk.backToLobby')}</button>
         </div>
       )}
     </div>
   );
 }
 
+/** Small horizontal list of joined players' names. */
+function PlayerChips({ round, youId, t }: { round: WerkRoundView | null; youId?: string; t: (k: string) => string }) {
+  const players = round?.players ?? [];
+  if (!players.length) return <div style={{ fontSize: 12, color: C.dim }}>{t('werk.noPlayersYet')}</div>;
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+      {players.map((p) => (
+        <span key={p.participantId} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, background: p.userId === youId ? 'rgba(0,212,255,0.14)' : 'rgba(30,36,45,0.7)', border: `1px solid ${p.userId === youId ? 'rgba(0,212,255,0.4)' : C.border}`, fontSize: 12 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.color }} />
+          {p.userId === youId ? t('werk.you') : p.name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ── Top HUD bar (a real bar — never drawn over the maze) ─────────────────────
-function TopHud({ game, name, muted, paused, onLeave, onPause, onMute }: {
-  game: WerkGame; name: string; muted: boolean; paused: boolean; onLeave: () => void; onPause: () => void; onMute: () => void;
+function TopHud({ game, name, muted, spectating, onLeave, onMute }: {
+  game: WerkGame; name: string; muted: boolean; spectating: boolean; onLeave: () => void; onMute: () => void;
 }) {
   const { t } = useTranslation();
-  const mine = game.standings().find((s) => s.player.isHuman)!;
   const h = game.human;
+  const mine = h ? game.standings().find((s) => s.player.isHuman) : undefined;
   const secs = Math.ceil(game.timeLeft);
   const isSprint = game.isFinalSprint;
   const initial = (name || '?').trim().charAt(0).toUpperCase() || '?';
@@ -273,37 +372,38 @@ function TopHud({ game, name, muted, paused, onLeave, onPause, onMute }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <button onClick={onLeave} style={iconBtn} aria-label="Leave"><ArrowLeft size={16} /></button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 15, color: '#06121a', background: `linear-gradient(135deg, ${C.accent}, ${C.accent2})` }}>{initial}</div>
+          <div style={{ width: 32, height: 32, borderRadius: 9, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 15, color: '#06121a', background: `linear-gradient(135deg, ${C.accent}, ${C.accent2})` }}>{spectating ? <Eye size={16} /> : initial}</div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-            <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.05em' }}>#{mine.rank}<span style={{ opacity: 0.6 }}> / {game.players.length}</span></div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spectating ? t('werk.spectating') : name}</div>
+            <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.05em' }}>{mine ? <>#{mine.rank}<span style={{ opacity: 0.6 }}> / {game.players.length}</span></> : <>{game.players.length} {t('werk.players')}</>}</div>
           </div>
         </div>
         <div style={{ padding: '4px 14px', borderRadius: 12, background: isSprint ? 'rgba(255,92,92,0.85)' : 'rgba(30,36,45,0.7)', border: `1px solid ${isSprint ? C.danger : C.border}` }}>
           <span style={{ fontSize: 20, fontWeight: 900, fontFamily: 'ui-monospace, monospace', color: '#fff', letterSpacing: '0.02em' }}>{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</span>
         </div>
-        <button onClick={onPause} style={iconBtn} aria-label="Pause">{paused ? <Play size={16} /> : <Pause size={16} />}</button>
         <button onClick={onMute} style={iconBtn} aria-label="Mute">{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, background: 'rgba(255,213,74,0.12)', border: '1px solid rgba(255,213,74,0.3)', color: C.coin, fontWeight: 800, fontSize: 13 }}>🪙 {h.coinValue}</span>
-        <span style={{ display: 'flex', gap: 8, fontSize: 11, color: C.dim }}>
-          <span style={{ color: COIN_COLOR.bronze }}>●{h.bronze}</span>
-          <span style={{ color: COIN_COLOR.silver }}>●{h.silver}</span>
-          <span style={{ color: COIN_COLOR.gold }}>●{h.gold}</span>
-        </span>
-        <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden', minWidth: 36 }} title="Energy">
-          <div style={{ width: `${h.stamina}%`, height: '100%', background: h.stamina > 30 ? C.success : C.danger, transition: 'width 0.1s' }} />
+      {h && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, background: 'rgba(255,213,74,0.12)', border: '1px solid rgba(255,213,74,0.3)', color: C.coin, fontWeight: 800, fontSize: 13 }}>🪙 {h.coinValue}</span>
+          <span style={{ display: 'flex', gap: 8, fontSize: 11, color: C.dim }}>
+            <span style={{ color: COIN_COLOR.bronze }}>●{h.bronze}</span>
+            <span style={{ color: COIN_COLOR.silver }}>●{h.silver}</span>
+            <span style={{ color: COIN_COLOR.gold }}>●{h.gold}</span>
+          </span>
+          <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.1)', borderRadius: 3, overflow: 'hidden', minWidth: 36 }} title="Energy">
+            <div style={{ width: `${h.stamina}%`, height: '100%', background: h.stamina > 30 ? C.success : C.danger, transition: 'width 0.1s' }} />
+          </div>
+          <span style={{ fontSize: 10, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
+            {game.opts.mode === 'B' ? t('werk.modeB') : t('werk.modeA')}
+          </span>
         </div>
-        <span style={{ fontSize: 10, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
-          {game.opts.mode === 'B' ? t('werk.modeB') : t('werk.modeA')}
-        </span>
-      </div>
+      )}
     </div>
   );
 }
 
-/** Big transient countdown during the Mode-B final sprint; sits over the maze but is click-through. */
+/** Big transient countdown during the Mode-B final sprint; click-through over the maze. */
 function SprintOverlay({ game }: { game: WerkGame }) {
   const { t } = useTranslation();
   if (!game.isFinalSprint) return null;
@@ -319,12 +419,11 @@ function SprintOverlay({ game }: { game: WerkGame }) {
 // ── Bottom control deck: live board + D-pad + actions ────────────────────────
 function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.MutableRefObject<HumanInput> }) {
   const { t } = useTranslation();
-  const h = game.human;
+  const h = game.human!;
   const top = game.standings().slice(0, 4);
   const powerReady = !!(h._pendingSpeed || h._pendingMagnet || h._pendingShield);
   return (
     <div style={{ ...glass, borderRadius: 0, borderBottomWidth: 0, borderInline: 'none', padding: '10px 12px', paddingBottom: 'calc(12px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 12, zIndex: 10, flexShrink: 0 }}>
-      {/* Info strip: minimap + live leaderboard (out of the play area) */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <Minimap game={game} size={58} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -334,7 +433,7 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
               <span key={s.player.id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 999, flexShrink: 0, background: s.player.isHuman ? 'rgba(0,212,255,0.14)' : 'rgba(30,36,45,0.7)', border: `1px solid ${s.player.isHuman ? 'rgba(0,212,255,0.4)' : C.border}` }}>
                 <span style={{ fontSize: 9, color: C.dim }}>{i + 1}</span>
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.player.color, flexShrink: 0 }} />
-                <span style={{ fontSize: 11, fontWeight: s.player.isHuman ? 800 : 600, color: s.player.isHuman ? C.accent : C.text, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.player.isHuman ? t('werk.you') : s.player.name}</span>
+                <span style={{ fontSize: 11, fontWeight: s.player.isHuman ? 800 : 600, color: s.player.isHuman ? C.accent : C.text, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.player.isHuman && s.player.id >= 1_000_000 && s.player.name === (game.human?.name) ? t('werk.you') : s.player.name}</span>
                 <span style={{ fontSize: 11, fontFamily: 'ui-monospace, monospace', color: C.coin }}>{s.player.coinValue}</span>
               </span>
             ))}
@@ -342,9 +441,7 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
         </div>
       </div>
 
-      {/* Controls */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-        {/* Action buttons on the left, movement thumbstick on the right. */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
           <button
             onPointerDown={(e) => { e.preventDefault(); inputRef.current.usePower = true; }}
@@ -364,14 +461,11 @@ function ControlDeck({ game, inputRef }: { game: WerkGame; inputRef: React.Mutab
   );
 }
 
-// ── Virtual analog thumbstick (fixed base, drag the knob to move 360°) ────────
-// Sits where the old D-pad was. Deflection sets an analog vector on the input ref
-// (magnitude → variable speed); the knob follows the thumb and springs back on
-// release. Pointer capture keeps it tracking even if the thumb leaves the base.
-const JOY_SIZE = 150;    // base diameter (px) — matches the old D-pad footprint
-const JOY_KNOB = 62;     // knob diameter (px)
-const JOY_TRAVEL = (JOY_SIZE - JOY_KNOB) / 2; // max knob-center offset from base center
-const JOY_DEADZONE = 0.14; // fraction of travel ignored, so a resting thumb doesn't creep
+// ── Virtual analog thumbstick ────────────────────────────────────────────────
+const JOY_SIZE = 150;
+const JOY_KNOB = 62;
+const JOY_TRAVEL = (JOY_SIZE - JOY_KNOB) / 2;
+const JOY_DEADZONE = 0.14;
 
 function Joystick({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }) {
   const baseRef = useRef<HTMLDivElement>(null);
@@ -395,7 +489,7 @@ function Joystick({ inputRef }: { inputRef: React.MutableRefObject<HumanInput> }
     if (knobRef.current) {
       knobRef.current.style.transform = `translate(calc(-50% + ${nx * clamped}px), calc(-50% + ${ny * clamped}px))`;
     }
-    const raw = clamped / JOY_TRAVEL; // 0..1
+    const raw = clamped / JOY_TRAVEL;
     const mag = raw <= JOY_DEADZONE ? 0 : (raw - JOY_DEADZONE) / (1 - JOY_DEADZONE);
     inputRef.current.moveX = nx * mag;
     inputRef.current.moveY = ny * mag;
@@ -456,7 +550,6 @@ function Minimap({ game, size = 118 }: { game: WerkGame; size?: number }) {
     ctx.fillStyle = 'rgba(255,213,74,0.3)';
     for (const c of game.coins) if (!c.collected) ctx.fillRect(c.x * scale - 0.5, c.y * scale - 0.5, 1.3, 1.3);
     for (const p of game.players) {
-      if (p.state === 'eliminated') continue;
       ctx.fillStyle = p.isHuman ? C.accent : p.color;
       ctx.beginPath(); ctx.arc(p.x * scale, p.y * scale, p.isHuman ? 3 : 2, 0, Math.PI * 2); ctx.fill();
     }
@@ -495,7 +588,7 @@ function ResultScreen({ result, onNewGame, onMenu }: {
           const grad = idx === 1 ? 'linear-gradient(#FFD54A,#c79b16)' : idx === 0 ? 'linear-gradient(#cfd6df,#8a8f99)' : 'linear-gradient(#cd7f32,#8a5320)';
           return (
             <div key={idx} style={{ textAlign: 'center', width: 86 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: s.isHuman ? C.accent : C.text }}>{s.isHuman ? t('werk.you') : s.name}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: s.isHuman ? C.accent : C.text }}>{s.isHuman ? s.name : s.name}</div>
               <div style={{ height: heights[idx], borderRadius: '10px 10px 0 0', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 7, background: grad, fontWeight: 900, fontSize: 20, color: '#151a1f' }}>{idx === 1 ? 1 : idx === 0 ? 2 : 3}</div>
               <div style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', marginTop: 3, color: C.coin }}>{s.coinValue}</div>
             </div>
@@ -505,10 +598,11 @@ function ResultScreen({ result, onNewGame, onMenu }: {
 
       <div style={{ ...glass, padding: 10, marginBottom: 18, maxHeight: 250, overflowY: 'auto' }}>
         {result.standings.map((s) => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px', fontSize: 13, fontWeight: s.isHuman ? 800 : 500, color: s.isHuman ? C.accent : C.text, opacity: s.eligible ? 1 : 0.45 }}>
+          <div key={`${s.isHuman ? 'h' : 'b'}-${s.id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px', fontSize: 13, fontWeight: s.isHuman ? 800 : 500, color: s.isHuman ? C.accent : C.text, opacity: s.eligible ? 1 : 0.45 }}>
             <span style={{ width: 22, textAlign: 'right', color: C.dim }}>{s.eligible ? `#${s.rank}` : '✗'}</span>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.color }} />
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.isHuman ? t('werk.you') : s.name}</span>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+            {(s.prizeMinor ?? 0) > 0 && <span style={{ fontSize: 11, color: C.success }}>+{s.prizeMinor}</span>}
             <span style={{ fontFamily: 'ui-monospace, monospace', color: C.coin }}>{s.coinValue}</span>
           </div>
         ))}
@@ -592,8 +686,9 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
   ctx.clearRect(0, 0, vw, vh);
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, vw, vh);
 
-  const h = game.human;
-  let camX = h.x - vw / 2, camY = h.y - vh / 2;
+  // Camera follows the local avatar, or the maze center when spectating.
+  const focus = game.human ?? { x: game.center[0] * CELL + CELL / 2, y: game.center[1] * CELL + CELL / 2 };
+  let camX = focus.x - vw / 2, camY = focus.y - vh / 2;
   camX = Math.max(0, Math.min(camX, game.worldPx - vw));
   camY = Math.max(0, Math.min(camY, game.worldPx - vh));
   if (game.worldPx < vw) camX = (game.worldPx - vw) / 2;
@@ -604,11 +699,9 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
 
   const th = THEMES[(game.opts.theme as ThemeKey)] ?? THEMES.adwa;
 
-  // Floor
   ctx.fillStyle = th.floor;
   ctx.fillRect(0, 0, game.worldPx, game.worldPx);
 
-  // Sector tiles — the bordered "rooms" grid look (visible cells only).
   {
     const tsc = Math.max(0, Math.floor(camX / CELL) - 1), tec = Math.min(game.size - 1, Math.ceil((camX + vw) / CELL) + 1);
     const tsr = Math.max(0, Math.floor(camY / CELL) - 1), ter = Math.min(game.size - 1, Math.ceil((camY + vh) / CELL) + 1);
@@ -619,7 +712,6 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
     }
   }
 
-  // Center hub
   const [ccx, ccy] = game.center;
   const hubX = ccx * CELL + CELL / 2, hubY = ccy * CELL + CELL / 2;
   const pulse = 0.5 + 0.5 * Math.sin(time * 4);
@@ -633,7 +725,6 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
   ctx.font = `${CELL * 0.9}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('★', hubX, hubY + 2);
 
-  // Walls (themed, subtle glow)
   const sc = Math.max(0, Math.floor(camX / CELL) - 1), ec = Math.min(game.size - 1, Math.ceil((camX + vw) / CELL) + 1);
   const sr = Math.max(0, Math.floor(camY / CELL) - 1), er = Math.min(game.size - 1, Math.ceil((camY + vh) / CELL) + 1);
   ctx.strokeStyle = th.wall; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
@@ -649,7 +740,6 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
   }
   ctx.stroke(); ctx.shadowBlur = 0;
 
-  // Coins
   for (const c of game.coins) {
     if (c.collected) continue;
     if (c.x < camX - CELL || c.x > camX + vw + CELL || c.y < camY - CELL || c.y > camY + vh + CELL) continue;
@@ -659,7 +749,6 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
     ctx.beginPath(); ctx.arc(c.x, c.y + bob, r, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
   }
 
-  // Power-ups
   if (game.opts.powerupsEnabled) {
     ctx.font = `${CELL * 0.55}px serif`;
     for (const pu of game.powerups) {
@@ -669,28 +758,26 @@ function drawWorld(canvas: HTMLCanvasElement | null, game: WerkGame, time: numbe
     }
   }
 
-  // Players
   for (const p of game.players) {
-    if (p.state === 'eliminated') continue;
     if (p.x < camX - CELL || p.x > camX + vw + CELL || p.y < camY - CELL || p.y > camY + vh + CELL) continue;
-    drawPlayer(ctx, p, p.isHuman);
+    drawPlayer(ctx, p, p.isHuman && !!game.human && p.id === game.human.id);
   }
   ctx.restore();
 }
 
-function drawPlayer(ctx: CanvasRenderingContext2D, p: Player, isHuman: boolean) {
+function drawPlayer(ctx: CanvasRenderingContext2D, p: Player, isSelf: boolean) {
   const r = CELL * 0.3;
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
   ctx.fillStyle = p.color; ctx.fill();
-  ctx.lineWidth = isHuman ? 3 : 1.5;
-  ctx.strokeStyle = isHuman ? C.accent : 'rgba(0,0,0,0.4)';
-  if (isHuman) { ctx.shadowColor = C.accent; ctx.shadowBlur = 10; }
+  ctx.lineWidth = isSelf ? 3 : 1.5;
+  ctx.strokeStyle = isSelf ? C.accent : 'rgba(0,0,0,0.4)';
+  if (isSelf) { ctx.shadowColor = C.accent; ctx.shadowBlur = 10; }
   ctx.stroke(); ctx.shadowBlur = 0;
   if (p.magnet > 0) { ctx.beginPath(); ctx.arc(p.x, p.y, r + 5, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(124,92,255,0.6)'; ctx.lineWidth = 2; ctx.stroke(); }
-  const label = isHuman ? '★' : p.name;
-  ctx.font = `${isHuman ? 12 : 10}px sans-serif`; ctx.textAlign = 'center';
+  const label = isSelf ? '★' : p.name;
+  ctx.font = `${isSelf ? 12 : 10}px sans-serif`; ctx.textAlign = 'center';
   const w = ctx.measureText(label).width + 8;
   ctx.fillStyle = 'rgba(11,15,20,0.6)'; ctx.fillRect(p.x - w / 2, p.y - r - 16, w, 13);
-  ctx.fillStyle = isHuman ? C.accent : '#fff'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = isSelf ? C.accent : '#fff'; ctx.textBaseline = 'middle';
   ctx.fillText(label, p.x, p.y - r - 9);
 }

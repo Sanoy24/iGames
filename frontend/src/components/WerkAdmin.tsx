@@ -102,6 +102,9 @@ export function WerkAdmin({ onClose, embedded = false }: { onClose?: () => void;
               <NumField label="Duration (s)" value={cfg.gameDurationSec} onChange={(v) => set('gameDurationSec', v)} min={30} max={600} />
               <NumField label="Coin density ×100" value={cfg.coinDensityX100} onChange={(v) => set('coinDensityX100', v)} min={5} max={30} />
               <NumField label="Sprint warn (s)" value={cfg.finalSprintWarningSec} onChange={(v) => set('finalSprintWarningSec', v)} min={3} max={15} />
+              <NumField label="Lobby countdown (s)" value={cfg.lobbyCountdownSec} onChange={(v) => set('lobbyCountdownSec', v)} min={5} max={120} hint="join window before start" />
+              <NumField label="Result display (s)" value={cfg.resultDisplaySec} onChange={(v) => set('resultDisplaySec', v)} min={2} max={60} hint="before the next round" />
+              <NumField label="Bots off at ≥ N real players" value={cfg.botMaxRealPlayers} onChange={(v) => set('botMaxRealPlayers', v)} min={0} max={100} hint="0 = bots never join" />
             </div>
 
             {/* Bots */}
@@ -178,7 +181,18 @@ export function WerkAdmin({ onClose, embedded = false }: { onClose?: () => void;
               <NumField label="Force bot win every N rounds" value={cfg.botForcedWinEveryNRounds} onChange={(v) => set('botForcedWinEveryNRounds', v)} min={0} max={1000} hint="0 = off (large games)" />
             </div>
             <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
-              Below the threshold the human is forced under every bot (no top prize). Above it, a random bot is pushed above the human every N settled rounds. Rolling counter: {cfg.winControlCounter}.
+              Below the threshold the human is forced under every bot (no top prize). Above it, a random bot is pushed above the human every N settled rounds. Rolling counter: {cfg.winControlCounter}. Win control only applies while bots are present (≥ {cfg.botMaxRealPlayers || '∞'} real players → no bots, pure competition).
+            </div>
+
+            {/* Onboarding win sequence (per new user) */}
+            <div style={{ fontSize: 12, fontWeight: 700, marginTop: 4 }}>Onboarding win sequence (per user)</div>
+            <Toggle label="Scripted first games" value={cfg.onboardingWinControlEnabled} onChange={(v) => set('onboardingWinControlEnabled', v)} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, opacity: cfg.onboardingWinControlEnabled ? 1 : 0.5 }}>
+              <NumField label="First N games are losses" value={cfg.onboardingBotWinGames} onChange={(v) => set('onboardingBotWinGames', v)} min={0} max={50} hint="a bot always beats them" />
+              <NumField label="Then M games are wins" value={cfg.onboardingUserWinGames} onChange={(v) => set('onboardingUserWinGames', v)} min={0} max={50} hint="boosted above all bots" />
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+              A new user loses their first {cfg.onboardingBotWinGames} game(s), wins the next {cfg.onboardingUserWinGames}, then falls back to the house-edge control above. Reward only the top places by setting lower ranks to 0 in the prize table.
             </div>
 
             <button className="btn btn-primary" disabled={saving} onClick={save} style={{ width: '100%', marginTop: 6 }}>

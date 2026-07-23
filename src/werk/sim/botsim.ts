@@ -21,6 +21,20 @@ export interface SimConfig {
   finalSprintWarningSec: number;
 }
 
+/**
+ * Optional shared coin-ownership view. When the server runs a multiplayer round,
+ * bots and real players compete for ONE coin pool: the manager passes this so a
+ * coin claimed by a human is invisible to bots and vice-versa. When omitted (the
+ * client display path), BotSim uses its own private `botTaken` and behaves
+ * byte-identically to the single-player original.
+ */
+export interface SharedCoinPool {
+  /** True if some participant (human or bot) already owns this coin. */
+  has(index: number): boolean;
+  /** Attempt to claim the coin for `byId`; returns true only if it was still free. */
+  take(index: number, byId: number): boolean;
+}
+
 export interface BotRuntime {
   id: number;
   name: string;
@@ -64,12 +78,15 @@ export class BotSim {
   private readonly bfsQueue: Int32Array;
   private bfsGen = 0;
   private rng: () => number;
+  /** When set, coin ownership is arbitrated against a pool shared with humans. */
+  private readonly shared?: SharedCoinPool;
   t = 0;
   finished = false;
 
-  constructor(layout: Layout, roster: BotConfig[], cfg: SimConfig) {
+  constructor(layout: Layout, roster: BotConfig[], cfg: SimConfig, shared?: SharedCoinPool) {
     this.layout = layout;
     this.cfg = cfg;
+    this.shared = shared;
     this.rng = makeRng((layout.seed ^ 0x5f356495) >>> 0);
     this.botTaken = new Uint8Array(layout.coins.length);
     this.coinAtCell = new Map();
@@ -91,6 +108,11 @@ export class BotSim {
 
   private get timeLeft(): number {
     return Math.max(0, this.cfg.durationSec - this.t);
+  }
+
+  /** Coin taken by anyone — consults the shared pool when present, else local. */
+  private isTaken(index: number): boolean {
+    return this.shared ? this.shared.has(index) : this.botTaken[index] === 1;
   }
 
   /**
@@ -141,7 +163,7 @@ export class BotSim {
     const coins = this.layout.coins;
     const candidates: Array<{ idx: number; md: number }> = [];
     for (const c of coins) {
-      if (this.botTaken[c.index]) continue;
+      if (this.isTaken(c.index)) continue;
       candidates.push({ idx: c.index, md: Math.abs(c.cx - bcx) + Math.abs(c.cy - bcy) });
     }
     if (!candidates.length) { b.path = []; return; }
@@ -181,9 +203,12 @@ export class BotSim {
         const cx = bcx + dx, cy = bcy + dy;
         if (cx < 0 || cy < 0 || cx >= size || cy >= size) continue;
         const ci = this.coinAtCell.get(cy * size + cx);
-        if (ci === undefined || this.botTaken[ci]) continue;
+        if (ci === undefined || this.isTaken(ci)) continue;
         const c = this.layout.coins[ci];
         if (Math.hypot(c.x - b.x, c.y - b.y) < COLLECT_RADIUS) {
+          // In a shared round, only credit the coin if this bot actually won the
+          // race for it (take() is atomic against concurrent human/bot claims).
+          if (this.shared && !this.shared.take(ci, b.id)) continue;
           this.botTaken[ci] = 1;
           b.coinValue += c.value;
         }

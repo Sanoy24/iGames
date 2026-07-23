@@ -460,4 +460,55 @@ export class GameEventsGateway
   emitPoolMatchFound(userId: string, payload: unknown): void {
     this.server.to(`user_${userId}`).emit('pool.match.found', payload);
   }
+
+  // ── Werk Flega (shared server-authoritative round) ───────────────────────────
+
+  /**
+   * Runtime-registered handler so the gateway can forward player input to the
+   * WerkRoundManager without a circular module import. The manager registers
+   * itself on bootstrap.
+   */
+  private werkInputHandler?: (userId: string, input: unknown) => void;
+
+  registerWerkInputHandler(fn: (userId: string, input: unknown) => void): void {
+    this.werkInputHandler = fn;
+  }
+
+  /** Join the shared lobby room + a specific round's room to play/spectate. */
+  @SubscribeMessage('werk.join')
+  async handleWerkJoin(client: Socket, payload: { roundId?: string }) {
+    await client.join('game_werk');
+    if (payload?.roundId) await client.join(`werk_round_${payload.roundId}`);
+  }
+
+  @SubscribeMessage('werk.leave')
+  async handleWerkLeave(client: Socket, payload: { roundId?: string }) {
+    if (payload?.roundId) await client.leave(`werk_round_${payload.roundId}`);
+    await client.leave('game_werk');
+  }
+
+  /** A player's per-tick input (analog move vector + sprint + power). */
+  @SubscribeMessage('werk.input')
+  handleWerkInput(client: Socket, payload: unknown) {
+    const userId: string | undefined = client.data?.user?.sub;
+    if (!userId || !this.werkInputHandler) return;
+    this.werkInputHandler(userId, payload);
+  }
+
+  /** High-frequency authoritative snapshot of the running round. */
+  emitWerkSnapshot(roundId: string, snapshot: unknown): void {
+    this.server.to(`werk_round_${roundId}`).emit('werk.snapshot', snapshot);
+  }
+
+  /** Round lifecycle transition (lobby opened, countdown, started). */
+  emitWerkRoundState(view: { id: string } & Record<string, unknown>): void {
+    this.server.to('game_werk').emit('werk.round.state', view);
+    this.server.to(`werk_round_${view.id}`).emit('werk.round.state', view);
+  }
+
+  /** Final standings when a round settles. */
+  emitWerkRoundCompleted(view: { id: string } & Record<string, unknown>): void {
+    this.server.to('game_werk').emit('werk.round.completed', view);
+    this.server.to(`werk_round_${view.id}`).emit('werk.round.completed', view);
+  }
 }

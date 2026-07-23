@@ -17,13 +17,16 @@ export interface WerkBot {
 
 /** One row of the authoritative final standings returned on settle. */
 export interface WerkStanding {
-  id: number; // 0 = human
+  id: number;
   name: string;
   isHuman: boolean;
   color: string;
   coinValue: number;
   eligible: boolean;
   rank: number;
+  prizeMinor?: number;
+  participantId?: string;
+  userId?: string;
 }
 
 /** Public config the client reads to render the lobby + build a game. */
@@ -34,6 +37,8 @@ export interface WerkConfig {
   maxStakeMinor: number;
   totalPlayers: number;
   botCount: number;
+  botMaxRealPlayers: number;
+  lobbyCountdownSec: number;
   gameDurationSec: number;
   winningMode: WerkMode;
   finalSprintWarningSec: number;
@@ -43,30 +48,69 @@ export interface WerkConfig {
   payoutMultsX100: number[];
 }
 
-/** A started game — everything needed to deterministically build the maze. */
-export interface WerkSessionView {
+/** One real player in the shared round (lobby/spectator listing). */
+export interface WerkRoundPlayer {
+  participantId: string;
+  userId: string;
+  seat: number;
+  name: string;
+  color: string;
+}
+
+/** The current shared round — everything needed to build the maze + know your seat. */
+export interface WerkRoundView {
   id: string;
-  status: 'active' | 'settled' | 'aborted';
+  status: 'lobby' | 'running' | 'settling' | 'completed' | 'cancelled' | 'none';
   seed: number;
-  stakeMinor: number;
   mode: WerkMode;
   durationSec: number;
-  totalPlayers: number;
-  botCount: number;
   coinDensityX100: number;
   finalSprintWarningSec: number;
   powerupsEnabled: boolean;
-  mazeTheme: WerkMazeTheme;
-  payoutMultsX100: number[];
+  maxPlayers: number;
+  botCount: number;
+  botsEnabled: boolean;
   bots: WerkBot[];
-  humanRank: number | null;
-  prizeMinor: number;
+  timeLeft: number;
+  countdown: number | null;
+  playerCount: number;
+  players: WerkRoundPlayer[];
+  yourParticipantId: string | null;
+  yourSeat: number | null;
   standings: WerkStanding[];
+  mazeTheme?: WerkMazeTheme;
 }
 
-export interface WerkSettleInput {
-  collectedCoinIndices: number[];
-  reachedCenter?: boolean;
+/** One participant in a high-frequency authoritative snapshot. */
+export interface WerkSnapshotPlayer {
+  id: number;
+  seat?: number;
+  name: string;
+  color: string;
+  isBot: boolean;
+  x: number;
+  y: number;
+  coinValue: number;
+  stamina?: number;
+  boost?: boolean;
+  magnet?: boolean;
+}
+
+export interface WerkSnapshot {
+  t: number;
+  status: string;
+  timeLeft: number;
+  players: WerkSnapshotPlayer[];
+  taken: number[];
+  powerupsTaken: number[];
+}
+
+/** Per-tick player input sent up over the socket. */
+export interface WerkInputMsg {
+  moveX: number;
+  moveY: number;
+  sprint: boolean;
+  usePower?: boolean;
 }
 
 /** Full admin config row (all editable fields). */
@@ -88,6 +132,9 @@ export interface AdminWerkConfig {
   coinDensityX100: number;
   powerupsEnabled: boolean;
   mazeTheme: WerkMazeTheme;
+  botMaxRealPlayers: number;
+  lobbyCountdownSec: number;
+  resultDisplaySec: number;
   payoutRank1MultX100: number;
   payoutRank2MultX100: number;
   payoutRank3MultX100: number;
@@ -97,6 +144,9 @@ export interface AdminWerkConfig {
   houseGuaranteedBelowPlayers: number;
   botForcedWinEveryNRounds: number;
   winControlCounter: number;
+  onboardingWinControlEnabled: boolean;
+  onboardingBotWinGames: number;
+  onboardingUserWinGames: number;
 }
 
 /** An admin-managed house bot row (the DB pool rosters are drawn from). */
@@ -132,11 +182,13 @@ export type CreateWerkBotInput = {
 // whitelist pipe and rejects any unknown property, so we send ONLY these keys.
 const WERK_CONFIG_EDITABLE_KEYS = [
   'enabled', 'entryStakeMinor', 'minStakeMinor', 'maxStakeMinor', 'totalPlayers',
-  'botCount', 'botSeedMode', 'botSpeedPct', 'botSkillPct', 'botPersonalities',
+  'botCount', 'botMaxRealPlayers', 'lobbyCountdownSec', 'resultDisplaySec',
+  'botSeedMode', 'botSpeedPct', 'botSkillPct', 'botPersonalities',
   'gameDurationSec', 'winningMode', 'finalSprintWarningSec', 'coinDensityX100',
   'powerupsEnabled', 'mazeTheme', 'payoutRank1MultX100', 'payoutRank2MultX100',
   'payoutRank3MultX100', 'payoutRank4MultX100', 'payoutRank5MultX100',
   'winControlEnabled', 'houseGuaranteedBelowPlayers', 'botForcedWinEveryNRounds',
+  'onboardingWinControlEnabled', 'onboardingBotWinGames', 'onboardingUserWinGames',
 ] as const satisfies readonly (keyof AdminWerkConfig)[];
 
 /** Keep only editable, non-null fields so the whitelist pipe never rejects. */
@@ -163,10 +215,11 @@ export const adminWerkApi = {
 
 export const werkApi = {
   getConfig: () => api.get<WerkConfig>('/werk/config').then((r) => r.data),
-  start: (stakeMinor?: number) =>
-    api.post<WerkSessionView>('/werk/start', stakeMinor != null ? { stakeMinor } : {}).then((r) => r.data),
-  getSession: (id: string) => api.get<WerkSessionView>(`/werk/${id}`).then((r) => r.data),
-  settle: (id: string, input: WerkSettleInput) =>
-    api.post<WerkSessionView>(`/werk/${id}/settle`, input).then((r) => r.data),
-  abort: (id: string) => api.post<WerkSessionView>(`/werk/${id}/abort`, {}).then((r) => r.data),
+  /** The round to show right now (lobby / running to spectate / results). */
+  getCurrent: () => api.get<WerkRoundView>('/werk/current').then((r) => r.data),
+  /** Join the open lobby round; debits the entry stake. */
+  join: (stakeMinor?: number) =>
+    api.post<WerkRoundView>('/werk/join', stakeMinor != null ? { stakeMinor } : {}).then((r) => r.data),
+  /** Leave the current round (refunds only while still in the lobby). */
+  leave: () => api.post<{ left: true }>('/werk/leave', {}).then((r) => r.data),
 };

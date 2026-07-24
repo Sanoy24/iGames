@@ -24,6 +24,7 @@ type EnvConfig = {
   TELEBIRR_PROXY_URL: string;
   TELEBIRR_PROXY_KEY: string;
   TELEBIRR_PROXY_TIMEOUT_MS: number;
+  MPESA_PORTAL_ENABLED: boolean;
   MPESA_PORTAL_URL: string;
   MPESA_PORTAL_KEY: string;
   MPESA_PORTAL_TIMEOUT_MS: number;
@@ -61,6 +62,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     TELEBIRR_PROXY_URL: readString(raw, 'TELEBIRR_PROXY_URL', ''),
     TELEBIRR_PROXY_KEY: readString(raw, 'TELEBIRR_PROXY_KEY', ''),
     TELEBIRR_PROXY_TIMEOUT_MS: readNumber(raw, 'TELEBIRR_PROXY_TIMEOUT_MS', 15000),
+    MPESA_PORTAL_ENABLED: readBoolean(raw, 'MPESA_PORTAL_ENABLED', false),
     MPESA_PORTAL_URL: readString(raw, 'MPESA_PORTAL_URL', ''),
     MPESA_PORTAL_KEY: readString(raw, 'MPESA_PORTAL_KEY', ''),
     MPESA_PORTAL_TIMEOUT_MS: readNumber(raw, 'MPESA_PORTAL_TIMEOUT_MS', 15000),

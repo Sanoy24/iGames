@@ -42,10 +42,9 @@ export class MpesaReceiptClientService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  /** True when a portal/proxy is configured (a cross-check is possible). */
+  /** Master switch for the authoritative portal cross-check (MPESA_PORTAL_ENABLED). */
   get isConfigured(): boolean {
-    // Direct access works too, but treat the proxy switch as the explicit on/off.
-    return !!this.configService.get<string>('MPESA_PORTAL_URL')?.trim();
+    return this.configService.get<boolean>('MPESA_PORTAL_ENABLED') === true;
   }
 
   /**

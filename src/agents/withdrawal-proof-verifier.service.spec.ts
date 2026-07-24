@@ -119,6 +119,30 @@ describe('WithdrawalProofVerifierService — M-PESA', () => {
     expect(result.receiverMatched).toBe(true);
   });
 
+  it('accepts the real masked send format (251714***707) when the ends match the player', async () => {
+    const sms =
+      `Dear Agent, you have sent 100.00 Birr to PLAYER ONE 251712***678 on ${freshMpesaDateParts()}. ` +
+      `Transaction number MPX12345AF. Transaction fee 0.00 Birr. Your current M-PESA balance is 5.00 Birr.`;
+    const result = await svc.verifyPayout({
+      provider: 'mpesa',
+      proof: sms,
+      destinationAccount: '0712345678',
+      expectedAmountMinor: 100,
+      creditMinorPerBirr: 1,
+    });
+    expect(result.receiverMatched).toBe(true);
+    expect(result.reference).toBe('MPX12345AF');
+  });
+
+  it('rejects a masked send whose visible ends do not match the player', async () => {
+    const sms =
+      `Dear Agent, you have sent 100.00 Birr to SOMEONE 251799***678 on ${freshMpesaDateParts()}. ` +
+      `Transaction number MPX12345AG. Your current M-PESA balance is 5.00 Birr.`;
+    await expect(
+      svc.verifyPayout({ provider: 'mpesa', proof: sms, destinationAccount: '0712345678', expectedAmountMinor: 100, creditMinorPerBirr: 1 }),
+    ).rejects.toThrow(/not sent to the player/i);
+  });
+
   it('rejects when the SMS has no receiver number to match the player', async () => {
     const sms =
       `Dear Agent, you have paid 100.00 Birr to SOME SHOP on ${freshMpesaDateParts()}. ` +

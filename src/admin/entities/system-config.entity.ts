@@ -24,6 +24,15 @@ export class SystemConfig {
   withdrawalCommissionPct: number;
 
   /**
+   * Commission % of a credited DEPOSIT earned by the agent whose Telebirr/M-PESA
+   * account received it. Credited to the agent's wallet in the same transaction as
+   * the player credit. 0 = no deposit commission (deposits still attribute the
+   * agent, just without a payout).
+   */
+  @Column({ type: 'int', default: 0 })
+  depositCommissionPct: number;
+
+  /**
    * User id of the designated super-admin whose wallet receives withdrawal
    * service fees. Null = fees are only tracked in platform_stats (no wallet credit).
    */

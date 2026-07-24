@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
+import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
 import { PaymentsService } from './payments.service';
 import { AgentsService } from '../agents/agents.service';
 
@@ -94,5 +95,39 @@ export class PaymentsController {
     @Body() dto: SubmitTelebirrReceiptDto
   ) {
     return this.paymentsService.submitTelebirrReceipt(user.id, dto);
+  }
+
+  // ── M-PESA ─────────────────────────────────────────────────────────
+  // Same rate limits as Telebirr: the player pastes their confirmation SMS.
+
+  @Post('mpesa/preview')
+  @Throttle({ strict: { ttl: 60_000, limit: 20 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Parsed M-PESA SMS details — wallet is NOT credited' })
+  previewMpesaSms(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SubmitMpesaSmsDto,
+  ) {
+    return this.paymentsService.previewMpesaSms(user.id, dto);
+  }
+
+  @Post('mpesa/receipts')
+  @Throttle({ strict: { ttl: 60_000, limit: 12 } })
+  @ApiCreatedResponse({
+    schema: {
+      example: {
+        id: '665f...',
+        confirmationCode: 'SGH7XYZ9Q2',
+        amountMinor: 50000,
+        currencyCode: 'CREDIT',
+        status: 'credited',
+      },
+    },
+  })
+  submitMpesaSms(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SubmitMpesaSmsDto,
+  ) {
+    return this.paymentsService.submitMpesaSms(user.id, dto);
   }
 }

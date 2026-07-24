@@ -13,6 +13,10 @@ import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
+import { AssignAgentLocationsDto } from '../locations/dto/assign-agent-locations.dto';
+import { CreateLocationDto } from '../locations/dto/create-location.dto';
+import { UpdateLocationDto } from '../locations/dto/update-location.dto';
+import { LocationsService } from '../locations/locations.service';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
@@ -27,6 +31,7 @@ export class AdminController {
     private readonly adminService: AdminService,
     private readonly usersService: UsersService,
     private readonly walletService: WalletService,
+    private readonly locationsService: LocationsService,
     private readonly gameEventsGateway: GameEventsGateway,
   ) {}
 
@@ -144,6 +149,44 @@ export class AdminController {
   @Get('agents/performance')
   getAgentPerformance() {
     return this.adminService.getAgentPerformance();
+  }
+
+  // ── Locations ─────────────────────────────────────────────────────
+
+  @Get('locations')
+  listLocations() {
+    return this.locationsService.listLocationsForAdmin();
+  }
+
+  @Post('locations')
+  createLocation(@Body() dto: CreateLocationDto) {
+    return this.locationsService.createLocation(dto);
+  }
+
+  @Patch('locations/:id')
+  updateLocation(@Param('id') id: string, @Body() dto: UpdateLocationDto) {
+    return this.locationsService.updateLocation(id, dto);
+  }
+
+  @Delete('locations/:id')
+  deleteLocation(@Param('id') id: string) {
+    return this.locationsService.deleteLocation(id);
+  }
+
+  @Get('locations/:id/agents')
+  listLocationAgents(@Param('id') id: string) {
+    return this.locationsService.listLocationAgents(id);
+  }
+
+  @Get('agents/:id/locations')
+  listAgentLocations(@Param('id') id: string) {
+    return this.locationsService.listAgentLocations(id);
+  }
+
+  /** Replaces the agent's whole assignment set. */
+  @Put('agents/:id/locations')
+  setAgentLocations(@Param('id') id: string, @Body() dto: AssignAgentLocationsDto) {
+    return this.locationsService.setAgentLocations(id, dto);
   }
 
   // ── Withdrawals ───────────────────────────────────────────────────

@@ -6,7 +6,21 @@ import type { LedgerEntry, Withdrawal } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, formatDateTimeFull, getErrorMessage } from '../lib/utils';
-import { authApi, walletApi, paymentsApi, type TelebirrPreview, type ActiveAgent } from '../lib/api';
+import { authApi, walletApi, paymentsApi, type ActiveAgent } from '../lib/api';
+
+// Deposit provider the player is using. Both flows paste a confirmation from the
+// same on-duty agent; only the parse/verify endpoint differs.
+type DepositProvider = 'telebirr' | 'mpesa';
+
+// Normalised preview so the confirm card renders the same for both providers.
+type NormalizedPreview = {
+  ref: string;
+  amountMinor: number;
+  payerName?: string;
+  payerPhone?: string;
+  receiverName?: string;
+  date?: string;
+};
 
 // Keys are the backend ledger `entryType` values
 // (see LedgerEntryType: stake | win | refund | adjustment | bonus | deposit |
@@ -115,9 +129,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const [txFilter,     setTxFilter]     = useState<TxFilter>('all');
 
   const [showTopup,      setShowTopup]      = useState(false);
+  const [provider,       setProvider]       = useState<DepositProvider>('telebirr');
   const [receiptInput,   setReceiptInput]   = useState('');
   const [isPreviewing,   setIsPreviewing]   = useState(false);
-  const [preview,        setPreview]        = useState<TelebirrPreview | null>(null);
+  const [preview,        setPreview]        = useState<NormalizedPreview | null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
   const [activeAgent,    setActiveAgent]    = useState<ActiveAgent | null>(null);
   const [agentList,      setAgentList]      = useState<ActiveAgent[]>([]);
@@ -178,8 +193,26 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     setIsPreviewing(true);
     setPreview(null);
     try {
-      const result = await paymentsApi.previewTelebirrReceipt(receiptInput.trim());
-      setPreview(result);
+      if (provider === 'mpesa') {
+        const r = await paymentsApi.previewMpesaSms(receiptInput.trim());
+        setPreview({
+          ref: r.confirmationCode,
+          amountMinor: r.amountMinor,
+          payerPhone: r.payerPhone,
+          receiverName: r.receiverName,
+          date: r.date,
+        });
+      } else {
+        const r = await paymentsApi.previewTelebirrReceipt(receiptInput.trim());
+        setPreview({
+          ref: r.receiptNo,
+          amountMinor: r.amountMinor,
+          payerName: r.payerName,
+          payerPhone: r.payerPhone,
+          receiverName: r.receiverName,
+          date: r.date,
+        });
+      }
     } catch (e) {
       addToast('error', getErrorMessage(e));
     } finally {
@@ -191,7 +224,11 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     if (!receiptInput.trim()) return;
     setIsSubmitting(true);
     try {
-      await paymentsApi.submitTelebirrReceipt(receiptInput.trim());
+      if (provider === 'mpesa') {
+        await paymentsApi.submitMpesaSms(receiptInput.trim());
+      } else {
+        await paymentsApi.submitTelebirrReceipt(receiptInput.trim());
+      }
       addToast('success', 'Deposit confirmed! Your account has been credited.');
       setReceiptInput('');
       setPreview(null);
@@ -202,6 +239,15 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Switching provider clears any in-progress paste/preview so the two flows
+  // never cross-contaminate.
+  const switchProvider = (next: DepositProvider) => {
+    if (next === provider) return;
+    setProvider(next);
+    setReceiptInput('');
+    setPreview(null);
   };
 
   const resetTopup = () => {
@@ -332,9 +378,35 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
               style={{ overflow: 'hidden' }}
             >
               <div className="admin-form" style={{ marginTop: 16 }}>
-                <h3 style={{ margin: '0 0 6px', fontSize: 16 }}>Telebirr Deposit</h3>
+                <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Deposit</h3>
+
+                {/* Provider chooser — Telebirr or M-Pesa */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  {(['telebirr', 'mpesa'] as const).map((p) => {
+                    const selected = provider === p;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => switchProvider(p)}
+                        style={{
+                          flex: 1, padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
+                          fontSize: 13, fontWeight: 700,
+                          background: selected ? 'rgba(250,204,21,0.14)' : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${selected ? 'rgba(250,204,21,0.55)' : 'var(--border)'}`,
+                          color: selected ? 'var(--gold)' : 'var(--text-secondary)',
+                        }}
+                      >
+                        {p === 'telebirr' ? 'Telebirr' : 'M-Pesa'}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <p className="text-muted" style={{ fontSize: 13, marginBottom: minDepositMinor > 0 ? 8 : 14 }}>
-                  Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.
+                  {provider === 'mpesa'
+                    ? 'Send your M-Pesa transfer to the agent below, then paste the confirmation SMS you receive.'
+                    : 'Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.'}
                 </p>
                 {minDepositMinor > 0 && (
                   <p style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700, margin: '0 0 14px' }}>
@@ -391,7 +463,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     marginBottom: 14,
                   }}>
                     <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
-                      Send Telebirr to
+                      {provider === 'mpesa' ? 'Send M-Pesa to' : 'Send Telebirr to'}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <UserIcon size={14} style={{ color: 'var(--gold)' }} />
@@ -439,7 +511,9 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     <textarea
                       className="input"
                       rows={4}
-                      placeholder="Paste your Telebirr SMS message or receipt link…"
+                      placeholder={provider === 'mpesa'
+                        ? 'Paste your M-Pesa confirmation SMS…'
+                        : 'Paste your Telebirr SMS message or receipt link…'}
                       value={receiptInput}
                       onChange={(e) => { setReceiptInput(e.target.value); }}
                       style={{ width: '100%', marginBottom: 12, resize: 'vertical' }}
@@ -450,7 +524,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                       disabled={isPreviewing || !receiptInput.trim()}
                     >
                       {isPreviewing
-                        ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Fetching receipt…</>
+                        ? <><RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> Verifying…</>
                         : <><Search size={14} /> Verify Receipt</>}
                     </button>
                   </>
@@ -473,7 +547,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
                         <CheckCircle size={15} color="#10b981" />
                         <span style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>Receipt Verified</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>#{preview.receiptNo}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>#{preview.ref}</span>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px', fontSize: 12 }}>
                         <div>

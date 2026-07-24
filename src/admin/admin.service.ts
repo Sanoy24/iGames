@@ -375,6 +375,9 @@ export class AdminService {
       payoutMinor: number;
       ggrMinor: number;
       commissionEarnedMinor: number;
+      depositCount: number;
+      depositVolumeMinor: number;
+      depositCommissionEarnedMinor: number;
     }>
   > {
     // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
@@ -387,6 +390,9 @@ export class AdminService {
       staked: string | number;
       payout: string | number;
       commission: string | number;
+      deposits: string | number;
+      depositVolume: string | number;
+      depositCommission: string | number;
     }> = await this.dataSource.query(
       `SELECT u.id, u.displayName,
               COALESCE(c.customers, 0) customers,
@@ -394,7 +400,10 @@ export class AdminService {
               COALESCE(t.players, 0) players,
               COALESCE(t.staked, 0) staked,
               COALESCE(t.payout, 0) payout,
-              COALESCE(cm.commission, 0) commission
+              COALESCE(cm.commission, 0) commission,
+              COALESCE(d.deposits, 0) deposits,
+              COALESCE(d.depositVolume, 0) depositVolume,
+              COALESCE(dcm.commission, 0) depositCommission
          FROM users u
          LEFT JOIN (
            SELECT t.agentId, COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
@@ -417,6 +426,18 @@ export class AdminService {
             WHERE entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'
             GROUP BY userId
          ) cm ON cm.userId = u.id
+         LEFT JOIN (
+           SELECT agentId, COUNT(*) deposits, SUM(amountMinor) depositVolume
+             FROM agent_action_logs
+            WHERE actionType IN ('telebirr_deposit_receipt','mpesa_deposit_receipt')
+            GROUP BY agentId
+         ) d ON d.agentId = u.id
+         LEFT JOIN (
+           SELECT userId, SUM(amountMinor) commission
+             FROM ledger_entries
+            WHERE entryType = 'agent_receipt' AND sourceType = 'deposit_commission'
+            GROUP BY userId
+         ) dcm ON dcm.userId = u.id
         WHERE JSON_CONTAINS(u.roles, '"agent"')
         ORDER BY staked DESC`,
     );
@@ -434,6 +455,9 @@ export class AdminService {
         payoutMinor,
         ggrMinor: stakedMinor - payoutMinor,
         commissionEarnedMinor: Number(r.commission ?? 0),
+        depositCount: Number(r.deposits ?? 0),
+        depositVolumeMinor: Number(r.depositVolume ?? 0),
+        depositCommissionEarnedMinor: Number(r.depositCommission ?? 0),
       };
     });
   }

@@ -112,7 +112,7 @@ export class AgentsController {
     @Body() dto: CompleteWithdrawalDto,
     @CurrentUser() agent: AuthenticatedUser,
   ) {
-    return this.agentsService.completeWithdrawal(id, agent.id, dto.telebirrReference);
+    return this.agentsService.completeWithdrawal(id, agent.id, dto.provider, dto.proof);
   }
 
   @Post('wallet/transfer-to-user')

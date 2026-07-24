@@ -14,6 +14,9 @@ import type {
   KenoTicket,
   LeaderboardEntry,
   LedgerEntry,
+  AdminLocation,
+  PublicLocation,
+  UserLocation,
   RecentWin,
   SpectatorCard,
   User,
@@ -155,6 +158,15 @@ function extractTelebirrReceiptBody(rawText: string): { receiptUrl: string } | {
   return { receiptNo: trimmed };
 }
 
+export type MpesaPreview = {
+  confirmationCode: string;
+  amountMinor: number;
+  payerPhone?: string;
+  receiverName?: string;
+  receiverPhone?: string;
+  date?: string;
+};
+
 export type ActiveAgent = {
   id?: string;
   displayName: string;
@@ -169,6 +181,14 @@ export const paymentsApi = {
 
   submitTelebirrReceipt: (rawText: string) =>
     api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
+
+  // M-Pesa is verified from the pasted confirmation SMS (optionally cross-checked
+  // against a portal server-side), so it can also exceed the default — give it 45s.
+  previewMpesaSms: (sms: string) =>
+    api.post<MpesaPreview>('/payments/mpesa/preview', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
+
+  submitMpesaSms: (sms: string) =>
+    api.post('/payments/mpesa/receipts', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
 
   getActiveAgent: () =>
     api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
@@ -268,6 +288,15 @@ export const userApi = {
     api.patch<User>('/users/me', dto).then((r) => r.data),
 };
 
+// ── Locations (player-facing) ─────────────────────────────────────
+export const locationsApi = {
+  list: () => api.get<PublicLocation[]>('/locations').then((r) => r.data),
+  /** Null when the player has never answered — the Mini App uses this to prompt. */
+  getMine: () => api.get<UserLocation | null>('/locations/me').then((r) => r.data),
+  setMine: (dto: { locationId?: string; other?: boolean }) =>
+    api.patch<UserLocation>('/locations/me', dto).then((r) => r.data),
+};
+
 // ── Admin: Overview + Config ──────────────────────────────────────
 export type PlatformStats = {
   ggrMinor: number;
@@ -283,6 +312,8 @@ export type SystemConfig = {
   welcomeBonusMinor: number;
   withdrawalServiceChargePct: number;
   withdrawalCommissionPct: number;
+  /** % of a credited deposit paid as commission to the receiving agent. */
+  depositCommissionPct?: number;
   superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;
@@ -304,6 +335,9 @@ export type AgentPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  depositCount: number;
+  depositVolumeMinor: number;
+  depositCommissionEarnedMinor: number;
 };
 
 export type AgentSelfPerformance = {
@@ -314,6 +348,9 @@ export type AgentSelfPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  depositCount: number;
+  depositVolumeMinor: number;
+  depositCommissionEarnedMinor: number;
 };
 
 export const adminApi = {
@@ -655,6 +692,36 @@ export const adminAgentsApi = {
     }>(`/admin/agents/actions?limit=${limit}`).then((r) => r.data),
 };
 
+// ── Admin: Locations ───────────────────────────────────────────────
+export const adminLocationsApi = {
+  list: () => api.get<AdminLocation[]>('/admin/locations').then((r) => r.data),
+  create: (dto: {
+    name: string;
+    region?: string;
+    latitude?: number;
+    longitude?: number;
+    radiusMeters?: number;
+    isActive?: boolean;
+    sortOrder?: number;
+  }) => api.post<AdminLocation>('/admin/locations', dto).then((r) => r.data),
+  update: (id: string, dto: Partial<{
+    name: string;
+    region: string;
+    latitude: number;
+    longitude: number;
+    radiusMeters: number;
+    isActive: boolean;
+    sortOrder: number;
+  }>) => api.patch<AdminLocation>(`/admin/locations/${id}`, dto).then((r) => r.data),
+  remove: (id: string) => api.delete(`/admin/locations/${id}`).then((r) => r.data),
+  listLocationAgents: (id: string) =>
+    api.get<Array<{ agentId: string; displayName: string; isPrimary: boolean }>>(`/admin/locations/${id}/agents`).then((r) => r.data),
+  listAgentLocations: (agentId: string) =>
+    api.get<Array<PublicLocation & { isPrimary: boolean }>>(`/admin/agents/${agentId}/locations`).then((r) => r.data),
+  setAgentLocations: (agentId: string, dto: { locationIds: string[]; primaryLocationId?: string }) =>
+    api.put<Array<{ id: string; agentId: string; locationId: string; isPrimary: boolean }>>(`/admin/agents/${agentId}/locations`, dto).then((r) => r.data),
+};
+
 // ── Admin: Withdrawals ─────────────────────────────────────────────
 export const adminWithdrawalsApi = {
   listWithdrawals: () => api.get<Withdrawal[]>('/admin/withdrawals').then((r) => r.data),
@@ -672,8 +739,8 @@ export const agentApi = {
   claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
   rejectWithdrawal: (id: string, remarks: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/reject`, { remarks }).then((r) => r.data),
-  completeWithdrawal: (id: string, telebirrReference: string) =>
-    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { telebirrReference }).then((r) => r.data),
+  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string) =>
+    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof }, { timeout: 45000 }).then((r) => r.data),
   transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
 };

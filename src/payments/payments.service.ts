@@ -1,14 +1,18 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, EntityManager } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AdminService } from '../admin/admin.service';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 import { User } from '../users/entities/user.entity';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
+import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
+import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
+import { MpesaReceiptVerifierService } from './mpesa-receipt-verifier.service';
+import { computeDepositCommissionMinor } from './deposit-commission';
 
 export type TelebirrReceiptPreview = {
   receiptNo: string;
@@ -32,13 +36,37 @@ export type TelebirrDepositResponse = {
   verification: Record<string, unknown>;
 };
 
+export type MpesaReceiptPreview = {
+  confirmationCode: string;
+  amountMinor: number;
+  payerPhone?: string;
+  receiverName?: string;
+  receiverPhone?: string;
+  date?: string;
+};
+
+export type MpesaDepositResponse = {
+  id: string;
+  confirmationCode: string;
+  amountMinor: number;
+  currencyCode: string;
+  status: string;
+  agentId?: string;
+  walletCredit?: Record<string, unknown>;
+  parsedSms: Record<string, unknown>;
+  verification: Record<string, unknown>;
+};
+
 @Injectable()
 export class PaymentsService {
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(TelebirrDeposit)
     private readonly telebirrDepositRepository: Repository<TelebirrDeposit>,
+    @InjectRepository(MpesaDeposit)
+    private readonly mpesaDepositRepository: Repository<MpesaDeposit>,
     private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
+    private readonly mpesaReceiptVerifierService: MpesaReceiptVerifierService,
     private readonly walletService: WalletService,
     private readonly notificationsService: NotificationsService,
     private readonly adminService: AdminService,
@@ -135,6 +163,50 @@ export class PaymentsService {
     }
   }
 
+  /**
+   * Phase 4 — agent deposit commission. When a deposit that is attributed to an
+   * agent is credited, pay that agent a configured % of the deposit as commission,
+   * in the SAME transaction as the player credit (never a wallet mutation without a
+   * ledger entry). Idempotent on the deposit reference, so a duplicate submit or a
+   * retry can never double-pay. No-op when the rate is 0 or rounds to nothing.
+   */
+  private async creditAgentDepositCommission(
+    manager: EntityManager,
+    input: {
+      agentId: string;
+      userId: string;
+      provider: 'telebirr' | 'mpesa';
+      reference: string;
+      depositAmountMinor: number;
+      depositCommissionPct: number;
+    },
+  ): Promise<number> {
+    const commissionMinor = computeDepositCommissionMinor(input.depositAmountMinor, input.depositCommissionPct);
+    if (commissionMinor <= 0) return 0;
+
+    await this.walletService.ensureDefaultWallet(input.agentId, manager);
+    await this.walletService.creditInSession(
+      {
+        userId: input.agentId,
+        amountMinor: commissionMinor,
+        entryType: 'agent_receipt',
+        sourceType: 'deposit_commission',
+        sourceId: input.reference,
+        idempotencyKey: `deposit-commission:${input.provider}:${input.reference}`,
+        metadata: {
+          provider: input.provider,
+          reference: input.reference,
+          userId: input.userId,
+          depositAmountMinor: input.depositAmountMinor,
+          depositCommissionPct: input.depositCommissionPct,
+          kind: 'deposit_commission',
+        },
+      },
+      manager,
+    );
+    return commissionMinor;
+  }
+
   async previewTelebirrReceipt(
     userId: string,
     dto: SubmitTelebirrReceiptDto,
@@ -175,6 +247,7 @@ export class PaymentsService {
 
     // Enforce the admin-configured minimum deposit before crediting.
     await this.assertMeetsMinimum(verified.amountMinor);
+    const depositCommissionPct = (await this.adminService.getSystemConfig()).depositCommissionPct ?? 0;
 
     let credited = false;
     const result = await this.dataSource.transaction(async (manager) => {
@@ -256,6 +329,15 @@ export class PaymentsService {
             },
           }),
         );
+
+        await this.creditAgentDepositCommission(manager, {
+          agentId: deposit.agentId,
+          userId,
+          provider: 'telebirr',
+          reference: deposit.receiptNo,
+          depositAmountMinor: deposit.amountMinor,
+          depositCommissionPct,
+        });
       }
 
       return this.toResponse(deposit);
@@ -285,6 +367,141 @@ export class PaymentsService {
       walletCredit: deposit.walletCredit || {},
       parsedReceipt: deposit.parsedReceipt,
       verification: deposit.verification || {}
+    };
+  }
+
+  // ── M-PESA ─────────────────────────────────────────────────────────
+
+  async previewMpesaSms(userId: string, dto: SubmitMpesaSmsDto): Promise<MpesaReceiptPreview> {
+    const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
+    await this.assertMeetsMinimum(verified.amountMinor);
+    const p = verified.parsedSms;
+    return {
+      confirmationCode: verified.confirmationCode,
+      amountMinor: verified.amountMinor,
+      receiverName: p.counterpartyName,
+      receiverPhone: p.counterpartyPhone,
+      date: p.dateRaw,
+    };
+  }
+
+  async submitMpesaSms(userId: string, dto: SubmitMpesaSmsDto): Promise<MpesaDepositResponse> {
+    const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
+    await this.assertMeetsMinimum(verified.amountMinor);
+    const depositCommissionPct = (await this.adminService.getSystemConfig()).depositCommissionPct ?? 0;
+
+    let credited = false;
+    const result = await this.dataSource.transaction(async (manager) => {
+      const depositRepo = manager.getRepository(MpesaDeposit);
+      const existingDeposit = await depositRepo.findOneBy({ confirmationCode: verified.confirmationCode });
+
+      if (existingDeposit) {
+        if (existingDeposit.status === 'rejected') {
+          throw new ConflictException('M-PESA receipt was already rejected');
+        }
+        if (existingDeposit.userId !== userId) {
+          throw new ConflictException('M-PESA receipt was already used');
+        }
+        return this.toMpesaResponse(existingDeposit);
+      }
+
+      const deposit = depositRepo.create({
+        userId,
+        agentId: verified.agentId || undefined,
+        confirmationCode: verified.confirmationCode,
+        amountMinor: verified.amountMinor,
+        currencyCode: 'CREDIT',
+        status: 'credited',
+        creditedPartyName: verified.parsedSms.counterpartyName,
+        creditedPartyAccount: verified.parsedSms.counterpartyPhone,
+        transactionStatus: verified.parsedSms.direction,
+        parsedSms: verified.parsedSms,
+        verification: verified.verification,
+      });
+      await depositRepo.save(deposit);
+
+      const walletCredit = await this.walletService.creditInSession(
+        {
+          userId,
+          amountMinor: verified.amountMinor,
+          entryType: 'deposit',
+          sourceType: 'mpesa_receipt',
+          sourceId: verified.confirmationCode,
+          idempotencyKey: `mpesa:${verified.confirmationCode}`,
+          metadata: {
+            confirmationCode: verified.confirmationCode,
+            receiverName: verified.parsedSms.counterpartyName,
+            receiverPhone: verified.parsedSms.counterpartyPhone,
+          },
+        },
+        manager,
+      );
+
+      deposit.walletCredit = walletCredit;
+      await depositRepo.save(deposit);
+      credited = true;
+
+      if (deposit.agentId) {
+        // First-deposit agent linking — mirrors the Telebirr flow. First deposit
+        // wins; never reassigned.
+        await manager
+          .createQueryBuilder()
+          .update(User)
+          .set({ referredByAgentId: deposit.agentId })
+          .where('id = :userId AND referredByAgentId IS NULL', { userId })
+          .execute();
+
+        const agentActionRepo = manager.getRepository(AgentActionLog);
+        await agentActionRepo.save(
+          agentActionRepo.create({
+            agentId: deposit.agentId,
+            userId,
+            amountMinor: deposit.amountMinor,
+            ledgerEntryId: walletCredit.ledgerEntry.id,
+            actionType: 'mpesa_deposit_receipt',
+            metadata: {
+              confirmationCode: deposit.confirmationCode,
+              creditedPartyAccount: deposit.creditedPartyAccount,
+            },
+          }),
+        );
+
+        await this.creditAgentDepositCommission(manager, {
+          agentId: deposit.agentId,
+          userId,
+          provider: 'mpesa',
+          reference: deposit.confirmationCode,
+          depositAmountMinor: deposit.amountMinor,
+          depositCommissionPct,
+        });
+      }
+
+      return this.toMpesaResponse(deposit);
+    });
+
+    if (credited) {
+      await this.notificationsService.safeCreate({
+        userId,
+        type: 'deposit',
+        title: 'Deposit received',
+        body: `Your wallet was credited with ${result.amountMinor.toLocaleString()} ETB.`,
+        data: { amountMinor: result.amountMinor, confirmationCode: result.confirmationCode },
+      });
+    }
+    return result;
+  }
+
+  private toMpesaResponse(deposit: MpesaDeposit): MpesaDepositResponse {
+    return {
+      id: deposit.id,
+      confirmationCode: deposit.confirmationCode,
+      amountMinor: deposit.amountMinor,
+      currencyCode: deposit.currencyCode,
+      status: deposit.status,
+      agentId: deposit.agentId,
+      walletCredit: deposit.walletCredit || {},
+      parsedSms: deposit.parsedSms,
+      verification: deposit.verification || {},
     };
   }
 }

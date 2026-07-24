@@ -61,8 +61,23 @@ export class Withdrawal {
   @Column({ type: 'bigint', nullable: true, transformer: bigintTransformer })
   netAmountMinor?: number;
 
+  /**
+   * The verified payout reference — a Telebirr receipt number or an M-PESA
+   * confirmation code — proving the agent actually paid the player. Kept as
+   * `telebirrReference` for backward compatibility; `paymentProvider` says which
+   * rail it belongs to.
+   */
   @Column({ type: 'varchar', length: 255, nullable: true })
+  @Index()
   telebirrReference?: string;
+
+  /** Which rail the payout proof came from. Null on legacy/admin-approved rows. */
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  paymentProvider?: 'telebirr' | 'mpesa' | null;
+
+  /** Structured result of verifying the payout proof (amount/receiver/freshness). */
+  @Column({ type: 'json', nullable: true })
+  payoutVerification?: Record<string, unknown> | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   adminNotes?: string;

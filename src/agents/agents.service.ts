@@ -7,6 +7,7 @@ import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
+import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 @Injectable()
 export class AgentsService {
@@ -17,6 +18,7 @@ export class AgentsService {
     private readonly systemConfigRepository: Repository<SystemConfig>,
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
+    private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
   ) {}
 
   // ── Config (agent-accessible) ────────────────────────────────────
@@ -78,7 +80,12 @@ export class AgentsService {
     return this.walletService.releaseWithdrawal(withdrawalId, agentId);
   }
 
-  async completeWithdrawal(withdrawalId: string, agentId: string, telebirrReference: string) {
+  async completeWithdrawal(
+    withdrawalId: string,
+    agentId: string,
+    provider: PayoutProvider,
+    proof: string,
+  ) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
     // Read fee/commission split and the designated super-admin from system config.
@@ -86,11 +93,33 @@ export class AgentsService {
     const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
     const commissionPct = config?.withdrawalCommissionPct ?? 0;
     const superAdminUserId = config?.superAdminUserId ?? null;
+    const creditMinorPerBirr = config?.telebirrCreditMinorPerBirr ?? 1;
+
+    // The withdrawal must be claimed by THIS agent, and we need its destination
+    // (the player's phone) and amount to check the payout proof against.
+    const withdrawal = await this.walletService.getClaimedWithdrawalForAgent(withdrawalId, agentId);
+
+    // The player receives the net amount (gross − service fee − commission); that
+    // is exactly what the agent must have paid out.
+    const serviceFeeMinor = Math.floor((withdrawal.amountMinor * serviceFeePct) / 100);
+    const commissionMinor = Math.floor((withdrawal.amountMinor * commissionPct) / 100);
+    const expectedAmountMinor = withdrawal.amountMinor - serviceFeeMinor - commissionMinor;
+
+    // Verify the agent actually paid the player before releasing frozen coins.
+    const verified = await this.withdrawalProofVerifier.verifyPayout({
+      provider,
+      proof,
+      destinationAccount: withdrawal.destinationAccount,
+      expectedAmountMinor,
+      creditMinorPerBirr,
+    });
 
     return this.walletService.completeWithdrawalByAgent({
       withdrawalId,
       agentId,
-      telebirrReference,
+      telebirrReference: verified.reference,
+      paymentProvider: verified.provider,
+      payoutVerification: verified.verification,
       serviceFeePct,
       commissionPct,
       superAdminUserId,
@@ -265,6 +294,9 @@ export class AgentsService {
     payoutMinor: number;
     ggrMinor: number;
     commissionEarnedMinor: number;
+    depositCount: number;
+    depositVolumeMinor: number;
+    depositCommissionEarnedMinor: number;
   }> {
     const q = (sql: string, params: unknown[]) => this.systemConfigRepository.query(sql, params);
     const [play] = await q(
@@ -282,6 +314,19 @@ export class AgentsService {
     );
     const [cust] = await q(`SELECT COUNT(*) customers FROM users WHERE referredByAgentId = ?`, [agentId]);
 
+    // Phase 4 — deposit activity the agent processed (volume/count from the
+    // deposit-receipt action log), and the commission it earned them.
+    const [dep] = await q(
+      `SELECT COUNT(*) deposits, COALESCE(SUM(amountMinor),0) volume FROM agent_action_logs
+        WHERE agentId = ? AND actionType IN ('telebirr_deposit_receipt','mpesa_deposit_receipt')`,
+      [agentId],
+    );
+    const [depComm] = await q(
+      `SELECT COALESCE(SUM(amountMinor),0) commission FROM ledger_entries
+        WHERE userId = ? AND entryType = 'agent_receipt' AND sourceType = 'deposit_commission'`,
+      [agentId],
+    );
+
     const stakedMinor = Number(play?.staked ?? 0);
     const payoutMinor = Number(play?.payout ?? 0);
     return {
@@ -292,6 +337,9 @@ export class AgentsService {
       payoutMinor,
       ggrMinor: stakedMinor - payoutMinor,
       commissionEarnedMinor: Number(comm?.commission ?? 0),
+      depositCount: Number(dep?.deposits ?? 0),
+      depositVolumeMinor: Number(dep?.volume ?? 0),
+      depositCommissionEarnedMinor: Number(depComm?.commission ?? 0),
     };
   }
 

@@ -12,6 +12,7 @@ import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
 import { MpesaReceiptVerifierService } from './mpesa-receipt-verifier.service';
+import { computeDepositCommissionMinor } from './deposit-commission';
 
 export type TelebirrReceiptPreview = {
   receiptNo: string;
@@ -180,7 +181,7 @@ export class PaymentsService {
       depositCommissionPct: number;
     },
   ): Promise<number> {
-    const commissionMinor = Math.floor((input.depositAmountMinor * input.depositCommissionPct) / 100);
+    const commissionMinor = computeDepositCommissionMinor(input.depositAmountMinor, input.depositCommissionPct);
     if (commissionMinor <= 0) return 0;
 
     await this.walletService.ensureDefaultWallet(input.agentId, manager);

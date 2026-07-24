@@ -11,30 +11,43 @@ import { parseEatDate } from './receipt-verification';
  * For a player deposit we expect 'sent' (or 'paid'), and `counterparty*` is the
  * agent who received the money.
  *
- * Real sample this parser is calibrated against (a bundle purchase):
+ * Real samples this parser is calibrated against:
+ *   Send-to-person (a player depositing to an agent / an agent paying a player):
+ *   "Dear Yonas, you have sent 2.00 Birr to Tesfaye Adare Weldekidan 251714***707
+ *    on 24/7/26 at 11:53 AM. Transaction number UGO4D2CODA. Transaction fee 0.00
+ *    Birr. Your current  M-PESA balance is 10.00 Birr. Get your receipt here:
+ *    https://m-pesabusiness.safaricom.et/receipt/UGO4D2CODA ..."
+ *   Bundle purchase (NOT a deposit):
  *   "Dear Yonas, you have bought a Safaricom bundle of 5.00 Birr for 251717404913
- *    on 28/6/26 at 7:04 PM. Transaction number UFS98HOPQJ. Your current M-PESA
- *    balance is 37.00 Birr."
- * Key format facts: amount is "<n> Birr" (currency AFTER), the code is labelled
- * "Transaction number <CODE>." near the end, and there is no "Confirmed" keyword.
+ *    on 28/6/26 at 7:04 PM. Transaction number UFS98HOPQJ. ..."
+ * Key format facts: amount is "<n> Birr" (currency AFTER); the code is labelled
+ * "Transaction number <CODE>." near the end; there is no "Confirmed" keyword; the
+ * counterparty phone is MASKED in the middle (251714***707); and a "receipt here:"
+ * portal URL ending in the same code is appended.
  */
 export type ParsedMpesaSms = {
   confirmationCode: string;
   amountBirr: number;
   direction: 'sent' | 'paid' | 'received' | 'purchase' | 'unknown';
   counterpartyName?: string;
+  /** The counterparty phone as printed — may be masked in the middle (251714***707). */
   counterpartyPhone?: string;
   dateRaw?: string;
   transactedAt?: Date;
   balanceBirr?: number;
+  /** The "receipt here:" portal URL, when present (future portal cross-check). */
+  receiptUrl?: string;
   raw: string;
 };
 
 // An amount, tolerant of either currency style: "5.00 Birr" (Ethiopia format)
 // or "ETB 5.00" (older assumption). Capture group 1 is the numeric amount.
 const AMOUNT = String.raw`(?:ETB\s*)?([\d,]+\.\d{2})(?:\s*Birr)?`;
-// A phone number: 8+ digits, optional leading + and internal spaces.
-const PHONE = String.raw`(\+?\d[\d\s]{7,}\d)`;
+// A phone number, tolerant of MASKED middle digits — Safaricom prints the
+// counterparty as e.g. "251714***707". Allow digits, spaces and '*' between a
+// digit start and a digit end. (Telebirr masked accounts go through the portal,
+// not this SMS parser, so '*' is the only mask marker we need here.)
+const PHONE = String.raw`(\+?[\d*][\d\s*]{6,}[\d*])`;
 
 /** Strip thousands separators from an "1,234.56" amount and return a number. */
 function toAmount(value: string): number {
@@ -119,6 +132,11 @@ export function parseMpesaSms(input: string): ParsedMpesaSms | null {
   const balanceMatch = text.match(new RegExp(String.raw`balance\s+is\s+${AMOUNT}`, 'i'));
   const balanceBirr = balanceMatch ? toAmount(balanceMatch[1]) : undefined;
 
+  // The appended "receipt here:" portal URL, if present. Kept for a future portal
+  // cross-check; never trusted as the code source (that stays "Transaction number").
+  const urlMatch = text.match(/https?:\/\/\S*\/receipt\/[A-Za-z0-9]+/i);
+  const receiptUrl = urlMatch ? urlMatch[0] : undefined;
+
   return {
     confirmationCode,
     amountBirr,
@@ -128,6 +146,7 @@ export function parseMpesaSms(input: string): ParsedMpesaSms | null {
     dateRaw,
     transactedAt,
     balanceBirr,
+    receiptUrl,
     raw,
   };
 }
@@ -139,9 +158,15 @@ function cleanName(value?: string): string | undefined {
   return cleaned || undefined;
 }
 
-/** Keep only the digits of a captured phone number. */
+/**
+ * Normalise a captured phone, PRESERVING mask markers. Safaricom masks the middle
+ * (251714***707); collapsing the '*' into the surrounding digits would corrupt the
+ * number, so we keep digits + '*' and only drop spaces/'+'. Requires enough real
+ * digits to be a plausible phone (masked numbers still show 6, e.g. 251714***707).
+ */
 function cleanPhone(value?: string): string | undefined {
   if (!value) return undefined;
-  const digits = value.replace(/[^\d]/g, '');
-  return digits.length >= 8 ? digits : undefined;
+  const cleaned = value.replace(/[^\d*]/g, '');
+  const digitCount = (cleaned.match(/\d/g) ?? []).length;
+  return digitCount >= 6 ? cleaned : undefined;
 }

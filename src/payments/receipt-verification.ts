@@ -30,13 +30,42 @@ export function accountMatchesPhone(receiptAcc?: string | null, agentPhone?: str
     return accDigits.slice(-9) === phoneTail;
   }
 
-  // Masked → compare the visible trailing run of digits (reliably shown).
+  // Masked, and the visible+masked digits line up with a 9-digit local number
+  // (each mask char stands for exactly one digit, e.g. "251714***707"): compare
+  // position-by-position on EVERY visible digit — this confirms the leading digits
+  // too, not just the trailing run, which matters when the phone is the only link
+  // (withdrawals). Only when the alignment is exact, so we never mis-position.
+  const local = maskedLocal(receiptAcc);
+  if (local.length === 9) {
+    let visible = 0;
+    for (let i = 0; i < 9; i++) {
+      if (local[i] === '*') continue;
+      visible++;
+      if (local[i] !== phoneTail[i]) return false;
+    }
+    if (visible >= 3) return true;
+    // else: too little visible to be meaningful — fall through to trailing compare.
+  }
+
+  // Fallback: compare the visible trailing run of digits (reliably shown).
   // Require ≥3 to be meaningful.
   const trailing = receiptAcc.match(/(\d+)\D*$/)?.[1] ?? '';
   if (trailing.length >= 3) {
     return phoneTail.endsWith(trailing.slice(-9));
   }
   return null;
+}
+
+/**
+ * Reduce a (possibly masked) account to its local digits + '*' markers, stripping
+ * a leading 251 / 0 prefix and normalising all mask glyphs to '*'. Used only to
+ * attempt exact positional alignment against a 9-digit local number.
+ */
+function maskedLocal(acc: string): string {
+  let s = acc.replace(/[^\d*xX•·]/g, '').replace(/[xX•·]/g, '*');
+  if (s.startsWith('251')) s = s.slice(3);
+  else if (s.startsWith('0')) s = s.slice(1);
+  return s;
 }
 
 /**

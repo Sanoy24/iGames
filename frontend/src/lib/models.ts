@@ -22,8 +22,33 @@ export type User = {
   effectiveOnDuty?: boolean;
   withinWorkingWindow?: boolean;
   wallets?: Wallet[];
+  /** Attributed play area, picked at registration. Null = "Other" / house. */
+  locationId?: string | null;
+  locationSource?: 'telegram_geo' | 'self_selected' | 'other' | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type PublicLocation = {
+  id: string;
+  name: string;
+  region?: string | null;
+};
+
+export type AdminLocation = PublicLocation & {
+  latitude: number | null;
+  longitude: number | null;
+  radiusMeters: number;
+  isActive: boolean;
+  sortOrder: number;
+  agentCount: number;
+  playerCount: number;
+};
+
+export type UserLocation = {
+  locationId: string | null;
+  locationName: string | null;
+  locationSource: 'telegram_geo' | 'self_selected' | 'other';
 };
 
 export type AuthTokenResponse = {

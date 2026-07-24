@@ -400,6 +400,35 @@
       "verification": "SELECT TABLE_NAME, ROW_FORMAT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND ROW_FORMAT != 'Dynamic';",
       "evidence": "Entities now declare engine 'InnoDB ROW_FORMAT=DYNAMIC' (commit e608f21), so fresh schemas are correct. Existing production tables still need the ALTER.",
       "notes": "Run the 25 ALTER TABLE statements from session 2026-06-29 on any pre-existing production DB."
+    },
+    {
+      "id": "BE-LOC-01",
+      "area": "locations",
+      "title": "Player location capture + agent attribution (Phase 1)",
+      "behavior": "DB-backed `locations` + `agent_locations` (many agents per location). Registration captures a player's area: Telegram bot asks after phone share (share-pin → nearest location within its radius, else pick-from-list dropdown of agent-covered locations + 'Other'); Mini App shows a one-time skippable prompt for players with no answer. 'Other' → user.locationId null, counts for the house. Location is the durable attribution unit; agent-level credit stays deposit-driven via referredByAgentId. Admin CRUD for locations + assign agents to locations. GET/PATCH /locations/me, GET /locations (public dropdown).",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest src/locations --no-coverage && cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "src/locations/ (entities, service, controller, location-geo.ts + spec 7/7 green). users.locationId/locationSource/locationCapturedAt columns. Telegram bot location step in src/telegram/telegram-bot.service.ts. Admin endpoints in src/admin/admin.controller.ts. Frontend: Admin.tsx LocationsAdmin tab, components/LocationPrompt.tsx, lib/api.ts locationsApi+adminLocationsApi. Backend + frontend tsc clean, both build.",
+      "notes": "ensure-schema now adds indexes automatically (2026-07-24), so no manual CREATE INDEX is needed. Part of the location/M-Pesa/agent-commission/house-accounting roadmap; Phases 3-6 pending."
+    },
+    {
+      "id": "OPS-03",
+      "area": "ops",
+      "title": "ensure-schema adds declared indexes automatically",
+      "behavior": "src/scripts/ensure-schema.ts now creates any entity-declared index a live index doesn't already cover, matched by COLUMN SET (not name), additive-only (never drops/alters). UNIQUE-vs-non-unique and name-collision cases are logged for a human, not auto-applied. Removes the manual CREATE INDEX step for new entity indexes.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest src/scripts/ensure-schema.spec.ts --no-coverage",
+      "evidence": "planIndexAdditions() + liveTableIndexes() + collectDesiredIndexes() in ensure-schema.ts. 15/15 spec tests (8 new). Header + DEVELOPMENT.md §8 updated."
+    },
+    {
+      "id": "BE-PAY-02",
+      "area": "payments",
+      "title": "M-Pesa deposits via confirmation SMS (Phase 2)",
+      "behavior": "Player picks Telebirr or M-Pesa in the deposit panel. M-Pesa: player sends to the on-duty agent, pastes the M-PESA confirmation SMS. Backend parses it (parseMpesaSms), dedupes on the confirmation code (unique), enforces freshness <=30min, matches the receiver to an active deposit-agent by name + phone, converts amount to minor, credits in one ledger transaction, links referredByAgentId on first deposit, logs agent action 'mpesa_deposit_receipt'. Pluggable portal cross-check via MPESA_PORTAL_URL (off = SMS-only). POST /payments/mpesa/preview + /payments/mpesa/receipts.",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest src/payments --no-coverage && cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "src/payments/: mpesa-deposit.entity.ts, mpesa-sms-parser.ts (+spec 7/7), mpesa-receipt-verifier.service.ts, receipt-verification.ts shared helpers (+spec 14/14), payments.service/controller/module. Env: MPESA_PORTAL_URL/KEY/TIMEOUT. Frontend: paymentsApi.previewMpesaSms/submitMpesaSms, Wallet.tsx provider toggle. Backend+frontend tsc+build clean, 194/194 unit tests.",
+      "notes": "SMS parser regexes (mpesa-sms-parser.ts) are tuned to the documented Safaricom Ethiopia format and should be validated against a REAL sample SMS. Portal decision-wiring deferred until the portal response format is known."
     }
   ]
 }

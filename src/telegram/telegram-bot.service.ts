@@ -2,9 +2,16 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback } from 'grammy';
+import { Bot, Context, InlineKeyboard, InputFile, Keyboard, webhookCallback } from 'grammy';
+import { LocationsService } from '../locations/locations.service';
 import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { UsersService } from '../users/users.service';
+
+/** Reply-keyboard button that opens the pick-from-list dropdown. */
+const LOCATION_PICK_FROM_LIST_TEXT = '🗺 Choose my area from a list';
+
+/** callback_data prefix for a location choice: `loc:<uuid>` or `loc:other`. */
+const LOCATION_CALLBACK_PREFIX = 'loc:';
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
@@ -18,6 +25,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    private readonly locationsService: LocationsService,
     @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
@@ -214,6 +222,106 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       .oneTime();
   }
 
+  /**
+   * Location step: share a pin, or fall back to picking the area by name. The
+   * pin is the better answer (it maps to a configured location automatically),
+   * but Telegram desktop clients and users with location off can't send one —
+   * hence the always-present list button.
+   */
+  private locationRequestKeyboard(): Keyboard {
+    return new Keyboard()
+      .requestLocation('📍 Share My Location')
+      .row()
+      .text(LOCATION_PICK_FROM_LIST_TEXT)
+      .resized()
+      .oneTime();
+  }
+
+  /**
+   * Send the pick-from-list dropdown: every location with an active agent, plus
+   * "Other". Callback data is `loc:<uuid>` / `loc:other`, well under Telegram's
+   * 64-byte callback_data limit. Returns false when no locations are configured,
+   * so callers can skip the whole step instead of showing an "Other"-only list.
+   */
+  private async sendLocationList(ctx: Context, prompt: string): Promise<boolean> {
+    let locations: Array<{ id: string; name: string; region?: string | null }> = [];
+    try {
+      locations = await this.locationsService.listPublicLocations();
+    } catch (err) {
+      this.logger.error('Failed to load locations for the dropdown', err as Error);
+      return false;
+    }
+
+    if (locations.length === 0) return false;
+
+    const keyboard = new InlineKeyboard();
+    for (const location of locations) {
+      const label = location.region ? `${location.name} (${location.region})` : location.name;
+      keyboard.text(label, `${LOCATION_CALLBACK_PREFIX}${location.id}`).row();
+    }
+    keyboard.text('🏠 Other / Not listed', `${LOCATION_CALLBACK_PREFIX}other`);
+
+    await ctx.reply(prompt, {
+      reply_markup: { remove_keyboard: true } as never,
+    });
+    await ctx.reply('Pick the closest one:', { reply_markup: keyboard });
+    return true;
+  }
+
+  /**
+   * Ask where the player is playing from. The question is skippable by design:
+   * "Other" is always offered, and a player who ignores the prompt can still
+   * open the Mini App. When no locations are configured at all the step is
+   * skipped entirely, so a fresh deployment isn't blocked on admin setup.
+   */
+  private async promptForLocation(ctx: Context, miniAppUrl: string): Promise<void> {
+    let hasLocations = false;
+    try {
+      hasLocations = (await this.locationsService.listPublicLocations()).length > 0;
+    } catch (err) {
+      this.logger.error('Failed to check configured locations', err as Error);
+    }
+
+    if (!hasLocations) {
+      await this.finishLocationStep(
+        ctx,
+        miniAppUrl,
+        `Thanks! Your number has been saved for payouts.\n\nTap below to start playing:`,
+      );
+      return;
+    }
+
+    await ctx.reply(
+      `Thanks! Your number has been saved for payouts.\n\n` +
+      `One last thing — which area are you playing from? ` +
+      `This tells us which of our agents to connect you with.`,
+      { reply_markup: this.locationRequestKeyboard() },
+    );
+  }
+
+  /** Confirm the recorded location and hand the player the Play button. */
+  private async finishLocationStep(ctx: Context, miniAppUrl: string, confirmation: string): Promise<void> {
+    const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
+    await ctx.reply(confirmation, {
+      reply_markup: {
+        remove_keyboard: true,
+        ...keyboard,
+      },
+    });
+  }
+
+  /** Resolve the internal user id behind the Telegram account, if linked. */
+  private async resolveInternalUserId(telegramUserId?: number): Promise<string | null> {
+    if (!telegramUserId) return null;
+    try {
+      const user = await this.usersService.findByTelegramUserId(String(telegramUserId));
+      return user?.id ?? null;
+    } catch (err) {
+      this.logger.error(`Failed to resolve internal user for Telegram ${telegramUserId}`, err as Error);
+      return null;
+    }
+  }
+
   private registerCommands(miniAppUrl: string): void {
     if (!this.bot) return;
 
@@ -287,16 +395,105 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`Stored phone ${savedPhone} for Telegram user ${userId}`);
       }
 
-      const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
+      // Phone is durably saved; now ask where they are playing from.
+      await this.promptForLocation(ctx, miniAppUrl);
+    });
 
-      await ctx.reply(
-        `Thanks! Your number has been saved for payouts.\n\nTap below to start playing:`,
-        {
-          reply_markup: {
-            remove_keyboard: true,
-            ...keyboard,
-          },
-        },
+    // Location shared as a pin — map it onto a configured location.
+    this.bot.on('message:location', async (ctx) => {
+      const { latitude, longitude } = ctx.message.location;
+      const internalUserId = await this.resolveInternalUserId(ctx.from?.id);
+
+      if (!internalUserId) {
+        await ctx.reply('Please share your phone number first.', {
+          reply_markup: this.contactRequestKeyboard(),
+        });
+        return;
+      }
+
+      let matched: { id: string; name: string } | null = null;
+      try {
+        matched = await this.locationsService.resolveLocationFromCoords(latitude, longitude);
+      } catch (err) {
+        this.logger.error('Failed to resolve shared location', err as Error);
+      }
+
+      // Outside every configured radius (or lookup failed) — don't guess, ask.
+      if (!matched) {
+        const listed = await this.sendLocationList(
+          ctx,
+          `We couldn't match that spot to one of our areas.`,
+        );
+        if (!listed) {
+          await this.finishLocationStep(ctx, miniAppUrl, 'Tap below to start playing:');
+        }
+        return;
+      }
+
+      try {
+        await this.locationsService.setUserLocation(
+          internalUserId,
+          { locationId: matched.id },
+          'telegram_geo',
+        );
+      } catch (err) {
+        this.logger.error(`Failed to save geo location for user ${internalUserId}`, err as Error);
+        const listed = await this.sendLocationList(ctx, 'Something went wrong saving that area.');
+        if (!listed) {
+          await this.finishLocationStep(ctx, miniAppUrl, 'Tap below to start playing:');
+        }
+        return;
+      }
+
+      await this.finishLocationStep(
+        ctx,
+        miniAppUrl,
+        `Got it — we've set your area to ${matched.name}.\n\nTap below to start playing:`,
+      );
+    });
+
+    // "Choose from a list" — declared before the catch-all text handler so it wins.
+    this.bot.hears(LOCATION_PICK_FROM_LIST_TEXT, async (ctx) => {
+      const listed = await this.sendLocationList(ctx, 'Which area are you playing from?');
+      if (!listed) {
+        await this.finishLocationStep(ctx, miniAppUrl, 'Tap below to start playing:');
+      }
+    });
+
+    // A location was picked from the inline dropdown.
+    this.bot.callbackQuery(new RegExp(`^${LOCATION_CALLBACK_PREFIX}`), async (ctx) => {
+      const choice = ctx.callbackQuery.data.slice(LOCATION_CALLBACK_PREFIX.length);
+      const internalUserId = await this.resolveInternalUserId(ctx.from?.id);
+
+      if (!internalUserId) {
+        await ctx.answerCallbackQuery({ text: 'Please share your phone number first.' });
+        return;
+      }
+
+      const isOther = choice === 'other';
+      let saved: { locationName: string | null } | null = null;
+
+      try {
+        saved = await this.locationsService.setUserLocation(
+          internalUserId,
+          isOther ? { other: true } : { locationId: choice },
+        );
+      } catch (err) {
+        this.logger.error(`Failed to save picked location for user ${internalUserId}`, err as Error);
+        await ctx.answerCallbackQuery({ text: 'Could not save that — please try again.' });
+        return;
+      }
+
+      await ctx.answerCallbackQuery();
+      // Drop the dropdown so the choice can't be silently changed later.
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => undefined);
+
+      await this.finishLocationStep(
+        ctx,
+        miniAppUrl,
+        isOther
+          ? `No problem — you're all set.\n\nTap below to start playing:`
+          : `Got it — we've set your area to ${saved?.locationName}.\n\nTap below to start playing:`,
       );
     });
 

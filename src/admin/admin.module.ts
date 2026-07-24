@@ -7,6 +7,7 @@ import { SystemConfig } from './entities/system-config.entity';
 import { PlatformStats } from './entities/platform-stats.entity';
 import { AdminAuditLog } from './entities/admin-audit-log.entity';
 import { AgentsModule } from '../agents/agents.module';
+import { LocationsModule } from '../locations/locations.module';
 import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { GameEventsModule } from '../events/game-events.module';
@@ -19,6 +20,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     UsersModule,
     WalletModule,
     AgentsModule,
+    LocationsModule,
     GameEventsModule,
     NotificationsModule,
   ],

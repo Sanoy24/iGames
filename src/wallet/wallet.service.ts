@@ -740,6 +740,19 @@ export class WalletService {
     });
   }
 
+  /** A withdrawal that is currently claimed by this agent, or throw. */
+  async getClaimedWithdrawalForAgent(withdrawalId: string, agentId: string): Promise<Withdrawal> {
+    const withdrawal = await this.withdrawalRepository.findOneBy({
+      id: withdrawalId,
+      status: 'claimed',
+      agentId,
+    });
+    if (!withdrawal) {
+      throw new ConflictException('Withdrawal not found or not assigned to you');
+    }
+    return withdrawal;
+  }
+
   async getAgentWithdrawalHistory(agentId: string): Promise<Withdrawal[]> {
     return this.withdrawalRepository.find({
       where: { agentId },
@@ -795,6 +808,8 @@ export class WalletService {
     withdrawalId: string;
     agentId: string;
     telebirrReference: string;
+    paymentProvider?: 'telebirr' | 'mpesa';
+    payoutVerification?: Record<string, unknown>;
     serviceFeePct: number;
     commissionPct: number;
     superAdminUserId?: string | null;
@@ -811,6 +826,18 @@ export class WalletService {
 
       if (!withdrawal) {
         throw new ConflictException('Withdrawal not found or not assigned to you');
+      }
+
+      // Dedupe the payout proof: the same receipt/confirmation code must not settle
+      // two withdrawals. Checked inside the transaction so two concurrent completes
+      // can't both slip through.
+      const reference = input.telebirrReference.trim();
+      const reused = await withdrawalRepo.findOne({
+        where: { telebirrReference: reference, status: 'completed' },
+        select: { id: true },
+      });
+      if (reused && reused.id !== withdrawal.id) {
+        throw new ConflictException('This payment proof has already been used for another withdrawal');
       }
 
       // Two cuts from the gross: a platform service fee (to the super-admin) and
@@ -908,7 +935,9 @@ export class WalletService {
       withdrawal.serviceFeeMinor = serviceFeeMinor;
       withdrawal.commissionMinor = commissionMinor;
       withdrawal.netAmountMinor = netAmountMinor;
-      withdrawal.telebirrReference = input.telebirrReference.trim();
+      withdrawal.telebirrReference = reference;
+      withdrawal.paymentProvider = input.paymentProvider ?? null;
+      withdrawal.payoutVerification = input.payoutVerification ?? null;
       withdrawal.processedAt = new Date();
       withdrawal.processedBy = input.agentId;
       await withdrawalRepo.save(withdrawal);

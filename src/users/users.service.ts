@@ -123,6 +123,20 @@ export class UsersService {
     return normalized;
   }
 
+  /**
+   * Resolve the internal user behind a Telegram account, or null if they have
+   * never been linked. Lets bot handlers act on the internal user id without
+   * creating an account as a side effect.
+   */
+  async findByTelegramUserId(telegramUserId: string): Promise<User | null> {
+    const identity = await this.authIdentityRepository.findOneBy({
+      provider: 'telegram',
+      providerUserId: telegramUserId,
+    });
+    if (!identity) return null;
+    return this.userRepository.findOneBy({ id: identity.userId });
+  }
+
   async listUsers(page: number, limit: number, role?: string, search?: string) {
     const skip = (page - 1) * limit;
     const queryBuilder = this.userRepository.createQueryBuilder('user')

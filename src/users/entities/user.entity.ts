@@ -81,6 +81,27 @@ export class User {
   @Index()
   referredByAgentId?: string | null;
 
+  /**
+   * Where the player says they came from, picked during registration. This is the
+   * durable attribution unit — an agent-level credit stays deposit-driven via
+   * `referredByAgentId`, because a location can have many agents. Null means the
+   * player picked "Other" (or has not answered yet) and counts for the house.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  locationId?: string | null;
+
+  /**
+   * How `locationId` was obtained. `other` records a deliberate "Other" choice,
+   * which is different from null-because-never-asked: only the latter should be
+   * re-prompted.
+   */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  locationSource?: 'telegram_geo' | 'self_selected' | 'other' | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  locationCapturedAt?: Date | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

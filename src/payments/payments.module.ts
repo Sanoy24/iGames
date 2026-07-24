@@ -9,20 +9,22 @@ import { UsersModule } from '../users/users.module';
 import { AgentsModule } from '../agents/agents.module';
 import { PaymentsController } from './payments.controller';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
+import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
+import { MpesaReceiptVerifierService } from './mpesa-receipt-verifier.service';
 import { PaymentsService } from './payments.service';
 
 @Module({
   imports: [
     JwtModule.register({}),
     WalletModule,
-    TypeOrmModule.forFeature([TelebirrDeposit]),
+    TypeOrmModule.forFeature([TelebirrDeposit, MpesaDeposit]),
     AdminModule,
     NotificationsModule,
     UsersModule,
     AgentsModule
   ],
   controllers: [PaymentsController],
-  providers: [PaymentsService, TelebirrReceiptVerifierService, JwtAuthGuard]
+  providers: [PaymentsService, TelebirrReceiptVerifierService, MpesaReceiptVerifierService, JwtAuthGuard]
 })
 export class PaymentsModule {}

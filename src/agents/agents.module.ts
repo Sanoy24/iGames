@@ -7,6 +7,8 @@ import { AgentsService } from './agents.service';
 import { AgentShift } from './entities/agent-shift.entity';
 import { UsersModule } from '../users/users.module';
 import { SystemConfig } from '../admin/entities/system-config.entity';
+import { TelebirrReceiptClientModule } from '../payments/telebirr-receipt-client.module';
+import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 @Module({
   imports: [
@@ -14,9 +16,10 @@ import { SystemConfig } from '../admin/entities/system-config.entity';
     TypeOrmModule.forFeature([AgentShift, SystemConfig]),
     WalletModule,
     UsersModule,
+    TelebirrReceiptClientModule,
   ],
   controllers: [AgentsController],
-  providers: [AgentsService],
+  providers: [AgentsService, WithdrawalProofVerifierService],
   exports: [AgentsService, TypeOrmModule],
 })
 export class AgentsModule {}

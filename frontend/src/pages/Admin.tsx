@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
-  Image as ImageIcon, LifeBuoy, Megaphone, Play, Plus, RefreshCw, Send, Settings,
+  Image as ImageIcon, LifeBuoy, MapPin, Megaphone, Play, Plus, RefreshCw, Send, Settings,
   Shield, Trash2, Users, Wallet, X,
 } from 'lucide-react';
 import {
@@ -11,6 +11,7 @@ import {
   adminBotsApi,
   adminKenoApi,
   adminApi,
+  adminLocationsApi,
   adminWithdrawalsApi,
   adminUsersApi,
   broadcastApi,
@@ -30,7 +31,7 @@ import {
   type PlatformStats,
   type SystemConfig,
 } from '../lib/api';
-import type { BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
+import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 import { SupportConsole } from '../components/SupportConsole';
@@ -38,12 +39,13 @@ import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
 import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
   { id: 'players',     label: 'Players',     icon: <Users size={15} /> },
   { id: 'agents',      label: 'Agents',      icon: <Users size={15} /> },
+  { id: 'locations',   label: 'Locations',   icon: <MapPin size={15} /> },
   { id: 'agent-actions', label: 'Agent Actions', icon: <Activity size={15} /> },
   { id: 'keno',        label: 'Keno',        icon: <Dices size={15} /> },
   { id: 'bingo',       label: 'Bingo',       icon: <CircleDot size={15} /> },
@@ -715,6 +717,297 @@ function DaysPicker({ value, onChange }: { value: number[]; onChange: (v: number
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ── Locations ────────────────────────────────────────────────────────
+// DB-backed play areas shown in the player's registration dropdown. A location
+// can have many agents; the location is the durable attribution unit, while
+// agent-level credit stays deposit-driven. "Other" (null location) counts for
+// the house.
+const EMPTY_LOCATION_FORM = {
+  name: '',
+  region: '',
+  latitude: '',
+  longitude: '',
+  radiusMeters: 5000,
+  isActive: true,
+  sortOrder: 0,
+};
+
+function LocationsAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [locations, setLocations] = useState<AdminLocation[]>([]);
+  const [agents, setAgents] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ ...EMPTY_LOCATION_FORM });
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Agent-assignment panel: which agent's coverage we're editing, and the set
+  // of location ids currently ticked for them.
+  const [assignAgentId, setAssignAgentId] = useState<string>('');
+  const [assignSelected, setAssignSelected] = useState<Set<string>>(new Set());
+  const [assignPrimary, setAssignPrimary] = useState<string>('');
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignLoading, setAssignLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [locs, ags] = await Promise.all([
+        adminLocationsApi.list(),
+        adminAgentsApi.listAgents(),
+      ]);
+      setLocations(locs);
+      setAgents(ags.filter((a) => a.status !== 'closed'));
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setLoading(false); }
+  }, [addToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // Load an agent's current coverage when one is picked in the assignment panel.
+  const pickAssignAgent = async (agentId: string) => {
+    setAssignAgentId(agentId);
+    setAssignSelected(new Set());
+    setAssignPrimary('');
+    if (!agentId) return;
+    setAssignLoading(true);
+    try {
+      const assigned = await adminLocationsApi.listAgentLocations(agentId);
+      setAssignSelected(new Set(assigned.map((a) => a.id)));
+      setAssignPrimary(assigned.find((a) => a.isPrimary)?.id ?? '');
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setAssignLoading(false); }
+  };
+
+  const resetForm = () => { setForm({ ...EMPTY_LOCATION_FORM }); setEditingId(null); };
+
+  const startEdit = (loc: AdminLocation) => {
+    setEditingId(loc.id);
+    setShowForm(true);
+    setForm({
+      name: loc.name,
+      region: loc.region ?? '',
+      latitude: loc.latitude === null ? '' : String(loc.latitude),
+      longitude: loc.longitude === null ? '' : String(loc.longitude),
+      radiusMeters: loc.radiusMeters,
+      isActive: loc.isActive,
+      sortOrder: loc.sortOrder,
+    });
+  };
+
+  const save = async () => {
+    if (!form.name.trim()) { addToast('info', 'A location name is required.'); return; }
+    const hasLat = form.latitude.trim() !== '';
+    const hasLng = form.longitude.trim() !== '';
+    if (hasLat !== hasLng) { addToast('info', 'Provide both latitude and longitude, or neither.'); return; }
+
+    const payload = {
+      name: form.name.trim(),
+      region: form.region.trim() || undefined,
+      latitude: hasLat ? Number(form.latitude) : undefined,
+      longitude: hasLng ? Number(form.longitude) : undefined,
+      radiusMeters: Number(form.radiusMeters) || 5000,
+      isActive: form.isActive,
+      sortOrder: Number(form.sortOrder) || 0,
+    };
+
+    setSaving(true);
+    try {
+      if (editingId) {
+        await adminLocationsApi.update(editingId, payload);
+        addToast('success', `Location "${payload.name}" updated.`);
+      } else {
+        await adminLocationsApi.create(payload);
+        addToast('success', `Location "${payload.name}" created.`);
+      }
+      resetForm();
+      setShowForm(false);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+
+  const remove = async (loc: AdminLocation) => {
+    if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
+    try {
+      await adminLocationsApi.remove(loc.id);
+      addToast('success', `Location "${loc.name}" deleted.`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+  };
+
+  const toggleAssign = (locationId: string) => {
+    setAssignSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(locationId)) {
+        next.delete(locationId);
+        if (assignPrimary === locationId) setAssignPrimary('');
+      } else {
+        next.add(locationId);
+      }
+      return next;
+    });
+  };
+
+  const saveAssignment = async () => {
+    if (!assignAgentId) { addToast('info', 'Pick an agent first.'); return; }
+    setAssignSaving(true);
+    try {
+      const locationIds = [...assignSelected];
+      await adminLocationsApi.setAgentLocations(assignAgentId, {
+        locationIds,
+        primaryLocationId: assignPrimary && locationIds.includes(assignPrimary) ? assignPrimary : undefined,
+      });
+      addToast('success', 'Agent coverage updated.');
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setAssignSaving(false); }
+  };
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="Locations" sub="Play areas offered to players at registration. Assign agents to a location so it appears in the dropdown.">
+        <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-primary" onClick={() => { setShowForm((v) => !v); if (showForm) resetForm(); }}>
+          {showForm ? <X size={13} /> : <Plus size={13} />}
+          {showForm ? 'Cancel' : 'New Location'}
+        </button>
+      </SectionHead>
+
+      {showForm && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">{editingId ? 'Edit Location' : 'Create Location'}</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>Name</span>
+              <input className="input" placeholder="e.g. Bole" value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Region <em className="adm-field-hint">— optional grouping</em></span>
+              <input className="input" placeholder="e.g. Addis Ababa" value={form.region}
+                onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Latitude <em className="adm-field-hint">— for pin matching; leave blank for list-only</em></span>
+              <input className="input" type="number" step="any" placeholder="8.9806" value={form.latitude}
+                onChange={(e) => setForm((f) => ({ ...f, latitude: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Longitude</span>
+              <input className="input" type="number" step="any" placeholder="38.7578" value={form.longitude}
+                onChange={(e) => setForm((f) => ({ ...f, longitude: e.target.value }))} />
+            </label>
+            <label className="adm-field">
+              <span>Match Radius (metres)</span>
+              <input className="input" type="number" min={100} max={200000} value={form.radiusMeters}
+                onChange={(e) => setForm((f) => ({ ...f, radiusMeters: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Sort Order <em className="adm-field-hint">— lower shows first</em></span>
+              <input className="input" type="number" min={0} value={form.sortOrder}
+                onChange={(e) => setForm((f) => ({ ...f, sortOrder: Number(e.target.value) }))} />
+            </label>
+            <div className="adm-field" style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.isActive}
+                  onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))} />
+                <span>Active</span>
+              </label>
+            </div>
+          </div>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={saving} onClick={save}>
+              {saving ? 'Saving…' : editingId ? 'Save Changes' : 'Create Location'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="adm-empty">Loading…</div>
+      ) : locations.length === 0 ? (
+        <div className="adm-empty">No locations yet. Create one, then assign agents to it.</div>
+      ) : (
+        <div className="adm-table-wrap">
+          <table className="adm-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Region</th><th>Coordinates</th><th>Radius</th>
+                <th>Agents</th><th>Players</th><th>Status</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {locations.map((loc) => (
+                <tr key={loc.id}>
+                  <td>{loc.name}</td>
+                  <td>{loc.region ?? '—'}</td>
+                  <td>{loc.latitude === null ? <em style={{ opacity: 0.6 }}>list-only</em> : `${loc.latitude}, ${loc.longitude}`}</td>
+                  <td>{loc.latitude === null ? '—' : `${loc.radiusMeters} m`}</td>
+                  <td>{loc.agentCount === 0 ? <span style={{ color: 'var(--danger, #e5484d)' }}>0 ⚠</span> : loc.agentCount}</td>
+                  <td>{loc.playerCount}</td>
+                  <td>{loc.isActive ? 'Active' : 'Inactive'}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="adm-icon-btn" title="Edit" onClick={() => startEdit(loc)}><Settings size={13} /></button>
+                    <button className="adm-icon-btn" title="Delete" onClick={() => remove(loc)}><Trash2 size={13} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Assign Agents to Locations</div>
+        <div className="adm-field" style={{ maxWidth: 360 }}>
+          <span>Agent</span>
+          <select className="input" value={assignAgentId} onChange={(e) => pickAssignAgent(e.target.value)}
+            style={{ background: 'var(--bg-2)', color: 'var(--text-primary)' }}>
+            <option value="">— Select an agent —</option>
+            {agents.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}
+          </select>
+        </div>
+
+        {assignAgentId && (
+          assignLoading ? (
+            <div className="adm-empty">Loading coverage…</div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, marginTop: 12 }}>
+                {locations.map((loc) => {
+                  const checked = assignSelected.has(loc.id);
+                  return (
+                    <div key={loc.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid var(--border, #333)', borderRadius: 8 }}>
+                      <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', flex: 1 }}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleAssign(loc.id)} />
+                        <span>{loc.name}{loc.region ? ` (${loc.region})` : ''}</span>
+                      </label>
+                      {checked && (
+                        <label style={{ display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer', fontSize: 12, opacity: 0.8 }} title="Home location">
+                          <input type="radio" name="assignPrimary" checked={assignPrimary === loc.id}
+                            onChange={() => setAssignPrimary(loc.id)} />
+                          <span>Home</span>
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="adm-panel-footer">
+                <button className="adm-btn adm-btn-primary" disabled={assignSaving} onClick={saveAssignment}>
+                  {assignSaving ? 'Saving…' : 'Save Coverage'}
+                </button>
+              </div>
+            </>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -3868,6 +4161,7 @@ export function Admin() {
           {tab === 'overview'      && <OverviewAdmin />}
           {tab === 'players'       && <PlayersAdmin />}
           {tab === 'agents'        && <AgentsAdmin />}
+          {tab === 'locations'     && <LocationsAdmin />}
           {tab === 'agent-actions' && <AgentActionsAdmin />}
           {tab === 'keno'          && <KenoAdmin />}
           {tab === 'bingo'         && <BingoAdmin />}

@@ -13,6 +13,7 @@ import { DevModule } from "./dev/dev.module";
 import { GameEventsModule } from "./events/game-events.module";
 import { HealthModule } from "./health/health.module";
 import { KenoModule } from "./keno/keno.module";
+import { LocationsModule } from "./locations/locations.module";
 import { PaymentsModule } from "./payments/payments.module";
 import { RedisModule } from "./redis/redis.module";
 import { RngModule } from "./rng/rng.module";
@@ -79,6 +80,7 @@ const isDev = process.env.NODE_ENV !== "production";
         AuthModule,
         UsersModule,
         WalletModule,
+        LocationsModule,
         PaymentsModule,
         KenoModule,
         BingoModule,

@@ -23,6 +23,7 @@ import { BottomNav } from './components/BottomNav';
 import { WalletBar } from './components/WalletBar';
 import { Toasts } from './components/Toasts';
 import { CredentialsLogin } from './components/CredentialsLogin';
+import { LocationPrompt } from './components/LocationPrompt';
 import type { AppTab } from './lib/navigation';
 
 type TelegramWindow = Window &
@@ -209,6 +210,7 @@ export function App() {
       </main>
       <BottomNav active={activeTab} onChange={setActiveTab} />
       <Toasts />
+      <LocationPrompt />
     </div>
   );
 }

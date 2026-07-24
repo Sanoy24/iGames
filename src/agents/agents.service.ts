@@ -7,6 +7,7 @@ import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
+import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 @Injectable()
 export class AgentsService {
@@ -17,6 +18,7 @@ export class AgentsService {
     private readonly systemConfigRepository: Repository<SystemConfig>,
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
+    private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
   ) {}
 
   // ── Config (agent-accessible) ────────────────────────────────────
@@ -78,7 +80,12 @@ export class AgentsService {
     return this.walletService.releaseWithdrawal(withdrawalId, agentId);
   }
 
-  async completeWithdrawal(withdrawalId: string, agentId: string, telebirrReference: string) {
+  async completeWithdrawal(
+    withdrawalId: string,
+    agentId: string,
+    provider: PayoutProvider,
+    proof: string,
+  ) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
     // Read fee/commission split and the designated super-admin from system config.
@@ -86,11 +93,33 @@ export class AgentsService {
     const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
     const commissionPct = config?.withdrawalCommissionPct ?? 0;
     const superAdminUserId = config?.superAdminUserId ?? null;
+    const creditMinorPerBirr = config?.telebirrCreditMinorPerBirr ?? 1;
+
+    // The withdrawal must be claimed by THIS agent, and we need its destination
+    // (the player's phone) and amount to check the payout proof against.
+    const withdrawal = await this.walletService.getClaimedWithdrawalForAgent(withdrawalId, agentId);
+
+    // The player receives the net amount (gross − service fee − commission); that
+    // is exactly what the agent must have paid out.
+    const serviceFeeMinor = Math.floor((withdrawal.amountMinor * serviceFeePct) / 100);
+    const commissionMinor = Math.floor((withdrawal.amountMinor * commissionPct) / 100);
+    const expectedAmountMinor = withdrawal.amountMinor - serviceFeeMinor - commissionMinor;
+
+    // Verify the agent actually paid the player before releasing frozen coins.
+    const verified = await this.withdrawalProofVerifier.verifyPayout({
+      provider,
+      proof,
+      destinationAccount: withdrawal.destinationAccount,
+      expectedAmountMinor,
+      creditMinorPerBirr,
+    });
 
     return this.walletService.completeWithdrawalByAgent({
       withdrawalId,
       agentId,
-      telebirrReference,
+      telebirrReference: verified.reference,
+      paymentProvider: verified.provider,
+      payoutVerification: verified.verification,
       serviceFeePct,
       commissionPct,
       superAdminUserId,

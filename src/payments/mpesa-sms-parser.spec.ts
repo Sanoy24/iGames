@@ -27,6 +27,36 @@ describe('parseMpesaSms', () => {
     expect(parsed.transactedAt?.toISOString()).toBe('2026-06-28T16:04:00.000Z');
   });
 
+  // The exact real send-to-person sample provided by the operator — masked phone,
+  // "Transaction fee" line, and an appended "receipt here:" portal URL.
+  const REAL_SEND_SMS =
+    'Dear Yonas, you have sent 2.00 Birr to Tesfaye Adare Weldekidan 251714***707 ' +
+    'on 24/7/26 at 11:53 AM. Transaction number UGO4D2CODA. Transaction fee 0.00 Birr. ' +
+    'Your current  M-PESA balance is 10.00 Birr. ' +
+    'Get your receipt here: https://m-pesabusiness.safaricom.et/receipt/UGO4D2CODA ' +
+    'Get extra 20MB when you buy 100MB daily bundle via M-PESA for 5 birr.';
+
+  it('parses the real masked send-to-person SMS (name and masked phone kept apart)', () => {
+    const parsed = parseMpesaSms(REAL_SEND_SMS)!;
+    expect(parsed).not.toBeNull();
+    expect(parsed.direction).toBe('sent');
+    expect(parsed.confirmationCode).toBe('UGO4D2CODA');
+    expect(parsed.amountBirr).toBe(2);
+    // The masked phone must NOT be swallowed into the name…
+    expect(parsed.counterpartyName).toBe('Tesfaye Adare Weldekidan');
+    // …and the mask must be preserved (not collapsed into wrong digits).
+    expect(parsed.counterpartyPhone).toBe('251714***707');
+    expect(parsed.balanceBirr).toBe(10);
+    expect(parsed.receiptUrl).toBe('https://m-pesabusiness.safaricom.et/receipt/UGO4D2CODA');
+    // 11:53 AM EAT (UTC+3) on 2026-07-24 → 08:53 UTC.
+    expect(parsed.transactedAt?.toISOString()).toBe('2026-07-24T08:53:00.000Z');
+  });
+
+  it('does not mistake the "Transaction fee" figure for the amount', () => {
+    const parsed = parseMpesaSms(REAL_SEND_SMS)!;
+    expect(parsed.amountBirr).toBe(2);
+  });
+
   it('parses a "transferred to <person>" send (the deposit case)', () => {
     const sms =
       'Dear Yonas, you have transferred 100.00 Birr to JANE DOE 251712345678 ' +

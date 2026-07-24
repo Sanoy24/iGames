@@ -19,6 +19,17 @@ describe('accountMatchesPhone', () => {
     expect(accountMatchesPhone('0712****678', '+251712345678')).toBe(true);
   });
 
+  it('matches the real M-PESA middle-masked format using both visible ends', () => {
+    // "251714***707" aligns to the 9-digit local 714***707 → confirm 714…707.
+    expect(accountMatchesPhone('251714***707', '0714555707')).toBe(true);
+    expect(accountMatchesPhone('251714***707', '+251714999707')).toBe(true);
+  });
+
+  it('rejects a middle-masked account whose visible LEADING digits differ', () => {
+    // Same trailing 707 but a different leading run (713 vs 714) → definite mismatch.
+    expect(accountMatchesPhone('251714***707', '0713555707')).toBe(false);
+  });
+
   it('returns null (indeterminate) when either side is missing', () => {
     expect(accountMatchesPhone(undefined, '0712345678')).toBeNull();
     expect(accountMatchesPhone('0712345678', null)).toBeNull();

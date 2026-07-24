@@ -48,6 +48,8 @@ export function Agent() {
   const [loading, setLoading] = useState(true);
 
   const [refInputs, setRefInputs] = useState<Record<string, string>>({});
+  // Per-withdrawal payout rail the agent used; defaults to Telebirr.
+  const [proofProvider, setProofProvider] = useState<Record<string, 'telebirr' | 'mpesa'>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
@@ -149,13 +151,20 @@ export function Agent() {
   };
 
   const handleComplete = async (w: Withdrawal) => {
-    const ref = (refInputs[w.id] ?? '').trim();
-    if (ref.length < 4) { addToast('info', 'Enter the Telebirr reference number (min 4 characters).'); return; }
+    const provider = proofProvider[w.id] ?? 'telebirr';
+    const proof = (refInputs[w.id] ?? '').trim();
+    const minLen = provider === 'mpesa' ? 20 : 6;
+    if (proof.length < minLen) {
+      addToast('info', provider === 'mpesa'
+        ? 'Paste the full M-Pesa confirmation SMS.'
+        : 'Enter the Telebirr receipt number or link.');
+      return;
+    }
     setBusyFor(w.id, true);
     try {
-      await agentApi.completeWithdrawal(w.id, ref);
+      await agentApi.completeWithdrawal(w.id, provider, proof);
       await load();
-      addToast('success', `Withdrawal completed. Ref: ${ref}`);
+      addToast('success', 'Withdrawal verified and completed.');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -228,6 +237,30 @@ export function Agent() {
               { label: t('agent.players', { defaultValue: 'Players' }), value: String(perf.players) },
               { label: t('agent.staked', { defaultValue: 'Staked' }), value: formatCredits(perf.stakedMinor) },
               { label: t('agent.commission', { defaultValue: 'Commission' }), value: formatCredits(perf.commissionEarnedMinor), accent: true },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* My deposit activity (Phase 4) — deposits I processed + commission earned */}
+      {perf && (perf.depositCount > 0 || perf.depositCommissionEarnedMinor > 0) && (
+        <div style={{
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: 14, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
+            {t('agent.myDeposits', { defaultValue: 'My Deposit Activity' })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+            {[
+              { label: t('agent.depositCount', { defaultValue: 'Deposits' }), value: String(perf.depositCount) },
+              { label: t('agent.depositVolume', { defaultValue: 'Volume' }), value: formatCredits(perf.depositVolumeMinor) },
+              { label: t('agent.depositCommission', { defaultValue: 'Commission' }), value: formatCredits(perf.depositCommissionEarnedMinor), accent: true },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
@@ -343,8 +376,8 @@ export function Agent() {
                     {/* Steps */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       <Step n={1} done label="Claimed by you" />
-                      <Step n={2} label={`Send Telebirr to ${w.destinationAccount}`} />
-                      <Step n={3} label="Enter reference number below" />
+                      <Step n={2} label={`Send the exact "You transfer" amount to ${w.destinationAccount}`} />
+                      <Step n={3} label="Paste your payment proof below to verify & complete" />
                     </div>
 
                     {/* Transfer details */}
@@ -381,23 +414,48 @@ export function Agent() {
                       </div>
                     </div>
 
-                    {/* Reference input + complete */}
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <input
+                    {/* Payout proof — provider toggle + proof, verified server-side */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {(['telebirr', 'mpesa'] as const).map((p) => {
+                          const selected = (proofProvider[w.id] ?? 'telebirr') === p;
+                          return (
+                            <button
+                              key={p}
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => setProofProvider((prev) => ({ ...prev, [w.id]: p }))}
+                              style={{
+                                flex: 1, padding: '7px 10px', borderRadius: 8, cursor: 'pointer',
+                                fontSize: 12, fontWeight: 700,
+                                background: selected ? 'rgba(250,204,21,0.14)' : 'var(--surface)',
+                                border: `1px solid ${selected ? 'rgba(250,204,21,0.55)' : 'var(--border)'}`,
+                                color: selected ? 'var(--accent)' : 'var(--text-secondary)',
+                              }}
+                            >
+                              {p === 'telebirr' ? 'Telebirr' : 'M-Pesa'}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <textarea
                         className="input"
-                        placeholder="Telebirr reference…"
+                        rows={(proofProvider[w.id] ?? 'telebirr') === 'mpesa' ? 3 : 1}
+                        placeholder={(proofProvider[w.id] ?? 'telebirr') === 'mpesa'
+                          ? 'Paste the M-Pesa confirmation SMS you received…'
+                          : 'Telebirr receipt number or link…'}
                         value={refInputs[w.id] ?? ''}
                         onChange={(e) => setRefInputs((prev) => ({ ...prev, [w.id]: e.target.value }))}
                         disabled={isBusy}
-                        style={{ flex: 1 }}
+                        style={{ width: '100%', resize: 'vertical' }}
                       />
                       <button
-                        className="btn btn-primary"
+                        className="btn btn-primary btn-full"
                         disabled={isBusy || !(refInputs[w.id] ?? '').trim()}
                         onClick={() => void handleComplete(w)}
                       >
                         <CheckCircle size={14} />
-                        {isBusy ? '...' : 'Done'}
+                        {isBusy ? 'Verifying…' : 'Verify & Complete'}
                       </button>
                     </div>
 

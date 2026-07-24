@@ -312,6 +312,8 @@ export type SystemConfig = {
   welcomeBonusMinor: number;
   withdrawalServiceChargePct: number;
   withdrawalCommissionPct: number;
+  /** % of a credited deposit paid as commission to the receiving agent. */
+  depositCommissionPct?: number;
   superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;
@@ -333,6 +335,9 @@ export type AgentPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  depositCount: number;
+  depositVolumeMinor: number;
+  depositCommissionEarnedMinor: number;
 };
 
 export type AgentSelfPerformance = {
@@ -343,6 +348,9 @@ export type AgentSelfPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  depositCount: number;
+  depositVolumeMinor: number;
+  depositCommissionEarnedMinor: number;
 };
 
 export const adminApi = {
@@ -731,8 +739,8 @@ export const agentApi = {
   claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
   rejectWithdrawal: (id: string, remarks: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/reject`, { remarks }).then((r) => r.data),
-  completeWithdrawal: (id: string, telebirrReference: string) =>
-    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { telebirrReference }).then((r) => r.data),
+  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string) =>
+    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof }, { timeout: 45000 }).then((r) => r.data),
   transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
 };

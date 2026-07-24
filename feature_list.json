@@ -428,7 +428,17 @@
       "status": "passing",
       "verification": "npx tsc --noEmit && npx jest src/payments --no-coverage && cd frontend && npx tsc --noEmit && npm run build",
       "evidence": "src/payments/: mpesa-deposit.entity.ts, mpesa-sms-parser.ts (+spec 7/7), mpesa-receipt-verifier.service.ts, receipt-verification.ts shared helpers (+spec 14/14), payments.service/controller/module. Env: MPESA_PORTAL_URL/KEY/TIMEOUT. Frontend: paymentsApi.previewMpesaSms/submitMpesaSms, Wallet.tsx provider toggle. Backend+frontend tsc+build clean, 194/194 unit tests.",
-      "notes": "SMS parser regexes (mpesa-sms-parser.ts) are tuned to the documented Safaricom Ethiopia format and should be validated against a REAL sample SMS. Portal decision-wiring deferred until the portal response format is known."
+      "notes": "SMS parser calibrated against a REAL Safaricom Ethiopia SMS (2026-07-24: 'X.XX Birr' after amount, 'Transaction number CODE', no 'Confirmed'). The person-to-person 'transferred to' send wording is still inferred — validate against a real send-money sample. Portal decision-wiring deferred until portal format known."
+    },
+    {
+      "id": "BE-PAY-03",
+      "area": "payments",
+      "title": "Withdrawal payout FT verification (Phase 3)",
+      "behavior": "Agent completing a withdrawal must paste verified payment proof instead of a free-text reference. POST /agent/withdrawals/:id/complete now takes { provider: telebirr|mpesa, proof }. WithdrawalProofVerifierService checks the proof shows: receiver = the player's withdrawal destination (not just any account), amount = the exact NET payout (gross − serviceFee − commission), freshness <=60min, correct direction (agent SENT to player). completeWithdrawalByAgent dedupes the reference (no proof reused across withdrawals) inside its transaction before releasing the player's frozen coins. Admin processWithdrawal(approve) remains the manual override (no proof).",
+      "status": "passing",
+      "verification": "npx tsc --noEmit && npx jest src/agents/withdrawal-proof-verifier.service.spec.ts --no-coverage && cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "src/agents/withdrawal-proof-verifier.service.ts (+spec 9/9), src/payments/telebirr-receipt-client.{service,module}.ts (leaf module to avoid Payments↔Agents cycle), withdrawal.entity paymentProvider+payoutVerification cols + telebirrReference index, wallet.service completeWithdrawalByAgent dedupe + getClaimedWithdrawalForAgent, CompleteWithdrawalDto { provider, proof }. Frontend: Agent.tsx provider toggle + proof textarea, agentApi.completeWithdrawal(id, provider, proof). 206/206 unit tests, both builds clean.",
+      "notes": "Payout freshness window is 60min (constant WithdrawalProofVerifierService.MAX_AGE_MS). Reference dedupe is app-level (not a DB unique index) to tolerate legacy free-text references. TelebirrReceiptClientService duplicates the deposit verifier's fetch logic on purpose to avoid touching the working deposit path."
     }
   ]
 }

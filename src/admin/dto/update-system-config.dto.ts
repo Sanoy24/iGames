@@ -23,6 +23,13 @@ export class UpdateSystemConfigDto {
   @Max(100)
   withdrawalCommissionPct?: number;
 
+  /** % of a credited deposit paid as commission to the receiving agent. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  depositCommissionPct?: number;
+
   /** User id of the super-admin whose wallet receives service fees (null = none). */
   @IsOptional()
   @ValidateIf((_, value) => value !== null)

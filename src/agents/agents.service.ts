@@ -294,6 +294,9 @@ export class AgentsService {
     payoutMinor: number;
     ggrMinor: number;
     commissionEarnedMinor: number;
+    depositCount: number;
+    depositVolumeMinor: number;
+    depositCommissionEarnedMinor: number;
   }> {
     const q = (sql: string, params: unknown[]) => this.systemConfigRepository.query(sql, params);
     const [play] = await q(
@@ -311,6 +314,19 @@ export class AgentsService {
     );
     const [cust] = await q(`SELECT COUNT(*) customers FROM users WHERE referredByAgentId = ?`, [agentId]);
 
+    // Phase 4 — deposit activity the agent processed (volume/count from the
+    // deposit-receipt action log), and the commission it earned them.
+    const [dep] = await q(
+      `SELECT COUNT(*) deposits, COALESCE(SUM(amountMinor),0) volume FROM agent_action_logs
+        WHERE agentId = ? AND actionType IN ('telebirr_deposit_receipt','mpesa_deposit_receipt')`,
+      [agentId],
+    );
+    const [depComm] = await q(
+      `SELECT COALESCE(SUM(amountMinor),0) commission FROM ledger_entries
+        WHERE userId = ? AND entryType = 'agent_receipt' AND sourceType = 'deposit_commission'`,
+      [agentId],
+    );
+
     const stakedMinor = Number(play?.staked ?? 0);
     const payoutMinor = Number(play?.payout ?? 0);
     return {
@@ -321,6 +337,9 @@ export class AgentsService {
       payoutMinor,
       ggrMinor: stakedMinor - payoutMinor,
       commissionEarnedMinor: Number(comm?.commission ?? 0),
+      depositCount: Number(dep?.deposits ?? 0),
+      depositVolumeMinor: Number(dep?.volume ?? 0),
+      depositCommissionEarnedMinor: Number(depComm?.commission ?? 0),
     };
   }
 

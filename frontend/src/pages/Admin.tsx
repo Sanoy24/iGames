@@ -1423,7 +1423,7 @@ function ConfigAdmin() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
     telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
-    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, superAdminUserId: null,
+    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, depositCommissionPct: 0, superAdminUserId: null,
     minDepositMinor: 0,
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
@@ -1439,6 +1439,7 @@ function ConfigAdmin() {
     welcomeBonusMinor: c.welcomeBonusMinor,
     withdrawalServiceChargePct: c.withdrawalServiceChargePct,
     withdrawalCommissionPct: c.withdrawalCommissionPct ?? 0,
+    depositCommissionPct: c.depositCommissionPct ?? 0,
     superAdminUserId: c.superAdminUserId ?? null,
     minDepositMinor: c.minDepositMinor ?? 0,
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
@@ -1492,6 +1493,7 @@ function ConfigAdmin() {
           {field('telebirrCreditMinorPerBirr', 'ETB per Birr deposited', '1 = flat (10 Birr → 10 ETB)')}
           {field('minDepositMinor', 'Minimum Deposit (ETB)', '0 = no minimum')}
           {field('welcomeBonusMinor', 'Welcome Bonus (ETB)', '0 = disabled')}
+          {field('depositCommissionPct', 'Deposit Commission % → Agent', 'earned by the agent whose account received the deposit')}
         </div>
       </div>
 
@@ -1561,7 +1563,7 @@ function ConfigAdmin() {
           <table className="adm-table">
             <thead>
               <tr className="adm-tr">
-                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Commission</th>
+                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Bingo comm.</th><th>Deposits</th><th>Deposit vol.</th><th>Deposit comm.</th>
               </tr>
             </thead>
             <tbody>
@@ -1577,6 +1579,9 @@ function ConfigAdmin() {
                     {formatCreditsFull(p.ggrMinor)}
                   </td>
                   <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.commissionEarnedMinor)}</td>
+                  <td className="adm-td-muted">{p.depositCount}</td>
+                  <td>{formatCreditsFull(p.depositVolumeMinor)}</td>
+                  <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.depositCommissionEarnedMinor)}</td>
                 </tr>
               ))}
             </tbody>

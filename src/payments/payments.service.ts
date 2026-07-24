@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, EntityManager } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AdminService } from '../admin/admin.service';
@@ -162,6 +162,50 @@ export class PaymentsService {
     }
   }
 
+  /**
+   * Phase 4 — agent deposit commission. When a deposit that is attributed to an
+   * agent is credited, pay that agent a configured % of the deposit as commission,
+   * in the SAME transaction as the player credit (never a wallet mutation without a
+   * ledger entry). Idempotent on the deposit reference, so a duplicate submit or a
+   * retry can never double-pay. No-op when the rate is 0 or rounds to nothing.
+   */
+  private async creditAgentDepositCommission(
+    manager: EntityManager,
+    input: {
+      agentId: string;
+      userId: string;
+      provider: 'telebirr' | 'mpesa';
+      reference: string;
+      depositAmountMinor: number;
+      depositCommissionPct: number;
+    },
+  ): Promise<number> {
+    const commissionMinor = Math.floor((input.depositAmountMinor * input.depositCommissionPct) / 100);
+    if (commissionMinor <= 0) return 0;
+
+    await this.walletService.ensureDefaultWallet(input.agentId, manager);
+    await this.walletService.creditInSession(
+      {
+        userId: input.agentId,
+        amountMinor: commissionMinor,
+        entryType: 'agent_receipt',
+        sourceType: 'deposit_commission',
+        sourceId: input.reference,
+        idempotencyKey: `deposit-commission:${input.provider}:${input.reference}`,
+        metadata: {
+          provider: input.provider,
+          reference: input.reference,
+          userId: input.userId,
+          depositAmountMinor: input.depositAmountMinor,
+          depositCommissionPct: input.depositCommissionPct,
+          kind: 'deposit_commission',
+        },
+      },
+      manager,
+    );
+    return commissionMinor;
+  }
+
   async previewTelebirrReceipt(
     userId: string,
     dto: SubmitTelebirrReceiptDto,
@@ -202,6 +246,7 @@ export class PaymentsService {
 
     // Enforce the admin-configured minimum deposit before crediting.
     await this.assertMeetsMinimum(verified.amountMinor);
+    const depositCommissionPct = (await this.adminService.getSystemConfig()).depositCommissionPct ?? 0;
 
     let credited = false;
     const result = await this.dataSource.transaction(async (manager) => {
@@ -283,6 +328,15 @@ export class PaymentsService {
             },
           }),
         );
+
+        await this.creditAgentDepositCommission(manager, {
+          agentId: deposit.agentId,
+          userId,
+          provider: 'telebirr',
+          reference: deposit.receiptNo,
+          depositAmountMinor: deposit.amountMinor,
+          depositCommissionPct,
+        });
       }
 
       return this.toResponse(deposit);
@@ -333,6 +387,7 @@ export class PaymentsService {
   async submitMpesaSms(userId: string, dto: SubmitMpesaSmsDto): Promise<MpesaDepositResponse> {
     const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
     await this.assertMeetsMinimum(verified.amountMinor);
+    const depositCommissionPct = (await this.adminService.getSystemConfig()).depositCommissionPct ?? 0;
 
     let credited = false;
     const result = await this.dataSource.transaction(async (manager) => {
@@ -409,6 +464,15 @@ export class PaymentsService {
             },
           }),
         );
+
+        await this.creditAgentDepositCommission(manager, {
+          agentId: deposit.agentId,
+          userId,
+          provider: 'mpesa',
+          reference: deposit.confirmationCode,
+          depositAmountMinor: deposit.amountMinor,
+          depositCommissionPct,
+        });
       }
 
       return this.toMpesaResponse(deposit);

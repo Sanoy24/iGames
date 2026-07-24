@@ -1,0 +1,63 @@
+
+
+
+SCAN TO VERIFY
+TIN NO :
+VAT REG NO :
+Address :
+Tel :
+TRANSACTION INFORMATION
+/ SENDER NAME
+Yonas Mekonnen Eshete
+ 0084242753
+ 22371880003
+Addis Ababa, Kirkos Woreda 1
+ +251 756 765434
+Safaricom M-PESA Mobile Financial Services
+የላኪ ስም
+/ PAYMENT METHOD
+M-PESA Main Account
+/ TRANSACTION TYPE
+/ PAYMENT CHANNEL
+Send Money
+:
+ / PAYMENT REASON
+- - -
+የመክፈያ ዘዴ
+የግብይት አይነት
+የክፍያ መንገድ
+የክፍያ ምክንያት
+/ RECEIVER PHONE NUMBER
+TRANSACTION DETAIL
+ / RECEIPT NO / PAYMENT DATE / SETTLED AMOUNT
+SCOAD3UVREUH2026-07-24 11:53:572.00
+0 Birr
+0.00 Birr
+ / SERVICE FEE
+ / + 15% VAT
+/ TOTAL AMOUNT IN WORDS
+Two Birr Only
+ / TOTAL
+2.00
+251714267707
+/ TRANSACTION ID
+UGO4D2CODA
+የግብይት ቁጥር
+የተቀባይ ስልክ ቁጥር
+ደረሰኝ ቁጥርየክፍያ ቀንየገንዘብ መጠን
+የአገልግሎት ክፍያ
+ተጨማሪ እሴት ታክስ
+ጠቅላላ
+ጠቅላላ መጠን በፊደል
+/ SENDER PHONE NUMBER
+251717404913
+/ SENDER TIN NO
+- - -
+/ RECEIVER NAME
+Tesfaye Adare Weldekidan
+የተቀባዩ ስም
+የላኪ ቲን ቁጥር
+የላኪ ስልክ ቁጥር
+/ THANK YOU FOR USING M-PESA
+ን ስለተጠቀሙ እናመሰግናለን
+M-PESA

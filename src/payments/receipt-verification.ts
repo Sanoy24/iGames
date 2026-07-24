@@ -77,6 +77,16 @@ function maskedLocal(acc: string): string {
 export function parseEatDate(raw?: string | null): Date | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
+
+  // ISO-like `YYYY-MM-DD HH:mm:ss` — the M-PESA receipt PDF prints the payment
+  // date this way, also in EAT. (The SMS uses DD/MM/YY, handled below.)
+  const iso = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (iso) {
+    const [, yyyy, mm, dd, hh, min, ss = '0'] = iso;
+    const utcMs = Date.UTC(+yyyy, +mm - 1, +dd, +hh, +min, +ss) - 3 * 60 * 60 * 1000;
+    if (!Number.isNaN(utcMs)) return new Date(utcMs);
+  }
+
   const m = trimmed.match(
     /^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?/,
   );

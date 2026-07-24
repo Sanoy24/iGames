@@ -6,7 +6,19 @@ import { User } from '../users/entities/user.entity';
 import { AdminService } from '../admin/admin.service';
 import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { parseMpesaSms, ParsedMpesaSms } from './mpesa-sms-parser';
+import { MpesaReceiptClientService } from './mpesa-receipt-client.service';
 import { accountMatchesPhone, checkFreshness, normalizeName } from './receipt-verification';
+
+/** Evidence from the authoritative portal receipt (when a cross-check ran). */
+export type MpesaPortalEvidence = {
+  checked: boolean;
+  success?: boolean;
+  code?: string;
+  amountMatched?: boolean;
+  receiverMatched?: boolean | null;
+  receiverPhone?: string;
+  receiverName?: string;
+};
 
 export type VerifiedMpesaReceipt = {
   confirmationCode: string;
@@ -19,6 +31,7 @@ export type VerifiedMpesaReceipt = {
     expectedReceiverName?: string;
     expectedReceiverAccount?: string;
     portalChecked: boolean;
+    portal?: MpesaPortalEvidence;
   };
   agentId: string;
 };
@@ -30,11 +43,17 @@ export class MpesaReceiptVerifierService {
   constructor(
     private readonly configService: ConfigService,
     private readonly adminService: AdminService,
+    private readonly receiptClient: MpesaReceiptClientService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     @InjectRepository(MpesaDeposit)
     private readonly mpesaDepositRepository: Repository<MpesaDeposit>,
   ) {}
+
+  /** When true, an unreachable portal blocks the deposit (like Telebirr). */
+  private get portalStrict(): boolean {
+    return this.configService.get<boolean>('MPESA_PORTAL_STRICT') === true;
+  }
 
   /**
    * Parse and verify a pasted M-PESA confirmation SMS. Applies the same guard set
@@ -132,8 +151,11 @@ export class MpesaReceiptVerifierService {
       );
     }
 
+    // Authoritative cross-check against the portal receipt PDF (unmasked). When it
+    // runs, its amount/receiver are the source of truth over the masked SMS.
+    const portal = await this.crossCheckPortal(parsed, matchingAgent);
+
     const amountMinor = await this.toCreditMinor(parsed.amountBirr);
-    const portalChecked = await this.crossCheckPortal(parsed);
 
     return {
       confirmationCode: parsed.confirmationCode,
@@ -141,45 +163,79 @@ export class MpesaReceiptVerifierService {
       parsedSms: parsed,
       verification: {
         receiverNameMatched: true,
-        receiverAccountMatched,
+        // Prefer the portal's unmasked receiver match when we have it.
+        receiverAccountMatched: portal.checked ? portal.receiverMatched ?? receiverAccountMatched : receiverAccountMatched,
         transactionStatusAccepted: true, // an M-PESA "Confirmed" SMS is a completed txn
         expectedReceiverName: matchingAgent.displayName,
         expectedReceiverAccount: matchingAgent.phoneNumber ?? undefined,
-        portalChecked,
+        portalChecked: portal.checked,
+        portal,
       },
       agentId: matchingAgent.id,
     };
   }
 
   /**
-   * Pluggable portal cross-check. Off unless `MPESA_PORTAL_URL` is set. When on,
-   * it fetches the raw portal response for the code so it is captured as evidence;
-   * parsing/deciding on it is intentionally deferred until the portal's response
-   * format is pinned down. Never throws — a portal blip must not block a deposit
-   * the SMS already verified.
+   * Authoritative portal cross-check — the M-PESA analogue of fetching a Telebirr
+   * receipt. Off unless a portal is configured (MPESA_PORTAL_URL). When on, it
+   * fetches the real receipt PDF (GET /api/receipt/getReceipt?trxNo=…), which is
+   * UNMASKED, and requires it to confirm the pasted SMS:
+   *   • the transaction resolves and is successful (responseCode "0"),
+   *   • the settled amount equals the SMS amount,
+   *   • the (unmasked) receiver is this agent.
+   * A definite conflict is REJECTED. A "not found / not successful" is REJECTED (the
+   * code isn't a real settled transaction). A portal OUTAGE falls back to the SMS
+   * unless MPESA_PORTAL_STRICT is on, in which case it blocks (like Telebirr).
    */
-  private async crossCheckPortal(parsed: ParsedMpesaSms): Promise<boolean> {
-    const portalUrl = this.configService.get<string>('MPESA_PORTAL_URL')?.trim();
-    if (!portalUrl) return false;
+  private async crossCheckPortal(
+    parsed: ParsedMpesaSms,
+    agent: User,
+  ): Promise<MpesaPortalEvidence> {
+    if (!this.receiptClient.isConfigured) return { checked: false };
 
-    const key = this.configService.get<string>('MPESA_PORTAL_KEY') ?? '';
-    const timeoutMs = Number(this.configService.get<string>('MPESA_PORTAL_TIMEOUT_MS') ?? 15000);
+    let receipt;
     try {
-      const res = await fetch(
-        `${portalUrl.replace(/\/+$/, '')}/fetchreceipt?code=${encodeURIComponent(parsed.confirmationCode)}`,
-        { headers: key ? { 'x-portal-key': key } : {}, signal: AbortSignal.timeout(timeoutMs) },
-      );
-      if (!res.ok) {
-        this.logger.warn(`M-PESA portal returned HTTP ${res.status} for ${parsed.confirmationCode}`);
-        return false;
-      }
-      return true;
+      receipt = await this.receiptClient.fetchParsed(parsed.receiptUrl ?? parsed.confirmationCode);
     } catch (error) {
+      // A definite "not found / not successful" is a hard reject.
+      if (error instanceof BadRequestException) {
+        throw new BadRequestException(`M-PESA portal could not confirm this receipt: ${error.message}`);
+      }
+      // Portal outage: block only in strict mode; otherwise fall back to the SMS.
+      if (this.portalStrict) throw error;
       this.logger.warn(
-        `M-PESA portal cross-check failed for ${parsed.confirmationCode}: ${error instanceof Error ? error.message : error}`,
+        `M-PESA portal unreachable; falling back to SMS for ${parsed.confirmationCode}: ${error instanceof Error ? error.message : error}`,
       );
-      return false;
+      return { checked: false };
     }
+
+    // Settled amount must match the SMS (tolerate float noise).
+    const amountMatched =
+      receipt.amountBirr != null && Math.abs(receipt.amountBirr - parsed.amountBirr) < 0.005;
+    if (receipt.amountBirr != null && !amountMatched) {
+      throw new BadRequestException(
+        `M-PESA receipt amount (${receipt.amountBirr} Birr) does not match the SMS (${parsed.amountBirr} Birr)`,
+      );
+    }
+
+    // The unmasked receiver must be THIS agent's number.
+    const receiverMatched = accountMatchesPhone(receipt.receiverPhone, agent.phoneNumber);
+    if (receiverMatched === false) {
+      throw new BadRequestException(
+        `M-PESA receipt shows the money went to ${receipt.receiverPhone ?? 'another number'}, ` +
+          `not agent "${agent.displayName}"`,
+      );
+    }
+
+    return {
+      checked: true,
+      success: receipt.success,
+      code: receipt.code,
+      amountMatched,
+      receiverMatched,
+      receiverPhone: receipt.receiverPhone,
+      receiverName: receipt.receiverName,
+    };
   }
 
   private async saveRejected(parsed: ParsedMpesaSms, userId: string, error: unknown): Promise<void> {

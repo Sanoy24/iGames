@@ -8,6 +8,7 @@ import { AgentShift } from './entities/agent-shift.entity';
 import { UsersModule } from '../users/users.module';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { TelebirrReceiptClientModule } from '../payments/telebirr-receipt-client.module';
+import { MpesaReceiptClientModule } from '../payments/mpesa-receipt-client.module';
 import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 @Module({
@@ -17,6 +18,7 @@ import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.serv
     WalletModule,
     UsersModule,
     TelebirrReceiptClientModule,
+    MpesaReceiptClientModule,
   ],
   controllers: [AgentsController],
   providers: [AgentsService, WithdrawalProofVerifierService],

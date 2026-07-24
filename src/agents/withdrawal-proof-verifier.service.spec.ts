@@ -1,5 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { TelebirrReceiptClientService } from '../payments/telebirr-receipt-client.service';
+import { MpesaReceiptClientService } from '../payments/mpesa-receipt-client.service';
+import { ParsedMpesaReceipt } from '../payments/types/mpesa-receipt';
 import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 // A fresh EAT timestamp string the freshness check will accept.
@@ -21,13 +23,21 @@ function freshMpesaDateParts(): string {
   return `${eat.getUTCDate()}/${eat.getUTCMonth() + 1}/${String(eat.getUTCFullYear()).slice(-2)} at ${h12}:${p(eat.getUTCMinutes())} ${ampm}`;
 }
 
-function makeService(parsedReceipt?: Record<string, unknown>) {
+function makeService(parsedReceipt?: Record<string, unknown>, mpesaReceipt?: Partial<ParsedMpesaReceipt>) {
   const client = {
     fetchParsed: jest.fn().mockResolvedValue(parsedReceipt ?? {}),
     isAcceptedTransactionStatus: (s?: string) =>
       !!s && ['completed', 'success', 'paid'].some((a) => s.toLowerCase().includes(a)),
   } as unknown as TelebirrReceiptClientService;
-  return new WithdrawalProofVerifierService(client);
+  // Default: no M-PESA portal configured → SMS-only path. When a receipt is given,
+  // the portal is "configured" and fetchParsed returns it (authoritative path).
+  const mpesaClient = {
+    get isConfigured() {
+      return !!mpesaReceipt;
+    },
+    fetchParsed: jest.fn().mockResolvedValue(mpesaReceipt ?? {}),
+  } as unknown as MpesaReceiptClientService;
+  return new WithdrawalProofVerifierService(client, mpesaClient);
 }
 
 describe('WithdrawalProofVerifierService — Telebirr', () => {
@@ -167,6 +177,62 @@ describe('WithdrawalProofVerifierService — M-PESA', () => {
       `Transaction number MPX12345AE. Your current M-PESA balance is 5.00 Birr.`;
     await expect(
       svc.verifyPayout({ provider: 'mpesa', proof: sms, destinationAccount, expectedAmountMinor: 100, creditMinorPerBirr: 1 }),
+    ).rejects.toThrow(/is owed/i);
+  });
+
+  // A valid "sent" SMS whose masked phone is irrelevant once the portal is on.
+  const sentSms = () =>
+    `Dear Agent, you have sent 100.00 Birr to PLAYER ONE 251712***678 on ${freshMpesaDateParts()}. ` +
+    `Transaction number UGO4D2CODA. Get your receipt here: https://m-pesabusiness.safaricom.et/receipt/UGO4D2CODA`;
+
+  it('verifies against the AUTHORITATIVE portal receipt (unmasked) when configured', async () => {
+    const portalSvc = makeService(undefined, {
+      code: 'UGO4D2CODA',
+      amountBirr: 100,
+      receiverPhone: '251712345678', // unmasked
+      receiverName: 'PLAYER ONE',
+      direction: 'sent',
+      success: true,
+      transactedAt: new Date(),
+    });
+    const result = await portalSvc.verifyPayout({
+      provider: 'mpesa',
+      proof: sentSms(),
+      destinationAccount,
+      expectedAmountMinor: 100,
+      creditMinorPerBirr: 1,
+    });
+    expect(result.reference).toBe('UGO4D2CODA');
+    expect(result.amountMinor).toBe(100);
+    expect(result.receiverMatched).toBe(true);
+    expect(result.verification.source).toBe('portal');
+  });
+
+  it('rejects when the portal receiver is not the player', async () => {
+    const portalSvc = makeService(undefined, {
+      code: 'UGO4D2CODA',
+      amountBirr: 100,
+      receiverPhone: '251799999999',
+      direction: 'sent',
+      success: true,
+      transactedAt: new Date(),
+    });
+    await expect(
+      portalSvc.verifyPayout({ provider: 'mpesa', proof: sentSms(), destinationAccount, expectedAmountMinor: 100, creditMinorPerBirr: 1 }),
+    ).rejects.toThrow(/not sent to the player/i);
+  });
+
+  it('rejects when the portal settled amount is not the net payout', async () => {
+    const portalSvc = makeService(undefined, {
+      code: 'UGO4D2CODA',
+      amountBirr: 90,
+      receiverPhone: '251712345678',
+      direction: 'sent',
+      success: true,
+      transactedAt: new Date(),
+    });
+    await expect(
+      portalSvc.verifyPayout({ provider: 'mpesa', proof: sentSms(), destinationAccount, expectedAmountMinor: 100, creditMinorPerBirr: 1 }),
     ).rejects.toThrow(/is owed/i);
   });
 });

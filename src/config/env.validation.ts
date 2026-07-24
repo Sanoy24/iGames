@@ -27,6 +27,7 @@ type EnvConfig = {
   MPESA_PORTAL_URL: string;
   MPESA_PORTAL_KEY: string;
   MPESA_PORTAL_TIMEOUT_MS: number;
+  MPESA_PORTAL_STRICT: boolean;
   SENTRY_DSN: string;
   ALLOWED_ORIGIN: string;
   THROTTLE_TTL_SECONDS: number;
@@ -63,6 +64,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     MPESA_PORTAL_URL: readString(raw, 'MPESA_PORTAL_URL', ''),
     MPESA_PORTAL_KEY: readString(raw, 'MPESA_PORTAL_KEY', ''),
     MPESA_PORTAL_TIMEOUT_MS: readNumber(raw, 'MPESA_PORTAL_TIMEOUT_MS', 15000),
+    MPESA_PORTAL_STRICT: readBoolean(raw, 'MPESA_PORTAL_STRICT', false),
     SENTRY_DSN: readString(raw, 'SENTRY_DSN', ''),
     ALLOWED_ORIGIN: readString(raw, 'ALLOWED_ORIGIN', '*'),
     THROTTLE_TTL_SECONDS: readNumber(raw, 'THROTTLE_TTL_SECONDS', 60),
@@ -93,6 +95,15 @@ function readNumber(raw: Record<string, unknown>, key: string, defaultValue: num
     if (Number.isFinite(parsed)) {
       return parsed;
     }
+  }
+  return defaultValue;
+}
+
+function readBoolean(raw: Record<string, unknown>, key: string, defaultValue: boolean): boolean {
+  const value = raw[key];
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return /^(true|1|yes|on)$/i.test(value.trim());
   }
   return defaultValue;
 }

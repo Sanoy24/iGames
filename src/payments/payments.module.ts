@@ -12,6 +12,7 @@ import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
 import { MpesaReceiptVerifierService } from './mpesa-receipt-verifier.service';
+import { MpesaReceiptClientModule } from './mpesa-receipt-client.module';
 import { PaymentsService } from './payments.service';
 
 @Module({
@@ -22,7 +23,8 @@ import { PaymentsService } from './payments.service';
     AdminModule,
     NotificationsModule,
     UsersModule,
-    AgentsModule
+    AgentsModule,
+    MpesaReceiptClientModule
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService, TelebirrReceiptVerifierService, MpesaReceiptVerifierService, JwtAuthGuard]

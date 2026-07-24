@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { TelebirrReceiptClientService } from '../payments/telebirr-receipt-client.service';
+import { MpesaReceiptClientService } from '../payments/mpesa-receipt-client.service';
 import { parseMpesaSms } from '../payments/mpesa-sms-parser';
 import { accountMatchesPhone, checkFreshness, parseEatDate } from '../payments/receipt-verification';
 
@@ -28,7 +29,10 @@ export class WithdrawalProofVerifierService {
   // then submits the proof), so allow a more generous freshness window.
   private static readonly MAX_AGE_MS = 60 * 60 * 1000;
 
-  constructor(private readonly telebirrClient: TelebirrReceiptClientService) {}
+  constructor(
+    private readonly telebirrClient: TelebirrReceiptClientService,
+    private readonly mpesaClient: MpesaReceiptClientService,
+  ) {}
 
   async verifyPayout(input: {
     provider: PayoutProvider;
@@ -91,12 +95,12 @@ export class WithdrawalProofVerifierService {
     };
   }
 
-  private verifyMpesa(input: {
+  private async verifyMpesa(input: {
     proof: string;
     destinationAccount: string;
     expectedAmountMinor: number;
     creditMinorPerBirr: number;
-  }): VerifiedPayout {
+  }): Promise<VerifiedPayout> {
     const parsed = parseMpesaSms(input.proof);
     if (!parsed) throw new BadRequestException('That does not look like an M-PESA confirmation SMS');
 
@@ -104,6 +108,12 @@ export class WithdrawalProofVerifierService {
       throw new BadRequestException(
         'Paste the "sent to <player>" M-PESA confirmation for the payout you made.',
       );
+    }
+
+    // When a portal is configured, verify against the AUTHORITATIVE receipt PDF
+    // (unmasked receiver + settled amount) rather than the masked SMS.
+    if (this.mpesaClient.isConfigured) {
+      return this.verifyMpesaViaPortal(parsed.receiptUrl ?? parsed.confirmationCode, input);
     }
 
     const amountMinor = this.toMinor(parsed.amountBirr, input.creditMinorPerBirr);
@@ -131,10 +141,61 @@ export class WithdrawalProofVerifierService {
       amountMinor,
       receiverMatched,
       verification: {
+        source: 'sms',
         receiverPhone: parsed.counterpartyPhone,
         receiverName: parsed.counterpartyName,
         direction: parsed.direction,
         date: parsed.dateRaw,
+        receiverMatched,
+      },
+    };
+  }
+
+  /**
+   * Verify an M-PESA payout against the authoritative portal receipt. The PDF is
+   * unmasked, so the receiver phone is an exact link to the player. A "not found /
+   * not successful" receipt or a portal outage BLOCKS the release (the admin manual
+   * approve remains the override) — we never release a player's frozen coins on an
+   * unconfirmable payout.
+   */
+  private async verifyMpesaViaPortal(
+    codeOrUrl: string,
+    input: { destinationAccount: string; expectedAmountMinor: number; creditMinorPerBirr: number },
+  ): Promise<VerifiedPayout> {
+    const receipt = await this.mpesaClient.fetchParsed(codeOrUrl);
+
+    if (receipt.amountBirr == null) {
+      throw new BadRequestException('The M-PESA receipt amount could not be read');
+    }
+    const amountMinor = this.toMinor(receipt.amountBirr, input.creditMinorPerBirr);
+    this.assertAmount(amountMinor, input.expectedAmountMinor);
+
+    this.assertFresh(receipt.transactedAt ?? null);
+
+    const receiverMatched = accountMatchesPhone(receipt.receiverPhone, input.destinationAccount);
+    if (receiverMatched === false) {
+      throw new BadRequestException(
+        'This M-PESA payout was not sent to the player who requested the withdrawal',
+      );
+    }
+    if (receiverMatched === null) {
+      throw new BadRequestException(
+        'The M-PESA receipt does not show a receiver number to match the player',
+      );
+    }
+
+    return {
+      provider: 'mpesa',
+      reference: receipt.code,
+      amountMinor,
+      receiverMatched,
+      verification: {
+        source: 'portal',
+        receiverPhone: receipt.receiverPhone,
+        receiverName: receipt.receiverName,
+        direction: receipt.direction,
+        date: receipt.paymentDateRaw,
+        success: receipt.success,
         receiverMatched,
       },
     };

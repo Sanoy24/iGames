@@ -13,36 +13,11 @@ const LOCATION_PICK_FROM_LIST_TEXT = '🗺 Choose my area from a list';
 /** callback_data prefix for a location choice: `loc:<uuid>` or `loc:other`. */
 const LOCATION_CALLBACK_PREFIX = 'loc:';
 
-/**
- * What a given bot's `/start` and `/help` copy should talk about. The two bots
- * still open the identical Mini App — actual game availability is controlled
- * globally by the game_settings catalog (see GamesService), not per bot — this
- * only changes the welcome copy so a dedicated Bingo bot reads as Bingo-only.
- */
-type BotFocus = 'all' | 'bingo';
-
-/** Internal name of a registered bot: 'main' (required) or 'bingo' (optional add-on). */
-type BotName = 'main' | 'bingo';
-
-type BotConfig = {
-  name: BotName;
-  token?: string;
-  webhookUrl?: string;
-  focus: BotFocus;
-};
-
-type BotRegistration = {
-  name: BotName;
-  bot: Bot;
-  isPolling: boolean;
-};
-
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramBotService.name);
-
-  /** Every bot that started successfully (main, plus any optional add-on bots). */
-  private readonly bots: BotRegistration[] = [];
+  private bot: Bot | undefined;
+  private isPolling = false;
 
   // In-memory cache: telegramUserId → phone (avoids repeated DB writes on /start)
   private readonly phoneCache = new Map<number, string>();
@@ -55,49 +30,28 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const miniAppUrl = this.configService.get<string>('TELEGRAM_MINIAPP_URL');
-    if (!miniAppUrl) {
-      this.logger.warn('TELEGRAM_MINIAPP_URL is not set — Telegram bots will not start');
+    const token = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
+    if (!token) {
+      this.logger.warn('TELEGRAM_BOT_TOKEN is not set — Telegram bot will not start');
       return;
     }
 
-    const configs: BotConfig[] = [
-      {
-        name: 'main',
-        token: this.configService.get<string>('TELEGRAM_BOT_TOKEN'),
-        webhookUrl: this.configService.get<string>('TELEGRAM_WEBHOOK_URL'),
-        focus: 'all',
-      },
-      {
-        name: 'bingo',
-        token: this.configService.get<string>('TELEGRAM_BINGO_BOT_TOKEN'),
-        webhookUrl: this.configService.get<string>('TELEGRAM_BINGO_BOT_WEBHOOK_URL'),
-        focus: 'bingo',
-      },
-    ];
-
-    for (const config of configs) {
-      if (!config.token?.trim()) {
-        if (config.name === 'main') {
-          this.logger.warn('TELEGRAM_BOT_TOKEN is not set — main Telegram bot will not start');
-        }
-        continue; // optional bots simply aren't configured
-      }
-      await this.startBot(config, miniAppUrl);
+    const miniAppUrl = this.configService.get<string>('TELEGRAM_MINIAPP_URL');
+    if (!miniAppUrl) {
+      this.logger.warn('TELEGRAM_MINIAPP_URL is not set — Telegram bot will not start');
+      return;
     }
-  }
 
-  private async startBot(config: BotConfig, miniAppUrl: string): Promise<void> {
-    const bot = new Bot(config.token!);
+    this.bot = new Bot(token);
 
-    bot.catch((err) => {
-      this.logger.error(`Error in Telegram bot "${config.name}" middleware: ${err.message}`, err.stack);
+    this.bot.catch((err) => {
+      this.logger.error(`Error in Telegram bot middleware: ${err.message}`, err.stack);
     });
 
-    this.registerCommands(bot, miniAppUrl, config.focus);
+    this.registerCommands(miniAppUrl);
 
     try {
-      await bot.api.setMyCommands([
+      await this.bot.api.setMyCommands([
         { command: 'start', description: 'Start playing iGames' },
         { command: 'play', description: 'Open the game' },
         { command: 'help', description: 'How to play' },
@@ -106,7 +60,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       const isTelegramLink = miniAppUrl.includes('t.me/') || miniAppUrl.includes('telegram.me/');
 
       if (!isTelegramLink) {
-        await bot.api.setChatMenuButton({
+        await this.bot.api.setChatMenuButton({
           menu_button: {
             type: 'web_app',
             text: '🎮 Play',
@@ -116,39 +70,35 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       } else {
         this.logger.warn(
           `TELEGRAM_MINIAPP_URL (${miniAppUrl}) is a Telegram redirect link. ` +
-          `Skipped setting the chat menu button of type 'web_app' for bot "${config.name}" as Telegram requires a direct HTTPS URL. ` +
+          `Skipped setting the chat menu button of type 'web_app' as Telegram requires a direct HTTPS URL. ` +
           `Please configure a direct HTTPS URL (e.g. via ngrok) to enable the web_app menu button.`
         );
       }
 
-      let isPolling = false;
-      if (config.webhookUrl) {
-        this.logger.log(`Setting Telegram webhook for "${config.name}" to: ${config.webhookUrl}`);
-        await bot.api.setWebhook(config.webhookUrl);
-        this.logger.log(`Telegram bot "${config.name}" webhook registered successfully`);
+      const webhookUrl = this.configService.get<string>('TELEGRAM_WEBHOOK_URL');
+      if (webhookUrl) {
+        this.logger.log(`Setting Telegram webhook to: ${webhookUrl}`);
+        await this.bot.api.setWebhook(webhookUrl);
+        this.logger.log('Telegram bot webhook registered successfully');
       } else {
-        this.logger.log(`Webhook URL not set for "${config.name}" — starting with long polling`);
-        isPolling = true;
-        bot.start({
-          onStart: () => this.logger.log(`Telegram bot "${config.name}" started (long polling)`),
-        }).catch((err) => this.logger.error(`Telegram bot "${config.name}" error`, err));
+        this.logger.log('TELEGRAM_WEBHOOK_URL is not set — starting Telegram bot with long polling');
+        this.isPolling = true;
+        this.bot.start({
+          onStart: () => this.logger.log('Telegram bot started (long polling)'),
+        }).catch((err) => this.logger.error('Telegram bot error', err));
       }
-
-      this.bots.push({ name: config.name, bot, isPolling });
     } catch (error) {
       this.logger.error(
-        `Failed to start Telegram bot "${config.name}"`,
+        'Failed to start Telegram bot',
         error instanceof Error ? error.stack : error,
       );
     }
   }
 
   async onModuleDestroy(): Promise<void> {
-    for (const reg of this.bots) {
-      if (reg.isPolling) {
-        await reg.bot.stop();
-        this.logger.log(`Telegram bot "${reg.name}" polling stopped`);
-      }
+    if (this.bot && this.isPolling) {
+      await this.bot.stop();
+      this.logger.log('Telegram bot polling stopped');
     }
   }
 
@@ -156,9 +106,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     // Win push notifications are disabled.
   }
 
-  /** True once the main bot has started (else broadcasts can't send). */
+  /** True once the bot has a token and is initialized (else broadcasts can't send). */
   public isReady(): boolean {
-    return this.bots.some((r) => r.name === 'main');
+    return this.bot !== undefined;
   }
 
   /**
@@ -180,13 +130,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     progressEvery?: number;
     isCancelled?: () => boolean;
   }): Promise<{ sent: number; failed: number; lastError?: string }> {
-    // Broadcasts are inherently bot-scoped — Telegram only lets a bot message a
-    // chat that has started a conversation with THAT bot — and the admin
-    // broadcast audience is tracked against the main bot, so that's what sends.
-    const mainBot = this.bots.find((r) => r.name === 'main')?.bot;
-    if (!mainBot) throw new Error('Telegram bot is not initialized (TELEGRAM_BOT_TOKEN missing)');
+    if (!this.bot) throw new Error('Telegram bot is not initialized (TELEGRAM_BOT_TOKEN missing)');
 
-    const api = mainBot.api;
+    const api = this.bot.api;
     const parseMode = opts.parseMode && opts.parseMode !== 'none' ? opts.parseMode : undefined;
     const keyboard = this.buildInlineButtons(opts.buttons ?? undefined);
     const throttleMs = opts.throttleMs ?? 40; // ~25 msg/s
@@ -252,19 +198,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /**
-   * Dispatch an incoming webhook update to the bot it belongs to. `botName`
-   * comes from the URL (`/telegram/webhook` = main, `/telegram/webhook/:bot` =
-   * an add-on bot) — each bot registers its OWN webhook URL with Telegram, so
-   * this just routes to the matching grammy instance.
-   */
-  public handleWebhookRequest(botName: string, req: any, res: any) {
-    const reg = this.bots.find((r) => r.name === botName);
-    if (!reg) {
-      res.status(404).send(`Telegram bot "${botName}" is not initialized`);
+  public handleWebhookRequest(req: any, res: any) {
+    if (!this.bot) {
+      res.status(500).send('Bot not initialized');
       return;
     }
-    const handler = webhookCallback(reg.bot, 'express');
+    const handler = webhookCallback(this.bot, 'express');
     return handler(req, res);
   }
 
@@ -383,14 +322,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private registerCommands(bot: Bot, miniAppUrl: string, focus: BotFocus): void {
-    const brandName = focus === 'bingo' ? 'iGames Bingo' : 'iGames';
-    const introLine = focus === 'bingo'
-      ? `Play 90-Ball Bingo right here in Telegram.\n\n`
-      : `Play Keno and 90-Ball Bingo right here in Telegram.\n\n`;
+  private registerCommands(miniAppUrl: string): void {
+    if (!this.bot) return;
 
     // /start — request phone number before showing the Play button
-    bot.command('start', async (ctx) => {
+    this.bot.command('start', async (ctx) => {
       const firstName = ctx.from?.first_name ?? 'Player';
       const userId = ctx.from?.id;
 
@@ -405,15 +341,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       }
 
       await ctx.reply(
-        `Welcome to ${brandName}, ${firstName}! 🎰\n\n` +
-        introLine +
+        `Welcome to iGames, ${firstName}! 🎰\n\n` +
+        `Play Keno and 90-Ball Bingo right here in Telegram.\n\n` +
         `To get started and enable Telebirr payouts, please share your phone number:`,
         { reply_markup: this.contactRequestKeyboard() },
       );
     });
 
     // Handle contact sharing
-    bot.on('message:contact', async (ctx) => {
+    this.bot.on('message:contact', async (ctx) => {
       const contact = ctx.message.contact;
       const userId = ctx.from?.id;
 
@@ -464,7 +400,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     });
 
     // Location shared as a pin — map it onto a configured location.
-    bot.on('message:location', async (ctx) => {
+    this.bot.on('message:location', async (ctx) => {
       const { latitude, longitude } = ctx.message.location;
       const internalUserId = await this.resolveInternalUserId(ctx.from?.id);
 
@@ -517,7 +453,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     });
 
     // "Choose from a list" — declared before the catch-all text handler so it wins.
-    bot.hears(LOCATION_PICK_FROM_LIST_TEXT, async (ctx) => {
+    this.bot.hears(LOCATION_PICK_FROM_LIST_TEXT, async (ctx) => {
       const listed = await this.sendLocationList(ctx, 'Which area are you playing from?');
       if (!listed) {
         await this.finishLocationStep(ctx, miniAppUrl, 'Tap below to start playing:');
@@ -525,7 +461,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     });
 
     // A location was picked from the inline dropdown.
-    bot.callbackQuery(new RegExp(`^${LOCATION_CALLBACK_PREFIX}`), async (ctx) => {
+    this.bot.callbackQuery(new RegExp(`^${LOCATION_CALLBACK_PREFIX}`), async (ctx) => {
       const choice = ctx.callbackQuery.data.slice(LOCATION_CALLBACK_PREFIX.length);
       const internalUserId = await this.resolveInternalUserId(ctx.from?.id);
 
@@ -562,7 +498,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     });
 
     // /play — quick shortcut to open the Mini App
-    bot.command('play', async (ctx) => {
+    this.bot.command('play', async (ctx) => {
       const keyboard = this.getPlayKeyboard('🎮 Open iGames', miniAppUrl);
 
       await ctx.reply('Tap below to open the game:', {
@@ -570,29 +506,24 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       });
     });
 
-    // /help — explain how the games work. Actual game availability is controlled
-    // globally by the game_settings catalog, not by which bot this is — this copy
-    // just matches what a dedicated Bingo bot's audience came for.
-    const kenoHelp =
-      `🎰 *Keno*\n` +
-      `Pick 1–12 numbers from 1–80. Twenty numbers are drawn each round. ` +
-      `The more you match, the bigger your payout!\n\n`;
-    const bingoHelp =
-      `🎱 *90\\-Ball Bingo*\n` +
-      `Buy tickets and join a room. Numbers 1–90 are drawn one at a time. ` +
-      `Complete one line, two lines, or a full house to win!\n\n`;
-    const walletHelp =
-      `💰 *Wallet*\n` +
-      `Top up your wallet via Telebirr. Winnings are credited instantly.\n\n` +
-      `Tap the *🎮 Play* button below the chat to get started.`;
-
-    bot.command('help', async (ctx) => {
-      const body = focus === 'bingo' ? bingoHelp + walletHelp : kenoHelp + bingoHelp + walletHelp;
-      await ctx.reply(body, { parse_mode: 'MarkdownV2' });
+    // /help — explain how the games work
+    this.bot.command('help', async (ctx) => {
+      await ctx.reply(
+        `🎰 *Keno*\n` +
+          `Pick 1–12 numbers from 1–80. Twenty numbers are drawn each round. ` +
+          `The more you match, the bigger your payout!\n\n` +
+          `🎱 *90\\-Ball Bingo*\n` +
+          `Buy tickets and join a room. Numbers 1–90 are drawn one at a time. ` +
+          `Complete one line, two lines, or a full house to win!\n\n` +
+          `💰 *Wallet*\n` +
+          `Top up your wallet via Telebirr. Winnings are credited instantly.\n\n` +
+          `Tap the *🎮 Play* button below the chat to get started.`,
+        { parse_mode: 'MarkdownV2' },
+      );
     });
 
     // Handle any other text message with a nudge to play
-    bot.on('message:text', async (ctx) => {
+    this.bot.on('message:text', async (ctx) => {
       const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
 
       await ctx.reply(

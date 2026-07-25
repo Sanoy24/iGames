@@ -29,7 +29,16 @@ export class TelegramMiniAppAuthService {
             .map(([key, value]) => `${key}=${value}`)
             .join("\n");
 
-        if (!this.matchesAnyRegisteredBot(dataCheckString, receivedHash)) {
+        const botToken =
+            this.configService.getOrThrow<string>("TELEGRAM_BOT_TOKEN");
+        const secretKey = createHmac("sha256", "WebAppData")
+            .update(botToken)
+            .digest();
+        const calculatedHash = createHmac("sha256", secretKey)
+            .update(dataCheckString)
+            .digest("hex");
+
+        if (!this.hashesMatch(calculatedHash, receivedHash)) {
             throw new UnauthorizedException("Telegram auth hash is invalid");
         }
 
@@ -44,31 +53,6 @@ export class TelegramMiniAppAuthService {
             startParam: params.get("start_param") ?? undefined,
             user,
         };
-    }
-
-    /**
-     * The Mini App can be opened via more than one registered Telegram bot (e.g. a
-     * dedicated Bingo bot alongside the main bot) — each bot signs initData with
-     * ITS OWN token, so a single hardcoded secret would reject every bot but one.
-     * Try every configured bot token and accept the first that matches.
-     */
-    private matchesAnyRegisteredBot(dataCheckString: string, receivedHash: string): boolean {
-        return this.getBotTokens().some((token) => {
-            const secretKey = createHmac("sha256", "WebAppData").update(token).digest();
-            const calculatedHash = createHmac("sha256", secretKey)
-                .update(dataCheckString)
-                .digest("hex");
-            return this.hashesMatch(calculatedHash, receivedHash);
-        });
-    }
-
-    /** Every registered bot's token — the main bot is required, others are optional. */
-    private getBotTokens(): string[] {
-        const tokens = [
-            this.configService.getOrThrow<string>("TELEGRAM_BOT_TOKEN"),
-            this.configService.get<string>("TELEGRAM_BINGO_BOT_TOKEN"),
-        ];
-        return tokens.filter((t): t is string => !!t && t.trim().length > 0);
     }
 
     private hashesMatch(calculatedHash: string, receivedHash: string): boolean {

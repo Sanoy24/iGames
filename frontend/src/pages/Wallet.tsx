@@ -501,7 +501,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     fontSize: 13,
                     color: 'var(--danger)',
                   }}>
-                    No agent is on duty right now. Please try again shortly before sending your deposit.
+                    No agent is currently available for deposits. Please try again shortly before sending your deposit.
                   </div>
                 )}
 

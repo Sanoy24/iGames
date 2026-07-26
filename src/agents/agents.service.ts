@@ -258,6 +258,12 @@ export class AgentsService {
     // An on-duty agent still needs the deposit permission to receive deposits.
     if (agent.agentPermissions && agent.agentPermissions.deposit === false) return null;
 
+    // An agent with a zero (or unfunded) wallet isn't shown as a deposit
+    // destination — the admin hasn't allocated them float yet, so treat them
+    // the same as not currently available.
+    const balances = await this.walletService.getAvailableBalances([agent.id]);
+    if ((balances.get(agent.id) ?? 0) <= 0) return null;
+
     return {
       displayName: agent.displayName,
       phoneNumber: agent.phoneNumber ?? null,
@@ -270,11 +276,16 @@ export class AgentsService {
    * available. Returns public info only (id + name + Telebirr phone). Empty when
    * nobody is on duty. Deposit attribution is still driven by the receipt itself
    * (the verifier matches the recipient name/phone), so this is purely a chooser.
+   * An agent whose wallet balance is zero is excluded — same reasoning as above.
    */
   async getActiveAgentsDepositInfo(): Promise<Array<{ id: string; displayName: string; phoneNumber: string | null }>> {
     const agents = await this.usersService.findOnDutyAgents();
-    return agents
-      .filter((a) => !(a.agentPermissions && a.agentPermissions.deposit === false))
+    const eligible = agents.filter((a) => !(a.agentPermissions && a.agentPermissions.deposit === false));
+    if (eligible.length === 0) return [];
+
+    const balances = await this.walletService.getAvailableBalances(eligible.map((a) => a.id));
+    return eligible
+      .filter((a) => (balances.get(a.id) ?? 0) > 0)
       .map((a) => ({
         id: a.id,
         displayName: a.displayName,

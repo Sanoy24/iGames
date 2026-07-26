@@ -105,6 +105,19 @@ export class WalletService {
     return this.toWalletSummary(wallet);
   }
 
+  /**
+   * Bulk `availableMinor` lookup — a user with no wallet row yet is simply
+   * absent from the map (callers should treat that as 0). Used where an N+1
+   * per-user lookup would be wasteful, e.g. filtering an agent list by balance.
+   */
+  async getAvailableBalances(userIds: string[]): Promise<Map<string, number>> {
+    if (userIds.length === 0) return new Map();
+    const wallets = await this.walletRepository.find({
+      where: { userId: In(userIds), currencyCode: 'CREDIT' },
+    });
+    return new Map(wallets.map((w) => [w.userId, w.availableMinor]));
+  }
+
   async getLedgerEntries(input: {
     userId: string;
     limit: number;

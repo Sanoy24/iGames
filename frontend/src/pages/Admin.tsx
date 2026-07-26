@@ -16,7 +16,6 @@ import {
   adminUsersApi,
   broadcastApi,
   broadcastImageUrl,
-  walletApi,
   type AdminGameStat,
   type AdminUserActivity,
   type AgentPerformance,
@@ -443,6 +442,7 @@ function PlayersAdmin() {
         ) : users.length === 0 ? (
           <div className="adm-empty">No matching users found.</div>
         ) : (
+          <div className="adm-table-wrap">
           <table className="adm-table">
             <thead>
               <tr className="adm-tr">
@@ -534,6 +534,7 @@ function PlayersAdmin() {
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         {/* Pagination */}
@@ -3447,8 +3448,11 @@ function AgentActionsAdmin() {
 // E-Money Management
 // ══════════════════════════════════════════════════════════════════
 function EMoneyAdmin() {
-  const wallet = useStore((s) => s.wallet);
-  const setWallet = useStore((s) => s.setWallet);
+  // The MASTER WALLET (a dedicated system account every admin operates on,
+  // not any individual admin's own wallet) — deliberately local state, not the
+  // global `wallet` store slot, which represents the logged-in user's OWN
+  // wallet everywhere else in the app.
+  const [wallet, setWallet] = useState<WalletType | null>(null);
   const addToast = useStore((s) => s.addToast);
 
   const [topupAmount, setTopupAmount] = useState('');
@@ -3461,7 +3465,7 @@ function EMoneyAdmin() {
 
   const refreshWallet = useCallback(async () => {
     try {
-      const data = await walletApi.getWallet();
+      const data = await adminApi.getHouseWallet();
       setWallet(data);
     } catch (e) {
       addToast('error', 'Failed to refresh wallet: ' + getErrorMessage(e));
@@ -3534,12 +3538,12 @@ function EMoneyAdmin() {
 
   return (
     <div className="stack-lg">
-      <SectionHead title="ETB Management" sub="Top-up your system balance and distribute ETB to agents.">
+      <SectionHead title="ETB Management" sub="Top-up the Master Wallet and distribute ETB to agents — every admin account shares this one balance.">
         <button className="adm-icon-btn" onClick={refreshWallet} title="Refresh Balance"><RefreshCw size={14} /></button>
       </SectionHead>
 
       <div className="adm-kpi-grid" style={{ gridTemplateColumns: '1fr' }}>
-        <Kpi label="Admin ETB Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
+        <Kpi label="Master Wallet Balance" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
@@ -3619,13 +3623,16 @@ function EMoneyAdmin() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Account — admin's own wallet, top-up, and transfer-to-agent
+// Account — admin identity + the MASTER WALLET (top-up, transfer-to-agent)
 // ══════════════════════════════════════════════════════════════════
 function AccountAdmin() {
   const addToast = useStore((s) => s.addToast);
   const user = useStore((s) => s.user);
-  const setWallet = useStore((s) => s.setWallet);
 
+  // The MASTER WALLET (a dedicated system account every admin operates on,
+  // not any individual admin's own wallet) — deliberately local state, not the
+  // global `wallet` store slot, which
+  // represents the logged-in user's OWN wallet everywhere else in the app.
   const [wallet, setLocalWallet] = useState<WalletType | null>(null);
   const [agents, setAgents] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3639,16 +3646,15 @@ function AccountAdmin() {
     setLoading(true);
     try {
       const [w, agentList] = await Promise.all([
-        walletApi.getWallet(),
+        adminApi.getHouseWallet(),
         adminAgentsApi.listAgents(1, 100),
       ]);
       setLocalWallet(w);
-      setWallet(w);
       setAgents(agentList);
       if (!transferAgentId && agentList.length > 0) setTransferAgentId(agentList[0].id);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setLoading(false); }
-  }, [addToast, setWallet, transferAgentId]);
+  }, [addToast, transferAgentId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -3659,7 +3665,6 @@ function AccountAdmin() {
     try {
       const w = await adminApi.topupWallet(Math.round(cr), createIdempotencyKey('admin-topup'));
       setLocalWallet(w);
-      setWallet(w);
       setTopupCr('');
       addToast('success', `Topped up ${cr} ETB.`);
     } catch (e) { addToast('error', getErrorMessage(e)); }
@@ -3674,7 +3679,6 @@ function AccountAdmin() {
     try {
       const { adminWallet } = await adminApi.transferToAgent(transferAgentId, Math.round(cr), createIdempotencyKey('admin-transfer'));
       setLocalWallet(adminWallet);
-      setWallet(adminWallet);
       setTransferCr('');
       addToast('success', `Transferred ${cr} ETB to agent.`);
     } catch (e) { addToast('error', getErrorMessage(e)); }
@@ -3685,7 +3689,7 @@ function AccountAdmin() {
 
   return (
     <div className="stack-lg">
-      <SectionHead title="My Admin Account" sub="Your administrator identity, wallet balance, and treasury actions.">
+      <SectionHead title="My Admin Account" sub="Your administrator identity, and the Master Wallet used for treasury actions.">
         <button className="adm-icon-btn" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
       </SectionHead>
 
@@ -3693,13 +3697,13 @@ function AccountAdmin() {
       <div className="adm-kpi-grid">
         <Kpi label="Display Name" value={user?.displayName ?? '—'} color="#8b5cf6" />
         <Kpi label="Roles" value={(user?.roles ?? []).join(', ') || '—'} color="#3b82f6" />
-        <Kpi label="Wallet Available" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
-        <Kpi label="Wallet Reserved" value={formatCreditsFull(wallet?.reservedMinor ?? 0)} color="#f59e0b" />
+        <Kpi label="Master Wallet Available" value={formatCreditsFull(wallet?.availableMinor ?? 0)} color="#10b981" />
+        <Kpi label="Master Wallet Reserved" value={formatCreditsFull(wallet?.reservedMinor ?? 0)} color="#f59e0b" />
       </div>
 
-      {/* Top up own wallet */}
+      {/* Top up the Master Wallet */}
       <div className="adm-panel">
-        <div className="adm-panel-head">Top Up My Wallet</div>
+        <div className="adm-panel-head">Top Up Master Wallet</div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap', padding: 16 }}>
           <label className="adm-field" style={{ flex: 1, minWidth: 180 }}>
             <span>Amount (ETB)</span>

@@ -358,6 +358,8 @@ export const adminApi = {
   getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
   updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
   getAgentPerformance: () => api.get<AgentPerformance[]>('/admin/agents/performance').then((r) => r.data),
+  /** The Master Wallet — the ONE shared system wallet every admin account operates on (see backend AdminService). */
+  getHouseWallet: () => api.get<Wallet>('/admin/wallet/house').then((r) => r.data),
   topupWallet: (amountMinor: number, idempotencyKey?: string) =>
     api.post<Wallet>('/admin/wallet/topup', { amountMinor, idempotencyKey }).then((r) => r.data),
   transferToAgent: (agentId: string, amountMinor: number, idempotencyKey?: string) =>

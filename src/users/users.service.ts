@@ -221,6 +221,71 @@ export class UsersService {
     });
   }
 
+  /**
+   * Create a dedicated internal "system" account — NO login identity at all (no
+   * password, no Telegram link, no phone). Used to anchor system-level ledger
+   * balances that must not belong to any individual human account, e.g. the
+   * Master Wallet (see AdminService.getOrCreateMasterWalletUserId). Never shows
+   * up in the admin/agent/player lists, since those all filter by a specific
+   * role and this account holds none of them.
+   */
+  async createSystemUser(displayName: string): Promise<User> {
+    const user = this.userRepository.create({
+      displayName,
+      roles: ['system'],
+      status: 'active',
+    });
+    return this.userRepository.save(user);
+  }
+
+  /**
+   * Idempotent admin bootstrap: create an admin account with phone+password
+   * login if one doesn't already exist for that phone. There is no self-service
+   * admin sign-up endpoint, so this is how the very first admin(s) get into a
+   * brand-new production database (see AdminBootstrapService, run once at boot).
+   * Never touches an existing account — if the phone is already registered this
+   * is a no-op, so a password the admin changes later is never undone by a restart.
+   */
+  async ensureAdminAccount(input: {
+    phoneNumber: string;
+    password: string;
+    displayName: string;
+  }): Promise<'created' | 'exists'> {
+    const normalizedPhone = normalizeEthiopianPhone(input.phoneNumber);
+    if (!normalizedPhone) throw new BadRequestException(`Invalid admin bootstrap phone number: ${input.phoneNumber}`);
+
+    return this.dataSource.transaction(async (manager) => {
+      const authRepo = manager.getRepository(AuthIdentity);
+      const userRepo = manager.getRepository(User);
+
+      const existing = await authRepo.findOneBy({ provider: 'password', providerUserId: normalizedPhone });
+      if (existing) return 'exists';
+
+      const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+
+      const user = userRepo.create({
+        displayName: input.displayName.trim(),
+        phoneNumber: normalizedPhone,
+        roles: ['admin'],
+        status: 'active',
+      });
+      await userRepo.save(user);
+
+      const identity = authRepo.create({
+        userId: user.id,
+        provider: 'password',
+        providerUserId: normalizedPhone,
+        passwordHash,
+        profileSnapshot: { phoneNumber: normalizedPhone },
+        linkedAt: new Date(),
+        lastAuthAt: new Date(),
+      });
+      await authRepo.save(identity);
+
+      return 'created';
+    });
+  }
+
   async updateAgentUser(
     agentId: string,
     update: {

@@ -1021,6 +1021,7 @@
 .adm-bar          { height: 7px; background: var(--bg-2); border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
 .adm-bar-fill     { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
 
+.adm-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .adm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .adm-table th {
   padding: 9px 16px;

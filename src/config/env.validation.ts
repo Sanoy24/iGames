@@ -29,6 +29,8 @@ type EnvConfig = {
   MPESA_PORTAL_KEY: string;
   MPESA_PORTAL_TIMEOUT_MS: number;
   MPESA_PORTAL_STRICT: boolean;
+  /** JSON array of { phoneNumber, password, displayName } — boot-time admin seeding for a fresh DB. */
+  ADMIN_BOOTSTRAP_ACCOUNTS: string;
   SENTRY_DSN: string;
   ALLOWED_ORIGIN: string;
   THROTTLE_TTL_SECONDS: number;
@@ -67,6 +69,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     MPESA_PORTAL_KEY: readString(raw, 'MPESA_PORTAL_KEY', ''),
     MPESA_PORTAL_TIMEOUT_MS: readNumber(raw, 'MPESA_PORTAL_TIMEOUT_MS', 15000),
     MPESA_PORTAL_STRICT: readBoolean(raw, 'MPESA_PORTAL_STRICT', false),
+    ADMIN_BOOTSTRAP_ACCOUNTS: readString(raw, 'ADMIN_BOOTSTRAP_ACCOUNTS', ''),
     SENTRY_DSN: readString(raw, 'SENTRY_DSN', ''),
     ALLOWED_ORIGIN: readString(raw, 'ALLOWED_ORIGIN', '*'),
     THROTTLE_TTL_SECONDS: readNumber(raw, 'THROTTLE_TTL_SECONDS', 60),

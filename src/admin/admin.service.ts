@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, In } from 'typeorm';
 import { randomUUID } from 'crypto';
@@ -25,7 +25,9 @@ import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 
 @Injectable()
-export class AdminService {
+export class AdminService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(SystemConfig)
@@ -38,6 +40,15 @@ export class AdminService {
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  /** Create the Master Wallet at boot, not lazily on first use — see below. */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      await this.getOrCreateMasterWalletUserId();
+    } catch (err) {
+      this.logger.warn(`Master Wallet bootstrap skipped: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   async getSystemConfig(): Promise<SystemConfig> {
     let config = await this.systemConfigRepository.findOneBy({ key: 'global' });
@@ -63,6 +74,48 @@ export class AdminService {
       Object.assign(config, update);
     }
     return await this.systemConfigRepository.save(config);
+  }
+
+  // ── Master Wallet (shared across every admin account) ───────────────
+  //
+  // With 2+ admin accounts, each admin's OWN wallet would otherwise be a
+  // separate float — whoever tops up sees a different balance than everyone
+  // else. Every ETB top-up/transfer-to-agent instead operates on ONE Master
+  // Wallet: a dedicated internal "system" account (roles: ['system'], no
+  // login/password/Telegram identity of its own — NOT any individual admin's
+  // personal account). Created at boot (onApplicationBootstrap above), not
+  // lazily on first use, and remembered via system_configs.masterWalletUserId;
+  // every admin manages the same one from day one, with no setup step
+  // required. Crediting a PLAYER's wallet (admin "Adjust Wallet") is unrelated
+  // and unaffected — it mints directly onto the player, never checking or
+  // touching this balance.
+
+  /** Returns the Master Wallet's owning user id, creating it if it somehow doesn't exist yet. */
+  private async getOrCreateMasterWalletUserId(): Promise<string> {
+    const config = await this.getSystemConfig();
+    if (config.masterWalletUserId) return config.masterWalletUserId;
+
+    const masterUser = await this.usersService.createSystemUser('Master Wallet');
+    await this.walletService.ensureDefaultWallet(masterUser.id);
+    config.masterWalletUserId = masterUser.id;
+    await this.systemConfigRepository.save(config);
+    return masterUser.id;
+  }
+
+  /** The Master Wallet's balance — what every admin's ETB Management tab should show. */
+  async getHouseWallet() {
+    const ownerId = await this.getOrCreateMasterWalletUserId();
+    return this.walletService.getDefaultWalletSummary(ownerId);
+  }
+
+  async adminTopup(actingAdminId: string, amountMinor: number, idempotencyKey?: string) {
+    const ownerId = await this.getOrCreateMasterWalletUserId();
+    return this.walletService.adminTopup(ownerId, amountMinor, idempotencyKey, actingAdminId);
+  }
+
+  async transferAdminToAgent(actingAdminId: string, agentId: string, amountMinor: number, idempotencyKey?: string) {
+    const ownerId = await this.getOrCreateMasterWalletUserId();
+    return this.walletService.transferAdminToAgent(ownerId, agentId, amountMinor, idempotencyKey, actingAdminId);
   }
 
   async getPlatformStats() {

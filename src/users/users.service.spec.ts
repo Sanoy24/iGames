@@ -138,9 +138,12 @@ describe('UsersService — agent Telegram phone linking', () => {
 
   describe('linkTelegramIdentityToUser', () => {
     it('creates a new telegram identity pointing at the given user', async () => {
-      const { service, authIdentityRepository } = makeService({ authIdentities: [] });
+      const { service, authIdentityRepository } = makeService({
+        authIdentities: [],
+        users: [{ id: 'agent-1', roles: ['agent'] as any, displayName: 'Agent One' }],
+      });
 
-      await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'agent_tg' });
+      await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'agent_tg' }, 'agent');
 
       expect(authIdentityRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ userId: 'agent-1', provider: 'telegram', providerUserId: '999' }),
@@ -150,23 +153,43 @@ describe('UsersService — agent Telegram phone linking', () => {
     it('reuses (updates) an existing identity already linked to the SAME user', async () => {
       const { service, authIdentityRepository } = makeService({
         authIdentities: [{ id: 'id-1', provider: 'telegram', providerUserId: '999', userId: 'agent-1' }],
+        users: [{ id: 'agent-1', roles: ['agent'] as any, displayName: 'Agent One' }],
       });
 
-      await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'renamed' });
+      await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'renamed' }, 'agent');
 
       expect(authIdentityRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'id-1', userId: 'agent-1' }),
       );
     });
 
-    it('rejects when this Telegram id is already linked to a DIFFERENT user', async () => {
+    it('rejects when this Telegram id is already linked to a DIFFERENT user of the SAME role', async () => {
       const { service } = makeService({
         authIdentities: [{ id: 'id-1', provider: 'telegram', providerUserId: '999', userId: 'other-agent' }],
+        users: [{ id: 'other-agent', roles: ['agent'] as any, displayName: 'Other Agent' }],
       });
 
       await expect(
-        service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999' }),
+        service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999' }, 'agent'),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('adds a role-suffixed identity when this Telegram id is already linked to a DIFFERENT-role user (e.g. an existing player account)', async () => {
+      const { service, authIdentityRepository } = makeService({
+        authIdentities: [{ id: 'id-player', provider: 'telegram', providerUserId: '999', userId: 'player-1' }],
+        users: [
+          { id: 'player-1', roles: ['player'] as any, displayName: 'Yoni' },
+          { id: 'agent-1', roles: ['agent'] as any, displayName: 'Agent One' },
+        ],
+      });
+
+      await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'agent_tg' }, 'agent');
+
+      expect(authIdentityRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'agent-1', provider: 'telegram', providerUserId: '999#agent' }),
+      );
+      // the existing player identity is untouched, not overwritten
+      expect(authIdentityRepository.remove).not.toHaveBeenCalled();
     });
   });
 
@@ -192,6 +215,22 @@ describe('UsersService — agent Telegram phone linking', () => {
         users: [{ id: 'user-1', roles: ['player'] as any, phoneNumber: '+251900000000', displayName: 'X' }],
       });
       expect(await service.findAgentPhoneByTelegramId('999')).toBeNull();
+    });
+
+    it('resolves the agent identity when the same Telegram id also backs a player account (role-suffixed identity)', async () => {
+      const { service } = makeService({
+        authIdentities: [
+          { provider: 'telegram', providerUserId: '999', userId: 'player-1' },
+          { provider: 'telegram', providerUserId: '999#agent', userId: 'agent-1' },
+        ],
+        users: [
+          { id: 'player-1', roles: ['player'] as any, phoneNumber: '+251900000000', displayName: 'Yoni' },
+          { id: 'agent-1', roles: ['agent'] as any, phoneNumber: '+251912345678', displayName: 'Agent One' },
+        ],
+      });
+
+      const result = await service.findAgentPhoneByTelegramId('999');
+      expect(result).toEqual({ phoneNumber: '+251912345678', displayName: 'Agent One' });
     });
   });
 });

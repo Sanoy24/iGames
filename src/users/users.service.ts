@@ -203,25 +203,30 @@ export class UsersService {
   }
 
   /**
-   * All LIVE password-login identities for a phone number. A phone can now
-   * back more than one account as long as each is a DIFFERENT role (e.g. one
-   * admin + one agent) — see createAgentUser/ensureAdminAccount below. The
-   * first account for a phone keeps the plain phone as its providerUserId
+   * All LIVE identities for a given provider + base id (a phone number for
+   * provider:'password', a Telegram user id for provider:'telegram'). One
+   * base id can now back more than one account as long as each is a
+   * DIFFERENT role (e.g. one admin + one agent sharing a phone; or one
+   * player + one agent sharing the same Telegram account) — see
+   * createAgentUser/ensureAdminAccount/linkTelegramIdentityToUser. The first
+   * account for a base id keeps the plain id as its providerUserId
    * (unchanged from before, so all existing rows keep working as-is); a
-   * SECOND, different-role account for the same phone is stored as
-   * `${phone}#${role}` so it doesn't collide with the existing unique index
-   * on (provider, providerUserId) — the phone number itself stays the one
-   * thing a person types to log in; findBackofficeUserByCredentials matches
-   * every form for that phone and disambiguates by which password verifies.
+   * SECOND, different-role account sharing that base id is stored as
+   * `${baseId}#${role}` so it doesn't collide with the existing unique index
+   * on (provider, providerUserId) — the phone/Telegram id itself stays the
+   * one thing that identifies the person; findBackofficeUserByCredentials and
+   * linkTelegramIdentityToUser match every form for that base id and
+   * disambiguate by password/role respectively.
    *
    * Self-healing: if an identity's userId points at a User row that no longer
    * exists (e.g. someone deleted the user directly in the database, bypassing
    * the app — there is no real FK constraint enforcing cascade, since schema
    * is managed by ensure-schema.ts, not TypeORM sync), that stale identity is
-   * deleted here on the spot instead of permanently blocking the phone number.
+   * deleted here on the spot instead of permanently blocking the base id.
    */
-  private async findLivePasswordIdentities(
-    phone: string,
+  private async findLiveIdentities(
+    provider: 'password' | 'telegram',
+    baseId: string,
     manager?: EntityManager,
   ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
     const authRepo = manager ? manager.getRepository(AuthIdentity) : this.authIdentityRepository;
@@ -229,8 +234,8 @@ export class UsersService {
 
     const candidates = await authRepo.find({
       where: [
-        { provider: 'password', providerUserId: phone },
-        { provider: 'password', providerUserId: Like(`${phone}#%`) },
+        { provider, providerUserId: baseId },
+        { provider, providerUserId: Like(`${baseId}#%`) },
       ],
       select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId'],
     });
@@ -254,13 +259,27 @@ export class UsersService {
     return live;
   }
 
-  /** The providerUserId to store for a NEW password identity on this phone — see findLivePasswordIdentities. */
-  private buildPasswordProviderUserId(
+  private async findLivePasswordIdentities(
     phone: string,
+    manager?: EntityManager,
+  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
+    return this.findLiveIdentities('password', phone, manager);
+  }
+
+  private async findLiveTelegramIdentities(
+    telegramUserId: string,
+    manager?: EntityManager,
+  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
+    return this.findLiveIdentities('telegram', telegramUserId, manager);
+  }
+
+  /** The providerUserId to store for a NEW identity on this base id — see findLiveIdentities. */
+  private buildScopedProviderUserId(
+    baseId: string,
     role: string,
-    existingForPhone: Array<{ identity: AuthIdentity; user: User }>,
+    existingForBaseId: Array<{ identity: AuthIdentity; user: User }>,
   ): string {
-    return existingForPhone.length === 0 ? phone : `${phone}#${role}`;
+    return existingForBaseId.length === 0 ? baseId : `${baseId}#${role}`;
   }
 
   async createAgentUser(input: {
@@ -285,7 +304,7 @@ export class UsersService {
       if (existingForPhone.some(({ user }) => Array.isArray(user.roles) && user.roles.includes('agent' as any))) {
         throw new ConflictException('An agent with that phone number already exists');
       }
-      const providerUserId = this.buildPasswordProviderUserId(normalizedPhone, 'agent', existingForPhone);
+      const providerUserId = this.buildScopedProviderUserId(normalizedPhone, 'agent', existingForPhone);
 
       const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
 
@@ -359,7 +378,7 @@ export class UsersService {
       if (existingForPhone.some(({ user }) => Array.isArray(user.roles) && user.roles.includes('admin' as any))) {
         return 'exists';
       }
-      const providerUserId = this.buildPasswordProviderUserId(normalizedPhone, 'admin', existingForPhone);
+      const providerUserId = this.buildScopedProviderUserId(normalizedPhone, 'admin', existingForPhone);
 
       const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
 
@@ -606,30 +625,41 @@ export class UsersService {
    * Link a Telegram identity to an EXISTING user (the agent bot's use case —
    * the user already exists, created by an admin; this just adds a
    * provider:'telegram' AuthIdentity pointing at it, so later Mini App opens
-   * resolve back to the same account). Rejects if this Telegram id is already
-   * linked to a DIFFERENT user — never silently re-points an identity.
+   * resolve back to the same account). `role` is the role this link is FOR
+   * (e.g. 'agent') — the same Telegram account may already be linked to a
+   * DIFFERENT-role account (most commonly a player account, auto-created by
+   * the main bot's findOrCreateTelegramUser the first time this person ever
+   * opened the player Mini App); that coexists fine via a role-suffixed
+   * identity (`${telegramUserId}#${role}`, see findLiveIdentities) rather than
+   * being treated as a conflict. Only rejects if this Telegram id is already
+   * linked to a DIFFERENT user of the SAME role — that would be a genuine,
+   * unexpected double-link, never silently re-pointed.
    */
-  async linkTelegramIdentityToUser(userId: string, input: TelegramIdentityInput): Promise<AuthIdentity> {
+  async linkTelegramIdentityToUser(userId: string, input: TelegramIdentityInput, role: string): Promise<AuthIdentity> {
     const now = new Date();
-    const existing = await this.authIdentityRepository.findOneBy({
-      provider: 'telegram',
-      providerUserId: input.telegramUserId,
-    });
+    const existingForTelegramId = await this.findLiveTelegramIdentities(input.telegramUserId);
 
-    if (existing) {
-      if (existing.userId !== userId) {
-        throw new ConflictException('This Telegram account is already linked to a different account');
-      }
-      existing.providerUsername = input.username?.toLowerCase();
-      existing.profileSnapshot = this.toTelegramSnapshot(input);
-      existing.lastAuthAt = now;
-      return this.authIdentityRepository.save(existing);
+    const own = existingForTelegramId.find(({ user }) => user.id === userId);
+    if (own) {
+      const identity = own.identity;
+      identity.providerUsername = input.username?.toLowerCase();
+      identity.profileSnapshot = this.toTelegramSnapshot(input);
+      identity.lastAuthAt = now;
+      return this.authIdentityRepository.save(identity);
     }
 
+    const sameRoleConflict = existingForTelegramId.find(
+      ({ user }) => Array.isArray(user.roles) && user.roles.includes(role as any),
+    );
+    if (sameRoleConflict) {
+      throw new ConflictException('This Telegram account is already linked to a different account');
+    }
+
+    const providerUserId = this.buildScopedProviderUserId(input.telegramUserId, role, existingForTelegramId);
     const identity = this.authIdentityRepository.create({
       userId,
       provider: 'telegram',
-      providerUserId: input.telegramUserId,
+      providerUserId,
       providerUsername: input.username?.toLowerCase(),
       profileSnapshot: this.toTelegramSnapshot(input),
       linkedAt: now,
@@ -642,18 +672,18 @@ export class UsersService {
    * Resolve the phone number of the agent linked to this Telegram id — used by
    * the agent Mini App to pre-fill/lock the phone field before the agent types
    * their password (POST /auth/credentials, unchanged). Null if not linked yet
-   * (frontend tells them to share their phone with the agent bot first).
+   * (frontend tells them to share their phone with the agent bot first). Uses
+   * findLiveTelegramIdentities so this still resolves correctly when the same
+   * Telegram account also has an unrelated, different-role identity (e.g. a
+   * player account) sharing the same Telegram user id.
    */
   async findAgentPhoneByTelegramId(telegramUserId: string): Promise<{ phoneNumber: string; displayName: string } | null> {
-    const identity = await this.authIdentityRepository.findOneBy({
-      provider: 'telegram',
-      providerUserId: telegramUserId,
-    });
-    if (!identity) return null;
-
-    const user = await this.userRepository.findOneBy({ id: identity.userId });
-    if (!user || !user.phoneNumber || !Array.isArray(user.roles) || !user.roles.includes('agent' as any)) return null;
-    return { phoneNumber: user.phoneNumber, displayName: user.displayName };
+    const identities = await this.findLiveTelegramIdentities(telegramUserId);
+    const match = identities.find(
+      ({ user }) => Array.isArray(user.roles) && user.roles.includes('agent' as any),
+    );
+    if (!match || !match.user.phoneNumber) return null;
+    return { phoneNumber: match.user.phoneNumber, displayName: match.user.displayName };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {

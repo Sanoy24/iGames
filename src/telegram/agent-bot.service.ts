@@ -149,13 +149,17 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
       }
 
       try {
-        await this.usersService.linkTelegramIdentityToUser(agent.id, {
-          telegramUserId: String(telegramUserId),
-          username: ctx.from?.username,
-          firstName: ctx.from?.first_name,
-          lastName: ctx.from?.last_name,
-          languageCode: ctx.from?.language_code,
-        });
+        await this.usersService.linkTelegramIdentityToUser(
+          agent.id,
+          {
+            telegramUserId: String(telegramUserId),
+            username: ctx.from?.username,
+            firstName: ctx.from?.first_name,
+            lastName: ctx.from?.last_name,
+            languageCode: ctx.from?.language_code,
+          },
+          'agent',
+        );
       } catch (err) {
         this.logger.error(`Failed to link Telegram identity for agent ${agent.id}`, err instanceof Error ? err.stack : err);
         await ctx.reply(

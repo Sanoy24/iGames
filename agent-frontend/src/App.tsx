@@ -90,13 +90,13 @@ export function App() {
 
   if (phase === 'resolving') {
     content = (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%' }}>
         <div className="spinner" />
       </div>
     );
   } else if (phase === 'need-link') {
     content = (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh', padding: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%', padding: 24 }}>
         <div style={{ maxWidth: 360, textAlign: 'center' }}>
           <div style={{ fontSize: 44, marginBottom: 12 }}>📱</div>
           <h2 style={{ margin: '0 0 10px', fontSize: 20, fontWeight: 800 }}>Link your agent account</h2>
@@ -109,7 +109,7 @@ export function App() {
     );
   } else if (phase === 'login') {
     content = (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh', padding: 24 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100%', padding: 24 }}>
         <div style={{ width: '100%', maxWidth: 360 }}>
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -172,7 +172,9 @@ export function App() {
 
   return (
     <div className="app-container">
-      {content}
+      <main className="main-content">
+        {content}
+      </main>
       <Toasts />
     </div>
   );

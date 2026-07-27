@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LogIn } from 'lucide-react';
+import { LogIn, LogOut } from 'lucide-react';
 import { authApi } from './lib/api';
 import { useStore } from './store/useStore';
 import { useSocketConnection } from './hooks/useSocketConnection';
@@ -29,12 +29,14 @@ type Phase = 'resolving' | 'need-link' | 'login' | 'dashboard';
 export function App() {
   useSocketConnection();
   const setAuth = useStore((s) => s.setAuth);
+  const clearAuth = useStore((s) => s.clearAuth);
   const isAuthenticated = useStore((s) => s.isAuthenticated);
   const [phase, setPhase] = useState<Phase>(isAuthenticated ? 'dashboard' : 'resolving');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) return;
@@ -64,6 +66,23 @@ export function App() {
       setLoginError(getErrorMessage(err));
     } finally {
       setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await authApi.logout();
+    } catch {
+      /* local logout is fine even if the server is unreachable */
+    } finally {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      clearAuth();
+      setPhone('');
+      setPassword('');
+      setPhase('resolving');
+      setLoggingOut(false);
     }
   };
 
@@ -133,7 +152,22 @@ export function App() {
       </div>
     );
   } else {
-    content = <Agent />;
+    content = (
+      <>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 12px 0' }}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => void handleLogout()}
+            disabled={loggingOut}
+            title="Log out"
+          >
+            <LogOut size={14} /> {loggingOut ? 'Logging out…' : 'Log out'}
+          </button>
+        </div>
+        <Agent />
+      </>
+    );
   }
 
   return (

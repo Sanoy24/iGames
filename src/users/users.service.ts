@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as argon2 from 'argon2';
-import { Repository, EntityManager, DataSource, IsNull, In } from 'typeorm';
+import { Repository, EntityManager, DataSource, IsNull, In, Like } from 'typeorm';
 import { User } from './entities/user.entity';
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
@@ -202,6 +202,67 @@ export class UsersService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
+  /**
+   * All LIVE password-login identities for a phone number. A phone can now
+   * back more than one account as long as each is a DIFFERENT role (e.g. one
+   * admin + one agent) — see createAgentUser/ensureAdminAccount below. The
+   * first account for a phone keeps the plain phone as its providerUserId
+   * (unchanged from before, so all existing rows keep working as-is); a
+   * SECOND, different-role account for the same phone is stored as
+   * `${phone}#${role}` so it doesn't collide with the existing unique index
+   * on (provider, providerUserId) — the phone number itself stays the one
+   * thing a person types to log in; findBackofficeUserByCredentials matches
+   * every form for that phone and disambiguates by which password verifies.
+   *
+   * Self-healing: if an identity's userId points at a User row that no longer
+   * exists (e.g. someone deleted the user directly in the database, bypassing
+   * the app — there is no real FK constraint enforcing cascade, since schema
+   * is managed by ensure-schema.ts, not TypeORM sync), that stale identity is
+   * deleted here on the spot instead of permanently blocking the phone number.
+   */
+  private async findLivePasswordIdentities(
+    phone: string,
+    manager?: EntityManager,
+  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
+    const authRepo = manager ? manager.getRepository(AuthIdentity) : this.authIdentityRepository;
+    const userRepo = manager ? manager.getRepository(User) : this.userRepository;
+
+    const candidates = await authRepo.find({
+      where: [
+        { provider: 'password', providerUserId: phone },
+        { provider: 'password', providerUserId: Like(`${phone}#%`) },
+      ],
+      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId'],
+    });
+    if (candidates.length === 0) return [];
+
+    const users = await userRepo.findBy({ id: In(candidates.map((c) => c.userId)) });
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    const live: Array<{ identity: AuthIdentity; user: User }> = [];
+    const orphaned: AuthIdentity[] = [];
+    for (const identity of candidates) {
+      const user = userById.get(identity.userId);
+      if (user) live.push({ identity, user });
+      else orphaned.push(identity);
+    }
+
+    if (orphaned.length > 0) {
+      await authRepo.remove(orphaned).catch(() => undefined);
+    }
+
+    return live;
+  }
+
+  /** The providerUserId to store for a NEW password identity on this phone — see findLivePasswordIdentities. */
+  private buildPasswordProviderUserId(
+    phone: string,
+    role: string,
+    existingForPhone: Array<{ identity: AuthIdentity; user: User }>,
+  ): string {
+    return existingForPhone.length === 0 ? phone : `${phone}#${role}`;
+  }
+
   async createAgentUser(input: {
     phoneNumber: string;
     displayName: string;
@@ -220,10 +281,11 @@ export class UsersService {
       const authRepo = manager.getRepository(AuthIdentity);
       const userRepo = manager.getRepository(User);
 
-      const existing = await authRepo.findOneBy({ provider: 'password', providerUserId: normalizedPhone });
-      if (existing) {
+      const existingForPhone = await this.findLivePasswordIdentities(normalizedPhone, manager);
+      if (existingForPhone.some(({ user }) => Array.isArray(user.roles) && user.roles.includes('agent' as any))) {
         throw new ConflictException('An agent with that phone number already exists');
       }
+      const providerUserId = this.buildPasswordProviderUserId(normalizedPhone, 'agent', existingForPhone);
 
       const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
 
@@ -244,7 +306,7 @@ export class UsersService {
       const identity = authRepo.create({
         userId: user.id,
         provider: 'password',
-        providerUserId: normalizedPhone,
+        providerUserId,
         passwordHash,
         profileSnapshot: { phoneNumber: normalizedPhone },
         linkedAt: new Date(),
@@ -293,8 +355,11 @@ export class UsersService {
       const authRepo = manager.getRepository(AuthIdentity);
       const userRepo = manager.getRepository(User);
 
-      const existing = await authRepo.findOneBy({ provider: 'password', providerUserId: normalizedPhone });
-      if (existing) return 'exists';
+      const existingForPhone = await this.findLivePasswordIdentities(normalizedPhone, manager);
+      if (existingForPhone.some(({ user }) => Array.isArray(user.roles) && user.roles.includes('admin' as any))) {
+        return 'exists';
+      }
+      const providerUserId = this.buildPasswordProviderUserId(normalizedPhone, 'admin', existingForPhone);
 
       const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
 
@@ -309,7 +374,7 @@ export class UsersService {
       const identity = authRepo.create({
         userId: user.id,
         provider: 'password',
-        providerUserId: normalizedPhone,
+        providerUserId,
         passwordHash,
         profileSnapshot: { phoneNumber: normalizedPhone },
         linkedAt: new Date(),
@@ -468,23 +533,38 @@ export class UsersService {
     // agent was stored under (older rows may hold "09…" or "2519…").
     const rawTrimmed = phoneNumber.trim();
     const normalizedPhone = normalizeEthiopianPhone(rawTrimmed) ?? rawTrimmed;
-    const candidates = [...new Set([normalizedPhone, rawTrimmed])];
-    const identity = await this.authIdentityRepository.findOne({
-      where: { provider: 'password', providerUserId: In(candidates) },
-      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId']
-    });
+    const candidatePhones = [...new Set([normalizedPhone, rawTrimmed])];
 
-    if (!identity || !identity.passwordHash) {
+    // A phone can now back more than one account (e.g. one admin + one agent,
+    // see findLivePasswordIdentities) — try the password against every live
+    // identity for this phone and log into whichever one it matches.
+    const candidateLists = await Promise.all(
+      candidatePhones.map((phone) => this.findLivePasswordIdentities(phone)),
+    );
+    const seen = new Set<string>();
+    const identities: Array<{ identity: AuthIdentity; user: User }> = [];
+    for (const list of candidateLists) {
+      for (const entry of list) {
+        if (seen.has(entry.identity.id)) continue;
+        seen.add(entry.identity.id);
+        identities.push(entry);
+      }
+    }
+
+    let matched: { identity: AuthIdentity; user: User } | undefined;
+    for (const entry of identities) {
+      if (!entry.identity.passwordHash) continue;
+      if (await argon2.verify(entry.identity.passwordHash, password)) {
+        matched = entry;
+        break;
+      }
+    }
+    if (!matched) {
       throw new BadRequestException('Invalid phone number or password');
     }
 
-    const valid = await argon2.verify(identity.passwordHash, password);
-    if (!valid) {
-      throw new BadRequestException('Invalid phone number or password');
-    }
-
-    const user = await this.userRepository.findOneBy({ id: identity.userId });
-    if (!user || user.status !== 'active') {
+    const { identity, user } = matched;
+    if (user.status !== 'active') {
       throw new BadRequestException('Account is inactive');
     }
 
@@ -508,20 +588,18 @@ export class UsersService {
    * which is for players). Returns null if no password-login identity with
    * this phone belongs to an agent — the caller decides what to tell the bot
    * user (no match vs suspended vs success), so this does NOT gate on status.
+   * A phone may also back a non-agent (e.g. admin) account at the same time —
+   * findLivePasswordIdentities returns all of them, and we pick the agent one.
    */
   async findAgentByPhone(phoneNumber: string): Promise<User | null> {
     const normalizedPhone = normalizeEthiopianPhone(phoneNumber);
     if (!normalizedPhone) return null;
 
-    const identity = await this.authIdentityRepository.findOneBy({
-      provider: 'password',
-      providerUserId: normalizedPhone,
-    });
-    if (!identity) return null;
-
-    const user = await this.userRepository.findOneBy({ id: identity.userId });
-    if (!user || !Array.isArray(user.roles) || !user.roles.includes('agent' as any)) return null;
-    return user;
+    const identities = await this.findLivePasswordIdentities(normalizedPhone);
+    const match = identities.find(
+      ({ user }) => Array.isArray(user.roles) && user.roles.includes('agent' as any),
+    );
+    return match?.user ?? null;
   }
 
   /**

@@ -17,6 +17,11 @@ type EnvConfig = {
   TELEGRAM_AUTH_MAX_AGE_SECONDS: number;
   TELEGRAM_MINIAPP_URL: string;
   TELEGRAM_WEBHOOK_URL?: string;
+  /** Separate, standalone bot for agents (yaho_agent_bot) — phone-link + Mini App entry only. */
+  TELEGRAM_AGENT_BOT_TOKEN: string;
+  TELEGRAM_AGENT_BOT_WEBHOOK_URL: string;
+  /** The standalone agent-frontend deployment's bare URL — its own domain, own Vite project. */
+  TELEGRAM_AGENT_MINIAPP_URL: string;
   AUTH_MODE: AuthMode;
   TELEBIRR_EXPECTED_RECEIVER_NAME: string;
   TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: string;
@@ -29,6 +34,8 @@ type EnvConfig = {
   MPESA_PORTAL_KEY: string;
   MPESA_PORTAL_TIMEOUT_MS: number;
   MPESA_PORTAL_STRICT: boolean;
+  /** JSON array of { phoneNumber, password, displayName } — boot-time admin seeding for a fresh DB. */
+  ADMIN_BOOTSTRAP_ACCOUNTS: string;
   SENTRY_DSN: string;
   ALLOWED_ORIGIN: string;
   THROTTLE_TTL_SECONDS: number;
@@ -55,6 +62,9 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     TELEGRAM_AUTH_MAX_AGE_SECONDS: readNumber(raw, 'TELEGRAM_AUTH_MAX_AGE_SECONDS', 86400),
     TELEGRAM_MINIAPP_URL: readString(raw, 'TELEGRAM_MINIAPP_URL', ''),
     TELEGRAM_WEBHOOK_URL: readString(raw, 'TELEGRAM_WEBHOOK_URL', ''),
+    TELEGRAM_AGENT_BOT_TOKEN: readString(raw, 'TELEGRAM_AGENT_BOT_TOKEN', ''),
+    TELEGRAM_AGENT_BOT_WEBHOOK_URL: readString(raw, 'TELEGRAM_AGENT_BOT_WEBHOOK_URL', ''),
+    TELEGRAM_AGENT_MINIAPP_URL: readString(raw, 'TELEGRAM_AGENT_MINIAPP_URL', ''),
     AUTH_MODE: readAuthMode(raw),
     TELEBIRR_EXPECTED_RECEIVER_NAME: readString(raw, 'TELEBIRR_EXPECTED_RECEIVER_NAME', ''),
     TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: readString(raw, 'TELEBIRR_EXPECTED_RECEIVER_ACCOUNT', ''),
@@ -67,6 +77,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     MPESA_PORTAL_KEY: readString(raw, 'MPESA_PORTAL_KEY', ''),
     MPESA_PORTAL_TIMEOUT_MS: readNumber(raw, 'MPESA_PORTAL_TIMEOUT_MS', 15000),
     MPESA_PORTAL_STRICT: readBoolean(raw, 'MPESA_PORTAL_STRICT', false),
+    ADMIN_BOOTSTRAP_ACCOUNTS: readString(raw, 'ADMIN_BOOTSTRAP_ACCOUNTS', ''),
     SENTRY_DSN: readString(raw, 'SENTRY_DSN', ''),
     ALLOWED_ORIGIN: readString(raw, 'ALLOWED_ORIGIN', '*'),
     THROTTLE_TTL_SECONDS: readNumber(raw, 'THROTTLE_TTL_SECONDS', 60),

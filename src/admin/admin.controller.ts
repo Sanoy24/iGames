@@ -205,14 +205,19 @@ export class AdminController {
     return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
   }
 
-  // ── Admin Wallet Operations ───────────────────────────────────────
+  // ── Admin Wallet Operations (shared house wallet — see AdminService) ──
+
+  @Get('wallet/house')
+  getHouseWallet() {
+    return this.adminService.getHouseWallet();
+  }
 
   @Post('wallet/topup')
   topupWallet(
     @Body() dto: AdminTopupDto,
     @CurrentUser() admin: AuthenticatedUser,
   ) {
-    return this.walletService.adminTopup(admin.id, dto.amountMinor, dto.idempotencyKey);
+    return this.adminService.adminTopup(admin.id, dto.amountMinor, dto.idempotencyKey);
   }
 
   @Post('wallet/transfer-to-agent')
@@ -220,7 +225,7 @@ export class AdminController {
     @Body() dto: AdminTransferToAgentDto,
     @CurrentUser() admin: AuthenticatedUser,
   ) {
-    return this.walletService.transferAdminToAgent(admin.id, dto.agentId, dto.amountMinor, dto.idempotencyKey);
+    return this.adminService.transferAdminToAgent(admin.id, dto.agentId, dto.amountMinor, dto.idempotencyKey);
   }
 
   // ── Agent Shifts ──────────────────────────────────────────────────

@@ -39,6 +39,18 @@ export class SystemConfig {
   @Column({ type: 'varchar', length: 36, nullable: true })
   superAdminUserId?: string | null;
 
+  /**
+   * Internal user id of the Master Wallet — a dedicated system account (no
+   * login, no Telegram/password identity, roles: []) that is NOT any individual
+   * admin's personal account. Every admin's ETB top-up and transfer-to-agent
+   * operates on THIS ONE wallet, so N admin accounts always share one true
+   * balance instead of each having their own float. Auto-created the first time
+   * it's needed (see AdminService.getOrCreateMasterWalletUserId) — never set
+   * from the admin config form.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  masterWalletUserId?: string | null;
+
   /** Minimum a single Telebirr deposit must be to be accepted. 0 = no minimum. */
   @Column({ type: 'int', default: 0 })
   minDepositMinor: number;

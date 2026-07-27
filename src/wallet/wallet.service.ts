@@ -105,6 +105,19 @@ export class WalletService {
     return this.toWalletSummary(wallet);
   }
 
+  /**
+   * Bulk `availableMinor` lookup — a user with no wallet row yet is simply
+   * absent from the map (callers should treat that as 0). Used where an N+1
+   * per-user lookup would be wasteful, e.g. filtering an agent list by balance.
+   */
+  async getAvailableBalances(userIds: string[]): Promise<Map<string, number>> {
+    if (userIds.length === 0) return new Map();
+    const wallets = await this.walletRepository.find({
+      where: { userId: In(userIds), currencyCode: 'CREDIT' },
+    });
+    return new Map(wallets.map((w) => [w.userId, w.availableMinor]));
+  }
+
   async getLedgerEntries(input: {
     userId: string;
     limit: number;
@@ -1051,51 +1064,61 @@ export class WalletService {
     await this.wagerLimitRepository.delete({ userId });
   }
 
+  /**
+   * Credits the ONE shared house wallet (see AdminService.resolveHouseWalletOwnerId
+   * — the designated Super-Admin), not the acting admin's own wallet. However many
+   * admin accounts exist, they all read/write this single balance, so it's a real
+   * source of truth rather than N separate personal floats. `actingAdminId` is
+   * recorded in metadata purely for the audit trail.
+   */
   async adminTopup(
-    adminUserId: string,
+    houseWalletOwnerId: string,
     amountMinor: number,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    actingAdminId?: string,
   ): Promise<WalletMutationResult> {
-    const key = idempotencyKey || `admin-topup:${adminUserId}:${Date.now()}`;
+    const key = idempotencyKey || `admin-topup:${houseWalletOwnerId}:${Date.now()}`;
     return this.dataSource.transaction(async (manager) => {
-      await this.ensureDefaultWallet(adminUserId, manager);
+      await this.ensureDefaultWallet(houseWalletOwnerId, manager);
       return await this.creditInSession(
         {
-          userId: adminUserId,
+          userId: houseWalletOwnerId,
           amountMinor,
           entryType: 'deposit',
           sourceType: 'admin_topup',
           sourceId: 'admin_topup',
           idempotencyKey: key,
-          metadata: { adminUserId }
+          metadata: { houseWalletOwnerId, toppedUpByAdminId: actingAdminId }
         },
         manager
       );
     });
   }
 
+  /** Debits the shared house wallet (see adminTopup) and credits the agent. */
   async transferAdminToAgent(
-    adminUserId: string,
+    houseWalletOwnerId: string,
     agentId: string,
     amountMinor: number,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    actingAdminId?: string,
   ): Promise<{ adminWallet: WalletSummary; agentWallet: WalletSummary }> {
-    const key = idempotencyKey || `admin-to-agent:${adminUserId}:${agentId}:${Date.now()}`;
+    const key = idempotencyKey || `admin-to-agent:${houseWalletOwnerId}:${agentId}:${Date.now()}`;
     return this.dataSource.transaction(async (manager) => {
       // Ensure wallets exist
-      await this.ensureDefaultWallet(adminUserId, manager);
+      await this.ensureDefaultWallet(houseWalletOwnerId, manager);
       await this.ensureDefaultWallet(agentId, manager);
 
-      // Debit admin
+      // Debit the house wallet
       const debitResult = await this.debitInSession(
         {
-          userId: adminUserId,
+          userId: houseWalletOwnerId,
           amountMinor,
           entryType: 'adjustment',
           sourceType: 'admin_to_agent_transfer',
           sourceId: agentId,
           idempotencyKey: `${key}:debit`,
-          metadata: { agentId }
+          metadata: { agentId, actingAdminId }
         },
         manager
       );
@@ -1107,9 +1130,9 @@ export class WalletService {
           amountMinor,
           entryType: 'deposit',
           sourceType: 'admin_to_agent_transfer',
-          sourceId: adminUserId,
+          sourceId: houseWalletOwnerId,
           idempotencyKey: `${key}:credit`,
-          metadata: { adminUserId }
+          metadata: { houseWalletOwnerId, actingAdminId }
         },
         manager
       );
@@ -1117,12 +1140,13 @@ export class WalletService {
       await this.recordAgentAction(
         {
           agentId,
-          userId: adminUserId,
+          userId: actingAdminId ?? houseWalletOwnerId,
           amountMinor,
           ledgerEntryId: creditResult.ledgerEntry.id,
           actionType: 'admin_transfer_to_agent',
           metadata: {
-            adminUserId,
+            houseWalletOwnerId,
+            actingAdminId,
             debitLedgerEntryId: debitResult.ledgerEntry.id,
             creditLedgerEntryId: creditResult.ledgerEntry.id,
           },

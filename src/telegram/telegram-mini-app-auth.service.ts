@@ -14,7 +14,21 @@ import {
 export class TelegramMiniAppAuthService {
     constructor(private readonly configService: ConfigService) {}
 
+    /** Validates initData signed by the main player bot (TELEGRAM_BOT_TOKEN). */
     validateInitData(initData: string): ValidatedTelegramMiniAppData {
+        const botToken =
+            this.configService.getOrThrow<string>("TELEGRAM_BOT_TOKEN");
+        return this.validateInitDataAgainstToken(initData, botToken);
+    }
+
+    /**
+     * Validates initData against an EXPLICIT bot token — for a separate bot
+     * (e.g. the agent bot) that is not TELEGRAM_BOT_TOKEN. Kept as its own
+     * public method rather than folded into validateInitData's "any registered
+     * bot" style matching, so a token mix-up can never let one bot's session
+     * be accepted where a different bot's is required.
+     */
+    validateInitDataAgainstToken(initData: string, botToken: string): ValidatedTelegramMiniAppData {
         const params = new URLSearchParams(initData);
         const receivedHash = params.get("hash");
 
@@ -29,8 +43,6 @@ export class TelegramMiniAppAuthService {
             .map(([key, value]) => `${key}=${value}`)
             .join("\n");
 
-        const botToken =
-            this.configService.getOrThrow<string>("TELEGRAM_BOT_TOKEN");
         const secretKey = createHmac("sha256", "WebAppData")
             .update(botToken)
             .digest();

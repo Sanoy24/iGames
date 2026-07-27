@@ -133,13 +133,29 @@ export class CrashService {
   // ── Round lifecycle ───────────────────────────────────────────────────────
 
   /**
-   * Marks any non-crashed rounds left over from a previous process (e.g. a
-   * restart mid-round) as crashed and refunds still-active bets, so the
-   * scheduler can start cleanly instead of dead-locking on a stuck round.
-   * Idempotent and restart-safe.
+   * Marks GENUINELY stuck rounds as crashed and refunds still-active bets, so a
+   * newly-booting scheduler doesn't dead-lock on a round abandoned by a process
+   * that crashed without cleaning up. Deliberately age-gated rather than "any
+   * non-crashed round" — on a multi-process deployment (e.g. Phusion Passenger
+   * running more than one worker), a round can be perfectly healthy and being
+   * actively driven by ANOTHER already-running process at the exact moment this
+   * one boots; wrongly abandoning it would refund live bets out from under a
+   * round that's still legitimately in progress. A 'waiting' round is normally
+   * resolved within `waitingDurationSeconds` (a few seconds); a 'running' round
+   * within roughly a minute even at the max configured multiplier — so anything
+   * far beyond either window is safe to call genuinely orphaned.
    */
   async abandonStaleRounds(): Promise<number> {
-    const stale = await this.roundRepo.find({ where: { status: Not('crashed') as any } });
+    const MAX_WAITING_AGE_MS = 5 * 60 * 1000;
+    const MAX_RUNNING_AGE_MS = 10 * 60 * 1000;
+    const now = Date.now();
+
+    const candidates = await this.roundRepo.find({ where: { status: Not('crashed') as any } });
+    const stale = candidates.filter((round) => {
+      if (round.status === 'waiting') return now - round.createdAt.getTime() > MAX_WAITING_AGE_MS;
+      if (round.status === 'running') return !round.startedAt || now - round.startedAt.getTime() > MAX_RUNNING_AGE_MS;
+      return false;
+    });
     if (stale.length === 0) return 0;
 
     for (const round of stale) {
@@ -186,6 +202,19 @@ export class CrashService {
       order: { createdAt: 'DESC' },
     });
     return round ? this.toRoundResponse(round) : null;
+  }
+
+  /**
+   * Scheduler-internal only — unlike getActiveRound(), this exposes the REAL
+   * crashPointX100 even while the round is still running (the scheduler needs
+   * it to detect the crash threshold). NEVER return this from a public
+   * endpoint; toRoundResponse's crashed-only reveal is the anti-cheat boundary.
+   */
+  async getActiveRoundEntity(): Promise<CrashRound | null> {
+    return this.roundRepo.findOne({
+      where: { status: Not('crashed') as any },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   async getRecentRounds(limit = 20): Promise<CrashRoundResponse[]> {

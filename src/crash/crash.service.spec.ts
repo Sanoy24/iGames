@@ -5,6 +5,13 @@ import { DataSource, EntityManager, Not } from 'typeorm';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// abandonStaleRounds is age-gated (see crash.service.ts) so a round another,
+// still-healthy process is legitimately driving is never wrongly refunded —
+// these are comfortably past both MAX_WAITING_AGE_MS (5 min) and
+// MAX_RUNNING_AGE_MS (10 min).
+const LONG_AGO_WAITING = new Date(Date.now() - 6 * 60 * 1000);
+const LONG_AGO_RUNNING = new Date(Date.now() - 11 * 60 * 1000);
+
 function makeRound(overrides: Partial<CrashRound> = {}): CrashRound {
   return Object.assign(new CrashRound(), {
     id: 'round-1',
@@ -12,7 +19,8 @@ function makeRound(overrides: Partial<CrashRound> = {}): CrashRound {
     seedHash: 'abc123',
     seed: 'secret-seed',
     crashPointX100: null,
-    startedAt: new Date(),
+    createdAt: LONG_AGO_RUNNING,
+    startedAt: LONG_AGO_RUNNING,
     crashedAt: null,
     ...overrides,
   });
@@ -183,6 +191,39 @@ describe('CrashService — unit (mocked repos)', () => {
       // roundRepo.find returns [] for non-crashed → no bets touched
       await service.abandonStaleRounds();
       expect(mockWalletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    // The actual bug this age-gating fixes: on a multi-process deployment, a
+    // newly-booting process must NOT refund/crash a round another, already-
+    // running process is legitimately still driving.
+    it('does NOT touch a fresh "running" round (another process may be actively driving it)', async () => {
+      const round = makeRound({ status: 'running', startedAt: new Date(), createdAt: new Date() });
+      const { service, mockWalletService } = makeService({ rounds: [round], bets: [] });
+
+      const count = await service.abandonStaleRounds();
+
+      expect(count).toBe(0);
+      expect(mockWalletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    it('does NOT touch a fresh "waiting" round', async () => {
+      const round = makeRound({ status: 'waiting', createdAt: new Date(), startedAt: null });
+      const bet = makeBet({});
+      const { service, mockWalletService } = makeService({ rounds: [round], bets: [bet] });
+
+      const count = await service.abandonStaleRounds();
+
+      expect(count).toBe(0);
+      expect(mockWalletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    it('treats a "running" round with no startedAt at all as stale (can never resolve on its own)', async () => {
+      const round = makeRound({ status: 'running', startedAt: null, createdAt: new Date() });
+      const { service } = makeService({ rounds: [round], bets: [] });
+
+      const count = await service.abandonStaleRounds();
+
+      expect(count).toBe(1);
     });
   });
 

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { LogIn } from 'lucide-react';
-import { authApi } from '../lib/api';
-import { useStore } from '../store/useStore';
-import { getErrorMessage } from '../lib/utils';
-import { Agent } from './Agent';
+import { authApi } from './lib/api';
+import { useStore } from './store/useStore';
+import { useSocketConnection } from './hooks/useSocketConnection';
+import { getErrorMessage } from './lib/utils';
+import { Agent } from './pages/Agent';
+import { Toasts } from './components/Toasts';
 
 type TelegramWindow = Window &
   typeof globalThis & {
@@ -13,18 +15,17 @@ type TelegramWindow = Window &
 type Phase = 'resolving' | 'need-link' | 'login' | 'dashboard';
 
 /**
- * Standalone entry surface for the agent bot (@yaho_agent_bot), opened via
- * `?entry=agent`. Deliberately NOT part of the standard player app shell/boot
- * flow — no Telegram-initData auto-login here. The phone field is resolved
- * from the Telegram identity linked via the agent bot's contact-share and is
- * locked; the agent must still type their password (POST /auth/credentials,
- * completely unchanged from the normal web/credentials login).
- *
- * Once logged in, this renders the SAME `Agent` page used by the web
- * credentials-login flow — full feature parity (withdrawals, performance,
- * transfer-to-user, support, and the "My Area" tab), not a lookalike subset.
+ * This whole app IS the agent bot's Mini App (opened via @yaho_agent_bot's
+ * "Open Agent Panel" button) — a standalone deployment, deliberately not a
+ * route inside the player app, so there's no query-param/menu-button
+ * ambiguity about which experience a given URL renders. No Telegram-initData
+ * auto-login here: the phone field is resolved from the Telegram identity
+ * linked via the bot's contact-share and locked, but the agent must still
+ * type their password every time (POST /auth/credentials, same endpoint the
+ * web credentials login uses) — never persisted across reopens.
  */
-export function AgentArea() {
+export function App() {
+  useSocketConnection();
   const setAuth = useStore((s) => s.setAuth);
   const [phase, setPhase] = useState<Phase>('resolving');
   const [phone, setPhone] = useState('');
@@ -62,16 +63,16 @@ export function AgentArea() {
     }
   };
 
+  let content;
+
   if (phase === 'resolving') {
-    return (
+    content = (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh' }}>
         <div className="spinner" />
       </div>
     );
-  }
-
-  if (phase === 'need-link') {
-    return (
+  } else if (phase === 'need-link') {
+    content = (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh', padding: 24 }}>
         <div style={{ maxWidth: 360, textAlign: 'center' }}>
           <div style={{ fontSize: 44, marginBottom: 12 }}>📱</div>
@@ -83,10 +84,8 @@ export function AgentArea() {
         </div>
       </div>
     );
-  }
-
-  if (phase === 'login') {
-    return (
+  } else if (phase === 'login') {
+    content = (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100dvh', padding: 24 }}>
         <div style={{ width: '100%', maxWidth: 360 }}>
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
@@ -129,7 +128,14 @@ export function AgentArea() {
         </div>
       </div>
     );
+  } else {
+    content = <Agent />;
   }
 
-  return <Agent />;
+  return (
+    <div className="app-container">
+      {content}
+      <Toasts />
+    </div>
+  );
 }

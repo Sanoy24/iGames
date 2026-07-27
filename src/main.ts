@@ -132,12 +132,16 @@ async function bootstrap() {
   }));
 
   // ── CORS ──────────────────────────────────────────────────────────
+  // Comma-separated list — the player Mini App and the standalone agent Mini
+  // App (see TELEGRAM_AGENT_MINIAPP_URL) are served from different origins
+  // but both call this same API, so more than one origin must be allowed.
   const allowedOrigin = configService.get<string>('ALLOWED_ORIGIN', '');
   if (!isDev && !allowedOrigin) {
     throw new Error('ALLOWED_ORIGIN env var is required in production');
   }
+  const allowedOrigins = allowedOrigin.split(',').map((o) => o.trim()).filter(Boolean);
   app.enableCors({
-    origin: isDev ? true : allowedOrigin,
+    origin: isDev ? true : allowedOrigins,
     credentials: true,
   });
 

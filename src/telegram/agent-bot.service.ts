@@ -40,9 +40,11 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
       return;
     }
 
-    const miniAppUrl = this.configService.get<string>('TELEGRAM_MINIAPP_URL');
+    // The agent Mini App is its own standalone frontend deployment (own domain,
+    // own Vite project) — NOT a query-param branch of the player TELEGRAM_MINIAPP_URL.
+    const miniAppUrl = this.configService.get<string>('TELEGRAM_AGENT_MINIAPP_URL');
     if (!miniAppUrl) {
-      this.logger.warn('TELEGRAM_MINIAPP_URL is not set — agent bot will not start');
+      this.logger.warn('TELEGRAM_AGENT_MINIAPP_URL is not set — agent bot will not start');
       return;
     }
 
@@ -170,7 +172,7 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
         return;
       }
 
-      const keyboard = new InlineKeyboard().webApp('📊 Open Agent Panel', `${miniAppUrl}?entry=agent`);
+      const keyboard = new InlineKeyboard().webApp('📊 Open Agent Panel', miniAppUrl);
       await ctx.reply(
         `Linked! Welcome, ${agent.displayName}.\n\nTap below to open your Agent Panel and enter your password:`,
         { reply_markup: { remove_keyboard: true } as never },

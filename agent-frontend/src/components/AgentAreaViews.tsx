@@ -5,9 +5,9 @@ import { formatCredits } from '../store/useStore';
 import { formatDateTime, getErrorMessage } from '../lib/utils';
 
 /**
- * "Players in My Area" — a tab within the web Agent page (Agent.tsx). Also
- * copied verbatim into the standalone agent-frontend project's Agent.tsx, so
- * both deployments show the identical feature rather than a lookalike duplicate.
+ * "Players in My Area" — shared between the web Agent page (Agent.tsx, as a
+ * tab) and the agent bot's Mini App entry (pages/AgentArea.tsx), so both
+ * surfaces show the identical feature rather than a lookalike duplicate.
  */
 
 // ══════════════════════════════════════════════════════════════════

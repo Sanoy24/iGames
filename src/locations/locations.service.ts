@@ -342,6 +342,15 @@ export class LocationsService {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /** Just the location ids assigned to an agent — for scoping "players in my area" queries. */
+  async listAgentLocationIds(agentId: string): Promise<string[]> {
+    const assignments = await this.agentLocationRepository.find({
+      where: { agentId },
+      select: { locationId: true },
+    });
+    return assignments.map((a) => a.locationId);
+  }
+
   /** The active agents covering a location. */
   async listLocationAgents(locationId: string): Promise<Array<{ agentId: string; displayName: string; isPrimary: boolean }>> {
     const rows: Array<{ agentId: string; displayName: string; isPrimary: number }> =

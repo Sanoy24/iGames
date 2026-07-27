@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -45,6 +45,34 @@ export class AgentsController {
   @Get('performance')
   getMyPerformance(@CurrentUser() agent: AuthenticatedUser) {
     return this.agentsService.getPerformance(agent.id);
+  }
+
+  /**
+   * All players registered in the agent's assigned location(s) — not scoped to
+   * this agent's own referrals; flagged per-player via isMyReferral instead.
+   * Always scoped off the authenticated agent, never a client-supplied id.
+   */
+  @Get('area/players')
+  listAreaPlayers(
+    @CurrentUser() agent: AuthenticatedUser,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.agentsService.listAreaPlayers(agent.id, {
+      search,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  /**
+   * Per-player drill-down: deposits, withdrawals, games played/won. 403s if
+   * the player is not in one of the agent's assigned locations.
+   */
+  @Get('area/players/:userId/activity')
+  getAreaPlayerActivity(@Param('userId') userId: string, @CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.getAreaPlayerActivity(agent.id, userId);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, NotFoundException, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -38,6 +38,25 @@ export class AuthController {
   @ApiOkResponse({ description: 'Agent/admin login with email and password' })
   loginWithCredentials(@Body() dto: CredentialsAuthDto): Promise<AuthTokenResponse> {
     return this.authService.loginWithCredentials(dto.phoneNumber, dto.password);
+  }
+
+  /**
+   * Agent Mini App pre-login step: resolves the phone number of the agent
+   * linked (via the separate agent bot's contact-share) to this Telegram
+   * session, so the frontend can pre-fill/lock the phone field. The agent
+   * still has to type their password via the unchanged POST /auth/credentials
+   * above — this endpoint never issues tokens.
+   */
+  @Post('agent/resolve-phone')
+  @Throttle({ strict: { ttl: 60_000, limit: 10 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Resolves the phone number linked to this Telegram session via the agent bot' })
+  async resolveAgentPhone(@Body() dto: TelegramMiniAppAuthDto): Promise<{ phoneNumber: string; displayName: string }> {
+    const result = await this.authService.resolveAgentPhoneFromTelegram(dto.initData);
+    if (!result) {
+      throw new NotFoundException('No agent is linked to this Telegram account yet — share your phone with the agent bot first');
+    }
+    return result;
   }
 
   @Post('refresh')

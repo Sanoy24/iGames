@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSocketConnection } from './hooks/useSocketConnection';
 import { useStore } from './store/useStore';
 import { authApi, walletApi } from './lib/api';
+const AgentArea = lazy(() => import('./pages/AgentArea').then((m) => ({ default: m.AgentArea })));
 // Home is the default landing tab for players, so keep it in the main chunk for
 // instant first paint. Every other page is code-split and loaded on demand — this
 // keeps the initial bundle small (Admin/Bingo/etc. are large and rarely the first
@@ -55,6 +56,15 @@ export function App() {
   const [phoneRequired, setPhoneRequired] = useState(false);
   const loginStarted = useRef(false);
 
+  // Separate entry surface for the agent bot (@yaho_agent_bot) — opened with
+  // ?entry=agent. Manages its OWN auth (phone locked from Telegram + typed
+  // password, never Telegram-initData auto-login), so the standard bootstrap
+  // effect below must never run for this entry — see the early return there.
+  const isAgentBotEntry = useMemo(
+    () => new URLSearchParams(window.location.search).get('entry') === 'agent',
+    [],
+  );
+
   useSocketConnection();
 
   useEffect(() => {
@@ -73,6 +83,7 @@ export function App() {
   }, [isAuthenticated, wallet, setWallet]);
 
   useEffect(() => {
+    if (isAgentBotEntry) return;
     if (authStatus !== 'idle' || loginStarted.current) return;
 
     loginStarted.current = true;
@@ -134,7 +145,18 @@ export function App() {
     };
 
     void bootstrap();
-  }, [authStatus, clearAuth, setAuth, setAuthLoading, setWallet]);
+  }, [authStatus, clearAuth, setAuth, setAuthLoading, setWallet, isAgentBotEntry]);
+
+  if (isAgentBotEntry) {
+    return (
+      <div className="app-container">
+        <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}><div className="spinner" /></div>}>
+          <AgentArea />
+        </Suspense>
+        <Toasts />
+      </div>
+    );
+  }
 
   if (phoneRequired && !isAuthenticated) {
     const tg = (window as TelegramWindow).Telegram?.WebApp;

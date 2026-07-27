@@ -47,6 +47,25 @@ export class AuthService {
     private readonly adminService: AdminService
   ) {}
 
+  /**
+   * For the agent Mini App only: proves this is a live Telegram session for
+   * the AGENT bot specifically (validated against TELEGRAM_AGENT_BOT_TOKEN,
+   * never the main bot's token), then resolves the phone number of whichever
+   * agent this Telegram identity was linked to (via the agent bot's contact
+   * share). Returns null if not linked yet. Deliberately does NOT issue tokens
+   * or check suspended/closed status — this is a pre-fill/lock helper only;
+   * the actual login is the existing, unchanged POST /auth/credentials, which
+   * already enforces status itself.
+   */
+  async resolveAgentPhoneFromTelegram(initData: string): Promise<{ phoneNumber: string; displayName: string } | null> {
+    const agentBotToken = this.configService.get<string>('TELEGRAM_AGENT_BOT_TOKEN');
+    if (!agentBotToken) {
+      throw new UnauthorizedException('The agent bot is not configured');
+    }
+    const validated = this.telegramMiniAppAuthService.validateInitDataAgainstToken(initData, agentBotToken);
+    return this.usersService.findAgentPhoneByTelegramId(String(validated.user.id));
+  }
+
   async loginWithTelegramMiniApp(initData: string): Promise<AuthTokenResponse> {
     const validatedTelegramData = this.telegramMiniAppAuthService.validateInitData(initData);
 

@@ -114,6 +114,12 @@ export const authApi = {
       .post<AuthTokenResponse>('/auth/credentials', { phoneNumber, password })
       .then((r) => r.data),
 
+  /** Agent Mini App pre-login: resolves the phone linked via the agent bot's contact-share. */
+  resolveAgentPhone: (initData: string) =>
+    api
+      .post<{ phoneNumber: string; displayName: string }>('/auth/agent/resolve-phone', { initData })
+      .then((r) => r.data),
+
   refresh: (refreshToken: string) =>
     api.post<AuthTokenResponse>('/auth/refresh', { refreshToken }).then((r) => r.data),
 
@@ -745,6 +751,56 @@ export const agentApi = {
     api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof }, { timeout: 45000 }).then((r) => r.data),
   transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
+
+  // ── Area reporting: players in the agent's assigned locations ──────
+  listAreaPlayers: (search?: string, page = 1, limit = 20) => {
+    let url = `/agent/area/players?page=${page}&limit=${limit}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    return api.get<AreaPlayersPage>(url).then((r) => r.data);
+  },
+  getAreaPlayerActivity: (userId: string) =>
+    api.get<AreaPlayerActivity>(`/agent/area/players/${userId}/activity`).then((r) => r.data),
+};
+
+export type AreaPlayer = {
+  id: string;
+  displayName: string;
+  phoneNumber: string | null;
+  locationId: string | null;
+  locationName: string | null;
+  walletBalanceMinor: number;
+  status: string;
+  isMyReferral: boolean;
+  createdAt: string;
+};
+
+export type AreaPlayersPage = {
+  data: AreaPlayer[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type AreaGameSummary = {
+  played: number;
+  won: number;
+  stakedMinor: number;
+  payoutMinor: number;
+};
+
+export type AreaPlayerActivity = {
+  player: { id: string; displayName: string; phoneNumber: string | null; isMyReferral: boolean };
+  deposits: {
+    telebirr: Array<{ id: string; receiptNo: string; amountMinor: number; status: string; createdAt: string }>;
+    mpesa: Array<{ id: string; confirmationCode: string; amountMinor: number; status: string; createdAt: string }>;
+  };
+  withdrawals: Array<{ id: string; amountMinor: number; status: string; destinationAccount: string; createdAt: string; processedAt: string | null }>;
+  games: {
+    bingo: AreaGameSummary;
+    keno: AreaGameSummary;
+    crash: AreaGameSummary;
+  };
 };
 
 // ── Admin: Users ───────────────────────────────────────────────────

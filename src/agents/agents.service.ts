@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
+import { LocationsService } from '../locations/locations.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
 import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
@@ -19,6 +20,7 @@ export class AgentsService {
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
     private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
+    private readonly locationsService: LocationsService,
   ) {}
 
   // ── Config (agent-accessible) ────────────────────────────────────
@@ -351,6 +353,138 @@ export class AgentsService {
       depositCount: Number(dep?.deposits ?? 0),
       depositVolumeMinor: Number(dep?.volume ?? 0),
       depositCommissionEarnedMinor: Number(depComm?.commission ?? 0),
+    };
+  }
+
+  // ── Area reporting (players in the agent's assigned locations) ─────
+  //
+  // Distinct from getPerformance above: this shows ALL players registered in
+  // whichever locations the agent is assigned to (many agents can share a
+  // location), not just players this agent personally processed a deposit
+  // for. Each player is additionally flagged `isMyReferral` when
+  // referredByAgentId matches this agent — the "mix of both" the requester
+  // asked for: full area visibility, with personal referrals called out.
+
+  async listAreaPlayers(
+    agentId: string,
+    opts: { search?: string; page?: number; limit?: number } = {},
+  ): Promise<{
+    data: Array<{
+      id: string;
+      displayName: string;
+      phoneNumber: string | null;
+      locationId: string | null;
+      locationName: string | null;
+      walletBalanceMinor: number;
+      status: string;
+      isMyReferral: boolean;
+      createdAt: Date;
+    }>;
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const [locationIds, myLocations] = await Promise.all([
+      this.locationsService.listAgentLocationIds(agentId),
+      this.locationsService.listAgentLocations(agentId),
+    ]);
+    const locationNameById = new Map(myLocations.map((l) => [l.id, l.name]));
+
+    const result = await this.usersService.listPlayersByLocationIds(locationIds, opts);
+
+    return {
+      ...result,
+      data: result.data.map((u) => ({
+        id: u.id,
+        displayName: u.displayName,
+        phoneNumber: u.phoneNumber ?? null,
+        locationId: u.locationId ?? null,
+        locationName: u.locationId ? locationNameById.get(u.locationId) ?? null : null,
+        walletBalanceMinor: u.wallets?.find((w) => w.currencyCode === 'CREDIT')?.availableMinor ?? 0,
+        status: u.status,
+        isMyReferral: u.referredByAgentId === agentId,
+        createdAt: u.createdAt,
+      })),
+    };
+  }
+
+  /**
+   * Per-player drill-down: deposits, withdrawals, games played/won. Enforces
+   * the authorization boundary — the target player MUST be in one of the
+   * agent's assigned locations, otherwise an agent could view any player by
+   * guessing a userId.
+   */
+  async getAreaPlayerActivity(agentId: string, playerUserId: string) {
+    const locationIds = await this.locationsService.listAgentLocationIds(agentId);
+    const player = await this.usersService.findById(playerUserId);
+
+    if (!player.locationId || !locationIds.includes(player.locationId)) {
+      throw new ForbiddenException('This player is not in your assigned area');
+    }
+
+    const q = (sql: string, params: unknown[]) => this.systemConfigRepository.query(sql, params);
+
+    const [telebirrDeposits, mpesaDeposits, withdrawals, [bingo], [keno], [crash]] = await Promise.all([
+      q(
+        `SELECT id, receiptNo, amountMinor, status, createdAt FROM telebirr_deposits
+          WHERE userId = ? ORDER BY createdAt DESC LIMIT 50`,
+        [playerUserId],
+      ),
+      q(
+        `SELECT id, confirmationCode, amountMinor, status, createdAt FROM mpesa_deposits
+          WHERE userId = ? ORDER BY createdAt DESC LIMIT 50`,
+        [playerUserId],
+      ),
+      q(
+        `SELECT id, amountMinor, status, destinationAccount, createdAt, processedAt FROM withdrawals
+          WHERE userId = ? ORDER BY createdAt DESC LIMIT 50`,
+        [playerUserId],
+      ),
+      q(
+        `SELECT COUNT(*) played, COALESCE(SUM(status='won'),0) won,
+                COALESCE(SUM(stakeMinor),0) staked, COALESCE(SUM(payoutMinor),0) payout
+           FROM bingo_tickets WHERE userId = ? AND status <> 'cancelled'`,
+        [playerUserId],
+      ),
+      q(
+        `SELECT COUNT(*) played, COALESCE(SUM(status='won'),0) won,
+                COALESCE(SUM(stakeMinor),0) staked, COALESCE(SUM(payoutMinor),0) payout
+           FROM keno_tickets WHERE userId = ? AND status <> 'cancelled'`,
+        [playerUserId],
+      ),
+      q(
+        `SELECT COUNT(*) played, COALESCE(SUM(status='won'),0) won,
+                COALESCE(SUM(stakeMinor),0) staked, COALESCE(SUM(payoutMinor),0) payout
+           FROM crash_bets WHERE userId = ? AND status <> 'active'`,
+        [playerUserId],
+      ),
+    ]);
+
+    const toGameSummary = (row: { played?: unknown; won?: unknown; staked?: unknown; payout?: unknown } | undefined) => ({
+      played: Number(row?.played ?? 0),
+      won: Number(row?.won ?? 0),
+      stakedMinor: Number(row?.staked ?? 0),
+      payoutMinor: Number(row?.payout ?? 0),
+    });
+
+    return {
+      player: {
+        id: player.id,
+        displayName: player.displayName,
+        phoneNumber: player.phoneNumber ?? null,
+        isMyReferral: player.referredByAgentId === agentId,
+      },
+      deposits: {
+        telebirr: telebirrDeposits,
+        mpesa: mpesaDeposits,
+      },
+      withdrawals,
+      games: {
+        bingo: toGameSummary(bingo),
+        keno: toGameSummary(keno),
+        crash: toGameSummary(crash),
+      },
     };
   }
 

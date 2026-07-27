@@ -167,6 +167,41 @@ export class UsersService {
     };
   }
 
+  /**
+   * Players whose locationId is in the given set — the "area visibility" an
+   * agent needs (via their assigned locations, see LocationsService), not
+   * scoped to any one agent's own referrals. Mirrors listUsers's query shape.
+   */
+  async listPlayersByLocationIds(
+    locationIds: string[],
+    opts: { search?: string; page?: number; limit?: number } = {},
+  ) {
+    const page = Math.max(opts.page ?? 1, 1);
+    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+
+    if (locationIds.length === 0) {
+      return { data: [] as User[], total: 0, page, limit, totalPages: 0 };
+    }
+
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .where('user.locationId IN (:...locationIds)', { locationIds })
+      .andWhere("JSON_CONTAINS(user.roles, '\"player\"')")
+      .orderBy('user.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${opts.search}%` },
+      );
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
   async createAgentUser(input: {
     phoneNumber: string;
     displayName: string;
@@ -464,6 +499,83 @@ export class UsersService {
     await this.authIdentityRepository.save(identity);
 
     return user;
+  }
+
+  /**
+   * Look up an EXISTING agent by phone number — used by the agent bot's
+   * contact-share handler to match a Telegram user to an already-admin-created
+   * agent account. Never creates a user (unlike findOrCreateTelegramUser,
+   * which is for players). Returns null if no password-login identity with
+   * this phone belongs to an agent — the caller decides what to tell the bot
+   * user (no match vs suspended vs success), so this does NOT gate on status.
+   */
+  async findAgentByPhone(phoneNumber: string): Promise<User | null> {
+    const normalizedPhone = normalizeEthiopianPhone(phoneNumber);
+    if (!normalizedPhone) return null;
+
+    const identity = await this.authIdentityRepository.findOneBy({
+      provider: 'password',
+      providerUserId: normalizedPhone,
+    });
+    if (!identity) return null;
+
+    const user = await this.userRepository.findOneBy({ id: identity.userId });
+    if (!user || !Array.isArray(user.roles) || !user.roles.includes('agent' as any)) return null;
+    return user;
+  }
+
+  /**
+   * Link a Telegram identity to an EXISTING user (the agent bot's use case —
+   * the user already exists, created by an admin; this just adds a
+   * provider:'telegram' AuthIdentity pointing at it, so later Mini App opens
+   * resolve back to the same account). Rejects if this Telegram id is already
+   * linked to a DIFFERENT user — never silently re-points an identity.
+   */
+  async linkTelegramIdentityToUser(userId: string, input: TelegramIdentityInput): Promise<AuthIdentity> {
+    const now = new Date();
+    const existing = await this.authIdentityRepository.findOneBy({
+      provider: 'telegram',
+      providerUserId: input.telegramUserId,
+    });
+
+    if (existing) {
+      if (existing.userId !== userId) {
+        throw new ConflictException('This Telegram account is already linked to a different account');
+      }
+      existing.providerUsername = input.username?.toLowerCase();
+      existing.profileSnapshot = this.toTelegramSnapshot(input);
+      existing.lastAuthAt = now;
+      return this.authIdentityRepository.save(existing);
+    }
+
+    const identity = this.authIdentityRepository.create({
+      userId,
+      provider: 'telegram',
+      providerUserId: input.telegramUserId,
+      providerUsername: input.username?.toLowerCase(),
+      profileSnapshot: this.toTelegramSnapshot(input),
+      linkedAt: now,
+      lastAuthAt: now,
+    });
+    return this.authIdentityRepository.save(identity);
+  }
+
+  /**
+   * Resolve the phone number of the agent linked to this Telegram id — used by
+   * the agent Mini App to pre-fill/lock the phone field before the agent types
+   * their password (POST /auth/credentials, unchanged). Null if not linked yet
+   * (frontend tells them to share their phone with the agent bot first).
+   */
+  async findAgentPhoneByTelegramId(telegramUserId: string): Promise<{ phoneNumber: string; displayName: string } | null> {
+    const identity = await this.authIdentityRepository.findOneBy({
+      provider: 'telegram',
+      providerUserId: telegramUserId,
+    });
+    if (!identity) return null;
+
+    const user = await this.userRepository.findOneBy({ id: identity.userId });
+    if (!user || !user.phoneNumber || !Array.isArray(user.roles) || !user.roles.includes('agent' as any)) return null;
+    return { phoneNumber: user.phoneNumber, displayName: user.displayName };
   }
 
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {

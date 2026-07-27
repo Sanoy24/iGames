@@ -51,6 +51,41 @@ describe('TelegramMiniAppAuthService', () => {
 
     expect(() => service.validateInitData(initData)).toThrow(UnauthorizedException);
   });
+
+  // validateInitDataAgainstToken — used by the separate agent bot, which is
+  // NOT TELEGRAM_BOT_TOKEN and must never accept the main bot's signature or
+  // vice versa.
+  describe('validateInitDataAgainstToken', () => {
+    const agentBotToken = '999999:agent-bot-test-token';
+
+    it('validates initData signed with the GIVEN token (not TELEGRAM_BOT_TOKEN)', () => {
+      const initData = buildInitData({
+        botToken: agentBotToken,
+        authDateSeconds: Math.floor(Date.now() / 1000)
+      });
+
+      const result = service.validateInitDataAgainstToken(initData, agentBotToken);
+      expect(result.user.id).toBe(12345);
+    });
+
+    it('rejects initData signed with the main bot token when checked against the agent bot token', () => {
+      const initData = buildInitData({
+        botToken, // signed with the MAIN bot's token
+        authDateSeconds: Math.floor(Date.now() / 1000)
+      });
+
+      expect(() => service.validateInitDataAgainstToken(initData, agentBotToken)).toThrow(UnauthorizedException);
+    });
+
+    it('validateInitData() itself still only accepts the main bot token', () => {
+      const initData = buildInitData({
+        botToken: agentBotToken, // signed with the AGENT bot's token
+        authDateSeconds: Math.floor(Date.now() / 1000)
+      });
+
+      expect(() => service.validateInitData(initData)).toThrow(UnauthorizedException);
+    });
+  });
 });
 
 function buildInitData(input: {

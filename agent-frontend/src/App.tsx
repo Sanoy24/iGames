@@ -19,21 +19,25 @@ type Phase = 'resolving' | 'need-link' | 'login' | 'dashboard';
  * "Open Agent Panel" button) — a standalone deployment, deliberately not a
  * route inside the player app, so there's no query-param/menu-button
  * ambiguity about which experience a given URL renders. No Telegram-initData
- * auto-login here: the phone field is resolved from the Telegram identity
- * linked via the bot's contact-share and locked, but the agent must still
- * type their password every time (POST /auth/credentials, same endpoint the
- * web credentials login uses) — never persisted across reopens.
+ * auto-login here: on a genuinely fresh session the phone field is resolved
+ * from the Telegram identity linked via the bot's contact-share and locked,
+ * and the agent types their password (POST /auth/credentials, same endpoint
+ * the web credentials login uses). Once logged in, the session persists in
+ * localStorage exactly like the rest of the app (useStore rehydrates it on
+ * load) — a reload or reopen of the Mini App does NOT force a fresh login.
  */
 export function App() {
   useSocketConnection();
   const setAuth = useStore((s) => s.setAuth);
-  const [phase, setPhase] = useState<Phase>('resolving');
+  const isAuthenticated = useStore((s) => s.isAuthenticated);
+  const [phase, setPhase] = useState<Phase>(isAuthenticated ? 'dashboard' : 'resolving');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
+    if (isAuthenticated) return;
     const tg = (window as TelegramWindow).Telegram?.WebApp;
     if (!tg?.initData) {
       setPhase('need-link');
@@ -45,7 +49,7 @@ export function App() {
         setPhase('login');
       })
       .catch(() => setPhase('need-link'));
-  }, []);
+  }, [isAuthenticated]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

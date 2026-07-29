@@ -25,6 +25,16 @@ export type User = {
   /** Attributed play area, picked at registration. Null = "Other" / house. */
   locationId?: string | null;
   locationSource?: 'telegram_geo' | 'self_selected' | 'other' | null;
+  /**
+   * An agent's own shared GPS pin (agent bot's mandatory location step).
+   * Informational only — area access comes from admin-assigned agent_locations,
+   * never from this pin. Shown to admins as an assignment hint.
+   */
+  sharedLatitude?: number | null;
+  sharedLongitude?: number | null;
+  sharedLocationAt?: string | null;
+  /** An agent's shareable referral code (players never have one). */
+  referralCode?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };

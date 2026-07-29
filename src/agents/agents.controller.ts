@@ -48,6 +48,15 @@ export class AgentsController {
   }
 
   /**
+   * The requesting agent's referral code + shareable deep link. Always scoped off
+   * the authenticated agent, so one agent can never read another's code.
+   */
+  @Get('referral')
+  getMyReferral(@CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.getReferral(agent.id);
+  }
+
+  /**
    * All players registered in the agent's assigned location(s) — not scoped to
    * this agent's own referrals; flagged per-player via isMyReferral instead.
    * Always scoped off the authenticated agent, never a client-supplied id.

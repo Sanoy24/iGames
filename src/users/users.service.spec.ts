@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { UsersService } from './users.service';
 import { AuthIdentity } from './entities/auth-identity.entity';
@@ -257,6 +257,178 @@ describe('UsersService — agent Telegram phone linking', () => {
 
       const result = await service.findAgentPhoneByTelegramId('999');
       expect(result).toEqual({ phoneNumber: '+251912345678', displayName: 'Agent One' });
+    });
+  });
+});
+
+describe('UsersService — agent referral codes', () => {
+  /**
+   * attributeReferral/ensureAgentReferralCode go through createQueryBuilder for
+   * their guarded UPDATEs, so this block uses its own mock that records the
+   * `set`/`where` payloads rather than reusing the finder-only mock above.
+   */
+  function makeService(input: { users?: Partial<User>[]; affected?: number }) {
+    const users = input.users ?? [];
+    const updates: Array<{ set: Record<string, unknown>; where: string; params: unknown }> = [];
+
+    const queryBuilder = {
+      update: jest.fn().mockReturnThis(),
+      set: jest.fn().mockImplementation((values: Record<string, unknown>) => {
+        updates.push({ set: values, where: '', params: undefined });
+        return queryBuilder;
+      }),
+      where: jest.fn().mockImplementation((clause: string, params: unknown) => {
+        if (updates.length > 0) {
+          updates[updates.length - 1].where = clause;
+          updates[updates.length - 1].params = params;
+        }
+        return queryBuilder;
+      }),
+      execute: jest.fn().mockImplementation(() =>
+        Promise.resolve({ affected: input.affected ?? 1 }),
+      ),
+    };
+
+    const userRepository = {
+      findOneBy: jest.fn().mockImplementation((where: Record<string, unknown>) => {
+        const found = users.find((u) => matchesWhere(u as any, where));
+        return Promise.resolve(found ?? null);
+      }),
+      findOne: jest.fn().mockImplementation(({ where }: { where: Record<string, unknown> }) => {
+        const found = users.find((u) => matchesWhere(u as any, where));
+        return Promise.resolve(found ?? null);
+      }),
+      count: jest.fn().mockImplementation(({ where }: { where: Record<string, unknown> }) =>
+        Promise.resolve(users.filter((u) => matchesWhere(u as any, where)).length),
+      ),
+      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+    };
+
+    const service = new UsersService(
+      {} as DataSource,
+      userRepository as any,
+      {} as any, // authIdentityRepository
+      {} as any, // refreshSessionRepository
+    );
+
+    return { service, userRepository, updates };
+  }
+
+  const AGENT = {
+    id: 'agent-1',
+    roles: ['agent'] as any,
+    status: 'active' as any,
+    displayName: 'Agent One',
+    referralCode: 'ABC234',
+  };
+
+  describe('attributeReferral', () => {
+    it('attributes the player to the code owner and returns the agent name', async () => {
+      const { service, updates } = makeService({ users: [AGENT] });
+
+      const result = await service.attributeReferral('player-1', 'ABC234');
+
+      expect(result).toBe('Agent One');
+      expect(updates).toHaveLength(1);
+      expect(updates[0].set).toEqual({ referredByAgentId: 'agent-1' });
+      // The IS NULL guard is what makes first-attribution-wins true.
+      expect(updates[0].where).toContain('referredByAgentId IS NULL');
+      expect(updates[0].params).toEqual({ userId: 'player-1' });
+    });
+
+    it('accepts a lowercase / separator-laden code', async () => {
+      const { service } = makeService({ users: [AGENT] });
+      expect(await service.attributeReferral('player-1', ' abc-234 ')).toBe('Agent One');
+    });
+
+    it('returns null and writes nothing for an unknown code', async () => {
+      const { service, updates } = makeService({ users: [AGENT] });
+
+      expect(await service.attributeReferral('player-1', 'ZZZZZZ')).toBeNull();
+      expect(updates).toHaveLength(0);
+    });
+
+    it('returns null and writes nothing for a malformed payload', async () => {
+      const { service, updates } = makeService({ users: [AGENT] });
+
+      expect(await service.attributeReferral('player-1', '<script>')).toBeNull();
+      expect(updates).toHaveLength(0);
+    });
+
+    it('refuses to let an agent refer themselves', async () => {
+      const { service, updates } = makeService({ users: [AGENT] });
+
+      expect(await service.attributeReferral('agent-1', 'ABC234')).toBeNull();
+      expect(updates).toHaveLength(0);
+    });
+
+    it('ignores a code owned by a suspended agent', async () => {
+      const { service, updates } = makeService({
+        users: [{ ...AGENT, status: 'suspended' as any }],
+      });
+
+      expect(await service.attributeReferral('player-1', 'ABC234')).toBeNull();
+      expect(updates).toHaveLength(0);
+    });
+
+    it('ignores a code owned by a non-agent account', async () => {
+      const { service, updates } = makeService({
+        users: [{ ...AGENT, roles: ['player'] as any }],
+      });
+
+      expect(await service.attributeReferral('player-1', 'ABC234')).toBeNull();
+      expect(updates).toHaveLength(0);
+    });
+
+    it('returns null when the player was ALREADY attributed (guard matched no rows)', async () => {
+      const { service } = makeService({ users: [AGENT], affected: 0 });
+
+      expect(await service.attributeReferral('player-1', 'ABC234')).toBeNull();
+    });
+  });
+
+  describe('ensureAgentReferralCode', () => {
+    it('returns the existing code without generating a new one', async () => {
+      const { service, updates } = makeService({ users: [AGENT] });
+
+      expect(await service.ensureAgentReferralCode('agent-1')).toBe('ABC234');
+      expect(updates).toHaveLength(0);
+    });
+
+    it('generates and persists a code for an agent created before referral codes existed', async () => {
+      const { service, updates } = makeService({
+        users: [{ ...AGENT, referralCode: null }],
+      });
+
+      const code = await service.ensureAgentReferralCode('agent-1');
+
+      expect(code).toMatch(/^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{6}$/);
+      expect(updates).toHaveLength(1);
+      // Guarded so a concurrent allocation isn't overwritten.
+      expect(updates[0].where).toContain('referralCode IS NULL');
+    });
+
+    it('rejects a non-agent account', async () => {
+      const { service } = makeService({
+        users: [{ id: 'u-1', roles: ['player'] as any }],
+      });
+
+      await expect(service.ensureAgentReferralCode('u-1')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('countReferredPlayers', () => {
+    it('counts players attributed to this agent', async () => {
+      const { service } = makeService({
+        users: [
+          AGENT,
+          { id: 'p-1', referredByAgentId: 'agent-1' },
+          { id: 'p-2', referredByAgentId: 'agent-1' },
+          { id: 'p-3', referredByAgentId: 'other-agent' },
+        ],
+      });
+
+      expect(await service.countReferredPlayers('agent-1')).toBe(2);
     });
   });
 });

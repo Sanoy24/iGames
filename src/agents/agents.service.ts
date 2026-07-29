@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
@@ -8,6 +9,7 @@ import { UsersService } from '../users/users.service';
 import { LocationsService } from '../locations/locations.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
+import { buildReferralPayload } from '../common/referral-code.util';
 import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 @Injectable()
@@ -21,6 +23,7 @@ export class AgentsService {
     private readonly usersService: UsersService,
     private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
     private readonly locationsService: LocationsService,
+    private readonly configService: ConfigService,
   ) {}
 
   // ── Config (agent-accessible) ────────────────────────────────────
@@ -293,6 +296,36 @@ export class AgentsService {
         displayName: a.displayName,
         phoneNumber: a.phoneNumber ?? null,
       }));
+  }
+
+  /**
+   * The agent's shareable referral link. The code is generated on first access for
+   * agents created before referral codes existed, so this is safe to call for any
+   * agent. `link` is null when TELEGRAM_BOT_USERNAME is not configured — the code
+   * itself is still returned so the agent can pass it on manually.
+   */
+  async getReferral(agentId: string): Promise<{
+    code: string;
+    link: string | null;
+    referredPlayers: number;
+  }> {
+    const [code, referredPlayers] = await Promise.all([
+      this.usersService.ensureAgentReferralCode(agentId),
+      this.usersService.countReferredPlayers(agentId),
+    ]);
+
+    const botUsername = this.configService
+      .get<string>('TELEGRAM_BOT_USERNAME', '')
+      .trim()
+      .replace(/^@/, '');
+
+    return {
+      code,
+      link: botUsername
+        ? `https://t.me/${botUsername}?start=${buildReferralPayload(code)}`
+        : null,
+      referredPlayers,
+    };
   }
 
   /**

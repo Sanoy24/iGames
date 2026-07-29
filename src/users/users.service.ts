@@ -6,6 +6,7 @@ import { User } from './entities/user.entity';
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
+import { generateReferralCode, normalizeReferralCode } from '../common/referral-code.util';
 import { AgentDutyMode, isAgentEffectivelyOnDuty, isWithinWorkingWindow } from '../common/agent-duty.util';
 
 export type TelegramIdentityInput = {
@@ -371,6 +372,7 @@ export class UsersService {
         phoneNumber: normalizedPhone,
         roles: ['agent'],
         status: 'active',
+        referralCode: await this.allocateReferralCode(manager),
         workStartHour: input.workStartHour,
         workStartMinute: input.workStartMinute,
         workEndHour: input.workEndHour,
@@ -600,6 +602,110 @@ export class UsersService {
       if (sa !== sb) return sa - sb;
       return a.createdAt.getTime() - b.createdAt.getTime();
     });
+  }
+
+  // ── Agent referral codes ───────────────────────────────────────────
+  // Attribution only: a code sets the player's `referredByAgentId`, which drives
+  // "customers brought" stats and lobby highlighting. It deliberately does NOT
+  // introduce a payout path — agent commission stays per-deposit and per-room.
+
+  /**
+   * A referral code not already taken. Retries on collision rather than trusting
+   * randomness: the unique index on `users.referralCode` is the real guarantee,
+   * and 30^6 keeps collisions vanishingly rare, so a handful of tries is plenty.
+   */
+  private async allocateReferralCode(manager?: EntityManager): Promise<string> {
+    const userRepo = manager ? manager.getRepository(User) : this.userRepository;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const code = generateReferralCode();
+      const taken = await userRepo.findOne({ where: { referralCode: code }, select: ['id'] });
+      if (!taken) return code;
+    }
+    throw new ConflictException('Could not allocate a referral code — please try again');
+  }
+
+  /**
+   * The agent's referral code, generating one on first access. Lazy generation is
+   * what backfills agents created BEFORE referral codes existed, so no one-off
+   * migration script is needed.
+   */
+  async ensureAgentReferralCode(agentId: string): Promise<string> {
+    const user = await this.userRepository.findOneBy({ id: agentId });
+    if (!user || !Array.isArray(user.roles) || !user.roles.includes('agent' as any)) {
+      throw new NotFoundException('Agent not found');
+    }
+    if (user.referralCode) return user.referralCode;
+
+    const code = await this.allocateReferralCode();
+    // Guarded update: if a concurrent request allocated one first, keep theirs
+    // instead of overwriting a code that may already be in circulation.
+    await this.userRepository
+      .createQueryBuilder()
+      .update(User)
+      .set({ referralCode: code })
+      .where('id = :agentId AND referralCode IS NULL', { agentId })
+      .execute();
+
+    const refreshed = await this.userRepository.findOneBy({ id: agentId });
+    return refreshed?.referralCode ?? code;
+  }
+
+  /** How many players this agent has been credited with bringing in. */
+  async countReferredPlayers(agentId: string): Promise<number> {
+    return this.userRepository.count({ where: { referredByAgentId: agentId } });
+  }
+
+  /**
+   * Attribute a player to the agent owning `code`. Returns the agent's display
+   * name on success, or null when the code is unknown, the agent is not an
+   * active agent, the player is the agent themselves, or the player is ALREADY
+   * attributed — the `IS NULL` guard means first attribution wins and is never
+   * reassigned, matching the deposit-linking path in PaymentsService.
+   */
+  async attributeReferral(userId: string, rawCode: string): Promise<string | null> {
+    const code = normalizeReferralCode(rawCode);
+    if (!code) return null;
+
+    const agent = await this.userRepository.findOneBy({ referralCode: code });
+    if (!agent || agent.status !== 'active') return null;
+    if (!Array.isArray(agent.roles) || !agent.roles.includes('agent' as any)) return null;
+    if (agent.id === userId) return null; // an agent can't refer themselves
+
+    const result = await this.userRepository
+      .createQueryBuilder()
+      .update(User)
+      .set({ referredByAgentId: agent.id })
+      .where('id = :userId AND referredByAgentId IS NULL', { userId })
+      .execute();
+
+    return (result.affected ?? 0) > 0 ? agent.displayName : null;
+  }
+
+  /**
+   * Record an agent's shared GPS pin. INFORMATIONAL ONLY — this never touches
+   * `agent_locations`, so it cannot change which players the agent is allowed to
+   * see (that stays admin-managed). See the column docs on `User.sharedLatitude`.
+   */
+  async setAgentSharedLocation(
+    agentId: string,
+    latitude: number,
+    longitude: number,
+  ): Promise<void> {
+    await this.userRepository.update(agentId, {
+      sharedLatitude: latitude,
+      sharedLongitude: longitude,
+      sharedLocationAt: new Date(),
+    });
+  }
+
+  /** Whether this agent has completed the mandatory location-share step. */
+  async hasSharedLocation(agentId: string): Promise<boolean> {
+    const agent = await this.userRepository.findOne({
+      where: { id: agentId },
+      select: ['id', 'sharedLatitude', 'sharedLongitude'],
+    });
+    return !!agent && agent.sharedLatitude != null && agent.sharedLongitude != null;
   }
 
   async findBackofficeUserByCredentials(

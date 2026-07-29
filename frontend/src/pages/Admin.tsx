@@ -980,6 +980,41 @@ function LocationsAdmin() {
             <div className="adm-empty">Loading coverage…</div>
           ) : (
             <>
+              {/*
+                The agent's own shared pin, from the agent bot's mandatory location
+                step. A HINT for picking the boxes below — it never grants access by
+                itself (a Telegram pin is client-supplied and freely movable, so
+                coverage stays admin-assigned).
+              */}
+              {(() => {
+                const picked = agents.find((a) => a.id === assignAgentId);
+                if (!picked?.sharedLatitude || !picked?.sharedLongitude) {
+                  return (
+                    <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+                      This agent has not shared a location yet.
+                    </div>
+                  );
+                }
+                const coords = `${picked.sharedLatitude}, ${picked.sharedLongitude}`;
+                return (
+                  <div style={{ marginTop: 10, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <MapPin size={13} style={{ opacity: 0.8 }} />
+                    <span style={{ opacity: 0.8 }}>Agent shared pin:</span>
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${picked.sharedLatitude},${picked.sharedLongitude}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      {coords}
+                    </a>
+                    {picked.sharedLocationAt && (
+                      <span style={{ opacity: 0.6 }}>({formatDateTime(picked.sharedLocationAt)})</span>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, marginTop: 12 }}>
                 {locations.map((loc) => {
                   const checked = assignSelected.has(loc.id);

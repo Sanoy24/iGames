@@ -23,6 +23,9 @@ function makeService(input: {
   listPlayersResult?: any;
   findByIdResult?: any;
   queryRows?: unknown[][];
+  referralCode?: string;
+  referredPlayers?: number;
+  botUsername?: string;
 }) {
   const usersService = {
     findOnDutyAgent: jest.fn().mockResolvedValue(input.onDutyAgent ?? null),
@@ -31,6 +34,8 @@ function makeService(input: {
       input.listPlayersResult ?? { data: [], total: 0, page: 1, limit: 20, totalPages: 0 },
     ),
     findById: jest.fn().mockResolvedValue(input.findByIdResult),
+    ensureAgentReferralCode: jest.fn().mockResolvedValue(input.referralCode ?? 'ABC234'),
+    countReferredPlayers: jest.fn().mockResolvedValue(input.referredPlayers ?? 0),
   } as unknown as UsersService;
 
   const walletService = {
@@ -53,6 +58,12 @@ function makeService(input: {
     }),
   };
 
+  const configService = {
+    get: jest.fn().mockImplementation((key: string, fallback?: string) =>
+      key === 'TELEGRAM_BOT_USERNAME' ? (input.botUsername ?? '') : (fallback ?? ''),
+    ),
+  };
+
   const service = new AgentsService(
     {} as any, // agentShiftRepository
     systemConfigRepository as any,
@@ -60,9 +71,10 @@ function makeService(input: {
     usersService,
     {} as any, // withdrawalProofVerifier
     locationsService,
+    configService as any,
   );
 
-  return { service, usersService, walletService, locationsService, systemConfigRepository };
+  return { service, usersService, walletService, locationsService, systemConfigRepository, configService };
 }
 
 describe('AgentsService — deposit-agent listing excludes zero-balance agents', () => {

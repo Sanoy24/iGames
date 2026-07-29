@@ -1,14 +1,90 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Search, ArrowLeft, RefreshCw, Users } from 'lucide-react';
-import { agentApi, type AreaPlayer, type AreaPlayerActivity } from '../lib/api';
+import { Search, ArrowLeft, Check, Copy, RefreshCw, Share2, Users } from 'lucide-react';
+import { agentApi, type AgentReferral, type AreaPlayer, type AreaPlayerActivity } from '../lib/api';
 import { formatCredits } from '../store/useStore';
 import { formatDateTime, getErrorMessage } from '../lib/utils';
 
 /**
- * "Players in My Area" — shared between the web Agent page (Agent.tsx, as a
- * tab) and the agent bot's Mini App entry (pages/AgentArea.tsx), so both
- * surfaces show the identical feature rather than a lookalike duplicate.
+ * "Players in My Area" — a tab within the web Agent page (Agent.tsx). Also
+ * copied verbatim into the standalone agent-frontend project's Agent.tsx, so
+ * both deployments show the identical feature rather than a lookalike duplicate.
  */
+
+// ══════════════════════════════════════════════════════════════════
+// Referral link — the agent's own code + shareable deep link
+// ══════════════════════════════════════════════════════════════════
+export function ReferralCard() {
+  const [referral, setReferral] = useState<AgentReferral | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    agentApi.getReferral()
+      .then(setReferral)
+      .catch((err) => setError(getErrorMessage(err)));
+  }, []);
+
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard is unavailable in some in-app webviews — the code stays
+      // visible on screen, so the agent can still read it out or retype it.
+      setError('Could not copy automatically — select the code above to copy it.');
+    }
+  };
+
+  if (error && !referral) {
+    return (
+      <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 13, color: 'var(--text-muted)' }}>
+        {error}
+      </div>
+    );
+  }
+  if (!referral) return null;
+
+  return (
+    <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <Share2 size={16} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontSize: 13, fontWeight: 800 }}>My Referral Link</span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)' }}>
+          {referral.referredPlayers} player{referral.referredPlayers === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <code style={{
+          flex: 1, background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 8, padding: '9px 12px', fontSize: 17, fontWeight: 800,
+          letterSpacing: 2, textAlign: 'center', color: 'var(--accent)',
+        }}>
+          {referral.code}
+        </code>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => void copy(referral.link ?? referral.code)}
+          title={referral.link ? 'Copy referral link' : 'Copy referral code'}
+        >
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+
+      <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        {referral.link
+          ? 'Share this link — anyone who joins through it is counted as your customer.'
+          : 'Share this code with new players so they are counted as your customers.'}
+      </p>
+
+      {error && (
+        <p style={{ margin: '8px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>{error}</p>
+      )}
+    </div>
+  );
+}
 
 // ══════════════════════════════════════════════════════════════════
 // Player list — searchable, paginated, area-scoped

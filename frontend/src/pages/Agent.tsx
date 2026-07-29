@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, MapPin, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
 import { agentApi, walletApi, type AgentSelfPerformance } from '../lib/api';
 import { SupportConsole } from '../components/SupportConsole';
-import { AreaPlayerList, PlayerDrillDown } from '../components/AgentAreaViews';
+import { AreaPlayerList, PlayerDrillDown, ReferralCard } from '../components/AgentAreaViews';
 import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -203,7 +203,7 @@ export function Agent() {
       {view === 'area' && (
         selectedAreaPlayer
           ? <PlayerDrillDown userId={selectedAreaPlayer} onBack={() => setSelectedAreaPlayer(null)} />
-          : <AreaPlayerList onSelectPlayer={setSelectedAreaPlayer} />
+          : <><ReferralCard /><AreaPlayerList onSelectPlayer={setSelectedAreaPlayer} /></>
       )}
 
       {view === 'withdrawals' && (<>

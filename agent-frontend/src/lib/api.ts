@@ -741,6 +741,7 @@ export const adminWithdrawalsApi = {
 export const agentApi = {
   getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
   getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
+  getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
   getTransactions: () => api.get<{ ledger: LedgerEntry[]; withdrawals: Withdrawal[] }>('/agent/transactions').then((r) => r.data),
@@ -760,6 +761,13 @@ export const agentApi = {
   },
   getAreaPlayerActivity: (userId: string) =>
     api.get<AreaPlayerActivity>(`/agent/area/players/${userId}/activity`).then((r) => r.data),
+};
+
+export type AgentReferral = {
+  code: string;
+  /** Ready-made t.me deep link, or null when TELEGRAM_BOT_USERNAME is unset server-side. */
+  link: string | null;
+  referredPlayers: number;
 };
 
 export type AreaPlayer = {

@@ -6,6 +6,16 @@ import { AgentShift } from '../../agents/entities/agent-shift.entity';
 export type UserRole = 'player' | 'admin' | 'agent' | 'system';
 export type UserStatus = 'active' | 'suspended' | 'closed';
 
+/**
+ * MySQL returns DECIMAL as a string to avoid precision loss. Coordinates are
+ * well inside double precision, so converting to a plain number on read keeps
+ * the service side arithmetic-friendly. (Mirrors the Location entity.)
+ */
+const decimalTransformer = {
+  to: (value: number | null | undefined) => value ?? null,
+  from: (value: string | null) => (value === null || value === undefined ? null : Number(value)),
+};
+
 @Entity({ name: 'users', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class User {
   @PrimaryGeneratedColumn('uuid')
@@ -73,13 +83,26 @@ export class User {
   workDaysOfWeek?: number[];
 
   /**
-   * Agent (user id) who brought this customer — set to the agent who processed the
-   * customer's FIRST credited Telebirr deposit. Used for "customers brought" stats
+   * Agent (user id) who brought this customer — set EITHER by the agent's referral
+   * code at signup (see `referralCode`), or by whoever processed the customer's
+   * FIRST credited Telebirr deposit, whichever happens first. Never reassigned
+   * once set (every writer guards on `IS NULL`), so a code used at signup beats a
+   * later deposit handled by a different agent. Used for "customers brought" stats
    * and to highlight the customer's home room in the lobby. Null = unattributed.
    */
   @Column({ type: 'varchar', length: 36, nullable: true })
   @Index()
   referredByAgentId?: string | null;
+
+  /**
+   * An AGENT's own shareable referral code (players never have one). Handed out as
+   * a `t.me/<bot>?start=ref_<code>` deep link; a player arriving through it gets
+   * `referredByAgentId` set to this agent. Attribution only — it does not create a
+   * payout path of its own (agent commission stays per-deposit and per-room).
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  @Index({ unique: true })
+  referralCode?: string | null;
 
   /**
    * Where the player says they came from, picked during registration. This is the
@@ -101,6 +124,23 @@ export class User {
 
   @Column({ type: 'timestamp', nullable: true })
   locationCapturedAt?: Date | null;
+
+  /**
+   * An AGENT's own shared GPS pin, captured via the agent bot's mandatory
+   * location step. Deliberately INFORMATIONAL ONLY: it is shown to admins as a
+   * hint for assigning areas, but it does NOT grant area access. Area visibility
+   * is governed solely by admin-managed `agent_locations` rows — a Telegram pin is
+   * client-supplied and trivially movable, so treating it as authorization would
+   * let an agent read any area's customer data by dragging the map.
+   */
+  @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true, transformer: decimalTransformer })
+  sharedLatitude?: number | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true, transformer: decimalTransformer })
+  sharedLongitude?: number | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  sharedLocationAt?: Date | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

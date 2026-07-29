@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Bot, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
+import { Bot, Context, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
 import { UsersService } from '../users/users.service';
 import { normalizeEthiopianPhone } from '../common/phone.util';
 
@@ -100,6 +100,19 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
       .oneTime();
   }
 
+  /**
+   * Location is mandatory for agents, so unlike the player bot there is no
+   * "pick from a list" escape hatch here — an agent's own coordinates are the
+   * point. If a client can't send a pin, an admin can still assign their area
+   * directly, and web credentials login remains available regardless.
+   */
+  private locationRequestKeyboard(): Keyboard {
+    return new Keyboard()
+      .requestLocation('📍 Share My Location')
+      .resized()
+      .oneTime();
+  }
+
   private registerCommands(bot: Bot, miniAppUrl: string): void {
     bot.command('start', async (ctx) => {
       await ctx.reply(
@@ -172,16 +185,83 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
         return;
       }
 
-      const keyboard = new InlineKeyboard().webApp('📊 Open Agent Panel', miniAppUrl);
+      // Location is mandatory for agents: ask for it now and withhold the panel
+      // button until it's shared. Falls straight through to the panel if this
+      // agent already shared one on a previous link.
+      let alreadyShared = false;
+      try {
+        alreadyShared = await this.usersService.hasSharedLocation(agent.id);
+      } catch (err) {
+        this.logger.error(`Failed to check shared location for agent ${agent.id}`, err instanceof Error ? err.stack : err);
+      }
+
+      if (!alreadyShared) {
+        await ctx.reply(
+          `Linked! Welcome, ${agent.displayName}.\n\n` +
+          `One more step — share your location so we know which area you operate in:`,
+          { reply_markup: this.locationRequestKeyboard() },
+        );
+        return;
+      }
+
       await ctx.reply(
-        `Linked! Welcome, ${agent.displayName}.\n\nTap below to open your Agent Panel and enter your password:`,
+        `Linked! Welcome, ${agent.displayName}.`,
         { reply_markup: { remove_keyboard: true } as never },
       );
-      await ctx.reply('Open Agent Panel:', { reply_markup: keyboard });
+      await this.sendPanelButton(ctx, miniAppUrl);
+    });
+
+    // Mandatory agent location step. Recorded for admin reference ONLY — it does
+    // NOT assign the agent an area (see UsersService.setAgentSharedLocation).
+    bot.on('message:location', async (ctx) => {
+      const telegramUserId = ctx.from?.id;
+      if (!telegramUserId) return;
+
+      const { latitude, longitude } = ctx.message.location;
+
+      let agentId: string | null = null;
+      try {
+        const linked = await this.usersService.findAgentPhoneByTelegramId(String(telegramUserId));
+        if (linked) {
+          const agent = await this.usersService.findAgentByPhone(linked.phoneNumber);
+          agentId = agent?.id ?? null;
+        }
+      } catch (err) {
+        this.logger.error(`Failed to resolve agent for Telegram user ${telegramUserId}`, err instanceof Error ? err.stack : err);
+      }
+
+      if (!agentId) {
+        await ctx.reply('Please share your phone number first to link your agent account.', {
+          reply_markup: this.contactRequestKeyboard(),
+        });
+        return;
+      }
+
+      try {
+        await this.usersService.setAgentSharedLocation(agentId, latitude, longitude);
+      } catch (err) {
+        this.logger.error(`Failed to save shared location for agent ${agentId}`, err instanceof Error ? err.stack : err);
+        await ctx.reply('Could not save your location — please try again.', {
+          reply_markup: this.locationRequestKeyboard(),
+        });
+        return;
+      }
+
+      await ctx.reply('Location saved. Thank you!', {
+        reply_markup: { remove_keyboard: true } as never,
+      });
+      await this.sendPanelButton(ctx, miniAppUrl);
     });
 
     bot.on('message:text', async (ctx) => {
       await ctx.reply('Send /start to link your agent account.');
+    });
+  }
+
+  private async sendPanelButton(ctx: Context, miniAppUrl: string): Promise<void> {
+    const keyboard = new InlineKeyboard().webApp('📊 Open Agent Panel', miniAppUrl);
+    await ctx.reply('Tap below to open your Agent Panel and enter your password:', {
+      reply_markup: keyboard,
     });
   }
 }

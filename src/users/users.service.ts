@@ -58,23 +58,33 @@ export class UsersService {
     const existingIdentity = await authRepo.findOneBy({ provider, providerUserId });
 
     if (existingIdentity) {
-      existingIdentity.providerUsername = input.username?.toLowerCase();
-      existingIdentity.profileSnapshot = this.toTelegramSnapshot(input);
-      existingIdentity.lastAuthAt = now;
-      await authRepo.save(existingIdentity);
-
       const existingUser = await userRepo.findOneBy({ id: existingIdentity.userId });
       if (!existingUser) {
         throw new NotFoundException('User not found');
       }
-      existingUser.lastLoginAt = now;
-      await userRepo.save(existingUser);
 
-      return {
-        user: existingUser,
-        identity: existingIdentity,
-        created: false
-      };
+      if (!this.isPlayerUser(existingUser)) {
+        await this.moveTelegramIdentityToRoleScope(
+          existingIdentity,
+          existingUser,
+          providerUserId,
+          authRepo,
+        );
+      } else {
+        existingIdentity.providerUsername = input.username?.toLowerCase();
+        existingIdentity.profileSnapshot = this.toTelegramSnapshot(input);
+        existingIdentity.lastAuthAt = now;
+        await authRepo.save(existingIdentity);
+
+        existingUser.lastLoginAt = now;
+        await userRepo.save(existingUser);
+
+        return {
+          user: existingUser,
+          identity: existingIdentity,
+          created: false
+        };
+      }
     }
 
     const newUser = userRepo.create({
@@ -105,6 +115,133 @@ export class UsersService {
       identity: newIdentity,
       created: true
     };
+  }
+
+  private isPlayerUser(user: User): boolean {
+    return Array.isArray(user.roles) && user.roles.includes('player' as any);
+  }
+
+  private getPrimaryScopedRole(user: User): string {
+    if (Array.isArray(user.roles)) {
+      const role = user.roles.find((r) => r !== 'player');
+      if (role) return role;
+    }
+    return 'user';
+  }
+
+  private async moveTelegramIdentityToRoleScope(
+    identity: AuthIdentity,
+    user: User,
+    telegramUserId: string,
+    authRepo: Repository<AuthIdentity>,
+  ): Promise<void> {
+    const scopedProviderUserId = this.buildTelegramProviderUserId(
+      telegramUserId,
+      this.getPrimaryScopedRole(user),
+    );
+
+    if (identity.providerUserId === scopedProviderUserId) return;
+
+    const existingScoped = await authRepo.findOneBy({
+      provider: 'telegram',
+      providerUserId: scopedProviderUserId,
+    });
+    if (existingScoped) {
+      if (existingScoped.userId === identity.userId) {
+        await authRepo.remove(identity);
+      }
+      return;
+    }
+
+    identity.providerUserId = scopedProviderUserId;
+    await authRepo.save(identity);
+  }
+
+  /**
+   * All LIVE identities for a given provider + base id (a phone number for
+   * provider:'password', a Telegram user id for provider:'telegram'). One
+   * base id can now back more than one account as long as each is a
+   * DIFFERENT role (e.g. one admin + one agent sharing a phone; or one
+   * player + one agent sharing the same Telegram account) — see
+   * createAgentUser/ensureAdminAccount/linkTelegramIdentityToUser. Password
+   * identities keep the first account on the plain id; Telegram keeps the plain
+   * id for the player Mini App and stores non-player links as `${baseId}#${role}`
+   * so the game bot never resolves to an agent/admin account. The base id itself
+   * stays the one thing that identifies the person; lookup helpers match every
+   * form for that base id and disambiguate by password/role respectively.
+   *
+   * Self-healing: if an identity's userId points at a User row that no longer
+   * exists (e.g. someone deleted the user directly in the database, bypassing
+   * the app — there is no real FK constraint enforcing cascade, since schema
+   * is managed by ensure-schema.ts, not TypeORM sync), that stale identity is
+   * deleted here on the spot instead of permanently blocking the base id.
+   */
+  private async findLiveIdentities(
+    provider: 'password' | 'telegram',
+    baseId: string,
+    manager?: EntityManager,
+  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
+    const authRepo = manager ? manager.getRepository(AuthIdentity) : this.authIdentityRepository;
+    const userRepo = manager ? manager.getRepository(User) : this.userRepository;
+
+    const candidates = await authRepo.find({
+      where: [
+        { provider, providerUserId: baseId },
+        { provider, providerUserId: Like(`${baseId}#%`) },
+      ],
+      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId'],
+    });
+    if (candidates.length === 0) return [];
+
+    const users = await userRepo.findBy({ id: In(candidates.map((c) => c.userId)) });
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    const live: Array<{ identity: AuthIdentity; user: User }> = [];
+    const orphaned: AuthIdentity[] = [];
+    for (const identity of candidates) {
+      const user = userById.get(identity.userId);
+      if (user) live.push({ identity, user });
+      else orphaned.push(identity);
+    }
+
+    if (orphaned.length > 0) {
+      await authRepo.remove(orphaned).catch(() => undefined);
+    }
+
+    return live;
+  }
+
+  private async findLivePasswordIdentities(
+    phone: string,
+    manager?: EntityManager,
+  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
+    return this.findLiveIdentities('password', phone, manager);
+  }
+
+  private async findLiveTelegramIdentities(
+    telegramUserId: string,
+    manager?: EntityManager,
+  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
+    return this.findLiveIdentities('telegram', telegramUserId, manager);
+  }
+
+  /** The providerUserId to store for a NEW identity on this base id — see findLiveIdentities. */
+  private buildScopedProviderUserId(
+    baseId: string,
+    role: string,
+    existingForBaseId: Array<{ identity: AuthIdentity; user: User }>,
+  ): string {
+    return existingForBaseId.length === 0 ? baseId : `${baseId}#${role}`;
+  }
+
+  /**
+   * Telegram's player Mini App auth intentionally looks up the plain Telegram
+   * user id. Agent/admin Telegram links must therefore be role-scoped even when
+   * they are the first link for that Telegram account, otherwise the player bot
+   * can log into the agent account and render the Agent tab on the game domain.
+   */
+  private buildTelegramProviderUserId(baseId: string, role: string): string {
+    return role === 'player' ? baseId : `${baseId}#${role}`;
   }
 
   /**
@@ -202,85 +339,6 @@ export class UsersService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  /**
-   * All LIVE identities for a given provider + base id (a phone number for
-   * provider:'password', a Telegram user id for provider:'telegram'). One
-   * base id can now back more than one account as long as each is a
-   * DIFFERENT role (e.g. one admin + one agent sharing a phone; or one
-   * player + one agent sharing the same Telegram account) — see
-   * createAgentUser/ensureAdminAccount/linkTelegramIdentityToUser. The first
-   * account for a base id keeps the plain id as its providerUserId
-   * (unchanged from before, so all existing rows keep working as-is); a
-   * SECOND, different-role account sharing that base id is stored as
-   * `${baseId}#${role}` so it doesn't collide with the existing unique index
-   * on (provider, providerUserId) — the phone/Telegram id itself stays the
-   * one thing that identifies the person; findBackofficeUserByCredentials and
-   * linkTelegramIdentityToUser match every form for that base id and
-   * disambiguate by password/role respectively.
-   *
-   * Self-healing: if an identity's userId points at a User row that no longer
-   * exists (e.g. someone deleted the user directly in the database, bypassing
-   * the app — there is no real FK constraint enforcing cascade, since schema
-   * is managed by ensure-schema.ts, not TypeORM sync), that stale identity is
-   * deleted here on the spot instead of permanently blocking the base id.
-   */
-  private async findLiveIdentities(
-    provider: 'password' | 'telegram',
-    baseId: string,
-    manager?: EntityManager,
-  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
-    const authRepo = manager ? manager.getRepository(AuthIdentity) : this.authIdentityRepository;
-    const userRepo = manager ? manager.getRepository(User) : this.userRepository;
-
-    const candidates = await authRepo.find({
-      where: [
-        { provider, providerUserId: baseId },
-        { provider, providerUserId: Like(`${baseId}#%`) },
-      ],
-      select: ['id', 'userId', 'passwordHash', 'provider', 'providerUserId'],
-    });
-    if (candidates.length === 0) return [];
-
-    const users = await userRepo.findBy({ id: In(candidates.map((c) => c.userId)) });
-    const userById = new Map(users.map((u) => [u.id, u]));
-
-    const live: Array<{ identity: AuthIdentity; user: User }> = [];
-    const orphaned: AuthIdentity[] = [];
-    for (const identity of candidates) {
-      const user = userById.get(identity.userId);
-      if (user) live.push({ identity, user });
-      else orphaned.push(identity);
-    }
-
-    if (orphaned.length > 0) {
-      await authRepo.remove(orphaned).catch(() => undefined);
-    }
-
-    return live;
-  }
-
-  private async findLivePasswordIdentities(
-    phone: string,
-    manager?: EntityManager,
-  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
-    return this.findLiveIdentities('password', phone, manager);
-  }
-
-  private async findLiveTelegramIdentities(
-    telegramUserId: string,
-    manager?: EntityManager,
-  ): Promise<Array<{ identity: AuthIdentity; user: User }>> {
-    return this.findLiveIdentities('telegram', telegramUserId, manager);
-  }
-
-  /** The providerUserId to store for a NEW identity on this base id — see findLiveIdentities. */
-  private buildScopedProviderUserId(
-    baseId: string,
-    role: string,
-    existingForBaseId: Array<{ identity: AuthIdentity; user: User }>,
-  ): string {
-    return existingForBaseId.length === 0 ? baseId : `${baseId}#${role}`;
-  }
 
   async createAgentUser(input: {
     phoneNumber: string;
@@ -638,10 +696,18 @@ export class UsersService {
   async linkTelegramIdentityToUser(userId: string, input: TelegramIdentityInput, role: string): Promise<AuthIdentity> {
     const now = new Date();
     const existingForTelegramId = await this.findLiveTelegramIdentities(input.telegramUserId);
+    const providerUserId = this.buildTelegramProviderUserId(input.telegramUserId, role);
 
-    const own = existingForTelegramId.find(({ user }) => user.id === userId);
+    const own = existingForTelegramId.find(({ user, identity }) =>
+      user.id === userId &&
+      (
+        identity.providerUserId === providerUserId ||
+        (Array.isArray(user.roles) && user.roles.includes(role as any))
+      ),
+    );
     if (own) {
       const identity = own.identity;
+      identity.providerUserId = providerUserId;
       identity.providerUsername = input.username?.toLowerCase();
       identity.profileSnapshot = this.toTelegramSnapshot(input);
       identity.lastAuthAt = now;
@@ -655,7 +721,6 @@ export class UsersService {
       throw new ConflictException('This Telegram account is already linked to a different account');
     }
 
-    const providerUserId = this.buildScopedProviderUserId(input.telegramUserId, role, existingForTelegramId);
     const identity = this.authIdentityRepository.create({
       userId,
       provider: 'telegram',

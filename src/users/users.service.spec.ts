@@ -66,6 +66,9 @@ describe('UsersService — agent Telegram phone linking', () => {
         const found = users.filter((u) => matchesWhere(u as any, where));
         return Promise.resolve(found);
       }),
+      create: jest.fn().mockImplementation((dto) => ({ id: dto.id ?? 'user-new', ...dto })),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve({ id: entity.id ?? 'user-new', ...entity })),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
 
     const service = new UsersService(
@@ -136,8 +139,31 @@ describe('UsersService — agent Telegram phone linking', () => {
     });
   });
 
+  describe('findOrCreateTelegramUser', () => {
+    it('moves a raw non-player telegram identity aside and creates the player identity', async () => {
+      const { service, authIdentityRepository, userRepository } = makeService({
+        authIdentities: [{ id: 'id-agent', provider: 'telegram', providerUserId: '999', userId: 'agent-1' }],
+        users: [{ id: 'agent-1', roles: ['agent'] as any, displayName: 'Agent One' }],
+      });
+
+      const result = await service.findOrCreateTelegramUser({ telegramUserId: '999', username: 'player_tg' });
+
+      expect(authIdentityRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'id-agent', providerUserId: '999#agent' }),
+      );
+      expect(userRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ roles: ['player'], username: 'player_tg' }),
+      );
+      expect(authIdentityRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-new', provider: 'telegram', providerUserId: '999' }),
+      );
+      expect(result.user.roles).toEqual(['player']);
+      expect(result.created).toBe(true);
+    });
+  });
+
   describe('linkTelegramIdentityToUser', () => {
-    it('creates a new telegram identity pointing at the given user', async () => {
+    it('creates a role-scoped telegram identity pointing at the given agent user', async () => {
       const { service, authIdentityRepository } = makeService({
         authIdentities: [],
         users: [{ id: 'agent-1', roles: ['agent'] as any, displayName: 'Agent One' }],
@@ -146,11 +172,11 @@ describe('UsersService — agent Telegram phone linking', () => {
       await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'agent_tg' }, 'agent');
 
       expect(authIdentityRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 'agent-1', provider: 'telegram', providerUserId: '999' }),
+        expect.objectContaining({ userId: 'agent-1', provider: 'telegram', providerUserId: '999#agent' }),
       );
     });
 
-    it('reuses (updates) an existing identity already linked to the SAME user', async () => {
+    it('moves an existing raw identity for the same agent to the role-scoped id', async () => {
       const { service, authIdentityRepository } = makeService({
         authIdentities: [{ id: 'id-1', provider: 'telegram', providerUserId: '999', userId: 'agent-1' }],
         users: [{ id: 'agent-1', roles: ['agent'] as any, displayName: 'Agent One' }],
@@ -159,7 +185,7 @@ describe('UsersService — agent Telegram phone linking', () => {
       await service.linkTelegramIdentityToUser('agent-1', { telegramUserId: '999', username: 'renamed' }, 'agent');
 
       expect(authIdentityRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'id-1', userId: 'agent-1' }),
+        expect.objectContaining({ id: 'id-1', userId: 'agent-1', providerUserId: '999#agent' }),
       );
     });
 

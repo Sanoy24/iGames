@@ -217,7 +217,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
   private contactRequestKeyboard(): Keyboard {
     return new Keyboard()
-      .requestContact('📱 Share My Phone Number')
+      .requestContact('📱 ስልክ ቁጥሬን አጋራ')
       .resized()
       .oneTime();
   }
@@ -286,7 +286,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       await this.finishLocationStep(
         ctx,
         miniAppUrl,
-        `Thanks! Your number has been saved for payouts.\n\nTap below to start playing:`,
+        `እናመሰግናለን! ቁጥርዎ ለክፍያ ተቀምጧል።\n\nለመጫወት ከታች ያለውን ይንኩ፦`,
       );
       return;
     }
@@ -301,7 +301,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
   /** Confirm the recorded location and hand the player the Play button. */
   private async finishLocationStep(ctx: Context, miniAppUrl: string, confirmation: string): Promise<void> {
-    const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
+    const keyboard = this.getPlayKeyboard('🎮 አሁን ተጫወት', miniAppUrl);
     await ctx.reply(confirmation, {
       reply_markup: {
         remove_keyboard: true,
@@ -332,18 +332,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
       if (userId && this.phoneCache.has(userId)) {
         // Already shared — go straight to play
-        const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
+        const keyboard = this.getPlayKeyboard('🎮 አሁን ተጫወት', miniAppUrl);
         await ctx.reply(
-          `Welcome back, ${firstName}! 🎰\n\nTap below to start playing.`,
+          `እንኳን ደህና መጡ ተመልሰው፣ ${firstName}! 🎰\n\nለመጫወት ከታች ያለውን ይንኩ።`,
           { reply_markup: keyboard },
         );
         return;
       }
 
       await ctx.reply(
-        `Welcome to iGames, ${firstName}! 🎰\n\n` +
-        `Play Keno and 90-Ball Bingo right here in Telegram.\n\n` +
-        `To get started and enable Telebirr payouts, please share your phone number:`,
+        `እንኳን ወደ iGames በደህና መጡ፣ ${firstName}! 🎰\n\n` +
+        `ኬኖ እና 90-ኳስ ቢንጎን በቴሌግራም ላይ ይጫወቱ።\n\n` +
+        `ለመጀመር እና የቴሌብር ክፍያ ለማንቃት እባክዎ ስልክ ቁጥርዎን ያጋሩ፦`,
         { reply_markup: this.contactRequestKeyboard() },
       );
     });
@@ -355,7 +355,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
       // Telegram only allows users to share their own contact via the request button
       if (!contact.phone_number || (contact.user_id && contact.user_id !== userId)) {
-        await ctx.reply('Please share your own phone number using the button provided.', {
+        await ctx.reply('እባክዎ የቀረበውን አዝራር በመጠቀም የራስዎን ስልክ ቁጥር ያጋሩ።', {
           reply_markup: this.contactRequestKeyboard(),
         });
         return;
@@ -384,7 +384,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
       if (!savedPhone) {
         await ctx.reply(
-          `That doesn't look like a valid Ethiopian phone number. Please share your phone using the button below.`,
+          `ይህ ትክክለኛ የኢትዮጵያ ስልክ ቁጥር አይመስልም። እባክዎ ከታች ባለው አዝራር ስልክዎን ያጋሩ።`,
           { reply_markup: this.contactRequestKeyboard() },
         );
         return;
@@ -524,7 +524,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // Handle any other text message with a nudge to play
     this.bot.on('message:text', async (ctx) => {
-      const keyboard = this.getPlayKeyboard('🎮 Play Now', miniAppUrl);
+      const keyboard = this.getPlayKeyboard('🎮 አሁን ተጫወት', miniAppUrl);
 
       await ctx.reply(
         `Tap the button below to open iGames:`,

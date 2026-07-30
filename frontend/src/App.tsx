@@ -68,9 +68,14 @@ export function App() {
   }, [isAuthenticated, user]);
 
   useEffect(() => {
-    if (!isAuthenticated || wallet) return;
+    if (!isAuthenticated || !user || wallet) return;
+    // Admins have no personal wallet to manage — WalletBar shows the shared
+    // Master Wallet for them instead. Skipping the fetch here also means
+    // ensureDefaultWallet never lazily creates an unused personal wallet row
+    // for a pure-admin account in the first place.
+    if (user.roles.includes('admin')) return;
     walletApi.getWallet().then(setWallet).catch(() => {});
-  }, [isAuthenticated, wallet, setWallet]);
+  }, [isAuthenticated, user, wallet, setWallet]);
 
   useEffect(() => {
     if (authStatus !== 'idle' || loginStarted.current) return;

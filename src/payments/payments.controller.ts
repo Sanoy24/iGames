@@ -4,6 +4,8 @@ import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiQuery, ApiTags } f
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
@@ -12,7 +14,7 @@ import { AgentsService } from '../agents/agents.service';
 
 @ApiTags('payments')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('payments')
 export class PaymentsController {
   constructor(
@@ -66,6 +68,13 @@ export class PaymentsController {
 
   // Both endpoints fetch the receipt from Ethiotelecom, so they are rate-limited
   // to curb abuse (spamming the upstream, brute-forcing receipt numbers).
+  //
+  // Restricted to players: without this, any authenticated JWT (including an
+  // admin's) could submit a real Telebirr receipt and have it credited straight
+  // into their own personal wallet — a second, genuine entry point for real
+  // e-money entirely outside the Master Wallet, which is supposed to be the
+  // ONLY source admins ever inject ETB through (see AdminService.adminTopup).
+  @Roles('player')
   @Post('telebirr/preview')
   @Throttle({ strict: { ttl: 60_000, limit: 20 } })
   @HttpCode(HttpStatus.OK)
@@ -77,6 +86,7 @@ export class PaymentsController {
     return this.paymentsService.previewTelebirrReceipt(user.id, dto);
   }
 
+  @Roles('player')
   @Post('telebirr/receipts')
   @Throttle({ strict: { ttl: 60_000, limit: 12 } })
   @ApiCreatedResponse({
@@ -100,6 +110,7 @@ export class PaymentsController {
   // ── M-PESA ─────────────────────────────────────────────────────────
   // Same rate limits as Telebirr: the player pastes their confirmation SMS.
 
+  @Roles('player')
   @Post('mpesa/preview')
   @Throttle({ strict: { ttl: 60_000, limit: 20 } })
   @HttpCode(HttpStatus.OK)
@@ -111,6 +122,7 @@ export class PaymentsController {
     return this.paymentsService.previewMpesaSms(user.id, dto);
   }
 
+  @Roles('player')
   @Post('mpesa/receipts')
   @Throttle({ strict: { ttl: 60_000, limit: 12 } })
   @ApiCreatedResponse({

@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { WalletService } from './wallet.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -232,6 +232,50 @@ describe('WalletService — unit (mocked repos)', () => {
 
       // The DataSource.transaction method must NOT be called — caller owns the transaction
       expect(mockDataSource.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // Regression: agents typing a player's phone in national "09…"/"07…" form got a
+  // silent "user not found" because the lookup ran on the raw, unnormalized string
+  // while users.phoneNumber is always stored as +2519…/+2517… — see phone.util.ts.
+  describe('transferAgentToUser', () => {
+    it('rejects a malformed phone before opening a transaction', async () => {
+      const { service, mockDataSource } = makeService({});
+
+      await expect(service.transferAgentToUser('agent-1', 'not-a-phone', 1_000))
+        .rejects.toBeInstanceOf(BadRequestException);
+      expect(mockDataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('normalizes a national "09…" phone to +2519… before looking up the recipient', async () => {
+      const userRepo = { findOneBy: jest.fn().mockResolvedValue(null) };
+      const { service, mockManager } = makeService({});
+      (mockManager.getRepository as jest.Mock).mockImplementation((entity) => {
+        if (entity?.name === 'User') return userRepo;
+        if (entity?.name === 'WagerLimit') {
+          return { findOneBy: jest.fn().mockResolvedValue(null), save: jest.fn(), create: jest.fn((x: unknown) => x) };
+        }
+        return { findOne: jest.fn().mockResolvedValue(makeWallet()), save: jest.fn() };
+      });
+
+      await expect(service.transferAgentToUser('agent-1', '0912345678', 1_000))
+        .rejects.toBeInstanceOf(NotFoundException);
+
+      expect(userRepo.findOneBy).toHaveBeenCalledWith({ phoneNumber: '+251912345678' });
+    });
+
+    it('also normalizes a bare 9-digit phone', async () => {
+      const userRepo = { findOneBy: jest.fn().mockResolvedValue(null) };
+      const { service, mockManager } = makeService({});
+      (mockManager.getRepository as jest.Mock).mockImplementation((entity) => {
+        if (entity?.name === 'User') return userRepo;
+        return { findOneBy: jest.fn().mockResolvedValue(null), save: jest.fn(), create: jest.fn((x: unknown) => x), findOne: jest.fn().mockResolvedValue(makeWallet()) };
+      });
+
+      await expect(service.transferAgentToUser('agent-1', '912345678', 1_000))
+        .rejects.toBeInstanceOf(NotFoundException);
+
+      expect(userRepo.findOneBy).toHaveBeenCalledWith({ phoneNumber: '+251912345678' });
     });
   });
 });

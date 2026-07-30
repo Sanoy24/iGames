@@ -16,6 +16,7 @@ import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
 import { User } from '../users/entities/user.entity';
+import { normalizeEthiopianPhone } from '../common/phone.util';
 
 export type WalletSummary = {
   id: string;
@@ -1167,11 +1168,19 @@ export class WalletService {
     amountMinor: number,
     idempotencyKey?: string
   ): Promise<{ agentWallet: WalletSummary; userWallet: WalletSummary }> {
-    const key = idempotencyKey || `agent-to-user:${agentUserId}:${userPhone}:${Date.now()}`;
+    // users.phoneNumber is always stored normalized (+2519XXXXXXXX/+2517XXXXXXXX —
+    // every write path runs it through normalizeEthiopianPhone), so an
+    // unnormalized "09…"/"07…" input here would silently never match a real row.
+    const normalizedPhone = normalizeEthiopianPhone(userPhone);
+    if (!normalizedPhone) {
+      throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
+    }
+
+    const key = idempotencyKey || `agent-to-user:${agentUserId}:${normalizedPhone}:${Date.now()}`;
     return this.dataSource.transaction(async (manager) => {
       // Find user by phone number
       const userRepo = manager.getRepository(User);
-      const user = await userRepo.findOneBy({ phoneNumber: userPhone });
+      const user = await userRepo.findOneBy({ phoneNumber: normalizedPhone });
       if (!user) {
         throw new NotFoundException(`User with phone number ${userPhone} not found`);
       }

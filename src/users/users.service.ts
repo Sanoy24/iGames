@@ -918,6 +918,25 @@ export class UsersService {
     if (update.phoneNumber?.trim()) {
       const normalizedPhone = normalizeEthiopianPhone(update.phoneNumber);
       if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
+
+      // Self-service edit, unlike agent/admin creation (which deliberately allows one
+      // phone to back accounts of DIFFERENT roles, see findLiveIdentities): this endpoint
+      // has no @Roles guard, so without this check any account could silently claim a
+      // phone number an active PLAYER already uses — no verification of any kind that
+      // they actually own it. Scoped to 'player' so it never collides with that
+      // intentional agent/admin phone-sharing design.
+      if (normalizedPhone !== user.phoneNumber) {
+        const conflict = await this.userRepository
+          .createQueryBuilder('u')
+          .where('u.phoneNumber = :phone', { phone: normalizedPhone })
+          .andWhere('u.id != :userId', { userId })
+          .andWhere('u.status = :status', { status: 'active' })
+          .andWhere(`JSON_CONTAINS(u.roles, '"player"')`)
+          .getOne();
+        if (conflict) {
+          throw new ConflictException('This phone number is already registered to a different account');
+        }
+      }
       user.phoneNumber = normalizedPhone;
     }
     await this.userRepository.save(user);

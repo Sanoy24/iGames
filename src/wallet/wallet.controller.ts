@@ -3,14 +3,16 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { WalletService } from './wallet.service';
 
 @ApiTags('wallet')
 @ApiBearerAuth()
 @SkipThrottle({ default: true })
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('wallet')
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
@@ -62,6 +64,12 @@ export class WalletController {
     });
   }
 
+  // Only players hold a play-balance wallet that withdrawals draw down — admins
+  // manage the shared Master Wallet via /admin/wallet/*, and agents receive
+  // their working capital via admin transfer, never a self-service withdrawal
+  // here. Without this, any authenticated JWT (including an admin's) could
+  // request a withdrawal against their own always-dormant personal wallet.
+  @Roles('player')
   @Post('withdraw')
   @ApiOkResponse({
     schema: {

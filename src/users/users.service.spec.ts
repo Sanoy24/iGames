@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { UsersService } from './users.service';
 import { AuthIdentity } from './entities/auth-identity.entity';
@@ -430,5 +430,98 @@ describe('UsersService — agent referral codes', () => {
 
       expect(await service.countReferredPlayers('agent-1')).toBe(2);
     });
+  });
+});
+
+describe('UsersService — updateProfile phone conflict', () => {
+  /**
+   * Regression for a real production incident: PATCH /users/me has no @Roles
+   * guard and updateProfile previously wrote phoneNumber with NO check that
+   * another account already held it — a player editing their profile silently
+   * created a second account sharing a phone with an existing one (two live
+   * wallets, one balance effectively stranded). This block covers the guard
+   * added to close that gap. Uses a SELECT-style queryBuilder mock (.getOne()),
+   * unlike the UPDATE-style one in the referral-codes block above.
+   */
+  function makeService(input: { users?: Partial<User>[]; conflictUser?: Partial<User> | null }) {
+    const users = input.users ?? [];
+
+    const queryBuilder = {
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getOne: jest.fn().mockImplementation(() => Promise.resolve(input.conflictUser ?? null)),
+    };
+
+    const userRepository = {
+      findOneBy: jest.fn().mockImplementation((where: Record<string, unknown>) => {
+        const found = users.find((u) => matchesWhere(u as any, where));
+        return Promise.resolve(found ?? null);
+      }),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+    };
+
+    const service = new UsersService(
+      {} as DataSource,
+      userRepository as any,
+      {} as any, // authIdentityRepository
+      {} as any, // refreshSessionRepository
+    );
+
+    return { service, userRepository, queryBuilder };
+  }
+
+  // A fresh object per test — updateProfile mutates the entity it's given
+  // (`user.phoneNumber = ...`), so a single shared constant would leak state
+  // between tests since the mock's findOneBy returns this exact reference.
+  const makeSelf = () => ({ id: 'player-1', displayName: 'Me', phoneNumber: '+251911111111', roles: ['player'] as any });
+
+  it('allows the update when no other account holds the phone', async () => {
+    const { service, userRepository } = makeService({ users: [makeSelf()], conflictUser: null });
+
+    const result = await service.updateProfile('player-1', { phoneNumber: '0922222222' });
+
+    expect(result.phoneNumber).toBe('+251922222222');
+    expect(userRepository.save).toHaveBeenCalled();
+  });
+
+  it('allows re-saving the SAME phone the account already has (no-op edit)', async () => {
+    const { service, queryBuilder } = makeService({ users: [makeSelf()], conflictUser: null });
+
+    await service.updateProfile('player-1', { phoneNumber: '0911111111', displayName: 'Me' });
+
+    // Same phone as before normalization — the conflict query must be skipped entirely.
+    expect(queryBuilder.getOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects when another ACTIVE player already holds that phone', async () => {
+    const { service } = makeService({
+      users: [makeSelf()],
+      conflictUser: { id: 'player-2', roles: ['player'] as any, status: 'active' as any },
+    });
+
+    await expect(
+      service.updateProfile('player-1', { phoneNumber: '0933333333' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('does not block on a phone shared by a DIFFERENT-role account (deliberate agent/admin sharing)', async () => {
+    // The conflict query itself is scoped to role:'player' via JSON_CONTAINS, so a
+    // real agent/admin row sharing this phone would never be returned here — this
+    // asserts the allow-path when the DB correctly returns no conflict.
+    const { service, userRepository } = makeService({ users: [makeSelf()], conflictUser: null });
+
+    const result = await service.updateProfile('player-1', { phoneNumber: '0938967749' });
+    expect(result.phoneNumber).toBe('+251938967749');
+    expect(userRepository.save).toHaveBeenCalled();
+  });
+
+  it('rejects an invalid phone before ever checking for a conflict', async () => {
+    const { service, queryBuilder } = makeService({ users: [makeSelf()] });
+
+    await expect(
+      service.updateProfile('player-1', { phoneNumber: 'not-a-phone' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(queryBuilder.getOne).not.toHaveBeenCalled();
   });
 });

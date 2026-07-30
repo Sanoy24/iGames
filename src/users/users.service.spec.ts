@@ -525,3 +525,124 @@ describe('UsersService — updateProfile phone conflict', () => {
     expect(queryBuilder.getOne).not.toHaveBeenCalled();
   });
 });
+
+describe('UsersService — direct player→agent GPS matching', () => {
+  function makeAgent(overrides: Partial<User> = {}): User {
+    return {
+      id: 'agent-1',
+      displayName: 'Agent One',
+      sharedLatitude: 8.9806,
+      sharedLongitude: 38.7578,
+      ...overrides,
+    } as User;
+  }
+
+  function makeService(input: { users?: Partial<User>[] } = {}) {
+    const users = input.users ?? [];
+
+    const userRepository = {
+      findOneBy: jest.fn().mockImplementation((where: Record<string, unknown>) => {
+        const found = users.find((u) => matchesWhere(u as any, where));
+        return Promise.resolve(found ?? null);
+      }),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+    };
+
+    const service = new UsersService(
+      {} as DataSource,
+      userRepository as any,
+      {} as any, // authIdentityRepository
+      {} as any, // refreshSessionRepository
+    );
+
+    return { service, userRepository };
+  }
+
+  // Two points ~1.1km apart (0.01° latitude) — well within the 5km match radius.
+  const NEAR_LAT = 8.9806;
+  const NEAR_LNG = 38.7578;
+  // ~13 degrees away — far outside any plausible match radius.
+  const FAR_LAT = 22.0;
+  const FAR_LNG = 38.7578;
+
+  describe('matchAgentFromCoords', () => {
+    it('matches the nearest on-duty agent within range', async () => {
+      const { service } = makeService();
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([makeAgent()]);
+
+      const result = await service.matchAgentFromCoords(NEAR_LAT, NEAR_LNG);
+      expect(result?.id).toBe('agent-1');
+    });
+
+    it('skips on-duty agents who never shared a pin', async () => {
+      const { service } = makeService();
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([
+        makeAgent({ id: 'no-pin', sharedLatitude: null, sharedLongitude: null }),
+      ]);
+
+      const result = await service.matchAgentFromCoords(NEAR_LAT, NEAR_LNG);
+      expect(result).toBeNull();
+    });
+
+    it('returns null when nothing is within range', async () => {
+      const { service } = makeService();
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([makeAgent()]);
+
+      const result = await service.matchAgentFromCoords(FAR_LAT, FAR_LNG);
+      expect(result).toBeNull();
+    });
+
+    it('returns null when nobody is on duty', async () => {
+      const { service } = makeService();
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([]);
+
+      const result = await service.matchAgentFromCoords(NEAR_LAT, NEAR_LNG);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('setAssignedAgent', () => {
+    it('rejects when both agentId and other are supplied', async () => {
+      const { service } = makeService({ users: [{ id: 'player-1' } as any] });
+      await expect(
+        service.setAssignedAgent('player-1', { agentId: 'agent-1', other: true }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects when neither agentId nor other are supplied', async () => {
+      const { service } = makeService({ users: [{ id: 'player-1' } as any] });
+      await expect(service.setAssignedAgent('player-1', {})).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects an agentId that is not currently on duty', async () => {
+      const { service } = makeService({ users: [{ id: 'player-1' } as any] });
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([]);
+
+      await expect(
+        service.setAssignedAgent('player-1', { agentId: 'agent-1' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('other: true always forces source "other", regardless of the source arg', async () => {
+      const { service } = makeService({ users: [{ id: 'player-1' } as any] });
+
+      const result = await service.setAssignedAgent('player-1', { other: true }, 'gps_match');
+      expect(result).toEqual({ assignedAgentId: null, assignedAgentName: null, assignedAgentSource: 'other' });
+    });
+
+    it('assigns a currently on-duty agent and is reassignable on a later call', async () => {
+      const player = { id: 'player-1' } as any;
+      const { service } = makeService({ users: [player] });
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([makeAgent()]);
+
+      const first = await service.setAssignedAgent('player-1', { agentId: 'agent-1' }, 'gps_match');
+      expect(first).toEqual({ assignedAgentId: 'agent-1', assignedAgentName: 'Agent One', assignedAgentSource: 'gps_match' });
+      expect(player.assignedAgentId).toBe('agent-1');
+
+      jest.spyOn(service, 'findOnDutyAgents').mockResolvedValue([makeAgent({ id: 'agent-2', displayName: 'Agent Two' })]);
+      const second = await service.setAssignedAgent('player-1', { agentId: 'agent-2' }, 'manual_pick');
+      expect(second.assignedAgentId).toBe('agent-2');
+      expect(player.assignedAgentId).toBe('agent-2');
+    });
+  });
+});

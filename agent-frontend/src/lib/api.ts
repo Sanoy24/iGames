@@ -774,8 +774,6 @@ export type AreaPlayer = {
   id: string;
   displayName: string;
   phoneNumber: string | null;
-  locationId: string | null;
-  locationName: string | null;
   walletBalanceMinor: number;
   status: string;
   isMyReferral: boolean;

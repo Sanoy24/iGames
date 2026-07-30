@@ -166,7 +166,7 @@ export function AreaPlayerList({ onSelectPlayer }: { onSelectPlayer: (userId: st
                   )}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {p.phoneNumber ?? '—'} · {p.locationName ?? 'No area'}
+                  {p.phoneNumber ?? '—'}
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>

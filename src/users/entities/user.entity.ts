@@ -126,12 +126,36 @@ export class User {
   locationCapturedAt?: Date | null;
 
   /**
+   * PLAYER attribution: the on-duty AGENT this player was matched/assigned to,
+   * either automatically (nearest on-duty agent to a shared GPS pin, via
+   * `UsersService.matchAgentFromCoords`) or manually picked from the on-duty
+   * list. This is the current routing signal for "which agent handles this
+   * player," replacing the `locationId` catalog step above for new onboarding
+   * (that field is kept for backward compat but no longer written to). Distinct
+   * from `referredByAgentId`, which is deposit/referral-code commission
+   * attribution and is never reassigned once set — `assignedAgentId` IS
+   * reassignable, since re-sharing location rematches to whichever on-duty
+   * agent is nearest now.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  assignedAgentId?: string | null;
+
+  /** How `assignedAgentId` was obtained. `other` records a deliberate skip. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  assignedAgentSource?: 'gps_match' | 'manual_pick' | 'other' | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  assignedAgentAt?: Date | null;
+
+  /**
    * An AGENT's own shared GPS pin, captured via the agent bot's mandatory
-   * location step. Deliberately INFORMATIONAL ONLY: it is shown to admins as a
-   * hint for assigning areas, but it does NOT grant area access. Area visibility
-   * is governed solely by admin-managed `agent_locations` rows — a Telegram pin is
-   * client-supplied and trivially movable, so treating it as authorization would
-   * let an agent read any area's customer data by dragging the map.
+   * location step (refreshable on demand via the agent bot's /updatelocation
+   * command). This is now the live signal `matchAgentFromCoords` matches
+   * players against, but it remains client-supplied and trivially movable, so
+   * it must never be treated as authorization on its own — area/customer-data
+   * visibility for an agent is governed by `assignedAgentId` equality, not by
+   * proximity of this pin to anything.
    */
   @Column({ type: 'decimal', precision: 10, scale: 7, nullable: true, transformer: decimalTransformer })
   sharedLatitude?: number | null;

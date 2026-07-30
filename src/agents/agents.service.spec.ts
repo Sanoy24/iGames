@@ -2,7 +2,6 @@ import { ForbiddenException } from '@nestjs/common';
 import { AgentsService } from './agents.service';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
-import { LocationsService } from '../locations/locations.service';
 
 function makeAgent(overrides: Partial<{ id: string; displayName: string; phoneNumber: string; agentPermissions: { deposit: boolean; withdraw: boolean } }>) {
   return {
@@ -18,8 +17,6 @@ function makeService(input: {
   onDutyAgent?: ReturnType<typeof makeAgent> | null;
   onDutyAgents?: Array<ReturnType<typeof makeAgent>>;
   balances?: Map<string, number>;
-  agentLocationIds?: string[];
-  agentLocations?: Array<{ id: string; name: string; region: string | null; isPrimary: boolean }>;
   listPlayersResult?: any;
   findByIdResult?: any;
   queryRows?: unknown[][];
@@ -30,7 +27,7 @@ function makeService(input: {
   const usersService = {
     findOnDutyAgent: jest.fn().mockResolvedValue(input.onDutyAgent ?? null),
     findOnDutyAgents: jest.fn().mockResolvedValue(input.onDutyAgents ?? []),
-    listPlayersByLocationIds: jest.fn().mockResolvedValue(
+    listPlayersByAssignedAgentId: jest.fn().mockResolvedValue(
       input.listPlayersResult ?? { data: [], total: 0, page: 1, limit: 20, totalPages: 0 },
     ),
     findById: jest.fn().mockResolvedValue(input.findByIdResult),
@@ -41,11 +38,6 @@ function makeService(input: {
   const walletService = {
     getAvailableBalances: jest.fn().mockResolvedValue(input.balances ?? new Map()),
   } as unknown as WalletService;
-
-  const locationsService = {
-    listAgentLocationIds: jest.fn().mockResolvedValue(input.agentLocationIds ?? []),
-    listAgentLocations: jest.fn().mockResolvedValue(input.agentLocations ?? []),
-  } as unknown as LocationsService;
 
   // getAreaPlayerActivity fires 6 parallel queries (telebirr, mpesa, withdrawals,
   // bingo, keno, crash) via systemConfigRepository.query — feed them in order.
@@ -70,11 +62,10 @@ function makeService(input: {
     walletService,
     usersService,
     {} as any, // withdrawalProofVerifier
-    locationsService,
     configService as any,
   );
 
-  return { service, usersService, walletService, locationsService, systemConfigRepository, configService };
+  return { service, usersService, walletService, systemConfigRepository, configService };
 }
 
 describe('AgentsService — deposit-agent listing excludes zero-balance agents', () => {
@@ -142,22 +133,17 @@ describe('AgentsService — deposit-agent listing excludes zero-balance agents',
     });
   });
 
-  // ── Area reporting (players in the agent's assigned locations) ─────
+  // ── Area reporting (players directly assigned to this agent) ─────
   describe('listAreaPlayers', () => {
-    it('enriches each player with locationName and isMyReferral', async () => {
+    it('enriches each player with isMyReferral', async () => {
       const { service } = makeService({
-        agentLocationIds: ['loc-1', 'loc-2'],
-        agentLocations: [
-          { id: 'loc-1', name: 'Bole', region: null, isPrimary: true },
-          { id: 'loc-2', name: 'Piassa', region: null, isPrimary: false },
-        ],
         listPlayersResult: {
           data: [
             {
               id: 'player-mine',
               displayName: 'My Referral',
               phoneNumber: '0911111111',
-              locationId: 'loc-1',
+              assignedAgentId: 'agent-1',
               status: 'active',
               referredByAgentId: 'agent-1',
               createdAt: new Date('2026-01-01'),
@@ -167,7 +153,7 @@ describe('AgentsService — deposit-agent listing excludes zero-balance agents',
               id: 'player-other',
               displayName: 'Area Player',
               phoneNumber: '0922222222',
-              locationId: 'loc-2',
+              assignedAgentId: 'agent-1',
               status: 'active',
               referredByAgentId: 'some-other-agent',
               createdAt: new Date('2026-01-02'),
@@ -184,43 +170,40 @@ describe('AgentsService — deposit-agent listing excludes zero-balance agents',
       const result = await service.listAreaPlayers('agent-1');
 
       expect(result.data).toEqual([
-        expect.objectContaining({ id: 'player-mine', locationName: 'Bole', isMyReferral: true, walletBalanceMinor: 5000 }),
-        expect.objectContaining({ id: 'player-other', locationName: 'Piassa', isMyReferral: false, walletBalanceMinor: 0 }),
+        expect.objectContaining({ id: 'player-mine', isMyReferral: true, walletBalanceMinor: 5000 }),
+        expect.objectContaining({ id: 'player-other', isMyReferral: false, walletBalanceMinor: 0 }),
       ]);
     });
 
-    it('passes the agent\'s assigned location ids through to the player query', async () => {
-      const { service, usersService } = makeService({ agentLocationIds: ['loc-1'] });
+    it('passes the agent id and opts through to the player query', async () => {
+      const { service, usersService } = makeService({});
       await service.listAreaPlayers('agent-1', { search: 'abebe', page: 2, limit: 10 });
-      expect(usersService.listPlayersByLocationIds).toHaveBeenCalledWith(['loc-1'], { search: 'abebe', page: 2, limit: 10 });
+      expect(usersService.listPlayersByAssignedAgentId).toHaveBeenCalledWith('agent-1', { search: 'abebe', page: 2, limit: 10 });
     });
   });
 
   describe('getAreaPlayerActivity', () => {
-    it('403s when the player is NOT in one of the agent\'s assigned locations', async () => {
+    it('403s when the player is assigned to a DIFFERENT agent', async () => {
       const { service } = makeService({
-        agentLocationIds: ['loc-1'],
-        findByIdResult: { id: 'player-1', locationId: 'loc-99', displayName: 'X', referredByAgentId: null },
+        findByIdResult: { id: 'player-1', assignedAgentId: 'other-agent', displayName: 'X', referredByAgentId: null },
       });
 
       await expect(service.getAreaPlayerActivity('agent-1', 'player-1')).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    it('403s when the player has no location at all', async () => {
+    it('403s when the player is not assigned to any agent', async () => {
       const { service } = makeService({
-        agentLocationIds: ['loc-1'],
-        findByIdResult: { id: 'player-1', locationId: null, displayName: 'X', referredByAgentId: null },
+        findByIdResult: { id: 'player-1', assignedAgentId: null, displayName: 'X', referredByAgentId: null },
       });
 
       await expect(service.getAreaPlayerActivity('agent-1', 'player-1')).rejects.toBeInstanceOf(ForbiddenException);
     });
 
-    it('returns deposits/withdrawals/games for a player in the agent\'s area', async () => {
+    it('returns deposits/withdrawals/games for a player assigned to this agent', async () => {
       const { service } = makeService({
-        agentLocationIds: ['loc-1'],
         findByIdResult: {
           id: 'player-1',
-          locationId: 'loc-1',
+          assignedAgentId: 'agent-1',
           displayName: 'Area Player',
           phoneNumber: '0911111111',
           referredByAgentId: 'agent-1',

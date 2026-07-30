@@ -8,6 +8,18 @@ import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
 import { generateReferralCode, normalizeReferralCode } from '../common/referral-code.util';
 import { AgentDutyMode, isAgentEffectivelyOnDuty, isWithinWorkingWindow } from '../common/agent-duty.util';
+import { findNearestLocation, GeoCandidate } from '../locations/location-geo';
+
+/** Default max distance for GPS-based player→agent matching, in metres.
+ * Mirrors Location.radiusMeters's own default. Not yet admin-configurable —
+ * a natural follow-up if 5km proves wrong in practice. */
+const AGENT_MATCH_RADIUS_METERS = 5000;
+
+export type AssignedAgentResult = {
+  assignedAgentId: string | null;
+  assignedAgentName: string | null;
+  assignedAgentSource: 'gps_match' | 'manual_pick' | 'other';
+};
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -602,6 +614,131 @@ export class UsersService {
       if (sa !== sb) return sa - sb;
       return a.createdAt.getTime() - b.createdAt.getTime();
     });
+  }
+
+  // ── Direct player→agent GPS matching ────────────────────────────────
+  // Replaces the old Location-catalog onboarding step: a player is matched to
+  // the nearest currently on-duty agent by proximity to that agent's own
+  // shared pin, with no admin-curated area catalog involved.
+
+  /** Player-facing fallback list — on-duty agents by name only. */
+  async listOnDutyAgentsForMatching(): Promise<Array<{ id: string; name: string }>> {
+    const agents = await this.findOnDutyAgents();
+    return agents.map((a) => ({ id: a.id, name: a.displayName }));
+  }
+
+  /**
+   * Pure/read-only: map a shared GPS pin onto the nearest on-duty agent's own
+   * last-shared pin, within AGENT_MATCH_RADIUS_METERS. Does NOT persist —
+   * callers follow up with setAssignedAgent. Returns null when no on-duty
+   * agent has a pin in range (including agents who never shared one).
+   */
+  async matchAgentFromCoords(
+    latitude: number,
+    longitude: number,
+  ): Promise<{ id: string; name: string; distanceMeters: number } | null> {
+    const onDuty = await this.findOnDutyAgents();
+    const candidates: GeoCandidate[] = onDuty.map((a) => ({
+      id: a.id,
+      name: a.displayName,
+      latitude: a.sharedLatitude ?? null,
+      longitude: a.sharedLongitude ?? null,
+      radiusMeters: AGENT_MATCH_RADIUS_METERS,
+    }));
+    return findNearestLocation(candidates, latitude, longitude);
+  }
+
+  /**
+   * Record the player's agent assignment. Exactly one of {agentId, other}.
+   * `other` always forces source 'other' regardless of the `source` arg —
+   * mirrors LocationsService.setUserLocation's wantsOther branch. A supplied
+   * agentId must currently be on duty, so a stale/spoofed client can't pin a
+   * player to an unavailable or nonexistent agent. Reassignable — a player who
+   * re-shares location gets rematched to whichever on-duty agent is nearest
+   * now (unlike `referredByAgentId`, which is set once and never moves).
+   */
+  async setAssignedAgent(
+    userId: string,
+    dto: { agentId?: string; other?: boolean },
+    source: 'gps_match' | 'manual_pick' = 'manual_pick',
+  ): Promise<AssignedAgentResult> {
+    const wantsOther = dto.other === true;
+
+    if (wantsOther && dto.agentId) {
+      throw new BadRequestException('Send either agentId or other, not both');
+    }
+    if (!wantsOther && !dto.agentId) {
+      throw new BadRequestException('Send an agentId, or other: true to skip attribution');
+    }
+
+    const user = await this.findById(userId);
+
+    if (wantsOther) {
+      user.assignedAgentId = null;
+      user.assignedAgentSource = 'other';
+      user.assignedAgentAt = new Date();
+      await this.userRepository.save(user);
+      return { assignedAgentId: null, assignedAgentName: null, assignedAgentSource: 'other' };
+    }
+
+    const onDuty = await this.findOnDutyAgents();
+    const agent = onDuty.find((a) => a.id === dto.agentId);
+    if (!agent) throw new NotFoundException('That agent is not currently available');
+
+    user.assignedAgentId = agent.id;
+    user.assignedAgentSource = source;
+    user.assignedAgentAt = new Date();
+    await this.userRepository.save(user);
+
+    return { assignedAgentId: agent.id, assignedAgentName: agent.displayName, assignedAgentSource: source };
+  }
+
+  /** The player's current agent assignment, or null when never asked. */
+  async getAssignedAgent(userId: string): Promise<AssignedAgentResult | null> {
+    const user = await this.findById(userId);
+    if (!user.assignedAgentSource) return null;
+
+    let assignedAgentName: string | null = null;
+    if (user.assignedAgentId) {
+      const agent = await this.userRepository.findOneBy({ id: user.assignedAgentId });
+      assignedAgentName = agent?.displayName ?? null;
+    }
+
+    return {
+      assignedAgentId: user.assignedAgentId ?? null,
+      assignedAgentName,
+      assignedAgentSource: user.assignedAgentSource,
+    };
+  }
+
+  /**
+   * Players directly assigned to this agent — the replacement for
+   * listPlayersByLocationIds under direct agent-attribution. Same shape.
+   */
+  async listPlayersByAssignedAgentId(
+    agentId: string,
+    opts: { search?: string; page?: number; limit?: number } = {},
+  ) {
+    const page = Math.max(opts.page ?? 1, 1);
+    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .where('user.assignedAgentId = :agentId', { agentId })
+      .andWhere("JSON_CONTAINS(user.roles, '\"player\"')")
+      .orderBy('user.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${opts.search}%` },
+      );
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   // ── Agent referral codes ───────────────────────────────────────────

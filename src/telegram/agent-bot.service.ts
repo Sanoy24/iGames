@@ -58,6 +58,7 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
     try {
       await this.bot.api.setMyCommands([
         { command: 'start', description: 'Link your agent account' },
+        { command: 'updatelocation', description: 'Update your shared location' },
       ]);
 
       const webhookUrl = this.configService.get<string>('TELEGRAM_AGENT_BOT_WEBHOOK_URL');
@@ -211,25 +212,18 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
       await this.sendPanelButton(ctx, miniAppUrl);
     });
 
-    // Mandatory agent location step. Recorded for admin reference ONLY — it does
-    // NOT assign the agent an area (see UsersService.setAgentSharedLocation).
+    // Mandatory first-time agent location step. This pin is now the live signal
+    // UsersService.matchAgentFromCoords matches players against (see
+    // /updatelocation below for refreshing it), but it still does NOT itself
+    // grant area access — visibility for an agent is governed by
+    // User.assignedAgentId equality, never by pin proximity.
     bot.on('message:location', async (ctx) => {
       const telegramUserId = ctx.from?.id;
       if (!telegramUserId) return;
 
       const { latitude, longitude } = ctx.message.location;
 
-      let agentId: string | null = null;
-      try {
-        const linked = await this.usersService.findAgentPhoneByTelegramId(String(telegramUserId));
-        if (linked) {
-          const agent = await this.usersService.findAgentByPhone(linked.phoneNumber);
-          agentId = agent?.id ?? null;
-        }
-      } catch (err) {
-        this.logger.error(`Failed to resolve agent for Telegram user ${telegramUserId}`, err instanceof Error ? err.stack : err);
-      }
-
+      const agentId = await this.resolveLinkedAgentId(telegramUserId);
       if (!agentId) {
         await ctx.reply('Please share your phone number first to link your agent account.', {
           reply_markup: this.contactRequestKeyboard(),
@@ -253,9 +247,43 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
       await this.sendPanelButton(ctx, miniAppUrl);
     });
 
+    // Re-entry point for the same location step above — an agent's pin is
+    // otherwise never refreshed after first link, which would make GPS-based
+    // player matching drift stale as agents move between areas or shifts.
+    // message:location's unconditional overwrite handles the actual save.
+    bot.command('updatelocation', async (ctx) => {
+      const telegramUserId = ctx.from?.id;
+      if (!telegramUserId) return;
+
+      const agentId = await this.resolveLinkedAgentId(telegramUserId);
+      if (!agentId) {
+        await ctx.reply('Please share your phone number first to link your agent account:', {
+          reply_markup: this.contactRequestKeyboard(),
+        });
+        return;
+      }
+
+      await ctx.reply('Share your current location to update it:', {
+        reply_markup: this.locationRequestKeyboard(),
+      });
+    });
+
     bot.on('message:text', async (ctx) => {
       await ctx.reply('Send /start to link your agent account.');
     });
+  }
+
+  /** The linked agent's user id for this Telegram account, or null if unlinked. */
+  private async resolveLinkedAgentId(telegramUserId: number): Promise<string | null> {
+    try {
+      const linked = await this.usersService.findAgentPhoneByTelegramId(String(telegramUserId));
+      if (!linked) return null;
+      const agent = await this.usersService.findAgentByPhone(linked.phoneNumber);
+      return agent?.id ?? null;
+    } catch (err) {
+      this.logger.error(`Failed to resolve agent for Telegram user ${telegramUserId}`, err instanceof Error ? err.stack : err);
+      return null;
+    }
   }
 
   private async sendPanelButton(ctx: Context, miniAppUrl: string): Promise<void> {

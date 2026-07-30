@@ -9,7 +9,6 @@ import { UsersModule } from '../users/users.module';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { TelebirrReceiptClientModule } from '../payments/telebirr-receipt-client.module';
 import { MpesaReceiptClientModule } from '../payments/mpesa-receipt-client.module';
-import { LocationsModule } from '../locations/locations.module';
 import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 
 @Module({
@@ -20,7 +19,6 @@ import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.serv
     UsersModule,
     TelebirrReceiptClientModule,
     MpesaReceiptClientModule,
-    LocationsModule,
   ],
   controllers: [AgentsController],
   providers: [AgentsService, WithdrawalProofVerifierService],

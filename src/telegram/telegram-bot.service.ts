@@ -17,14 +17,13 @@ import {
     Keyboard,
     webhookCallback,
 } from 'grammy';
-import { LocationsService } from '../locations/locations.service';
 import { REDIS_CLIENT } from '../redis/redis.constants';
 import { parseReferralPayload } from '../common/referral-code.util';
 import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { UsersService } from '../users/users.service';
 
 /** Reply-keyboard button that opens the pick-from-list dropdown. */
-const LOCATION_PICK_FROM_LIST_TEXT = '🗺 Choose my area from a list';
+const LOCATION_PICK_FROM_LIST_TEXT = '👤 Choose my agent from a list';
 
 /**
  * A referral code seen on `/start` is held here until the player's account
@@ -35,8 +34,8 @@ const LOCATION_PICK_FROM_LIST_TEXT = '🗺 Choose my area from a list';
 const PENDING_REFERRAL_KEY = (telegramUserId: number) => `referral:pending:${telegramUserId}`;
 const PENDING_REFERRAL_TTL_SECONDS = 24 * 60 * 60;
 
-/** callback_data prefix for a location choice: `loc:<uuid>` or `loc:other`. */
-const LOCATION_CALLBACK_PREFIX = 'loc:';
+/** callback_data prefix for an agent choice: `agent:<uuid>` or `agent:other`. */
+const AGENT_CALLBACK_PREFIX = 'agent:';
 
 @Injectable()
 export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
@@ -50,7 +49,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     constructor(
         private readonly configService: ConfigService,
         private readonly usersService: UsersService,
-        private readonly locationsService: LocationsService,
         @InjectDataSource() private readonly dataSource: DataSource,
         @Inject(REDIS_CLIENT) private readonly redis: Redis,
     ) {}
@@ -375,75 +373,69 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     /**
-     * Send the pick-from-list dropdown: every location with an active agent, plus
-     * "Other". Callback data is `loc:<uuid>` / `loc:other`, well under Telegram's
-     * 64-byte callback_data limit. Returns false when no locations are configured,
-     * so callers can skip the whole step instead of showing an "Other"-only list.
+     * Send the pick-from-list dropdown: every currently on-duty agent, plus
+     * "Other". Callback data is `agent:<uuid>` / `agent:other`, well under
+     * Telegram's 64-byte callback_data limit. Returns false when nobody is on
+     * duty, so callers can skip the whole step instead of showing an
+     * "Other"-only list.
      */
-    private async sendLocationList(
+    private async sendAgentList(
         ctx: Context,
         prompt: string,
     ): Promise<boolean> {
-        let locations: Array<{
-            id: string;
-            name: string;
-            region?: string | null;
-        }> = [];
+        let agents: Array<{ id: string; name: string }> = [];
         try {
-            locations = await this.locationsService.listPublicLocations();
+            agents = await this.usersService.listOnDutyAgentsForMatching();
         } catch (err) {
             this.logger.error(
-                'Failed to load locations for the dropdown',
+                'Failed to load on-duty agents for the dropdown',
                 err as Error,
             );
             return false;
         }
 
-        if (locations.length === 0) return false;
+        if (agents.length === 0) return false;
 
         const keyboard = new InlineKeyboard();
-        for (const location of locations) {
-            const label = location.region
-                ? `${location.name} (${location.region})`
-                : location.name;
+        for (const agent of agents) {
             keyboard
-                .text(label, `${LOCATION_CALLBACK_PREFIX}${location.id}`)
+                .text(agent.name, `${AGENT_CALLBACK_PREFIX}${agent.id}`)
                 .row();
         }
         keyboard.text(
             '🏠 Other / Not listed',
-            `${LOCATION_CALLBACK_PREFIX}other`,
+            `${AGENT_CALLBACK_PREFIX}other`,
         );
 
         await ctx.reply(prompt, {
             reply_markup: { remove_keyboard: true } as never,
         });
-        await ctx.reply('Pick the closest one:', { reply_markup: keyboard });
+        await ctx.reply('Pick one:', { reply_markup: keyboard });
         return true;
     }
 
     /**
-     * Ask where the player is playing from. The question is skippable by design:
-     * "Other" is always offered, and a player who ignores the prompt can still
-     * open the Mini App. When no locations are configured at all the step is
-     * skipped entirely, so a fresh deployment isn't blocked on admin setup.
+     * Ask the player to connect with an agent. The question is skippable by
+     * design: "Other" is always offered, and a player who ignores the prompt
+     * can still open the Mini App. When nobody is currently on duty the step
+     * is skipped entirely, so a quiet moment isn't blocked on agent staffing.
      */
-    private async promptForLocation(
+    private async promptForAgentMatch(
         ctx: Context,
         miniAppUrl: string,
     ): Promise<void> {
-        let hasLocations = false;
+        let hasAgents = false;
         try {
-            hasLocations =
-                (await this.locationsService.listPublicLocations()).length > 0;
+            hasAgents =
+                (await this.usersService.listOnDutyAgentsForMatching()).length > 0;
         } catch (err) {
             this.logger.error(
-                'Failed to check configured locations',
+                'Failed to check on-duty agents',
                 err as Error,
             );
         }
 
-        if (!hasLocations) {
+        if (!hasAgents) {
             await this.finishLocationStep(
                 ctx,
                 miniAppUrl,
@@ -454,8 +446,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
         await ctx.reply(
             `Thanks! Your number has been saved for payouts.\n\n` +
-                `One last thing — which area are you playing from? ` +
-                `This tells us which of our agents to connect you with.`,
+                `One last thing — share your location so we can connect you ` +
+                `with the nearest available agent for fast deposits and withdrawals.`,
             { reply_markup: this.locationRequestKeyboard() },
         );
     }
@@ -592,11 +584,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                 }
             }
 
-            // Phone is durably saved; now ask where they are playing from.
-            await this.promptForLocation(ctx, miniAppUrl);
+            // Phone is durably saved; now offer to connect them with an agent.
+            await this.promptForAgentMatch(ctx, miniAppUrl);
         });
 
-        // Location shared as a pin — map it onto a configured location.
+        // Location shared as a pin — match it onto the nearest on-duty agent.
         this.bot.on('message:location', async (ctx) => {
             const { latitude, longitude } = ctx.message.location;
             const internalUserId = await this.resolveInternalUserId(
@@ -610,24 +602,24 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                 return;
             }
 
-            let matched: { id: string; name: string } | null = null;
+            let matched: { id: string; name: string; distanceMeters: number } | null = null;
             try {
-                matched = await this.locationsService.resolveLocationFromCoords(
+                matched = await this.usersService.matchAgentFromCoords(
                     latitude,
                     longitude,
                 );
             } catch (err) {
                 this.logger.error(
-                    'Failed to resolve shared location',
+                    'Failed to match shared location to an agent',
                     err as Error,
                 );
             }
 
-            // Outside every configured radius (or lookup failed) — don't guess, ask.
+            // Outside every on-duty agent's radius (or lookup failed) — don't guess, ask.
             if (!matched) {
-                const listed = await this.sendLocationList(
+                const listed = await this.sendAgentList(
                     ctx,
-                    `We couldn't match that spot to one of our areas.`,
+                    `We couldn't find an on-duty agent near that spot.`,
                 );
                 if (!listed) {
                     await this.finishLocationStep(
@@ -640,19 +632,19 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             }
 
             try {
-                await this.locationsService.setUserLocation(
+                await this.usersService.setAssignedAgent(
                     internalUserId,
-                    { locationId: matched.id },
-                    'telegram_geo',
+                    { agentId: matched.id },
+                    'gps_match',
                 );
             } catch (err) {
                 this.logger.error(
-                    `Failed to save geo location for user ${internalUserId}`,
+                    `Failed to save agent match for user ${internalUserId}`,
                     err as Error,
                 );
-                const listed = await this.sendLocationList(
+                const listed = await this.sendAgentList(
                     ctx,
-                    'Something went wrong saving that area.',
+                    'Something went wrong connecting you with an agent.',
                 );
                 if (!listed) {
                     await this.finishLocationStep(
@@ -667,15 +659,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             await this.finishLocationStep(
                 ctx,
                 miniAppUrl,
-                `Got it — we've set your area to ${matched.name}.\n\nTap below to start playing:`,
+                `Got it — we've connected you with ${matched.name}.\n\nTap below to start playing:`,
             );
         });
 
         // "Choose from a list" — declared before the catch-all text handler so it wins.
         this.bot.hears(LOCATION_PICK_FROM_LIST_TEXT, async (ctx) => {
-            const listed = await this.sendLocationList(
+            const listed = await this.sendAgentList(
                 ctx,
-                'Which area are you playing from?',
+                'Which agent would you like to connect with?',
             );
             if (!listed) {
                 await this.finishLocationStep(
@@ -686,12 +678,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             }
         });
 
-        // A location was picked from the inline dropdown.
+        // An agent was picked from the inline dropdown.
         this.bot.callbackQuery(
-            new RegExp(`^${LOCATION_CALLBACK_PREFIX}`),
+            new RegExp(`^${AGENT_CALLBACK_PREFIX}`),
             async (ctx) => {
                 const choice = ctx.callbackQuery.data.slice(
-                    LOCATION_CALLBACK_PREFIX.length,
+                    AGENT_CALLBACK_PREFIX.length,
                 );
                 const internalUserId = await this.resolveInternalUserId(
                     ctx.from?.id,
@@ -705,16 +697,16 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                 }
 
                 const isOther = choice === 'other';
-                let saved: { locationName: string | null } | null = null;
+                let saved: { assignedAgentName: string | null } | null = null;
 
                 try {
-                    saved = await this.locationsService.setUserLocation(
+                    saved = await this.usersService.setAssignedAgent(
                         internalUserId,
-                        isOther ? { other: true } : { locationId: choice },
+                        isOther ? { other: true } : { agentId: choice },
                     );
                 } catch (err) {
                     this.logger.error(
-                        `Failed to save picked location for user ${internalUserId}`,
+                        `Failed to save picked agent for user ${internalUserId}`,
                         err as Error,
                     );
                     await ctx.answerCallbackQuery({
@@ -734,7 +726,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                     miniAppUrl,
                     isOther
                         ? `No problem — you're all set.\n\nTap below to start playing:`
-                        : `Got it — we've set your area to ${saved?.locationName}.\n\nTap below to start playing:`,
+                        : `Got it — we've connected you with ${saved?.assignedAgentName}.\n\nTap below to start playing:`,
                 );
             },
         );

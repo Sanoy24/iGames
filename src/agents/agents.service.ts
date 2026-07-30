@@ -6,7 +6,6 @@ import { WalletService } from '../wallet/wallet.service';
 import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
-import { LocationsService } from '../locations/locations.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
 import { buildReferralPayload } from '../common/referral-code.util';
@@ -22,7 +21,6 @@ export class AgentsService {
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
     private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
-    private readonly locationsService: LocationsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -416,14 +414,14 @@ export class AgentsService {
     };
   }
 
-  // ── Area reporting (players in the agent's assigned locations) ─────
+  // ── Area reporting (players directly assigned to this agent) ───────
   //
-  // Distinct from getPerformance above: this shows ALL players registered in
-  // whichever locations the agent is assigned to (many agents can share a
-  // location), not just players this agent personally processed a deposit
-  // for. Each player is additionally flagged `isMyReferral` when
-  // referredByAgentId matches this agent — the "mix of both" the requester
-  // asked for: full area visibility, with personal referrals called out.
+  // Distinct from getPerformance above: this shows ALL players GPS-matched or
+  // manually assigned to this agent (see UsersService.setAssignedAgent), not
+  // just players this agent personally processed a deposit for. Each player
+  // is additionally flagged `isMyReferral` when referredByAgentId matches
+  // this agent — the "mix of both" the requester asked for: full area
+  // visibility, with personal referrals called out.
 
   async listAreaPlayers(
     agentId: string,
@@ -433,8 +431,6 @@ export class AgentsService {
       id: string;
       displayName: string;
       phoneNumber: string | null;
-      locationId: string | null;
-      locationName: string | null;
       walletBalanceMinor: number;
       status: string;
       isMyReferral: boolean;
@@ -445,13 +441,7 @@ export class AgentsService {
     limit: number;
     totalPages: number;
   }> {
-    const [locationIds, myLocations] = await Promise.all([
-      this.locationsService.listAgentLocationIds(agentId),
-      this.locationsService.listAgentLocations(agentId),
-    ]);
-    const locationNameById = new Map(myLocations.map((l) => [l.id, l.name]));
-
-    const result = await this.usersService.listPlayersByLocationIds(locationIds, opts);
+    const result = await this.usersService.listPlayersByAssignedAgentId(agentId, opts);
 
     return {
       ...result,
@@ -459,8 +449,6 @@ export class AgentsService {
         id: u.id,
         displayName: u.displayName,
         phoneNumber: u.phoneNumber ?? null,
-        locationId: u.locationId ?? null,
-        locationName: u.locationId ? locationNameById.get(u.locationId) ?? null : null,
         walletBalanceMinor: u.wallets?.find((w) => w.currencyCode === 'CREDIT')?.availableMinor ?? 0,
         status: u.status,
         isMyReferral: u.referredByAgentId === agentId,
@@ -471,15 +459,13 @@ export class AgentsService {
 
   /**
    * Per-player drill-down: deposits, withdrawals, games played/won. Enforces
-   * the authorization boundary — the target player MUST be in one of the
-   * agent's assigned locations, otherwise an agent could view any player by
-   * guessing a userId.
+   * the authorization boundary — the target player MUST be assigned to this
+   * agent, otherwise an agent could view any player by guessing a userId.
    */
   async getAreaPlayerActivity(agentId: string, playerUserId: string) {
-    const locationIds = await this.locationsService.listAgentLocationIds(agentId);
     const player = await this.usersService.findById(playerUserId);
 
-    if (!player.locationId || !locationIds.includes(player.locationId)) {
+    if (player.assignedAgentId !== agentId) {
       throw new ForbiddenException('This player is not in your assigned area');
     }
 

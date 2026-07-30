@@ -297,12 +297,31 @@ export const userApi = {
 };
 
 // ── Locations (player-facing) ─────────────────────────────────────
+// Retired for onboarding — kept only for anything still reading the admin
+// Location catalog. New player→agent attribution uses agentMatchApi below.
 export const locationsApi = {
   list: () => api.get<PublicLocation[]>('/locations').then((r) => r.data),
   /** Null when the player has never answered — the Mini App uses this to prompt. */
   getMine: () => api.get<UserLocation | null>('/locations/me').then((r) => r.data),
   setMine: (dto: { locationId?: string; other?: boolean }) =>
     api.patch<UserLocation>('/locations/me', dto).then((r) => r.data),
+};
+
+// ── Direct player→agent GPS matching (replaces Location-based onboarding) ──
+export type OnDutyAgentOption = { id: string; name: string };
+export type AssignedAgentResult = {
+  assignedAgentId: string | null;
+  assignedAgentName: string | null;
+  assignedAgentSource: 'gps_match' | 'manual_pick' | 'other';
+};
+
+export const agentMatchApi = {
+  listAgents: () => api.get<OnDutyAgentOption[]>('/agent-match/agents').then((r) => r.data),
+  getMine: () => api.get<AssignedAgentResult | null>('/agent-match/me').then((r) => r.data),
+  setMine: (dto: { agentId?: string; other?: boolean }) =>
+    api.patch<AssignedAgentResult>('/agent-match/me', dto).then((r) => r.data),
+  attempt: (latitude: number, longitude: number) =>
+    api.post<AssignedAgentResult | null>('/agent-match/attempt', { latitude, longitude }).then((r) => r.data),
 };
 
 // ── Admin: Overview + Config ──────────────────────────────────────
@@ -778,8 +797,6 @@ export type AreaPlayer = {
   id: string;
   displayName: string;
   phoneNumber: string | null;
-  locationId: string | null;
-  locationName: string | null;
   walletBalanceMinor: number;
   status: string;
   isMyReferral: boolean;

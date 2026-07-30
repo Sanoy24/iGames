@@ -1107,6 +1107,7 @@ function LivePlaceWinPopup({
         (entry.winnerGrid as Array<Array<number | null>> | undefined) ?? null;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
+    const isBot = !!entry.winnerIsBot;
     const name = (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
     const prize = (entry.prizeMinor as number | undefined) ?? 0;
@@ -1155,10 +1156,11 @@ function LivePlaceWinPopup({
                     <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
                         <span
                             className='rounded-lg px-3 py-1 font-black text-white'
-                            style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
+                            style={{ background: disqualified ? '#b91c1c' : isBot ? '#4f46e5' : '#2f8f4f' }}
                         >
                             {name}
-                            {last4 ? ` ( *${last4} )` : ''}
+                            {isBot && <span className='ml-1.5 text-[10px] uppercase text-indigo-200'>(Bot)</span>}
+                            {last4 && !isBot ? ` ( *${last4} )` : ''}
                         </span>
                         <span>
                             {disqualified
@@ -1417,11 +1419,14 @@ function RoomResultOverlay({
                                             <span className='text-sm leading-none'>
                                                 {PLACE_MEDAL[place]}
                                             </span>
-                                            <span className='text-[11px] font-black text-white truncate'>
+                                            <span className={`text-[11px] font-black truncate ${!!entry.winnerIsBot ? 'text-indigo-400' : 'text-white'}`}>
                                                 {(entry.winnerDisplayName as
                                                     | string
                                                     | undefined) ?? tr('bingo.player')}
-                                                {entry.winnerPhoneLast4 ? (
+                                                {!!entry.winnerIsBot && (
+                                                    <span className='ml-1.5 text-[9px] uppercase text-indigo-300'>(Bot)</span>
+                                                )}
+                                                {entry.winnerPhoneLast4 && !entry.winnerIsBot ? (
                                                     <span className='text-slate-400'>
                                                         {' '}
                                                         *
@@ -2308,13 +2313,26 @@ export function Bingo({ onBack }: BingoProps) {
     // delivers several numbers at once. Snap to full on room switch (no history
     // replay) and on completion (show the final state immediately).
     const [revealedCount, setRevealedCount] = useState(0);
+    const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const processNextReveal = useCallback(() => {
+        revealTimerRef.current = null;
+        setRevealedCount((c) => c + 1);
+        soundEngine.pop();
+    }, []);
+
     useEffect(() => {
         setRevealedCount(room?.drawnNumbers?.length ?? 0);
     }, [room?.id]);
+
     useEffect(() => {
         const total = drawnNumbers.length;
         // Snap to the final state on completion/cancel (no replay) and clamp any overshoot.
         if (room?.status === 'completed' || room?.status === 'cancelled') {
+            if (revealTimerRef.current) {
+                clearTimeout(revealTimerRef.current);
+                revealTimerRef.current = null;
+            }
             setRevealedCount(total);
             return;
         }
@@ -2323,18 +2341,27 @@ export function Bingo({ onBack }: BingoProps) {
             return;
         }
         if (revealedCount >= total) return;
+
+        // If a timer is already running, let it finish. It will increment the count
+        // and this effect will re-run to schedule the next one, completely decoupled
+        // from the fast socket arrivals.
+        if (revealTimerRef.current) return;
+
         // One steady, calm cadence for every ball. Only shorten (still gently) when
-        // the client is far behind — never a fast 250ms burst that outruns the
-        // animation and reads as "rushed".
+        // the client is far behind.
         const backlog = total - revealedCount;
         const delay =
             backlog > REVEAL_CATCHUP_BACKLOG ? REVEAL_MIN_MS : REVEAL_BASE_MS;
-        const id = setTimeout(() => {
-            setRevealedCount((c) => Math.min(c + 1, total));
-            soundEngine.pop();
-        }, delay);
-        return () => clearTimeout(id);
-    }, [revealedCount, drawnNumbers.length, room?.status]);
+
+        revealTimerRef.current = setTimeout(processNextReveal, delay);
+    }, [revealedCount, drawnNumbers.length, room?.status, processNextReveal]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+        };
+    }, []);
     const revealedNumbers = useMemo(
         () => drawnNumbers.slice(0, revealedCount),
         [drawnNumbers, revealedCount],
@@ -2379,14 +2406,15 @@ export function Bingo({ onBack }: BingoProps) {
         [drawnNumbers, ticketCount],
     );
 
-    // When a place is won, a card completed its pattern on numbers the server has
-    // already drawn. Snap the paced reveal up to the full drawn set so the winner
-    // card's marked cells all read as genuinely CALLED — otherwise the board's slow
-    // reveal lags behind and the win card looks like it marked uncalled numbers.
+    // When a place is won, the server already knows the winner.
+    // We intentionally do NOT snap the paced reveal here to keep the drawing uniform.
+    // The UI will show the winner popups while the board catches up.
+    /* 
     useEffect(() => {
         if (livePlaceQueue.length > 0)
             setRevealedCount(room?.drawnNumbers?.length ?? 0);
     }, [livePlaceQueue.length, room?.drawnNumbers?.length]);
+    */
 
     const myTickets = useMemo(() => {
         const apiTickets = room?.tickets ?? [];

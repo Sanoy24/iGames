@@ -248,6 +248,78 @@ export class AdminService implements OnApplicationBootstrap {
     return debitResult;
   }
 
+  // ── Game Transactions ────────────────────────────────────────────────
+
+  async getGameTransactions(page: number, limit: number) {
+    const skip = (page - 1) * limit;
+
+    const [rooms, total] = await this.dataSource.getRepository(BingoRoom).findAndCount({
+      where: { status: 'completed' },
+      order: { scheduledStartAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    const transactions = await Promise.all(
+      rooms.map(async (room) => {
+        const tickets = await this.dataSource.getRepository(BingoTicket).find({
+          where: { roomId: room.id },
+          relations: ['user'],
+        });
+
+        const realPlayers = new Set<string>();
+        const bots = new Set<string>();
+        let ticketsByBot = 0;
+        let botWonAmount = 0;
+        const agentIds = new Set<string>();
+
+        for (const ticket of tickets) {
+          const isBot = !!(ticket.user?.productMetadata as any)?.botPolicy?.active;
+          if (isBot) {
+            bots.add(ticket.userId);
+            ticketsByBot++;
+            botWonAmount += ticket.payoutMinor;
+          } else {
+            realPlayers.add(ticket.userId);
+            if (ticket.user?.referredByAgentId) {
+              agentIds.add(ticket.user.referredByAgentId);
+            }
+          }
+        }
+
+        const realStake = (room.soldTickets - ticketsByBot) * room.ticketPriceMinor;
+        const realWinnings = tickets
+          .filter((t) => !(t.user?.productMetadata as any)?.botPolicy?.active)
+          .reduce((sum, t) => sum + t.payoutMinor, 0);
+        const realEmoneyEarned = realStake - realWinnings;
+
+        let agentNames = '';
+        if (agentIds.size > 0) {
+          const agents = await this.dataSource.getRepository(User).find({
+            where: { id: In(Array.from(agentIds)) },
+            select: ['displayName'],
+          });
+          agentNames = agents.map((a) => a.displayName).join(', ');
+        }
+
+        return {
+          id: room.id,
+          gameType: 'Bingo',
+          ticketsSold: room.soldTickets,
+          singleStake: room.ticketPriceMinor,
+          numberOfPlayers: realPlayers.size,
+          numberOfBots: bots.size,
+          ticketsTakenByBot: ticketsByBot,
+          agents: agentNames,
+          amountBotWon: botWonAmount,
+          realEmoneyEarned,
+        };
+      }),
+    );
+
+    return { data: transactions, total, page, limit };
+  }
+
   async getPlatformStats() {
     // 1. Total active liabilities (money in wallets)
     const walletStats = await this.dataSource.getRepository(Wallet)

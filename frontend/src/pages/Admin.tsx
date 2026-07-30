@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Activity, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
   Image as ImageIcon, LifeBuoy, MapPin, Megaphone, Play, Plus, RefreshCw, Send, Settings,
-  Shield, Trash2, Users, Wallet, X,
+  Shield, Trash2, Users, Wallet, X, History
 } from 'lucide-react';
 import {
   adminAgentsApi,
@@ -37,8 +37,9 @@ import { SupportConsole } from '../components/SupportConsole';
 import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
 import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
+import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'game-transactions' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -55,6 +56,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
   { id: 'support',     label: 'Support',     icon: <LifeBuoy size={15} /> },
   { id: 'games',       label: 'Games',       icon: <Dices size={15} /> },
+  { id: 'game-transactions', label: 'Game Trans', icon: <History size={15} /> },
   { id: 'config',      label: 'Config',      icon: <Settings size={15} /> },
   { id: 'emoney',      label: 'ETB',         icon: <Coins size={15} /> },
   { id: 'account',     label: 'Account',     icon: <Shield size={15} /> },
@@ -1464,6 +1466,7 @@ function ConfigAdmin() {
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
     agentRoomsEnabled: false, agentRoomCommissionPct: 0,
+    withdrawalFeeTiers: null,
   });
   const [admins, setAdmins] = useState<User[]>([]);
   const [perf, setPerf] = useState<AgentPerformance[]>([]);
@@ -1483,6 +1486,7 @@ function ConfigAdmin() {
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
     agentRoomsEnabled: c.agentRoomsEnabled ?? false,
     agentRoomCommissionPct: c.agentRoomCommissionPct ?? 0,
+    withdrawalFeeTiers: c.withdrawalFeeTiers ?? null,
   });
 
   useEffect(() => {
@@ -1560,6 +1564,79 @@ function ConfigAdmin() {
         <p className="adm-field-hint" style={{ marginTop: 8 }}>
           Both cuts come out of the gross withdrawal — the user receives gross minus service fee minus commission.
         </p>
+
+        {/* ── Tiered Fee Schedule ── */}
+        <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div>
+              <span style={{ fontWeight: 700, fontSize: 13 }}>Tiered Service Fee Schedule</span>
+              <em className="adm-field-hint" style={{ display: 'block', marginTop: 2 }}>
+                When tiers are set, they override the flat "Service Fee %" above. The highest matching tier (by min amount) wins.
+              </em>
+            </div>
+            <button
+              className="adm-btn adm-btn-primary"
+              onClick={() => setForm((f) => ({
+                ...f,
+                withdrawalFeeTiers: [...(f.withdrawalFeeTiers ?? []), { minAmountMinor: 0, feePct: 0 }],
+              }))}
+            >
+              <Plus size={12} /> Add Tier
+            </button>
+          </div>
+
+          {(!form.withdrawalFeeTiers || form.withdrawalFeeTiers.length === 0) ? (
+            <p className="adm-field-hint">No tiers — flat rate applies. Add a tier to enable tiered pricing.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Header */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
+                <span>Min Amount (ETB)</span>
+                <span>Fee %</span>
+                <span></span>
+              </div>
+              {form.withdrawalFeeTiers.map((tier, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    type="number" min={0} step={1}
+                    value={tier.minAmountMinor}
+                    onChange={(e) => setForm((f) => {
+                      const tiers = [...(f.withdrawalFeeTiers ?? [])];
+                      tiers[i] = { ...tiers[i], minAmountMinor: Number(e.target.value) };
+                      return { ...f, withdrawalFeeTiers: tiers };
+                    })}
+                    placeholder="0"
+                  />
+                  <input
+                    className="input"
+                    type="number" min={0} max={100} step={0.1}
+                    value={tier.feePct}
+                    onChange={(e) => setForm((f) => {
+                      const tiers = [...(f.withdrawalFeeTiers ?? [])];
+                      tiers[i] = { ...tiers[i], feePct: Number(e.target.value) };
+                      return { ...f, withdrawalFeeTiers: tiers };
+                    })}
+                    placeholder="5"
+                  />
+                  <button
+                    className="adm-icon-btn"
+                    title="Remove tier"
+                    onClick={() => setForm((f) => ({
+                      ...f,
+                      withdrawalFeeTiers: (f.withdrawalFeeTiers ?? []).filter((_, j) => j !== i),
+                    }))}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              <p className="adm-field-hint" style={{ marginTop: 4 }}>
+                Example: 0 ETB→5%, 50,000 ETB→3%, 200,000 ETB→2% means small withdrawals pay 5%, large ones pay 2%.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="adm-panel">
@@ -4216,6 +4293,7 @@ export function Admin() {
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
           {tab === 'support'       && <SupportConsole />}
           {tab === 'games'         && <GamesAdmin />}
+          {tab === 'game-transactions' && <GameTransactionsAdmin />}
           {tab === 'config'        && <ConfigAdmin />}
           {tab === 'emoney'        && <EMoneyAdmin />}
           {tab === 'account'       && <AccountAdmin />}

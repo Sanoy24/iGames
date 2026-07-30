@@ -329,6 +329,8 @@ export type SystemConfig = {
   agentRoomsEnabled?: boolean;
   /** % of a room's real-player GGR paid to the owning agent on completion. */
   agentRoomCommissionPct?: number;
+  /** Tiered withdrawal fee schedule. When set, overrides flat withdrawalServiceChargePct. */
+  withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
 };
 
 export type AgentPerformance = {
@@ -739,7 +741,7 @@ export const adminWithdrawalsApi = {
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
-  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
+  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number; withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null }>('/agent/config').then((r) => r.data),
   getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
   getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
@@ -1016,3 +1018,5 @@ export const adminPoolApi = {
 
 export default api;
 
+  
+export const adminGameTransactionsApi = { getGameTransactions: (page?: number, limit?: number) =, { params: { page, limit } }).then((r) = }; 

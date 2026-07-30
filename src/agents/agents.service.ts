@@ -28,12 +28,33 @@ export class AgentsService {
 
   // ── Config (agent-accessible) ────────────────────────────────────
 
-  async getAgentConfig(): Promise<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }> {
+  async getAgentConfig(): Promise<{
+    withdrawalServiceChargePct: number;
+    withdrawalCommissionPct: number;
+    withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+  }> {
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
     return {
       withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0,
       withdrawalCommissionPct: config?.withdrawalCommissionPct ?? 0,
+      withdrawalFeeTiers: config?.withdrawalFeeTiers ?? null,
     };
+  }
+
+  /** Resolve the effective service-fee % for a given withdrawal amount.
+   * If tiered config is present it takes precedence over the flat pct. */
+  static resolveServiceFeePct(
+    amountMinor: number,
+    flatPct: number,
+    tiers?: { minAmountMinor: number; feePct: number }[] | null,
+  ): number {
+    if (!tiers || tiers.length === 0) return flatPct;
+    const sorted = [...tiers].sort((a, b) => a.minAmountMinor - b.minAmountMinor);
+    let resolved = flatPct;
+    for (const tier of sorted) {
+      if (amountMinor >= tier.minAmountMinor) resolved = tier.feePct;
+    }
+    return resolved;
   }
 
   // ── Withdrawals ────────────────────────────────────────────────────
@@ -95,7 +116,6 @@ export class AgentsService {
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
     // Read fee/commission split and the designated super-admin from system config.
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
     const commissionPct = config?.withdrawalCommissionPct ?? 0;
     const superAdminUserId = config?.superAdminUserId ?? null;
     const creditMinorPerBirr = config?.telebirrCreditMinorPerBirr ?? 1;
@@ -103,6 +123,13 @@ export class AgentsService {
     // The withdrawal must be claimed by THIS agent, and we need its destination
     // (the player's phone) and amount to check the payout proof against.
     const withdrawal = await this.walletService.getClaimedWithdrawalForAgent(withdrawalId, agentId);
+
+    // Resolve the effective service fee (flat % or tiered % depending on config).
+    const serviceFeePct = AgentsService.resolveServiceFeePct(
+      withdrawal.amountMinor,
+      config?.withdrawalServiceChargePct ?? 0,
+      config?.withdrawalFeeTiers,
+    );
 
     // The player receives the net amount (gross − service fee − commission); that
     // is exactly what the agent must have paid out.

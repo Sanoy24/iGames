@@ -113,7 +113,7 @@ export function LocationPrompt() {
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Which area are you in?</h2>
         </div>
         <p style={{ color: 'var(--text-muted, #999)', fontSize: 13, lineHeight: 1.5, margin: '0 0 16px' }}>
-          This helps us connect you with the right local agent. It's optional — you can skip it.
+          It is optional, but if you choose your nearest place it is easy to assign an agent for you to make a fast deposit and withdraw.
         </p>
 
         <select

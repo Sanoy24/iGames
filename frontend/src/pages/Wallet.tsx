@@ -6,7 +6,7 @@ import type { LedgerEntry, Withdrawal } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, formatDateTimeFull, getErrorMessage } from '../lib/utils';
-import { authApi, walletApi, paymentsApi, type ActiveAgent } from '../lib/api';
+import { authApi, walletApi, paymentsApi, agentApi, type ActiveAgent } from '../lib/api';
 
 // Deposit provider the player is using. Both flows paste a confirmation from the
 // same on-duty agent; only the parse/verify endpoint differs.
@@ -143,6 +143,11 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawPhone,  setWithdrawPhone]  = useState('');
   const [isWithdrawing,  setIsWithdrawing]  = useState(false);
+  const [withdrawFeeConfig, setWithdrawFeeConfig] = useState<{
+    withdrawalServiceChargePct: number;
+    withdrawalCommissionPct: number;
+    withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+  } | null>(null);
 
   const loadWallet = useCallback(async () => {
     try {
@@ -255,6 +260,34 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     setPreview(null);
   };
 
+  const toggleWithdraw = () => {
+    setShowWithdraw((open) => {
+      const next = !open;
+      if (next) {
+        setShowTopup(false);
+        resetTopup();
+        // Fetch fee tiers so we can show an estimate before submission
+        agentApi.getConfig()
+          .then((c) => setWithdrawFeeConfig(c))
+          .catch(() => setWithdrawFeeConfig(null));
+      }
+      return next;
+    });
+  };
+
+  /** Mirror of AgentsService.resolveServiceFeePct — same logic, client side. */
+  const resolveFeePct = (amountMinor: number): number => {
+    if (!withdrawFeeConfig) return 0;
+    const { withdrawalServiceChargePct: flat, withdrawalFeeTiers: tiers } = withdrawFeeConfig;
+    if (!tiers || tiers.length === 0) return flat;
+    const sorted = [...tiers].sort((a, b) => a.minAmountMinor - b.minAmountMinor);
+    let pct = flat;
+    for (const tier of sorted) {
+      if (amountMinor >= tier.minAmountMinor) pct = tier.feePct;
+    }
+    return pct;
+  };
+
   const handleWithdraw = async () => {
     const credits = parseFloat(withdrawAmount);
     if (isNaN(credits) || credits <= 0) { addToast('error', 'Please enter a valid amount'); return; }
@@ -340,7 +373,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
           </motion.button>
           <motion.button
             className="btn btn-secondary"
-            onClick={() => { setShowWithdraw(v => !v); setShowTopup(false); }}
+            onClick={toggleWithdraw}
             style={{ flex: 1, minWidth: 140 }}
             whileTap={{ scale: 0.96 }}
           >
@@ -663,6 +696,44 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     style={{ width: '100%' }}
                   />
                 </div>
+
+                {/* Fee estimate — shown whenever a valid amount is entered */}
+                {(() => {
+                  const raw = parseFloat(withdrawAmount);
+                  if (isNaN(raw) || raw <= 0 || !withdrawFeeConfig) return null;
+                  const amtMinor = Math.round(raw);
+                  const feePct  = resolveFeePct(amtMinor);
+                  const commPct = withdrawFeeConfig.withdrawalCommissionPct ?? 0;
+                  const feeMinor  = Math.floor(amtMinor * feePct / 100);
+                  const commMinor = Math.floor(amtMinor * commPct / 100);
+                  const netMinor  = amtMinor - feeMinor - commMinor;
+                  if (feeMinor === 0 && commMinor === 0) return null;
+                  return (
+                    <div style={{
+                      marginBottom: 12, padding: '10px 12px',
+                      background: 'rgba(250,204,21,0.06)',
+                      border: '1px solid rgba(250,204,21,0.2)',
+                      borderRadius: 10, fontSize: 12,
+                    }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--gold)' }}>Fee Breakdown</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--text-muted)' }}>
+                        <span>Service fee ({feePct}%)</span>
+                        <span style={{ color: '#ef4444' }}>−{new Intl.NumberFormat().format(feeMinor)} ETB</span>
+                      </div>
+                      {commMinor > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--text-muted)' }}>
+                          <span>Agent commission ({commPct}%)</span>
+                          <span style={{ color: '#ef4444' }}>−{new Intl.NumberFormat().format(commMinor)} ETB</span>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 6, fontWeight: 700, color: 'var(--green)' }}>
+                        <span>You receive</span>
+                        <span>{new Intl.NumberFormat().format(netMinor)} ETB</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>Telebirr Phone Number</label>
                   <input

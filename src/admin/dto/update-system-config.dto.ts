@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -68,4 +68,12 @@ export class UpdateSystemConfigDto {
   @Min(0)
   @Max(100)
   agentRoomCommissionPct?: number;
+
+  /**
+   * Tiered withdrawal fee schedule. Pass null to clear (flat pct reverts to
+   * withdrawalServiceChargePct). Each entry: { minAmountMinor, feePct }.
+   */
+  @IsOptional()
+  @IsArray()
+  withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
 }

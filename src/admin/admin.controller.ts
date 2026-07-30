@@ -40,6 +40,14 @@ export class AdminController {
     return this.adminService.getPlatformStats();
   }
 
+  @Get('game-transactions')
+  getGameTransactions(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.adminService.getGameTransactions(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+  }
+
   @Get('config')
   getConfig() {
     return this.adminService.getSystemConfig();

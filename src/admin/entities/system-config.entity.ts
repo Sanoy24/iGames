@@ -80,6 +80,21 @@ export class SystemConfig {
   @Column({ type: 'int', default: 0 })
   agentRoomCommissionPct: number;
 
+  /**
+   * Tiered withdrawal service fee configuration. Each tier specifies a minimum
+   * amount (in minor units) and the fee percentage that applies when the
+   * withdrawal amount is >= minAmountMinor. Tiers are evaluated in ascending
+   * order of minAmountMinor; the last matching tier wins. When absent, the flat
+   * withdrawalServiceChargePct applies. Example:
+   * [
+   *   { minAmountMinor: 0, feePct: 5 },
+   *   { minAmountMinor: 50000, feePct: 3 },
+   *   { minAmountMinor: 200000, feePct: 2 },
+   * ]
+   */
+  @Column({ type: 'json', nullable: true })
+  withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

@@ -69,6 +69,24 @@ export class WalletController {
   // their working capital via admin transfer, never a self-service withdrawal
   // here. Without this, any authenticated JWT (including an admin's) could
   // request a withdrawal against their own always-dormant personal wallet.
+  // Player-scoped fee preview — deliberately separate from GET /agent/config
+  // (which is @Roles('agent')-gated) so a plain player token doesn't 403 when
+  // the withdraw form fetches the fee tiers to display before submission.
+  @Roles('player')
+  @Get('withdrawal-fee-config')
+  @ApiOkResponse({
+    schema: {
+      example: {
+        withdrawalServiceChargePct: 5,
+        withdrawalCommissionPct: 1,
+        withdrawalFeeTiers: [{ minAmountMinor: 100000, feePct: 2 }]
+      }
+    }
+  })
+  getWithdrawalFeeConfig() {
+    return this.walletService.getWithdrawalFeeConfig();
+  }
+
   @Roles('player')
   @Post('withdraw')
   @ApiOkResponse({

@@ -46,7 +46,8 @@ export class BingoAdminController {
   @Post('rooms/:id/draw-next')
   async drawNextNumber(@Param('id') roomId: string) {
     const room = await this.bingoService.drawNextNumber(roomId);
-    this.gameEventsGateway.emitBingoNumberDrawn(room);
+    const cfg = await this.bingoService.getBingoConfig();
+    this.gameEventsGateway.emitBingoNumberDrawn(room, Math.max(1, cfg.drawIntervalSeconds ?? 2) * 1000);
     if (room.status === 'completed') {
       this.gameEventsGateway.emitBingoRoomCompleted(room);
       void this.bingoService.notifyRoomWinners(room.id).catch(() => undefined);

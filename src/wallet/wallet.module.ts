@@ -10,6 +10,7 @@ import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal } from './entities/withdrawal.entity';
 import { User } from '../users/entities/user.entity';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
+import { SystemConfig } from '../admin/entities/system-config.entity';
 import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 
@@ -19,7 +20,7 @@ import { WalletService } from './wallet.service';
     LedgerModule,
     GameEventsModule,
     NotificationsModule,
-    TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal, User, AgentActionLog])
+    TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal, User, AgentActionLog, SystemConfig])
   ],
   controllers: [WalletController],
   providers: [WalletService, JwtAuthGuard],

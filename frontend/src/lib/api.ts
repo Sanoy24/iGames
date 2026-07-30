@@ -139,6 +139,8 @@ export const walletApi = {
   requestWithdrawal: (amountMinor: number, destinationAccount: string) =>
     api.post<Withdrawal>('/wallet/withdraw', { amountMinor, destinationAccount }).then((r) => r.data),
   getWithdrawals: () => api.get<Withdrawal[]>('/wallet/withdrawals').then((r) => r.data),
+  getWithdrawalFeeConfig: () =>
+    api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number; withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null }>('/wallet/withdrawal-fee-config').then((r) => r.data),
 };
 
 // ── Payments ──────────────────────────────────────────────────────
@@ -1019,4 +1021,7 @@ export const adminPoolApi = {
 export default api;
 
   
-export const adminGameTransactionsApi = { getGameTransactions: (page?: number, limit?: number) =, { params: { page, limit } }).then((r) = }; 
+export const adminGameTransactionsApi = {
+  getGameTransactions: (page?: number, limit?: number) => 
+    api.get<{ data: any[], total: number }>('/admin/game-transactions', { params: { page, limit } }).then((r) => r.data)
+}; 

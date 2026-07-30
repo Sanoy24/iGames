@@ -16,6 +16,7 @@ import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
 import { User } from '../users/entities/user.entity';
+import { SystemConfig } from '../admin/entities/system-config.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
 
 export type WalletSummary = {
@@ -69,6 +70,8 @@ export class WalletService {
     private readonly wagerLimitRepository: Repository<WagerLimit>,
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepository: Repository<Withdrawal>,
+    @InjectRepository(SystemConfig)
+    private readonly systemConfigRepository: Repository<SystemConfig>,
     private readonly ledgerService: LedgerService,
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly notificationsService: NotificationsService
@@ -492,6 +495,21 @@ export class WalletService {
     }
 
     return JSON.stringify(value);
+  }
+
+  /** Player-facing withdrawal fee config, so the withdraw form can show a fee
+   * estimate before submission without requiring the agent role. */
+  async getWithdrawalFeeConfig(): Promise<{
+    withdrawalServiceChargePct: number;
+    withdrawalCommissionPct: number;
+    withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+  }> {
+    const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    return {
+      withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0,
+      withdrawalCommissionPct: config?.withdrawalCommissionPct ?? 0,
+      withdrawalFeeTiers: config?.withdrawalFeeTiers ?? null,
+    };
   }
 
   async requestWithdrawal(

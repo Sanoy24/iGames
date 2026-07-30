@@ -44,6 +44,12 @@ const POLL_INTERVAL_MS = 5_000;
 // to REVEAL_MIN_MS when the client has fallen far behind (e.g. it was a
 // background tab and a poll delivered a big batch), and never below the ball
 // animation's own duration — so reveals always stay smooth, never a rushed burst.
+// REVEAL_BASE_MS is only the fallback used before the first `bingo.number.drawn`
+// event of a session arrives — once a draw event lands, its `intervalMs` (the
+// server's actual configured cadence) takes over as the steady-state delay. This
+// was previously a hardcoded 1500ms, faster than the server's own 2000ms default,
+// so the client routinely caught up and stalled waiting on the socket — visible
+// as uneven/laggy calling ("it seems the bot is calculating").
 const REVEAL_BASE_MS = 1_500;
 const REVEAL_MIN_MS = 650;
 const REVEAL_CATCHUP_BACKLOG = 10;
@@ -2013,9 +2019,15 @@ export function Bingo({ onBack }: BingoProps) {
             number?: number;
             winnersByTier?: Record<string, string[]>;
             settlementSummary?: Record<string, unknown>;
+            intervalMs?: number;
         }) => {
             if (p.roomId !== roomIdRef.current || p.number === undefined)
                 return;
+            // Track the server's real cadence so the reveal pacer below can match it
+            // instead of racing ahead on a hardcoded guess.
+            if (typeof p.intervalMs === 'number' && p.intervalMs > 0) {
+                serverIntervalMsRef.current = p.intervalMs;
+            }
             // The reveal sound is played by CurrentBallDisplay in sync with the queued
             // ball animation, so we don't pop here (that fired in a fast burst).
             const drawn = p.number;
@@ -2314,6 +2326,9 @@ export function Bingo({ onBack }: BingoProps) {
     // replay) and on completion (show the final state immediately).
     const [revealedCount, setRevealedCount] = useState(0);
     const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Server's actual draw cadence, learned from the most recent draw event.
+    // Falls back to REVEAL_BASE_MS until the first event of the session arrives.
+    const serverIntervalMsRef = useRef<number>(REVEAL_BASE_MS);
 
     const processNextReveal = useCallback(() => {
         revealTimerRef.current = null;
@@ -2347,11 +2362,12 @@ export function Bingo({ onBack }: BingoProps) {
         // from the fast socket arrivals.
         if (revealTimerRef.current) return;
 
-        // One steady, calm cadence for every ball. Only shorten (still gently) when
-        // the client is far behind.
+        // One steady, calm cadence for every ball, matched to the server's actual
+        // draw interval so the client never outpaces it and stalls. Only shorten
+        // (still gently) when the client is far behind.
         const backlog = total - revealedCount;
         const delay =
-            backlog > REVEAL_CATCHUP_BACKLOG ? REVEAL_MIN_MS : REVEAL_BASE_MS;
+            backlog > REVEAL_CATCHUP_BACKLOG ? REVEAL_MIN_MS : serverIntervalMsRef.current;
 
         revealTimerRef.current = setTimeout(processNextReveal, delay);
     }, [revealedCount, drawnNumbers.length, room?.status, processNextReveal]);

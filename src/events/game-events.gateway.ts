@@ -44,6 +44,11 @@ export type BingoNumberDrawnPayload = {
   // (derash), rather than only learning the winners at room completion.
   winnersByTier: Record<string, string[]>;
   settlementSummary: Record<string, unknown>;
+  // Server clock at emit time and the configured cadence, so the client can pace
+  // its reveal animation off the server's actual interval instead of a hardcoded
+  // guess that can outrun it and stall waiting for the next socket event.
+  emittedAt: number;
+  intervalMs: number;
 };
 
 export type BingoRoomCompletedPayload = {
@@ -315,7 +320,7 @@ export class GameEventsGateway
     this.server.emit('bingo.room.updated', payload);
   }
 
-  emitBingoNumberDrawn(room: BingoRoomResponse): void {
+  emitBingoNumberDrawn(room: BingoRoomResponse, intervalMs: number): void {
     const drawnNumbers = room.drawnNumbers;
     const latestNumber = drawnNumbers[drawnNumbers.length - 1];
     if (latestNumber === undefined) return;
@@ -326,7 +331,9 @@ export class GameEventsGateway
       drawIndex: drawnNumbers.length - 1,
       totalDrawn: drawnNumbers.length,
       winnersByTier: room.winnersByTier,
-      settlementSummary: room.settlementSummary
+      settlementSummary: room.settlementSummary,
+      emittedAt: Date.now(),
+      intervalMs
     };
     this.server.emit('bingo.number.drawn', payload);
   }

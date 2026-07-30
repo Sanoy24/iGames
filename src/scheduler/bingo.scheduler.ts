@@ -93,13 +93,19 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       }
 
       const intervalSeconds = Math.max(1, cfg.drawIntervalSeconds ?? 2);
+      const intervalMs = intervalSeconds * 1000;
       const dueRoomIds = await this.bingoService.findRunningRoomIdsDue(intervalSeconds);
 
-      for (const roomId of dueRoomIds) {
-        if (this.shuttingDown) break;
+      // Draw+emit for due rooms concurrently rather than one-at-a-time: each
+      // room draws under its own row-level transaction lock, so they don't
+      // contend with each other, but sequential awaiting here was letting one
+      // room's DB/RNG-audit latency delay the emit for every other due room in
+      // the same tick — a direct source of the uneven call cadence players saw.
+      await Promise.all(dueRoomIds.map(async (roomId) => {
+        if (this.shuttingDown) return;
         try {
           const updated = await this.bingoService.drawNextNumber(roomId);
-          this.gameEventsGateway.emitBingoNumberDrawn(updated);
+          this.gameEventsGateway.emitBingoNumberDrawn(updated, intervalMs);
 
           if (updated.status === 'completed') {
             this.logger.log(`Bingo room ${updated.id} completed`);
@@ -128,7 +134,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
             error instanceof Error ? error.stack : error
           );
         }
-      }
+      }));
 
       // Auto-start rooms whose scheduledStartAt has passed (skipped while paused).
       // Per-agent mode starts one game per owner; shared mode starts one globally.
@@ -145,7 +151,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           this.logger.log(`Auto-starting Bingo room ${room.id}`);
           const updated = await this.bingoService.drawNextNumber(room.id);
           this.gameEventsGateway.emitBingoRoomUpdated(updated);
-          this.gameEventsGateway.emitBingoNumberDrawn(updated);
+          this.gameEventsGateway.emitBingoNumberDrawn(updated, intervalMs);
         } catch (error) {
           this.logger.error(
             `Error auto-starting room ${room.id}`,

@@ -6,7 +6,7 @@ import type { LedgerEntry, Withdrawal } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, formatDateTimeFull, getErrorMessage } from '../lib/utils';
-import { authApi, walletApi, paymentsApi, agentApi, type ActiveAgent } from '../lib/api';
+import { authApi, walletApi, paymentsApi, type ActiveAgent } from '../lib/api';
 
 // Deposit provider the player is using. Both flows paste a confirmation from the
 // same on-duty agent; only the parse/verify endpoint differs.
@@ -266,8 +266,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
       if (next) {
         setShowTopup(false);
         resetTopup();
-        // Fetch fee tiers so we can show an estimate before submission
-        agentApi.getConfig()
+        // Fetch fee tiers so we can show an estimate before submission. Uses the
+        // player-scoped endpoint (not agentApi.getConfig, which is agent-role-only
+        // and would 403 for a plain player, silently zeroing out the fee note).
+        walletApi.getWithdrawalFeeConfig()
           .then((c) => setWithdrawFeeConfig(c))
           .catch(() => setWithdrawFeeConfig(null));
       }

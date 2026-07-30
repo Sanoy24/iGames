@@ -91,6 +91,7 @@ function makeService({
     { findOneBy: jest.fn(), create: jest.fn(), save: jest.fn() } as any,
     { findOneBy: jest.fn() } as any,
     { findOneBy: jest.fn() } as any,
+    { findOneBy: jest.fn() } as any,
     mockLedgerService,
     mockEventsGateway,
     mockNotificationsService,

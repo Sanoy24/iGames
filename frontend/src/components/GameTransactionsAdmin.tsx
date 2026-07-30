@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { History } from 'lucide-react';
 import { adminGameTransactionsApi } from '../lib/api';
-import { getErrorMessage } from '../lib/utils';
-import { useTranslation } from 'react-i18next';
-import { formatCredits } from '../lib/utils';
+import { getErrorMessage, formatCreditsFull } from '../lib/utils';
 
 export function GameTransactionsAdmin() {
-  const { t } = useTranslation();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,15 +70,15 @@ export function GameTransactionsAdmin() {
                   <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{row.id.slice(0, 8)}...</td>
                   <td><span className="badge badge-indigo">{row.gameType}</span></td>
                   <td>{row.ticketsSold}</td>
-                  <td>{formatCredits(row.singleStake)} ETB</td>
+                  <td>{formatCreditsFull(row.singleStake)} ETB</td>
                   <td>{row.numberOfPlayers}</td>
                   <td>{row.numberOfBots}</td>
                   <td>{row.ticketsTakenByBot}</td>
                   <td style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.agents}>
                     {row.agents || '-'}
                   </td>
-                  <td><span className="badge badge-gold">{formatCredits(row.amountBotWon)} ETB</span></td>
-                  <td><span className="badge badge-green">{formatCredits(row.realEmoneyEarned)} ETB</span></td>
+                  <td><span className="badge badge-gold">{formatCreditsFull(row.amountBotWon)} ETB</span></td>
+                  <td><span className="badge badge-green">{formatCreditsFull(row.realEmoneyEarned)} ETB</span></td>
                 </tr>
               ))
             )}

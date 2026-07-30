@@ -8,6 +8,7 @@ import { CrashModule } from '../crash/crash.module';
 import { KenoModule } from '../keno/keno.module';
 import { User } from '../users/entities/user.entity';
 import { WalletModule } from '../wallet/wallet.module';
+import { AdminModule } from '../admin/admin.module';
 import { BotsController } from './bots.controller';
 import { BotsService } from './bots.service';
 
@@ -16,6 +17,7 @@ import { BotsService } from './bots.service';
     JwtModule.register({}),
     TypeOrmModule.forFeature([User]),
     WalletModule,
+    AdminModule,
     KenoModule,
     BingoModule,
     CrashModule,

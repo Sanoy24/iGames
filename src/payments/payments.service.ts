@@ -184,10 +184,11 @@ export class PaymentsService {
     const commissionMinor = computeDepositCommissionMinor(input.depositAmountMinor, input.depositCommissionPct);
     if (commissionMinor <= 0) return 0;
 
-    await this.walletService.ensureDefaultWallet(input.agentId, manager);
-    await this.walletService.creditInSession(
+    // Commission is not backed by any external real-money event of its own — it
+    // must be funded from the Master Wallet like every other credit, not minted.
+    await this.adminService.creditFromMasterWallet(
       {
-        userId: input.agentId,
+        targetUserId: input.agentId,
         amountMinor: commissionMinor,
         entryType: 'agent_receipt',
         sourceType: 'deposit_commission',
@@ -281,9 +282,12 @@ export class PaymentsService {
       });
       await depositRepo.save(deposit);
 
-      const walletCredit = await this.walletService.creditInSession(
+      // Funded from the Master Wallet — the admin's ETB float backs every
+      // deposit credit, so this fails (and the whole submission rolls back) if
+      // the Master Wallet can't cover it, rather than minting for free.
+      const walletCredit = await this.adminService.creditFromMasterWallet(
         {
-          userId,
+          targetUserId: userId,
           amountMinor: verified.amountMinor,
           entryType: 'deposit',
           sourceType: 'telebirr_receipt',
@@ -420,9 +424,10 @@ export class PaymentsService {
       });
       await depositRepo.save(deposit);
 
-      const walletCredit = await this.walletService.creditInSession(
+      // Funded from the Master Wallet — see the matching Telebirr comment above.
+      const walletCredit = await this.adminService.creditFromMasterWallet(
         {
-          userId,
+          targetUserId: userId,
           amountMinor: verified.amountMinor,
           entryType: 'deposit',
           sourceType: 'mpesa_receipt',

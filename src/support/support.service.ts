@@ -9,10 +9,11 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { SupportGateway } from './support.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WalletService } from '../wallet/wallet.service';
+import { AdminService } from '../admin/admin.service';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
 import {
@@ -87,6 +88,8 @@ export class SupportService {
     @InjectRepository(TelebirrDeposit)
     private readonly depositRepo: Repository<TelebirrDeposit>,
     private readonly walletService: WalletService,
+    private readonly adminService: AdminService,
+    private readonly dataSource: DataSource,
     private readonly notifications: NotificationsService,
     @Inject(forwardRef(() => SupportGateway))
     private readonly gateway: SupportGateway,
@@ -315,16 +318,23 @@ export class SupportService {
       throw new BadRequestException('Refund amount cannot exceed the requested amount');
     }
 
+    // Funded from the Master Wallet like every other credit — a refund is a
+    // discretionary payout, not backed by any external real-money event.
     // Ledger-backed, idempotent per REQUEST — re-approving won't double-credit.
-    const result = await this.walletService.credit({
-      userId: ticket.userId,
-      amountMinor,
-      entryType: 'refund',
-      sourceType: 'support_refund',
-      sourceId: message.id,
-      idempotencyKey: `support-refund:${message.id}`,
-      metadata: { ticketId: ticket.id, messageId: message.id, approvedBy: agentId, relatedType: message.relatedType, relatedId: message.relatedId },
-    });
+    const result = await this.dataSource.transaction((manager) =>
+      this.adminService.creditFromMasterWallet(
+        {
+          targetUserId: ticket.userId,
+          amountMinor,
+          entryType: 'refund',
+          sourceType: 'support_refund',
+          sourceId: message.id,
+          idempotencyKey: `support-refund:${message.id}`,
+          metadata: { ticketId: ticket.id, messageId: message.id, approvedBy: agentId, relatedType: message.relatedType, relatedId: message.relatedId },
+        },
+        manager,
+      ),
+    );
 
     message.requestStatus = 'approved';
     message.resolutionNote = dto.note?.trim() ?? null;

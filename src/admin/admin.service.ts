@@ -1,6 +1,6 @@
-import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In } from 'typeorm';
+import { Repository, DataSource, EntityManager, In } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { SystemConfig } from './entities/system-config.entity';
 import { PlatformStats } from './entities/platform-stats.entity';
@@ -9,6 +9,7 @@ import { AgentsService } from '../agents/agents.service';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
+import { WalletMutationResult } from '../wallet/wallet.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { Wallet } from '../wallet/entities/wallet.entity';
 import { KenoTicket } from '../keno/entities/keno-ticket.entity';
@@ -19,7 +20,7 @@ import { KenoDraw } from '../keno/entities/keno-draw.entity';
 import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
-import { LedgerEntry } from '../ledger/entities/ledger-entry.entity';
+import { LedgerEntry, LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
@@ -86,9 +87,18 @@ export class AdminService implements OnApplicationBootstrap {
   // personal account). Created at boot (onApplicationBootstrap above), not
   // lazily on first use, and remembered via system_configs.masterWalletUserId;
   // every admin manages the same one from day one, with no setup step
-  // required. Crediting a PLAYER's wallet (admin "Adjust Wallet") is unrelated
-  // and unaffected — it mints directly onto the player, never checking or
-  // touching this balance.
+  // required.
+  //
+  // It is also the ONLY place e-money is created (`adminTopup`, no receipt
+  // required — the house directly injecting supply). Every OTHER credit
+  // anywhere in the system — player Telebirr/M-Pesa deposits, agent deposit
+  // commissions, admin "Adjust Wallet", the welcome bonus — routes through
+  // `creditFromMasterWallet` below instead of minting independently, so the
+  // Master Wallet balance always represents the real ETB still available to
+  // back new credits. `debitToMasterWallet` is the reverse, for money being
+  // reclaimed FROM a wallet rather than paid out elsewhere (e.g. a downward
+  // admin adjustment) — it returns to the Master Wallet rather than vanishing,
+  // so total system supply is always conserved.
 
   /** Returns the Master Wallet's owning user id, creating it if it somehow doesn't exist yet. */
   private async getOrCreateMasterWalletUserId(): Promise<string> {
@@ -116,6 +126,126 @@ export class AdminService implements OnApplicationBootstrap {
   async transferAdminToAgent(actingAdminId: string, agentId: string, amountMinor: number, idempotencyKey?: string) {
     const ownerId = await this.getOrCreateMasterWalletUserId();
     return this.walletService.transferAdminToAgent(ownerId, agentId, amountMinor, idempotencyKey, actingAdminId);
+  }
+
+  /**
+   * The single mechanism through which e-money enters ANY wallet other than the
+   * Master Wallet itself: debits the Master Wallet and credits `targetUserId` by
+   * the same amount, atomically, within the CALLER's own transaction (pass the
+   * same `manager` the caller is already using, so this never opens a nested
+   * transaction). `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/`metadata`
+   * describe the CREDIT side exactly as callers already recorded it before this
+   * existed (e.g. entryType:'deposit', sourceType:'telebirr_receipt') — ledger
+   * history for the receiving wallet is unchanged. The Master Wallet's own debit
+   * side is always recorded as entryType:'adjustment', sourceType:
+   * 'master_wallet_funding', so its own ledger stays legible as "who was this
+   * funding."
+   *
+   * Throws — rolling back the caller's whole transaction — if the Master Wallet
+   * can't cover it. This is deliberate: every credit anywhere must be backed by
+   * real ETB the admin has already put into the Master Wallet via adminTopup, so
+   * a shortfall blocks the credit rather than letting it happen for free. The
+   * underlying "insufficient wallet balance" error is deliberately NOT surfaced
+   * verbatim — callers (players, agents) should never see the words "Master
+   * Wallet"; they get a generic "try again / contact support" message instead.
+   */
+  async creditFromMasterWallet(
+    input: {
+      targetUserId: string;
+      amountMinor: number;
+      entryType: LedgerEntryType;
+      sourceType: string;
+      sourceId: string;
+      idempotencyKey: string;
+      metadata?: Record<string, unknown>;
+    },
+    manager: EntityManager,
+  ): Promise<WalletMutationResult> {
+    const ownerId = await this.getOrCreateMasterWalletUserId();
+    await this.walletService.ensureDefaultWallet(ownerId, manager);
+    await this.walletService.ensureDefaultWallet(input.targetUserId, manager);
+
+    try {
+      await this.walletService.debitInSession(
+        {
+          userId: ownerId,
+          amountMinor: input.amountMinor,
+          entryType: 'adjustment',
+          sourceType: 'master_wallet_funding',
+          sourceId: input.sourceId,
+          idempotencyKey: `${input.idempotencyKey}:master-debit`,
+          metadata: { ...input.metadata, targetUserId: input.targetUserId, fundedSourceType: input.sourceType },
+        },
+        manager,
+      );
+    } catch {
+      throw new ConflictException('Unable to process this right now — please try again shortly or contact support.');
+    }
+
+    return this.walletService.creditInSession(
+      {
+        userId: input.targetUserId,
+        amountMinor: input.amountMinor,
+        entryType: input.entryType,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        idempotencyKey: input.idempotencyKey,
+        metadata: input.metadata,
+      },
+      manager,
+    );
+  }
+
+  /**
+   * The reverse of `creditFromMasterWallet`: debits `sourceUserId` and returns the
+   * amount to the Master Wallet, atomically, within the caller's own transaction.
+   * Used when e-money is being reclaimed/removed from a wallet rather than paid
+   * out elsewhere (e.g. a downward admin wallet adjustment) — keeps the Master
+   * Wallet meaning "real ETB currently backing something in the system" instead
+   * of letting reclaimed money simply vanish from the ledger.
+   */
+  async debitToMasterWallet(
+    input: {
+      sourceUserId: string;
+      amountMinor: number;
+      entryType: LedgerEntryType;
+      sourceType: string;
+      sourceId: string;
+      idempotencyKey: string;
+      metadata?: Record<string, unknown>;
+    },
+    manager: EntityManager,
+  ): Promise<WalletMutationResult> {
+    const ownerId = await this.getOrCreateMasterWalletUserId();
+    await this.walletService.ensureDefaultWallet(ownerId, manager);
+
+    const debitResult = await this.walletService.debitInSession(
+      {
+        userId: input.sourceUserId,
+        amountMinor: input.amountMinor,
+        entryType: input.entryType,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        idempotencyKey: input.idempotencyKey,
+        metadata: input.metadata,
+      },
+      manager,
+    );
+
+    await this.walletService.creditInSession(
+      {
+        userId: ownerId,
+        amountMinor: input.amountMinor,
+        entryType: 'adjustment',
+        sourceType: 'master_wallet_reclaim',
+        sourceId: input.sourceId,
+        idempotencyKey: `${input.idempotencyKey}:master-credit`,
+        metadata: { ...input.metadata, sourceUserId: input.sourceUserId, reclaimedSourceType: input.sourceType },
+      },
+      manager,
+    );
+
+    return debitResult;
   }
 
   async getPlatformStats() {
@@ -236,21 +366,22 @@ export class AdminService implements OnApplicationBootstrap {
 
   async adjustUserWallet(userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) {
     return this.dataSource.transaction(async (manager) => {
-      const payload = {
-        userId,
-        amountMinor,
-        direction,
+      const shared = {
         entryType: 'bonus' as const,
         sourceType: 'admin_adjustment',
         sourceId: randomUUID(),
         idempotencyKey: `admin-adj:${randomUUID()}`,
         metadata: { reason }
       };
-      
+
+      // Both directions are backed by the Master Wallet: a credit is funded FROM
+      // it (see creditFromMasterWallet); a debit RETURNS the reclaimed amount to
+      // it (see debitToMasterWallet) rather than letting it vanish — keeps total
+      // system supply conserved either way.
       if (direction === 'credit') {
-        return await this.walletService.creditInSession(payload, manager);
+        return await this.creditFromMasterWallet({ targetUserId: userId, amountMinor, ...shared }, manager);
       } else {
-        return await this.walletService.debitInSession(payload, manager);
+        return await this.debitToMasterWallet({ sourceUserId: userId, amountMinor, ...shared }, manager);
       }
     }).then(async (result) => {
       const amount = amountMinor.toLocaleString();

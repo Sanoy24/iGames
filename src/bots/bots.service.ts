@@ -13,6 +13,7 @@ import { CrashService } from '../crash/crash.service';
 import { BingoRoom } from '../bingo/entities/bingo-room.entity';
 import { User } from '../users/entities/user.entity';
 import { WalletService } from '../wallet/wallet.service';
+import { AdminService } from '../admin/admin.service';
 import { CreateBotDto } from './dto/create-bot.dto';
 import { UpdateBotPolicyDto } from './dto/update-bot-policy.dto';
 import { KenoTicket } from '../keno/entities/keno-ticket.entity';
@@ -41,6 +42,7 @@ export class BotsService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
     private readonly walletService: WalletService,
+    private readonly adminService: AdminService,
     private readonly kenoService: KenoService,
     private readonly bingoService: BingoService,
     private readonly crashService: CrashService,
@@ -66,10 +68,13 @@ export class BotsService {
 
       await this.walletService.ensureDefaultWallet(user.id, manager);
 
+      // Funded from the Master Wallet like every other credit — a bot's
+      // bankroll is still real ETB liability sitting in the system (it can be
+      // won by a real player), not free money.
       const initialBalance = dto.initialBalanceMinor ?? 100000;
-      await this.walletService.creditInSession(
+      await this.adminService.creditFromMasterWallet(
         {
-          userId: user.id,
+          targetUserId: user.id,
           amountMinor: initialBalance,
           entryType: 'bonus',
           sourceType: 'bot_init',
@@ -115,9 +120,10 @@ export class BotsService {
   async topupBot(botId: string, amountMinor: number): Promise<BotResponse> {
     const bot = await this.findBot(botId);
     await this.dataSource.transaction(async (manager) => {
-      await this.walletService.creditInSession(
+      // Funded from the Master Wallet — see createBot's matching comment.
+      await this.adminService.creditFromMasterWallet(
         {
-          userId: bot.id,
+          targetUserId: bot.id,
           amountMinor,
           entryType: 'bonus',
           sourceType: 'bot_topup',

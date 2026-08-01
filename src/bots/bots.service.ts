@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomInt } from 'crypto';
-import { Repository, DataSource, In, MoreThan } from 'typeorm';
+import { Repository, DataSource, EntityManager, In, MoreThan } from 'typeorm';
 import { KenoService } from '../keno/keno.service';
 import { BingoService } from '../bingo/bingo.service';
 import { CrashService } from '../crash/crash.service';
@@ -21,7 +21,21 @@ import { UpdateBotPolicyDto } from './dto/update-bot-policy.dto';
 import { UpdateBotNameDto } from './dto/update-bot-name.dto';
 import { KenoTicket } from '../keno/entities/keno-ticket.entity';
 import { KenoDraw } from '../keno/entities/keno-draw.entity';
+import { BotActionLog, BotActionGame } from './entities/bot-action-log.entity';
 import { BotName } from './entities/bot-name.entity';
+
+export type BotStrategyProfile = 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+export type BotGameKey = 'keno' | 'bingo' | 'crash';
+
+export type BotGamePolicyBase = {
+  active: boolean;
+  strategy: BotStrategyProfile;
+  participationRatePct: number;
+  minBalanceMinor: number;
+  maxStakeMinorPerDay: number;
+  maxLossMinorPerDay: number;
+  maxWinMinorPerDay: number;
+};
 
 export type BotPolicy = {
   ticketsPerRound: number;
@@ -29,17 +43,38 @@ export type BotPolicy = {
   drawParticipationCount: number;
   active: boolean;
   games?: {
-    keno?: {
-      active: boolean;
+    keno?: BotGamePolicyBase & {
       ticketsPerRound: number;
       spotCount: number;
       drawParticipationCount: number;
     };
-    bingo?: {
-      active: boolean;
+    bingo?: BotGamePolicyBase & {
+      maxCartelasPerRoom: number;
     };
-    crash?: {
-      active: boolean;
+    crash?: BotGamePolicyBase & {
+      minCashoutX100: number;
+      maxCashoutX100: number;
+    };
+  };
+};
+
+export type BotPolicyInput = {
+  ticketsPerRound?: number;
+  spotCount?: number;
+  drawParticipationCount?: number;
+  active?: boolean;
+  games?: {
+    keno?: Partial<BotGamePolicyBase> & {
+      ticketsPerRound?: number;
+      spotCount?: number;
+      drawParticipationCount?: number;
+    };
+    bingo?: Partial<BotGamePolicyBase> & {
+      maxCartelasPerRoom?: number;
+    };
+    crash?: Partial<BotGamePolicyBase> & {
+      minCashoutX100?: number;
+      maxCashoutX100?: number;
     };
   };
 };
@@ -59,6 +94,17 @@ export type BotNameResponse = {
   updatedAt: Date;
 };
 
+export type BotActionLogResponse = {
+  id: string;
+  botId: string | null;
+  game: BotActionGame;
+  action: string;
+  sourceId: string | null;
+  amountMinor: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+};
+
 @Injectable()
 export class BotsService {
   private readonly logger = new Logger(BotsService.name);
@@ -69,6 +115,8 @@ export class BotsService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(BotName)
     private readonly botNameRepository: Repository<BotName>,
+    @InjectRepository(BotActionLog)
+    private readonly botActionLogRepository: Repository<BotActionLog>,
     private readonly walletService: WalletService,
     private readonly adminService: AdminService,
     private readonly kenoService: KenoService,
@@ -88,9 +136,34 @@ export class BotsService {
           ticketsPerRound: dto.ticketsPerRound ?? 1,
           spotCount: dto.spotCount ?? 3,
           drawParticipationCount: 0,
+          strategy: dto.kenoStrategy ?? 'normal',
+          participationRatePct: dto.kenoParticipationRatePct ?? 100,
+          minBalanceMinor: dto.kenoMinBalanceMinor ?? 0,
+          maxStakeMinorPerDay: dto.kenoMaxStakeMinorPerDay ?? 0,
+          maxLossMinorPerDay: 0,
+          maxWinMinorPerDay: 0,
         },
-        bingo: { active: dto.bingoActive ?? true },
-        crash: { active: dto.crashActive ?? true },
+        bingo: {
+          active: dto.bingoActive ?? true,
+          strategy: dto.bingoStrategy ?? 'mirror-human',
+          participationRatePct: dto.bingoParticipationRatePct ?? 100,
+          minBalanceMinor: dto.bingoMinBalanceMinor ?? 0,
+          maxStakeMinorPerDay: dto.bingoMaxStakeMinorPerDay ?? 0,
+          maxLossMinorPerDay: 0,
+          maxWinMinorPerDay: 0,
+          maxCartelasPerRoom: dto.bingoMaxCartelasPerRoom ?? 24,
+        },
+        crash: {
+          active: dto.crashActive ?? true,
+          strategy: dto.crashStrategy ?? 'normal',
+          participationRatePct: dto.crashParticipationRatePct ?? 60,
+          minBalanceMinor: dto.crashMinBalanceMinor ?? 0,
+          maxStakeMinorPerDay: dto.crashMaxStakeMinorPerDay ?? 0,
+          maxLossMinorPerDay: 0,
+          maxWinMinorPerDay: 0,
+          minCashoutX100: dto.crashMinCashoutX100 ?? 120,
+          maxCashoutX100: dto.crashMaxCashoutX100 ?? 250,
+        },
       },
     });
 
@@ -123,6 +196,18 @@ export class BotsService {
         manager
       );
 
+      await this.logBotAction(
+        {
+          botId: user.id,
+          game: 'admin',
+          action: 'bot_created',
+          sourceId: user.id,
+          amountMinor: initialBalance,
+          metadata: { policy },
+        },
+        manager,
+      );
+
       return this.toBotResponse(user);
     });
   }
@@ -148,10 +233,17 @@ export class BotsService {
   async deleteBot(botId: string): Promise<void> {
     const bot = await this.findBot(botId);
     // Mark as inactive + strip bot policy so it no longer participates in games
-    const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>);
+    const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput);
     bot.productMetadata = { ...bot.productMetadata!, botPolicy: { ...policy, active: false } };
     bot.status = 'suspended';
     await this.userRepository.save(bot);
+    await this.logBotAction({
+      botId: bot.id,
+      game: 'admin',
+      action: 'bot_deleted',
+      sourceId: bot.id,
+      metadata: { previousPolicy: policy },
+    });
     this.logger.log(`Bot ${botId} (${bot.displayName}) deleted`);
   }
 
@@ -171,6 +263,17 @@ export class BotsService {
         },
         manager,
       );
+      await this.logBotAction(
+        {
+          botId: bot.id,
+          game: 'admin',
+          action: 'bot_topped_up',
+          sourceId: bot.id,
+          amountMinor,
+          metadata: { reason: 'admin_topup' },
+        },
+        manager,
+      );
     });
     const ws = await this.walletService.getDefaultWalletSummary(bot.id);
     return { ...this.toBotResponse(bot), walletBalanceMinor: ws.availableMinor };
@@ -181,6 +284,38 @@ export class BotsService {
       order: { active: 'DESC', displayName: 'ASC', createdAt: 'ASC' },
     });
     return names.map((name) => this.toBotNameResponse(name));
+  }
+
+  async listBotActions(input: {
+    botId?: string;
+    game?: BotActionGame;
+    page?: number;
+    limit?: number;
+  }): Promise<{ data: BotActionLogResponse[]; total: number; page: number; limit: number; totalPages: number }> {
+    const page = Math.max(1, input.page ?? 1);
+    const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+    const qb = this.botActionLogRepository
+      .createQueryBuilder('log')
+      .orderBy('log.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (input.botId) {
+      this.validateUuid(input.botId, 'botId');
+      qb.andWhere('log.botId = :botId', { botId: input.botId });
+    }
+    if (input.game) {
+      qb.andWhere('log.game = :game', { game: input.game });
+    }
+
+    const [rows, total] = await qb.getManyAndCount();
+    return {
+      data: rows.map((row) => this.toBotActionResponse(row)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async createBotName(dto: CreateBotNameDto): Promise<BotNameResponse> {
@@ -246,10 +381,14 @@ export class BotsService {
 
   async updatePolicy(botId: string, dto: UpdateBotPolicyDto): Promise<BotResponse> {
     const bot = await this.findBot(botId);
-    const current = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>);
+    const current = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput);
     const nextKeno = {
       ...current.games!.keno!,
       ...(dto.kenoActive !== undefined && { active: dto.kenoActive }),
+      ...(dto.kenoStrategy !== undefined && { strategy: dto.kenoStrategy }),
+      ...(dto.kenoParticipationRatePct !== undefined && { participationRatePct: dto.kenoParticipationRatePct }),
+      ...(dto.kenoMinBalanceMinor !== undefined && { minBalanceMinor: dto.kenoMinBalanceMinor }),
+      ...(dto.kenoMaxStakeMinorPerDay !== undefined && { maxStakeMinorPerDay: dto.kenoMaxStakeMinorPerDay }),
       ...(dto.ticketsPerRound !== undefined && { ticketsPerRound: dto.ticketsPerRound }),
       ...(dto.spotCount !== undefined && { spotCount: dto.spotCount }),
     };
@@ -265,16 +404,35 @@ export class BotsService {
         bingo: {
           ...current.games!.bingo!,
           ...(dto.bingoActive !== undefined && { active: dto.bingoActive }),
+          ...(dto.bingoStrategy !== undefined && { strategy: dto.bingoStrategy }),
+          ...(dto.bingoParticipationRatePct !== undefined && { participationRatePct: dto.bingoParticipationRatePct }),
+          ...(dto.bingoMinBalanceMinor !== undefined && { minBalanceMinor: dto.bingoMinBalanceMinor }),
+          ...(dto.bingoMaxStakeMinorPerDay !== undefined && { maxStakeMinorPerDay: dto.bingoMaxStakeMinorPerDay }),
+          ...(dto.bingoMaxCartelasPerRoom !== undefined && { maxCartelasPerRoom: dto.bingoMaxCartelasPerRoom }),
         },
         crash: {
           ...current.games!.crash!,
           ...(dto.crashActive !== undefined && { active: dto.crashActive }),
+          ...(dto.crashStrategy !== undefined && { strategy: dto.crashStrategy }),
+          ...(dto.crashParticipationRatePct !== undefined && { participationRatePct: dto.crashParticipationRatePct }),
+          ...(dto.crashMinBalanceMinor !== undefined && { minBalanceMinor: dto.crashMinBalanceMinor }),
+          ...(dto.crashMaxStakeMinorPerDay !== undefined && { maxStakeMinorPerDay: dto.crashMaxStakeMinorPerDay }),
+          ...(dto.crashMinCashoutX100 !== undefined && { minCashoutX100: dto.crashMinCashoutX100 }),
+          ...(dto.crashMaxCashoutX100 !== undefined && { maxCashoutX100: dto.crashMaxCashoutX100 }),
         },
       },
     };
 
-    bot.productMetadata = { ...bot.productMetadata!, botPolicy: updated };
+    const normalizedUpdated = this.normalizeBotPolicy(updated);
+    bot.productMetadata = { ...bot.productMetadata!, botPolicy: normalizedUpdated };
     await this.userRepository.save(bot);
+    await this.logBotAction({
+      botId: bot.id,
+      game: 'admin',
+      action: 'policy_updated',
+      sourceId: bot.id,
+      metadata: { before: current, after: normalizedUpdated, patch: dto },
+    });
 
     return this.toBotResponse(bot);
   }
@@ -356,7 +514,17 @@ export class BotsService {
       }
       return cancelled;
     }
-    return this.bingoService.reconcileBotCartelasInRoom(roomId);
+    const changed = await this.bingoService.reconcileBotCartelasInRoom(roomId);
+    if (changed) {
+      await this.logBotAction({
+        botId: null,
+        game: 'bingo',
+        action: 'bingo_cartelas_reconciled',
+        sourceId: roomId,
+        metadata: { realPlayers, activeBotCount: bots.length },
+      });
+    }
+    return changed;
   }
 
   /**
@@ -412,19 +580,32 @@ export class BotsService {
 
     for (const bot of bots) {
       // ~60% participation rate per round
-      if (randomInt(0, 10) >= 6) continue;
+      const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput);
+      const crashPolicy = policy.games!.crash!;
+      if (!this.rollParticipation(crashPolicy.participationRatePct)) continue;
+      if (!(await this.canBotEnterGame(bot, 'crash', crashPolicy, cfg.botBetMinor))) continue;
 
       const idempotencyKey = `crash-bot-bet:${roundId}:${bot.id}`;
       // Bot auto-cashout: random between 1.20× and 2.50× (120–250)
-      const autoCashoutX100 = 120 + randomInt(0, 131);
+      const minCashout = Math.min(crashPolicy.minCashoutX100, crashPolicy.maxCashoutX100);
+      const maxCashout = Math.max(crashPolicy.minCashoutX100, crashPolicy.maxCashoutX100);
+      const autoCashoutX100 = minCashout + randomInt(0, maxCashout - minCashout + 1);
 
       try {
-        await this.crashService.placeBet(
+        const bet = await this.crashService.placeBet(
           bot.id,
           roundId,
           { stakeMinor: cfg.botBetMinor, autoCashoutAt: autoCashoutX100 / 100 },
           idempotencyKey,
         );
+        await this.logBotAction({
+          botId: bot.id,
+          game: 'crash',
+          action: 'crash_bet_placed',
+          sourceId: bet.id,
+          amountMinor: bet.stakeMinor,
+          metadata: { roundId, autoCashoutX100, strategy: crashPolicy.strategy },
+        });
       } catch {
         // Duplicate key, insufficient balance, or round no longer waiting — skip silently
       }
@@ -438,14 +619,17 @@ export class BotsService {
       .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy.active') = true")
       .getMany();
     if (!game) return bots;
-    return bots.filter((bot) => this.isGameEnabled(this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>), game));
+    return bots.filter((bot) => this.isGameEnabled(this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput), game));
   }
 
   private async buyTicketsForSingleBot(bot: User, drawId: string, isForcedWin: boolean): Promise<void> {
-    const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>);
+    const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput);
     const kenoPolicy = policy.games!.keno!;
     const config = await this.kenoService.getActiveConfig();
     const { numberMin, numberMax, allowedSpots } = config;
+
+    if (!this.rollParticipation(kenoPolicy.participationRatePct)) return;
+    if (!(await this.canBotEnterGame(bot, 'keno', kenoPolicy, config.ticketPriceMinor * kenoPolicy.ticketsPerRound))) return;
 
     const spotCount = allowedSpots.includes(kenoPolicy.spotCount)
       ? kenoPolicy.spotCount
@@ -455,12 +639,20 @@ export class BotsService {
       const selectedNumbers = this.pickRandomNumbers(numberMin, numberMax, spotCount);
       const idempotencyKey = `bot-ticket:${drawId}:${bot.id}:${i}`;
       try {
-        await this.kenoService.purchaseTicketForDraw({
+        const ticket = await this.kenoService.purchaseTicketForDraw({
           userId: bot.id,
           drawId,
           selectedNumbers,
           idempotencyKey,
           isForcedWin
+        });
+        await this.logBotAction({
+          botId: bot.id,
+          game: 'keno',
+          action: 'keno_ticket_purchase',
+          sourceId: ticket.id,
+          amountMinor: ticket.stakeMinor,
+          metadata: { drawId, selectedNumbers, isForcedWin, strategy: kenoPolicy.strategy },
         });
       } catch {
         // Already purchased (idempotent replay) or draw no longer open — skip
@@ -471,6 +663,87 @@ export class BotsService {
     policy.drawParticipationCount = kenoPolicy.drawParticipationCount;
     bot.productMetadata = { ...bot.productMetadata!, botPolicy: policy };
     await this.userRepository.save(bot);
+  }
+
+  private rollParticipation(ratePct: number): boolean {
+    const safeRate = Math.min(Math.max(ratePct, 0), 100);
+    return safeRate >= 100 || randomInt(0, 100) < safeRate;
+  }
+
+  private async canBotEnterGame(
+    bot: User,
+    game: BotGameKey,
+    policy: BotGamePolicyBase,
+    plannedStakeMinor: number,
+  ): Promise<boolean> {
+    if (policy.minBalanceMinor > 0) {
+      try {
+        const wallet = await this.walletService.getDefaultWalletSummary(bot.id);
+        if (wallet.availableMinor < policy.minBalanceMinor) {
+          await this.logBotAction({
+            botId: bot.id,
+            game,
+            action: 'guardrail_min_balance_skip',
+            metadata: { availableMinor: wallet.availableMinor, minBalanceMinor: policy.minBalanceMinor },
+          });
+          return false;
+        }
+      } catch {
+        return false;
+      }
+    }
+
+    if (policy.maxStakeMinorPerDay > 0) {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const raw = await this.botActionLogRepository
+        .createQueryBuilder('log')
+        .select('COALESCE(SUM(log.amountMinor), 0)', 'total')
+        .where('log.botId = :botId', { botId: bot.id })
+        .andWhere('log.game = :game', { game })
+        .andWhere('log.action IN (:...actions)', { actions: ['keno_ticket_purchase', 'crash_bet_placed'] })
+        .andWhere('log.createdAt >= :today', { today })
+        .getRawOne<{ total: string | number | null }>();
+      const spentToday = Number(raw?.total ?? 0);
+      if (spentToday + plannedStakeMinor > policy.maxStakeMinorPerDay) {
+        await this.logBotAction({
+          botId: bot.id,
+          game,
+          action: 'guardrail_daily_stake_skip',
+          amountMinor: plannedStakeMinor,
+          metadata: { spentToday, maxStakeMinorPerDay: policy.maxStakeMinorPerDay },
+        });
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async logBotAction(
+    input: {
+      botId: string | null;
+      game: BotActionGame;
+      action: string;
+      sourceId?: string | null;
+      amountMinor?: number | null;
+      metadata?: Record<string, unknown> | null;
+    },
+    manager?: EntityManager,
+  ): Promise<void> {
+    try {
+      const repo = manager ? manager.getRepository(BotActionLog) : this.botActionLogRepository;
+      await repo.save(repo.create({
+        botId: input.botId,
+        game: input.game,
+        action: input.action,
+        sourceId: input.sourceId ?? null,
+        amountMinor: input.amountMinor ?? null,
+        metadata: input.metadata ?? null,
+      }));
+    } catch (error) {
+      this.logger.warn(`Failed to write bot action log: ${input.action}`, error instanceof Error ? error.stack : error);
+    }
   }
 
   private pickRandomNumbers(min: number, max: number, count: number): number[] {
@@ -498,15 +771,32 @@ export class BotsService {
     return {
       id: user.id,
       displayName: user.displayName,
-      botPolicy: this.normalizeBotPolicy(user.productMetadata!.botPolicy as Partial<BotPolicy>)
+      botPolicy: this.normalizeBotPolicy(user.productMetadata!.botPolicy as BotPolicyInput)
     };
   }
 
-  private normalizeBotPolicy(policy: Partial<BotPolicy> = {}): BotPolicy {
+  private normalizeBotPolicy(policy: BotPolicyInput = {}): BotPolicy {
     const ticketsPerRound = policy.ticketsPerRound ?? policy.games?.keno?.ticketsPerRound ?? 1;
     const spotCount = policy.spotCount ?? policy.games?.keno?.spotCount ?? 3;
     const drawParticipationCount = policy.drawParticipationCount ?? policy.games?.keno?.drawParticipationCount ?? 0;
     const active = policy.active ?? true;
+    const base = (
+      gamePolicy: Partial<BotGamePolicyBase> | undefined,
+      defaults: { strategy: BotStrategyProfile; participationRatePct: number },
+    ): BotGamePolicyBase => ({
+      active: gamePolicy?.active ?? active,
+      strategy: gamePolicy?.strategy ?? defaults.strategy,
+      participationRatePct: this.clampInt(gamePolicy?.participationRatePct ?? defaults.participationRatePct, 0, 100),
+      minBalanceMinor: Math.max(0, gamePolicy?.minBalanceMinor ?? 0),
+      maxStakeMinorPerDay: Math.max(0, gamePolicy?.maxStakeMinorPerDay ?? 0),
+      maxLossMinorPerDay: Math.max(0, gamePolicy?.maxLossMinorPerDay ?? 0),
+      maxWinMinorPerDay: Math.max(0, gamePolicy?.maxWinMinorPerDay ?? 0),
+    });
+    const kenoBase = base(policy.games?.keno, { strategy: 'normal', participationRatePct: 100 });
+    const bingoBase = base(policy.games?.bingo, { strategy: 'mirror-human', participationRatePct: 100 });
+    const crashBase = base(policy.games?.crash, { strategy: 'normal', participationRatePct: 60 });
+    const minCashoutX100 = Math.max(101, policy.games?.crash?.minCashoutX100 ?? 120);
+    const maxCashoutX100 = Math.max(minCashoutX100, policy.games?.crash?.maxCashoutX100 ?? 250);
     return {
       ...policy,
       ticketsPerRound,
@@ -515,15 +805,26 @@ export class BotsService {
       active,
       games: {
         keno: {
-          active: policy.games?.keno?.active ?? active,
+          ...kenoBase,
           ticketsPerRound,
           spotCount,
           drawParticipationCount,
         },
-        bingo: { active: policy.games?.bingo?.active ?? active },
-        crash: { active: policy.games?.crash?.active ?? active },
+        bingo: {
+          ...bingoBase,
+          maxCartelasPerRoom: this.clampInt(policy.games?.bingo?.maxCartelasPerRoom ?? 24, 1, 24),
+        },
+        crash: {
+          ...crashBase,
+          minCashoutX100,
+          maxCashoutX100,
+        },
       },
     };
+  }
+
+  private clampInt(value: number, min: number, max: number): number {
+    return Math.min(Math.max(Math.floor(value), min), max);
   }
 
   private isGameEnabled(policy: BotPolicy, game: 'keno' | 'bingo' | 'crash'): boolean {
@@ -541,6 +842,19 @@ export class BotsService {
       active: name.active,
       createdAt: name.createdAt,
       updatedAt: name.updatedAt,
+    };
+  }
+
+  private toBotActionResponse(log: BotActionLog): BotActionLogResponse {
+    return {
+      id: log.id,
+      botId: log.botId,
+      game: log.game,
+      action: log.action,
+      sourceId: log.sourceId,
+      amountMinor: log.amountMinor == null ? null : Number(log.amountMinor),
+      metadata: log.metadata,
+      createdAt: log.createdAt,
     };
   }
 

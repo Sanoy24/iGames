@@ -16,6 +16,20 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     save: jest.fn().mockImplementation((x: unknown) => Promise.resolve(x)),
     remove: jest.fn().mockResolvedValue(undefined),
   };
+  const botActionLogRepository = {
+    create: jest.fn().mockImplementation((x: unknown) => ({ id: 'log-1', createdAt: new Date('2026-08-02T00:00:00.000Z'), ...x as object })),
+    save: jest.fn().mockImplementation((x: unknown) => Promise.resolve(x)),
+    createQueryBuilder: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({ total: 0 }),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    }),
+  };
 
   const userRepoInManager = {
     create: jest.fn().mockImplementation((x: unknown) => ({ id: 'bot-1', ...x as object })),
@@ -49,6 +63,7 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     dataSource as any,
     userRepository as any,
     botNameRepository as any,
+    botActionLogRepository as any,
     walletService as any,
     adminService as any,
     {} as any, // kenoService
@@ -56,7 +71,7 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     {} as any, // crashService
   );
 
-  return { service, adminService, userRepoInManager, userRepository, botNameRepository, bingoService };
+  return { service, adminService, userRepoInManager, userRepository, botNameRepository, botActionLogRepository, bingoService };
 }
 
 describe('BotsService — bot funding is Master-Wallet-backed', () => {
@@ -99,11 +114,11 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
             active: true,
             ticketsPerRound: 2,
             spotCount: 4,
-            games: {
-              keno: expect.objectContaining({ active: true, ticketsPerRound: 2, spotCount: 4 }),
-              bingo: { active: true },
-              crash: { active: true },
-            },
+            games: expect.objectContaining({
+              keno: expect.objectContaining({ active: true, ticketsPerRound: 2, spotCount: 4, strategy: 'normal' }),
+              bingo: expect.objectContaining({ active: true, strategy: 'mirror-human' }),
+              crash: expect.objectContaining({ active: true, participationRatePct: 60 }),
+            }),
           }),
         },
       }));
@@ -142,7 +157,7 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
           botPolicy: expect.objectContaining({
             active: true,
             games: expect.objectContaining({
-              bingo: { active: false },
+              bingo: expect.objectContaining({ active: false }),
             }),
           }),
         }),
@@ -204,6 +219,46 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
         }),
         expect.anything(),
       );
+    });
+  });
+
+  describe('listBotActions', () => {
+    it('returns paginated bot activity rows', async () => {
+      const { service, botActionLogRepository } = makeService({});
+      const createdAt = new Date('2026-08-02T12:00:00.000Z');
+      botActionLogRepository.createQueryBuilder.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ total: 0 }),
+        getManyAndCount: jest.fn().mockResolvedValue([[
+          {
+            id: 'log-1',
+            botId: 'bot-1',
+            game: 'admin',
+            action: 'bot_created',
+            sourceId: 'bot-1',
+            amountMinor: '250000',
+            metadata: { reason: 'bot_initial_balance' },
+            createdAt,
+          },
+        ], 1]),
+      });
+
+      const result = await service.listBotActions({ botId: '550e8400-e29b-41d4-a716-446655440000', page: 1, limit: 20 });
+
+      expect(result.total).toBe(1);
+      expect(result.data[0]).toEqual(expect.objectContaining({
+        id: 'log-1',
+        botId: 'bot-1',
+        game: 'admin',
+        action: 'bot_created',
+        amountMinor: 250000,
+      }));
+      expect(botActionLogRepository.createQueryBuilder).toHaveBeenCalled();
     });
   });
 });

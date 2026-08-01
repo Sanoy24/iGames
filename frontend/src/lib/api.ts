@@ -659,14 +659,50 @@ export type BotUser = {
     games?: {
       keno?: {
         active: boolean;
+        strategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+        participationRatePct: number;
+        minBalanceMinor: number;
+        maxStakeMinorPerDay: number;
+        maxLossMinorPerDay: number;
+        maxWinMinorPerDay: number;
         ticketsPerRound: number;
         spotCount: number;
         drawParticipationCount: number;
       };
-      bingo?: { active: boolean };
-      crash?: { active: boolean };
+      bingo?: {
+        active: boolean;
+        strategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+        participationRatePct: number;
+        minBalanceMinor: number;
+        maxStakeMinorPerDay: number;
+        maxLossMinorPerDay: number;
+        maxWinMinorPerDay: number;
+        maxCartelasPerRoom: number;
+      };
+      crash?: {
+        active: boolean;
+        strategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+        participationRatePct: number;
+        minBalanceMinor: number;
+        maxStakeMinorPerDay: number;
+        maxLossMinorPerDay: number;
+        maxWinMinorPerDay: number;
+        minCashoutX100: number;
+        maxCashoutX100: number;
+      };
     };
   };
+};
+
+export type BotActionLogRecord = {
+  id: string;
+  botId: string | null;
+  game: 'keno' | 'bingo' | 'crash' | 'admin';
+  action: string;
+  sourceId: string | null;
+  amountMinor: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
 };
 
 export type BotNameRecord = {
@@ -687,6 +723,21 @@ export const adminBotsApi = {
     kenoActive?: boolean;
     bingoActive?: boolean;
     crashActive?: boolean;
+    kenoStrategy?: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    bingoStrategy?: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    crashStrategy?: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    kenoParticipationRatePct?: number;
+    bingoParticipationRatePct?: number;
+    crashParticipationRatePct?: number;
+    kenoMinBalanceMinor?: number;
+    bingoMinBalanceMinor?: number;
+    crashMinBalanceMinor?: number;
+    kenoMaxStakeMinorPerDay?: number;
+    bingoMaxStakeMinorPerDay?: number;
+    crashMaxStakeMinorPerDay?: number;
+    bingoMaxCartelasPerRoom?: number;
+    crashMinCashoutX100?: number;
+    crashMaxCashoutX100?: number;
   }) =>
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
   updateBot: (id: string, dto: Partial<{
@@ -696,12 +747,38 @@ export const adminBotsApi = {
     kenoActive: boolean;
     bingoActive: boolean;
     crashActive: boolean;
+    kenoStrategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    bingoStrategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    crashStrategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    kenoParticipationRatePct: number;
+    bingoParticipationRatePct: number;
+    crashParticipationRatePct: number;
+    kenoMinBalanceMinor: number;
+    bingoMinBalanceMinor: number;
+    crashMinBalanceMinor: number;
+    kenoMaxStakeMinorPerDay: number;
+    bingoMaxStakeMinorPerDay: number;
+    crashMaxStakeMinorPerDay: number;
+    bingoMaxCartelasPerRoom: number;
+    crashMinCashoutX100: number;
+    crashMaxCashoutX100: number;
   }>) =>
     api.patch<BotUser>(`/admin/bots/${id}`, dto).then((r) => r.data),
   topupBot: (id: string, amountMinor: number) =>
     api.post<BotUser>(`/admin/bots/${id}/topup`, { amountMinor }).then((r) => r.data),
   deleteBot: (id: string) =>
     api.delete(`/admin/bots/${id}`).then((r) => r.data),
+  listBotActions: (params?: { botId?: string; game?: 'keno' | 'bingo' | 'crash' | 'admin'; page?: number; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.botId) search.set('botId', params.botId);
+    if (params?.game) search.set('game', params.game);
+    if (params?.page) search.set('page', String(params.page));
+    if (params?.limit) search.set('limit', String(params.limit));
+    const suffix = search.toString();
+    return api.get<{ data: BotActionLogRecord[]; total: number; page: number; limit: number; totalPages: number }>(
+      `/admin/bots/actions${suffix ? `?${suffix}` : ''}`,
+    ).then((r) => r.data);
+  },
   listBotNames: () => api.get<BotNameRecord[]>('/admin/bots/names').then((r) => r.data),
   createBotName: (dto: { displayName: string; active?: boolean }) =>
     api.post<BotNameRecord>('/admin/bots/names', dto).then((r) => r.data),

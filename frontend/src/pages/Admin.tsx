@@ -24,6 +24,7 @@ import {
   type BingoRoundDetails,
   type BingoRoundTicket,
   type BotUser,
+  type BotActionLogRecord,
   type BotNameRecord,
   type BroadcastButton,
   type BroadcastMessage,
@@ -3466,11 +3467,22 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
 type BotsSubTab = 'liquidity' | 'names' | 'werk';
 type BotGameKey = 'keno' | 'bingo' | 'crash';
 type BotGameActiveKey = 'kenoActive' | 'bingoActive' | 'crashActive';
+type BotStrategyProfile = 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+type KenoBotPolicy = NonNullable<NonNullable<BotUser['botPolicy']['games']>['keno']>;
+type BingoBotPolicy = NonNullable<NonNullable<BotUser['botPolicy']['games']>['bingo']>;
+type CrashBotPolicy = NonNullable<NonNullable<BotUser['botPolicy']['games']>['crash']>;
 const BOT_GAME_KEYS: BotGameKey[] = ['keno', 'bingo', 'crash'];
 const BOT_GAME_LABELS: Record<BotGameKey, string> = {
   keno: 'Keno',
   bingo: 'Bingo',
   crash: 'Crash',
+};
+const BOT_STRATEGY_OPTIONS: BotStrategyProfile[] = ['conservative', 'normal', 'aggressive', 'mirror-human'];
+const BOT_STRATEGY_LABELS: Record<BotStrategyProfile, string> = {
+  conservative: 'Conservative',
+  normal: 'Normal',
+  aggressive: 'Aggressive',
+  'mirror-human': 'Mirror Human',
 };
 const BOT_GAME_ACTIVE_KEYS: Record<BotGameKey, BotGameActiveKey> = {
   keno: 'kenoActive',
@@ -3515,6 +3527,12 @@ function BotsAdmin() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [topupId, setTopupId]     = useState<string | null>(null);
   const [topupAmount, setTopupAmount] = useState('');
+  const [detailBotId, setDetailBotId] = useState<string | null>(null);
+  const [detailActions, setDetailActions] = useState<BotActionLogRecord[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailPage, setDetailPage] = useState(1);
+  const [detailTotalPages, setDetailTotalPages] = useState(1);
+  const [detailGameFilter, setDetailGameFilter] = useState<'all' | 'keno' | 'bingo' | 'crash' | 'admin'>('all');
   const [form, setForm] = useState({
     displayName: 'Bot Alpha',
     initialBalanceMinor: 10000,
@@ -3523,6 +3541,21 @@ function BotsAdmin() {
     kenoActive: true,
     bingoActive: true,
     crashActive: true,
+    kenoStrategy: 'normal' as BotStrategyProfile,
+    bingoStrategy: 'mirror-human' as BotStrategyProfile,
+    crashStrategy: 'normal' as BotStrategyProfile,
+    kenoParticipationRatePct: 100,
+    bingoParticipationRatePct: 100,
+    crashParticipationRatePct: 60,
+    kenoMinBalanceMinor: 0,
+    bingoMinBalanceMinor: 0,
+    crashMinBalanceMinor: 0,
+    kenoMaxStakeMinorPerDay: 0,
+    bingoMaxStakeMinorPerDay: 0,
+    crashMaxStakeMinorPerDay: 0,
+    bingoMaxCartelasPerRoom: 24,
+    crashMinCashoutX100: 120,
+    crashMaxCashoutX100: 250,
   });
   const [editForm, setEditForm] = useState<{
     ticketsPerRound: number;
@@ -3530,12 +3563,42 @@ function BotsAdmin() {
     kenoActive: boolean;
     bingoActive: boolean;
     crashActive: boolean;
+    kenoStrategy: BotStrategyProfile;
+    bingoStrategy: BotStrategyProfile;
+    crashStrategy: BotStrategyProfile;
+    kenoParticipationRatePct: number;
+    bingoParticipationRatePct: number;
+    crashParticipationRatePct: number;
+    kenoMinBalanceMinor: number;
+    bingoMinBalanceMinor: number;
+    crashMinBalanceMinor: number;
+    kenoMaxStakeMinorPerDay: number;
+    bingoMaxStakeMinorPerDay: number;
+    crashMaxStakeMinorPerDay: number;
+    bingoMaxCartelasPerRoom: number;
+    crashMinCashoutX100: number;
+    crashMaxCashoutX100: number;
   }>({
     ticketsPerRound: 1,
     spotCount: 3,
     kenoActive: true,
     bingoActive: true,
     crashActive: true,
+    kenoStrategy: 'normal',
+    bingoStrategy: 'mirror-human',
+    crashStrategy: 'normal',
+    kenoParticipationRatePct: 100,
+    bingoParticipationRatePct: 100,
+    crashParticipationRatePct: 60,
+    kenoMinBalanceMinor: 0,
+    bingoMinBalanceMinor: 0,
+    crashMinBalanceMinor: 0,
+    kenoMaxStakeMinorPerDay: 0,
+    bingoMaxStakeMinorPerDay: 0,
+    crashMaxStakeMinorPerDay: 0,
+    bingoMaxCartelasPerRoom: 24,
+    crashMinCashoutX100: 120,
+    crashMaxCashoutX100: 250,
   });
 
   const load = useCallback(async () => {
@@ -3546,6 +3609,31 @@ function BotsAdmin() {
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadDetailActions = useCallback(async () => {
+    if (!detailBotId) {
+      setDetailActions([]);
+      setDetailTotalPages(1);
+      return;
+    }
+    setDetailLoading(true);
+    try {
+      const res = await adminBotsApi.listBotActions({
+        botId: detailBotId,
+        game: detailGameFilter === 'all' ? undefined : detailGameFilter,
+        page: detailPage,
+        limit: 10,
+      });
+      setDetailActions(res.data);
+      setDetailTotalPages(res.totalPages || 1);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [addToast, detailBotId, detailGameFilter, detailPage]);
+
+  useEffect(() => { void loadDetailActions(); }, [loadDetailActions]);
 
   const createBot = async () => {
     setBusy('create');
@@ -3565,7 +3653,39 @@ function BotsAdmin() {
     finally { setBusy(null); }
   };
 
-  const getKenoPolicy = (bot: BotUser) => bot.botPolicy.games?.keno ?? bot.botPolicy;
+  const getKenoPolicy = (bot: BotUser): KenoBotPolicy => (bot.botPolicy.games?.keno ?? {
+    active: bot.botPolicy.active,
+    strategy: 'normal',
+    participationRatePct: 100,
+    minBalanceMinor: 0,
+    maxStakeMinorPerDay: 0,
+    maxLossMinorPerDay: 0,
+    maxWinMinorPerDay: 0,
+    ticketsPerRound: bot.botPolicy.ticketsPerRound,
+    spotCount: bot.botPolicy.spotCount,
+    drawParticipationCount: bot.botPolicy.drawParticipationCount,
+  }) as KenoBotPolicy;
+  const getBingoPolicy = (bot: BotUser): BingoBotPolicy => (bot.botPolicy.games?.bingo ?? {
+    active: bot.botPolicy.active,
+    strategy: 'mirror-human',
+    participationRatePct: 100,
+    minBalanceMinor: 0,
+    maxStakeMinorPerDay: 0,
+    maxLossMinorPerDay: 0,
+    maxWinMinorPerDay: 0,
+    maxCartelasPerRoom: 24,
+  }) as BingoBotPolicy;
+  const getCrashPolicy = (bot: BotUser): CrashBotPolicy => (bot.botPolicy.games?.crash ?? {
+    active: bot.botPolicy.active,
+    strategy: 'normal',
+    participationRatePct: 60,
+    minBalanceMinor: 0,
+    maxStakeMinorPerDay: 0,
+    maxLossMinorPerDay: 0,
+    maxWinMinorPerDay: 0,
+    minCashoutX100: 120,
+    maxCashoutX100: 250,
+  }) as CrashBotPolicy;
   const gamePolicyEnabled = (bot: BotUser, game: BotGameKey) =>
     bot.botPolicy.games?.[game]?.active !== false;
   const gameActive = (bot: BotUser, game: BotGameKey) =>
@@ -3632,6 +3752,8 @@ function BotsAdmin() {
     bingo: bots.filter((b) => gameActive(b, 'bingo')).length,
     crash: bots.filter((b) => gameActive(b, 'crash')).length,
   };
+  const selectedBot = detailBotId ? bots.find((bot) => bot.id === detailBotId) ?? null : null;
+  const selectedKenoPolicy = selectedBot ? getKenoPolicy(selectedBot) : null;
 
   return (
     <div className="stack-lg">
@@ -3652,6 +3774,121 @@ function BotsAdmin() {
           value={`${formatCreditsFull(bots.reduce((s, b) => s + (b.walletBalanceMinor ?? 0), 0))} ETB`}
           color="#f59e0b" />
       </div>
+
+      {selectedBot && selectedKenoPolicy && (
+        <div className="adm-panel">
+          <div className="adm-panel-head" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+            <span>Bot Details</span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button className="adm-btn adm-btn-xs adm-btn-secondary" onClick={() => { setDetailPage(1); void loadDetailActions(); }}>
+                Refresh
+              </button>
+              <button className="adm-btn adm-btn-xs adm-btn-secondary" onClick={() => { setDetailBotId(null); setDetailActions([]); }}>
+                Close
+              </button>
+            </div>
+          </div>
+          <div className="adm-field-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <div className="adm-field">
+              <span>Selected Bot</span>
+              <strong>{selectedBot.displayName}</strong>
+            </div>
+            <div className="adm-field">
+              <span>Global State</span>
+              <strong>{selectedBot.botPolicy.active ? 'Active' : 'Paused'}</strong>
+            </div>
+            <div className="adm-field">
+              <span>Keno</span>
+              <strong>{selectedBot.botPolicy.games?.keno?.strategy ?? 'normal'} · {selectedBot.botPolicy.games?.keno?.participationRatePct ?? 0}%</strong>
+            </div>
+            <div className="adm-field">
+              <span>Bingo</span>
+              <strong>{selectedBot.botPolicy.games?.bingo?.strategy ?? 'mirror-human'} · {selectedBot.botPolicy.games?.bingo?.participationRatePct ?? 0}%</strong>
+            </div>
+            <div className="adm-field">
+              <span>Crash</span>
+              <strong>{selectedBot.botPolicy.games?.crash?.strategy ?? 'normal'} · {selectedBot.botPolicy.games?.crash?.participationRatePct ?? 0}%</strong>
+            </div>
+            <div className="adm-field">
+              <span>Balance Guard</span>
+              <strong>K {selectedBot.botPolicy.games?.keno?.minBalanceMinor ?? 0} / B {selectedBot.botPolicy.games?.bingo?.minBalanceMinor ?? 0} / C {selectedBot.botPolicy.games?.crash?.minBalanceMinor ?? 0}</strong>
+            </div>
+          </div>
+          <div className="adm-field-grid" style={{ marginTop: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+            <div className="adm-field">
+              <span>Daily Caps</span>
+              <strong>K {selectedBot.botPolicy.games?.keno?.maxStakeMinorPerDay ?? 0} / B {selectedBot.botPolicy.games?.bingo?.maxStakeMinorPerDay ?? 0} / C {selectedBot.botPolicy.games?.crash?.maxStakeMinorPerDay ?? 0}</strong>
+            </div>
+            <div className="adm-field">
+              <span>Bingo Cartela Cap</span>
+              <strong>{selectedBot.botPolicy.games?.bingo?.maxCartelasPerRoom ?? 0}</strong>
+            </div>
+            <div className="adm-field">
+              <span>Crash Cashout Range</span>
+              <strong>{selectedBot.botPolicy.games?.crash?.minCashoutX100 ?? 0} - {selectedBot.botPolicy.games?.crash?.maxCashoutX100 ?? 0}</strong>
+            </div>
+            <div className="adm-field">
+              <span>Keno Ticket Settings</span>
+              <strong>{selectedKenoPolicy.ticketsPerRound} tickets · {selectedKenoPolicy.spotCount} spots</strong>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label className="adm-field" style={{ margin: 0, minWidth: 140 }}>
+                <span>Action Scope</span>
+                <select
+                  className="input"
+                  value={detailGameFilter}
+                  onChange={(e) => { setDetailGameFilter(e.target.value as typeof detailGameFilter); setDetailPage(1); }}
+                >
+                  <option value="all">All</option>
+                  <option value="admin">Admin</option>
+                  <option value="keno">Keno</option>
+                  <option value="bingo">Bingo</option>
+                  <option value="crash">Crash</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button className="adm-btn adm-btn-xs adm-btn-secondary" disabled={detailPage <= 1 || detailLoading} onClick={() => setDetailPage((p) => Math.max(1, p - 1))}>
+                Prev
+              </button>
+              <span className="adm-td-muted" style={{ fontSize: 12 }}>
+                Page {detailPage} / {Math.max(1, detailTotalPages)}
+              </span>
+              <button className="adm-btn adm-btn-xs adm-btn-secondary" disabled={detailPage >= detailTotalPages || detailLoading} onClick={() => setDetailPage((p) => p + 1)}>
+                Next
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14 }}>
+            <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Recent Bot Activity</div>
+            {detailLoading ? (
+              <div className="adm-empty">Loading audit trail...</div>
+            ) : detailActions.length === 0 ? (
+              <div className="adm-empty">No audit events yet for this bot.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {detailActions.map((action) => (
+                  <div key={action.id} style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: 13 }}>{action.action}</strong>
+                      <span className={`badge ${action.game === 'admin' ? 'badge-violet' : 'badge-blue'}`} style={{ fontSize: 9 }}>{action.game}</span>
+                    </div>
+                    <div className="adm-td-muted" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.6 }}>
+                      {action.sourceId ? <>Source: {action.sourceId}<br /></> : null}
+                      {action.amountMinor !== null ? <>Amount: {formatCreditsFull(action.amountMinor)} ETB<br /></> : null}
+                      Time: {formatRelativeTime(action.createdAt)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Create form */}
       {showCreate && (
@@ -3684,6 +3921,75 @@ function BotsAdmin() {
               </label>
             ))}
           </div>
+          <div className="adm-panel-head" style={{ marginTop: 14, background: 'none', padding: 0 }}>Advanced Policy</div>
+          <div className="adm-field-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <label className="adm-field">
+              <span>Keno Strategy</span>
+              <select className="input" value={form.kenoStrategy} onChange={(e) => setForm((prev) => ({ ...prev, kenoStrategy: e.target.value as BotStrategyProfile }))}>
+                {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Bingo Strategy</span>
+              <select className="input" value={form.bingoStrategy} onChange={(e) => setForm((prev) => ({ ...prev, bingoStrategy: e.target.value as BotStrategyProfile }))}>
+                {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Crash Strategy</span>
+              <select className="input" value={form.crashStrategy} onChange={(e) => setForm((prev) => ({ ...prev, crashStrategy: e.target.value as BotStrategyProfile }))}>
+                {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Keno Participation %</span>
+              <input className="input" type="number" min={0} max={100} value={form.kenoParticipationRatePct} onChange={(e) => setForm((prev) => ({ ...prev, kenoParticipationRatePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Participation %</span>
+              <input className="input" type="number" min={0} max={100} value={form.bingoParticipationRatePct} onChange={(e) => setForm((prev) => ({ ...prev, bingoParticipationRatePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Participation %</span>
+              <input className="input" type="number" min={0} max={100} value={form.crashParticipationRatePct} onChange={(e) => setForm((prev) => ({ ...prev, crashParticipationRatePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Min Balance</span>
+              <input className="input" type="number" min={0} value={form.kenoMinBalanceMinor} onChange={(e) => setForm((prev) => ({ ...prev, kenoMinBalanceMinor: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Min Balance</span>
+              <input className="input" type="number" min={0} value={form.bingoMinBalanceMinor} onChange={(e) => setForm((prev) => ({ ...prev, bingoMinBalanceMinor: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Min Balance</span>
+              <input className="input" type="number" min={0} value={form.crashMinBalanceMinor} onChange={(e) => setForm((prev) => ({ ...prev, crashMinBalanceMinor: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Daily Stake Cap</span>
+              <input className="input" type="number" min={0} value={form.kenoMaxStakeMinorPerDay} onChange={(e) => setForm((prev) => ({ ...prev, kenoMaxStakeMinorPerDay: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Daily Stake Cap</span>
+              <input className="input" type="number" min={0} value={form.bingoMaxStakeMinorPerDay} onChange={(e) => setForm((prev) => ({ ...prev, bingoMaxStakeMinorPerDay: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Daily Stake Cap</span>
+              <input className="input" type="number" min={0} value={form.crashMaxStakeMinorPerDay} onChange={(e) => setForm((prev) => ({ ...prev, crashMaxStakeMinorPerDay: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Cartela Cap</span>
+              <input className="input" type="number" min={1} max={24} value={form.bingoMaxCartelasPerRoom} onChange={(e) => setForm((prev) => ({ ...prev, bingoMaxCartelasPerRoom: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Cashout Min x100</span>
+              <input className="input" type="number" min={101} value={form.crashMinCashoutX100} onChange={(e) => setForm((prev) => ({ ...prev, crashMinCashoutX100: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Cashout Max x100</span>
+              <input className="input" type="number" min={101} value={form.crashMaxCashoutX100} onChange={(e) => setForm((prev) => ({ ...prev, crashMaxCashoutX100: Number(e.target.value) }))} />
+            </label>
+          </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createBot}>
               {busy === 'create' ? 'Creating…' : 'Create Bot'}
@@ -3704,6 +4010,8 @@ function BotsAdmin() {
                 const isEditing = editingId === bot.id;
                 const isTopping = topupId === bot.id;
                 const kenoPolicy = getKenoPolicy(bot);
+                const bingoPolicy = getBingoPolicy(bot);
+                const crashPolicy = getCrashPolicy(bot);
                 return (
                   <div key={bot.id} style={{
                     borderBottom: '1px solid var(--border)',
@@ -3751,6 +4059,15 @@ function BotsAdmin() {
                         <button
                           className="adm-btn adm-btn-xs adm-btn-secondary"
                           onClick={() => {
+                            setDetailBotId(bot.id);
+                            setDetailGameFilter('all');
+                            setDetailPage(1);
+                          }}>
+                          Details
+                        </button>
+                        <button
+                          className="adm-btn adm-btn-xs adm-btn-secondary"
+                          onClick={() => {
                             setEditingId(isEditing ? null : bot.id);
                             setTopupId(null);
                             setEditForm({
@@ -3759,6 +4076,21 @@ function BotsAdmin() {
                               kenoActive: gamePolicyEnabled(bot, 'keno'),
                               bingoActive: gamePolicyEnabled(bot, 'bingo'),
                               crashActive: gamePolicyEnabled(bot, 'crash'),
+                              kenoStrategy: kenoPolicy.strategy ?? 'normal',
+                              bingoStrategy: bingoPolicy?.strategy ?? 'mirror-human',
+                              crashStrategy: crashPolicy?.strategy ?? 'normal',
+                              kenoParticipationRatePct: kenoPolicy.participationRatePct ?? 100,
+                              bingoParticipationRatePct: bingoPolicy?.participationRatePct ?? 100,
+                              crashParticipationRatePct: crashPolicy?.participationRatePct ?? 60,
+                              kenoMinBalanceMinor: kenoPolicy.minBalanceMinor ?? 0,
+                              bingoMinBalanceMinor: bingoPolicy?.minBalanceMinor ?? 0,
+                              crashMinBalanceMinor: crashPolicy?.minBalanceMinor ?? 0,
+                              kenoMaxStakeMinorPerDay: kenoPolicy.maxStakeMinorPerDay ?? 0,
+                              bingoMaxStakeMinorPerDay: bingoPolicy?.maxStakeMinorPerDay ?? 0,
+                              crashMaxStakeMinorPerDay: crashPolicy?.maxStakeMinorPerDay ?? 0,
+                              bingoMaxCartelasPerRoom: bingoPolicy?.maxCartelasPerRoom ?? 24,
+                              crashMinCashoutX100: crashPolicy?.minCashoutX100 ?? 120,
+                              crashMaxCashoutX100: crashPolicy?.maxCashoutX100 ?? 250,
                             });
                           }}>
                           {isEditing ? 'Cancel' : 'Edit'}
@@ -3813,6 +4145,74 @@ function BotsAdmin() {
                               {BOT_GAME_LABELS[game]}
                             </label>
                           ))}
+                        </div>
+                        <div className="adm-field-grid" style={{ width: '100%', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 8 }}>
+                          <label className="adm-field">
+                            <span>Keno Strategy</span>
+                            <select className="input" value={editForm.kenoStrategy} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoStrategy: e.target.value as BotStrategyProfile }))}>
+                              {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+                            </select>
+                          </label>
+                          <label className="adm-field">
+                            <span>Bingo Strategy</span>
+                            <select className="input" value={editForm.bingoStrategy} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoStrategy: e.target.value as BotStrategyProfile }))}>
+                              {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+                            </select>
+                          </label>
+                          <label className="adm-field">
+                            <span>Crash Strategy</span>
+                            <select className="input" value={editForm.crashStrategy} onChange={(e) => setEditForm((prev) => ({ ...prev, crashStrategy: e.target.value as BotStrategyProfile }))}>
+                              {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+                            </select>
+                          </label>
+                          <label className="adm-field">
+                            <span>Keno Participation %</span>
+                            <input className="input" type="number" min={0} max={100} value={editForm.kenoParticipationRatePct} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoParticipationRatePct: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Bingo Participation %</span>
+                            <input className="input" type="number" min={0} max={100} value={editForm.bingoParticipationRatePct} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoParticipationRatePct: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Crash Participation %</span>
+                            <input className="input" type="number" min={0} max={100} value={editForm.crashParticipationRatePct} onChange={(e) => setEditForm((prev) => ({ ...prev, crashParticipationRatePct: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Keno Min Balance</span>
+                            <input className="input" type="number" min={0} value={editForm.kenoMinBalanceMinor} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoMinBalanceMinor: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Bingo Min Balance</span>
+                            <input className="input" type="number" min={0} value={editForm.bingoMinBalanceMinor} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoMinBalanceMinor: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Crash Min Balance</span>
+                            <input className="input" type="number" min={0} value={editForm.crashMinBalanceMinor} onChange={(e) => setEditForm((prev) => ({ ...prev, crashMinBalanceMinor: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Keno Daily Stake Cap</span>
+                            <input className="input" type="number" min={0} value={editForm.kenoMaxStakeMinorPerDay} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoMaxStakeMinorPerDay: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Bingo Daily Stake Cap</span>
+                            <input className="input" type="number" min={0} value={editForm.bingoMaxStakeMinorPerDay} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoMaxStakeMinorPerDay: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Crash Daily Stake Cap</span>
+                            <input className="input" type="number" min={0} value={editForm.crashMaxStakeMinorPerDay} onChange={(e) => setEditForm((prev) => ({ ...prev, crashMaxStakeMinorPerDay: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Bingo Cartela Cap</span>
+                            <input className="input" type="number" min={1} max={24} value={editForm.bingoMaxCartelasPerRoom} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoMaxCartelasPerRoom: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Crash Cashout Min x100</span>
+                            <input className="input" type="number" min={101} value={editForm.crashMinCashoutX100} onChange={(e) => setEditForm((prev) => ({ ...prev, crashMinCashoutX100: Number(e.target.value) }))} />
+                          </label>
+                          <label className="adm-field">
+                            <span>Crash Cashout Max x100</span>
+                            <input className="input" type="number" min={101} value={editForm.crashMaxCashoutX100} onChange={(e) => setEditForm((prev) => ({ ...prev, crashMaxCashoutX100: Number(e.target.value) }))} />
+                          </label>
                         </div>
                         <button
                           className="adm-btn adm-btn-primary"

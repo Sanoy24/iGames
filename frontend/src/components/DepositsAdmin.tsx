@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Banknote } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Banknote, X } from 'lucide-react';
 import { adminDepositsApi } from '../lib/api';
 import { getErrorMessage, formatCreditsFull } from '../lib/utils';
 
@@ -31,6 +31,7 @@ export function DepositsAdmin() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [detailRow, setDetailRow] = useState<any | null>(null);
 
   const limit = 20;
 
@@ -162,6 +163,7 @@ export function DepositsAdmin() {
                       )}
                     </td>
                     <td style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn btn-sm btn-ghost" onClick={() => setDetailRow(row)}>Details</button>
                       <button className="btn btn-sm btn-ghost" disabled={verifying === row.id} onClick={() => verify(row.id, 'verified')}>Verify</button>
                       <button className="btn btn-sm btn-ghost" disabled={verifying === row.id} onClick={() => verify(row.id, 'flagged')}>Flag</button>
                     </td>
@@ -188,6 +190,173 @@ export function DepositsAdmin() {
           </div>
         </div>
       )}
+
+      {detailRow && (
+        <DepositDetailModal
+          row={detailRow}
+          onClose={() => setDetailRow(null)}
+          onVerify={async (verificationStatus) => {
+            await verify(detailRow.id, verificationStatus);
+            setDetailRow(null);
+          }}
+          verifying={verifying === detailRow.id}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Turns a camelCase/snake_case key into a human-readable label, e.g.
+ * "credited_party_name" / "creditedPartyName" -> "Credited Party Name". */
+function humanizeKey(key: string): string {
+  return key
+    .replace(/_/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function RawFieldsTable({ title, data }: { title: string; data: Record<string, unknown> | null | undefined }) {
+  if (!data || Object.keys(data).length === 0) return null;
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 6 }}>
+        {title}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 12px', fontSize: 12 }}>
+        {Object.entries(data).map(([key, value]) => (
+          <Fragment key={key}>
+            <span style={{ color: 'var(--text-muted)' }}>{humanizeKey(key)}</span>
+            <span style={{ wordBreak: 'break-word' }}>
+              {value === null || value === undefined || value === '' ? '—' : String(value)}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DepositDetailModal({
+  row,
+  onClose,
+  onVerify,
+  verifying,
+}: {
+  row: any;
+  onClose: () => void;
+  onVerify: (status: 'verified' | 'flagged') => void;
+  verifying: boolean;
+}) {
+  const reference = row.receiptNo ?? row.confirmationCode;
+  const rejectionError = row.status === 'rejected' ? (row.verification?.error as string | undefined) : undefined;
+  const verificationStatus = row.verificationStatus ?? 'unverified';
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}
+    >
+      <div
+        className="adm-panel"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 640, width: '100%', margin: 'auto', maxHeight: '90vh', overflowY: 'auto' }}
+      >
+        <div className="adm-panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Deposit — {reference ?? row.id.slice(0, 8)}</span>
+          <button className="adm-icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Headline */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <span className={`badge ${row.status === 'credited' ? 'badge-green' : 'badge-red'}`}>{row.status}</span>
+            <span className={`badge ${VERIFICATION_BADGE[verificationStatus]}`}>{verificationStatus}</span>
+            <strong style={{ fontSize: 18 }}>{formatCreditsFull(row.amountMinor)} ETB</strong>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{new Date(row.createdAt).toLocaleString()}</span>
+          </div>
+
+          {/* Rejection reason — front and center, not truncated */}
+          {rejectionError && (
+            <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--danger)', marginBottom: 4 }}>
+                Why this was rejected
+              </div>
+              <div style={{ fontSize: 13 }}>{rejectionError}</div>
+              {row.verification?.timestamp && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {new Date(row.verification.timestamp).toLocaleString()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {row.status === 'credited' && row.fundingFallbackReason && (
+            <div style={{ background: 'rgba(250,204,21,0.08)', border: '1px solid rgba(250,204,21,0.3)', borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--gold)', marginBottom: 4 }}>
+                Funding fallback
+              </div>
+              <div style={{ fontSize: 13 }}>
+                {FALLBACK_REASON_LABEL[row.fundingFallbackReason] ?? row.fundingFallbackReason}
+                {' — credited from '}
+                {FUNDED_BY_LABEL[row.fundedBy] ?? row.fundedBy}
+              </div>
+            </div>
+          )}
+
+          {/* Who / where */}
+          <RawFieldsTable
+            title="Account"
+            data={{
+              player: row.user?.displayName,
+              phone: row.user?.phoneNumber,
+              userId: row.userId,
+              agent: row.agent?.displayName ?? '—',
+              reference,
+            }}
+          />
+
+          {/* Everything the receipt parser actually extracted — this is what
+              tells you exactly what went wrong (e.g. which amount field came
+              back invalid, what the receiver name/account actually were). */}
+          <RawFieldsTable title="Parsed receipt / SMS" data={row.parsedReceipt ?? row.parsedSms} />
+
+          <RawFieldsTable
+            title="Verification checks"
+            data={{
+              receiverNameMatched: row.verification?.receiverNameMatched,
+              receiverAccountMatched: row.verification?.receiverAccountMatched,
+              transactionStatusAccepted: row.verification?.transactionStatusAccepted,
+              expectedReceiverName: row.verification?.expectedReceiverName,
+              expectedReceiverAccount: row.verification?.expectedReceiverAccount,
+            }}
+          />
+
+          {/* Receipt links */}
+          <div style={{ display: 'flex', gap: 12, fontSize: 12, flexWrap: 'wrap' }}>
+            {row.receiptNo && (
+              <a href={`https://transactioninfo.ethiotelecom.et/receipt/${encodeURIComponent(row.receiptNo)}`} target="_blank" rel="noreferrer">
+                Open Ethiotelecom receipt page ↗
+              </a>
+            )}
+            {row.receiptFileUrl && (
+              <a href={`/uploads/${row.receiptFileUrl}`} target="_blank" rel="noreferrer">
+                View uploaded screenshot/photo ↗
+              </a>
+            )}
+          </div>
+
+          {row.verifiedBy && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Admin sign-off by {row.verifiedBy.slice(0, 8)}{row.verifiedAt ? ` · ${new Date(row.verifiedAt).toLocaleString()}` : ''}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <button className="btn btn-sm btn-ghost" disabled={verifying} onClick={() => onVerify('verified')}>Verify</button>
+            <button className="btn btn-sm btn-ghost" disabled={verifying} onClick={() => onVerify('flagged')}>Flag</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

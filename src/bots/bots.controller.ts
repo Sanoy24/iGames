@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -27,6 +27,22 @@ export class BotsController {
   @ApiOkResponse({ description: 'Lists all virtual users with their policies and wallet balances' })
   listBots() {
     return this.botsService.listBots();
+  }
+
+  @Get('actions')
+  @ApiOkResponse({ description: 'Lists recent bot activity and admin bot-management events' })
+  listBotActions(
+    @Query('botId') botId?: string,
+    @Query('game') game?: 'keno' | 'bingo' | 'crash' | 'admin',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.botsService.listBotActions({
+      botId,
+      game,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 
   @Get('names')

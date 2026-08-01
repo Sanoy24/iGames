@@ -440,7 +440,7 @@ export class AdminService implements OnApplicationBootstrap {
         const agentIds = new Set<string>();
 
         for (const ticket of tickets) {
-          const isBot = !!(ticket.user?.productMetadata as any)?.botPolicy?.active;
+          const isBot = !!(ticket.user?.productMetadata as any)?.botPolicy;
           if (isBot) {
             bots.add(ticket.userId);
             ticketsByBot++;
@@ -455,7 +455,7 @@ export class AdminService implements OnApplicationBootstrap {
 
         const realStake = (room.soldTickets - ticketsByBot) * room.ticketPriceMinor;
         const realWinnings = tickets
-          .filter((t) => !(t.user?.productMetadata as any)?.botPolicy?.active)
+          .filter((t) => !(t.user?.productMetadata as any)?.botPolicy)
           .reduce((sum, t) => sum + t.payoutMinor, 0);
         const realEmoneyEarned = realStake - realWinnings;
 

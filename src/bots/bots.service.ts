@@ -28,6 +28,20 @@ export type BotPolicy = {
   spotCount: number;
   drawParticipationCount: number;
   active: boolean;
+  games?: {
+    keno?: {
+      active: boolean;
+      ticketsPerRound: number;
+      spotCount: number;
+      drawParticipationCount: number;
+    };
+    bingo?: {
+      active: boolean;
+    };
+    crash?: {
+      active: boolean;
+    };
+  };
 };
 
 export type BotResponse = {
@@ -63,12 +77,22 @@ export class BotsService {
   ) {}
 
   async createBot(dto: CreateBotDto): Promise<BotResponse> {
-    const policy: BotPolicy = {
+    const policy = this.normalizeBotPolicy({
       ticketsPerRound: dto.ticketsPerRound ?? 1,
       spotCount: dto.spotCount ?? 3,
       drawParticipationCount: 0,
-      active: true
-    };
+      active: true,
+      games: {
+        keno: {
+          active: dto.kenoActive ?? true,
+          ticketsPerRound: dto.ticketsPerRound ?? 1,
+          spotCount: dto.spotCount ?? 3,
+          drawParticipationCount: 0,
+        },
+        bingo: { active: dto.bingoActive ?? true },
+        crash: { active: dto.crashActive ?? true },
+      },
+    });
 
     return await this.dataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(User);
@@ -124,7 +148,7 @@ export class BotsService {
   async deleteBot(botId: string): Promise<void> {
     const bot = await this.findBot(botId);
     // Mark as inactive + strip bot policy so it no longer participates in games
-    const policy = bot.productMetadata!.botPolicy as BotPolicy;
+    const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>);
     bot.productMetadata = { ...bot.productMetadata!, botPolicy: { ...policy, active: false } };
     bot.status = 'suspended';
     await this.userRepository.save(bot);
@@ -222,13 +246,31 @@ export class BotsService {
 
   async updatePolicy(botId: string, dto: UpdateBotPolicyDto): Promise<BotResponse> {
     const bot = await this.findBot(botId);
-    const current = bot.productMetadata!.botPolicy as BotPolicy;
+    const current = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>);
+    const nextKeno = {
+      ...current.games!.keno!,
+      ...(dto.kenoActive !== undefined && { active: dto.kenoActive }),
+      ...(dto.ticketsPerRound !== undefined && { ticketsPerRound: dto.ticketsPerRound }),
+      ...(dto.spotCount !== undefined && { spotCount: dto.spotCount }),
+    };
 
     const updated: BotPolicy = {
       ...current,
       ...(dto.ticketsPerRound !== undefined && { ticketsPerRound: dto.ticketsPerRound }),
       ...(dto.spotCount !== undefined && { spotCount: dto.spotCount }),
-      ...(dto.active !== undefined && { active: dto.active })
+      ...(dto.active !== undefined && { active: dto.active }),
+      games: {
+        ...current.games,
+        keno: nextKeno,
+        bingo: {
+          ...current.games!.bingo!,
+          ...(dto.bingoActive !== undefined && { active: dto.bingoActive }),
+        },
+        crash: {
+          ...current.games!.crash!,
+          ...(dto.crashActive !== undefined && { active: dto.crashActive }),
+        },
+      },
     };
 
     bot.productMetadata = { ...bot.productMetadata!, botPolicy: updated };
@@ -242,7 +284,7 @@ export class BotsService {
    * Each active bot buys tickets for the given open draw.
    */
   async buyTicketsForDraw(drawId: string): Promise<void> {
-    const bots = await this.getActiveBots();
+    const bots = await this.getActiveBots('keno');
 
     if (bots.length === 0) return;
 
@@ -298,7 +340,7 @@ export class BotsService {
    * Returns true if any bot purchase or refund happened this call.
    */
   async topUpBotsForOpenRoom(roomId: string): Promise<boolean> {
-    const bots = await this.getActiveBots();
+    const bots = await this.getActiveBots('bingo');
     if (bots.length === 0) return false;
     const realPlayers = await this.bingoService.countRealPlayersInRoom(roomId);
     if (realPlayers <= 0) {
@@ -328,7 +370,7 @@ export class BotsService {
     const completedCount = await this.dataSource.getRepository(BingoRoom).countBy({ status: 'completed' });
     if (completedCount === 0 || completedCount % interval !== 0) return;
 
-    const bots = await this.getActiveBots();
+    const bots = await this.getActiveBots('bingo');
     if (bots.length === 0) return;
 
     const luckyBot = bots[randomInt(0, bots.length)];
@@ -362,7 +404,7 @@ export class BotsService {
    * Each active bot randomly decides to participate (~60% chance) and places one bet.
    */
   async placeBetsForCrashRound(roundId: string): Promise<void> {
-    const bots = await this.getActiveBots();
+    const bots = await this.getActiveBots('crash');
     if (bots.length === 0) return;
 
     const cfg = await this.crashService.getConfig();
@@ -389,24 +431,27 @@ export class BotsService {
     }
   }
 
-  private async getActiveBots(): Promise<User[]> {
-    return this.userRepository
+  private async getActiveBots(game?: 'keno' | 'bingo' | 'crash'): Promise<User[]> {
+    const bots = await this.userRepository
       .createQueryBuilder('user')
       .where("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL")
       .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy.active') = true")
       .getMany();
+    if (!game) return bots;
+    return bots.filter((bot) => this.isGameEnabled(this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>), game));
   }
 
   private async buyTicketsForSingleBot(bot: User, drawId: string, isForcedWin: boolean): Promise<void> {
-    const policy = bot.productMetadata!.botPolicy as BotPolicy;
+    const policy = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as Partial<BotPolicy>);
+    const kenoPolicy = policy.games!.keno!;
     const config = await this.kenoService.getActiveConfig();
     const { numberMin, numberMax, allowedSpots } = config;
 
-    const spotCount = allowedSpots.includes(policy.spotCount)
-      ? policy.spotCount
+    const spotCount = allowedSpots.includes(kenoPolicy.spotCount)
+      ? kenoPolicy.spotCount
       : allowedSpots[0];
 
-    for (let i = 0; i < policy.ticketsPerRound; i++) {
+    for (let i = 0; i < kenoPolicy.ticketsPerRound; i++) {
       const selectedNumbers = this.pickRandomNumbers(numberMin, numberMax, spotCount);
       const idempotencyKey = `bot-ticket:${drawId}:${bot.id}:${i}`;
       try {
@@ -422,7 +467,8 @@ export class BotsService {
       }
     }
 
-    policy.drawParticipationCount += 1;
+    kenoPolicy.drawParticipationCount += 1;
+    policy.drawParticipationCount = kenoPolicy.drawParticipationCount;
     bot.productMetadata = { ...bot.productMetadata!, botPolicy: policy };
     await this.userRepository.save(bot);
   }
@@ -452,8 +498,36 @@ export class BotsService {
     return {
       id: user.id,
       displayName: user.displayName,
-      botPolicy: user.productMetadata!.botPolicy as BotPolicy
+      botPolicy: this.normalizeBotPolicy(user.productMetadata!.botPolicy as Partial<BotPolicy>)
     };
+  }
+
+  private normalizeBotPolicy(policy: Partial<BotPolicy> = {}): BotPolicy {
+    const ticketsPerRound = policy.ticketsPerRound ?? policy.games?.keno?.ticketsPerRound ?? 1;
+    const spotCount = policy.spotCount ?? policy.games?.keno?.spotCount ?? 3;
+    const drawParticipationCount = policy.drawParticipationCount ?? policy.games?.keno?.drawParticipationCount ?? 0;
+    const active = policy.active ?? true;
+    return {
+      ...policy,
+      ticketsPerRound,
+      spotCount,
+      drawParticipationCount,
+      active,
+      games: {
+        keno: {
+          active: policy.games?.keno?.active ?? active,
+          ticketsPerRound,
+          spotCount,
+          drawParticipationCount,
+        },
+        bingo: { active: policy.games?.bingo?.active ?? active },
+        crash: { active: policy.games?.crash?.active ?? active },
+      },
+    };
+  }
+
+  private isGameEnabled(policy: BotPolicy, game: 'keno' | 'bingo' | 'crash'): boolean {
+    return policy.active !== false && policy.games?.[game]?.active !== false;
   }
 
   private normalizeBotName(displayName: string): string {

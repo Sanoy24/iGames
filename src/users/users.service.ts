@@ -289,7 +289,23 @@ export class UsersService {
     return this.userRepository.findOneBy({ id: identity.userId });
   }
 
-  async listUsers(page: number, limit: number, role?: string, search?: string) {
+  async listUsers(
+    page: number,
+    limit: number,
+    role?: string,
+    search?: string,
+    filters: {
+      isBot?: boolean;
+      status?: 'active' | 'suspended' | 'closed';
+      /** Pre-resolved by the caller (online state is in-memory via the socket
+       * gateway, not a DB column) — undefined means "don't filter on this". */
+      onlineUserIds?: string[];
+      online?: boolean;
+      hasPhone?: boolean;
+      minBalanceMinor?: number;
+      maxBalanceMinor?: number;
+    } = {},
+  ) {
     const skip = (page - 1) * limit;
     const queryBuilder = this.userRepository.createQueryBuilder('user')
       .leftJoinAndSelect('user.wallets', 'wallet')
@@ -306,6 +322,42 @@ export class UsersService {
         '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
         { search: `%${search}%` }
       );
+    }
+
+    // Every bot account has productMetadata.botPolicy set (see BotsService);
+    // real accounts never do. Same JSON_EXTRACT check used there.
+    if (filters.isBot === true) {
+      queryBuilder.andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL");
+    } else if (filters.isBot === false) {
+      queryBuilder.andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NULL");
+    }
+
+    if (filters.status) {
+      queryBuilder.andWhere('user.status = :status', { status: filters.status });
+    }
+
+    if (filters.hasPhone === true) {
+      queryBuilder.andWhere('user.phoneNumber IS NOT NULL');
+    } else if (filters.hasPhone === false) {
+      queryBuilder.andWhere('user.phoneNumber IS NULL');
+    }
+
+    if (filters.minBalanceMinor !== undefined) {
+      queryBuilder.andWhere('wallet.availableMinor >= :minBalance', { minBalance: filters.minBalanceMinor });
+    }
+    if (filters.maxBalanceMinor !== undefined) {
+      queryBuilder.andWhere('wallet.availableMinor <= :maxBalance', { maxBalance: filters.maxBalanceMinor });
+    }
+
+    // Online/offline is resolved by the controller from the live socket gateway
+    // (not a DB column) and passed down as a concrete id list, so pagination and
+    // totals stay correct at the DB level instead of filtering after the fact.
+    if (filters.online === true) {
+      const ids = filters.onlineUserIds ?? [];
+      if (ids.length === 0) return { data: [], total: 0, page, limit, totalPages: 0 };
+      queryBuilder.andWhere('user.id IN (:...onlineIds)', { onlineIds: ids });
+    } else if (filters.online === false && filters.onlineUserIds && filters.onlineUserIds.length > 0) {
+      queryBuilder.andWhere('user.id NOT IN (:...onlineIds)', { onlineIds: filters.onlineUserIds });
     }
 
     const [data, total] = await queryBuilder.getManyAndCount();

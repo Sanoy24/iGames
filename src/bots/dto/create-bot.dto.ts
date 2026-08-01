@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -27,6 +28,21 @@ export class CreateBotDto {
   @Min(1)
   @Max(12)
   spotCount?: number;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow this bot to play Keno', default: true })
+  @IsOptional()
+  @IsBoolean()
+  kenoActive?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow this bot to play Bingo', default: true })
+  @IsOptional()
+  @IsBoolean()
+  bingoActive?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow this bot to play Crash', default: true })
+  @IsOptional()
+  @IsBoolean()
+  crashActive?: boolean;
 
 
   @ApiPropertyOptional({

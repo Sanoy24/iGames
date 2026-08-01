@@ -278,6 +278,12 @@ function PlayersAdmin() {
   // Filters
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('player'); // player by default
+  const [accountType, setAccountType] = useState<'' | 'real' | 'bot'>('');
+  const [status, setStatus] = useState<'' | 'active' | 'suspended' | 'closed'>('');
+  const [onlineFilter, setOnlineFilter] = useState<'' | 'online' | 'offline'>('');
+  const [phoneFilter, setPhoneFilter] = useState<'' | 'has' | 'none'>('');
+  const [minBalance, setMinBalance] = useState('');
+  const [maxBalance, setMaxBalance] = useState('');
 
   // Wallet adjustment
   const [adjustingUser, setAdjustingUser] = useState<User | null>(null);
@@ -292,7 +298,14 @@ function PlayersAdmin() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await adminUsersApi.listUsers(page, limit, role || undefined, search || undefined);
+      const res = await adminUsersApi.listUsers(page, limit, role || undefined, search || undefined, {
+        isBot: accountType === 'bot' ? true : accountType === 'real' ? false : undefined,
+        status: status || undefined,
+        online: onlineFilter === 'online' ? true : onlineFilter === 'offline' ? false : undefined,
+        hasPhone: phoneFilter === 'has' ? true : phoneFilter === 'none' ? false : undefined,
+        minBalanceMinor: minBalance ? Math.round(parseFloat(minBalance) * 100) : undefined,
+        maxBalanceMinor: maxBalance ? Math.round(parseFloat(maxBalance) * 100) : undefined,
+      });
       setUsers(res.data);
       setTotalPages(Math.ceil(res.total / limit));
       setTotalUsers(res.total);
@@ -301,7 +314,7 @@ function PlayersAdmin() {
     } finally {
       setLoading(false);
     }
-  }, [page, limit, role, search, addToast]);
+  }, [page, limit, role, search, accountType, status, onlineFilter, phoneFilter, minBalance, maxBalance, addToast]);
 
   useEffect(() => {
     void load();
@@ -441,6 +454,77 @@ function PlayersAdmin() {
               <option value="">All Roles</option>
             </select>
           </div>
+          <div className="adm-field" style={{ width: 150, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Account Type</label>
+            <select
+              className="input"
+              value={accountType}
+              onChange={(e) => { setAccountType(e.target.value as typeof accountType); setPage(1); }}
+            >
+              <option value="">All</option>
+              <option value="real">Real Players Only</option>
+              <option value="bot">Bots Only</option>
+            </select>
+          </div>
+          <div className="adm-field" style={{ width: 150, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Status</label>
+            <select
+              className="input"
+              value={status}
+              onChange={(e) => { setStatus(e.target.value as typeof status); setPage(1); }}
+            >
+              <option value="">All</option>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+          <div className="adm-field" style={{ width: 130, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Online</label>
+            <select
+              className="input"
+              value={onlineFilter}
+              onChange={(e) => { setOnlineFilter(e.target.value as typeof onlineFilter); setPage(1); }}
+            >
+              <option value="">All</option>
+              <option value="online">Online</option>
+              <option value="offline">Offline</option>
+            </select>
+          </div>
+          <div className="adm-field" style={{ width: 130, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Phone</label>
+            <select
+              className="input"
+              value={phoneFilter}
+              onChange={(e) => { setPhoneFilter(e.target.value as typeof phoneFilter); setPage(1); }}
+            >
+              <option value="">All</option>
+              <option value="has">Has Phone</option>
+              <option value="none">No Phone</option>
+            </select>
+          </div>
+          <div className="adm-field" style={{ width: 110, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Min Balance (ETB)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              placeholder="0"
+              value={minBalance}
+              onChange={(e) => { setMinBalance(e.target.value); setPage(1); }}
+            />
+          </div>
+          <div className="adm-field" style={{ width: 110, margin: 0 }}>
+            <label style={{ fontSize: 11 }}>Max Balance (ETB)</label>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              placeholder="No limit"
+              value={maxBalance}
+              onChange={(e) => { setMaxBalance(e.target.value); setPage(1); }}
+            />
+          </div>
         </div>
       </div>
 
@@ -457,6 +541,7 @@ function PlayersAdmin() {
             <thead>
               <tr className="adm-tr">
                 <th>Display Name</th>
+                <th>Type</th>
                 <th>Roles</th>
                 <th>Contact info</th>
                 <th>Wallet Balance</th>
@@ -471,6 +556,11 @@ function PlayersAdmin() {
                 return (
                   <tr key={u.id} className="adm-tr">
                     <td><strong>{u.displayName}</strong></td>
+                    <td>
+                      {u.isBot
+                        ? <span className="badge badge-violet" style={{ fontSize: 9 }}>🤖 Bot</span>
+                        : <span className="badge badge-green" style={{ fontSize: 9 }}>Real</span>}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', gap: 4 }}>
                         {u.roles.map((r) => (
@@ -3374,6 +3464,19 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
 //   • Werk Flega: cosmetic AI maze opponents (name/colour/skill, no wallet).
 // ══════════════════════════════════════════════════════════════════
 type BotsSubTab = 'liquidity' | 'names' | 'werk';
+type BotGameKey = 'keno' | 'bingo' | 'crash';
+type BotGameActiveKey = 'kenoActive' | 'bingoActive' | 'crashActive';
+const BOT_GAME_KEYS: BotGameKey[] = ['keno', 'bingo', 'crash'];
+const BOT_GAME_LABELS: Record<BotGameKey, string> = {
+  keno: 'Keno',
+  bingo: 'Bingo',
+  crash: 'Crash',
+};
+const BOT_GAME_ACTIVE_KEYS: Record<BotGameKey, BotGameActiveKey> = {
+  keno: 'kenoActive',
+  bingo: 'bingoActive',
+  crash: 'crashActive',
+};
 const BOTS_SUBTABS: Array<{ id: BotsSubTab; label: string }> = [
   { id: 'liquidity', label: 'Liquidity (Keno/Bingo/Crash)' },
   { id: 'names', label: 'Bingo Name Pool' },
@@ -3417,9 +3520,22 @@ function BotsAdmin() {
     initialBalanceMinor: 10000,
     ticketsPerRound: 2,
     spotCount: 4,
+    kenoActive: true,
+    bingoActive: true,
+    crashActive: true,
   });
-  const [editForm, setEditForm] = useState<{ ticketsPerRound: number; spotCount: number }>({
-    ticketsPerRound: 1, spotCount: 3,
+  const [editForm, setEditForm] = useState<{
+    ticketsPerRound: number;
+    spotCount: number;
+    kenoActive: boolean;
+    bingoActive: boolean;
+    crashActive: boolean;
+  }>({
+    ticketsPerRound: 1,
+    spotCount: 3,
+    kenoActive: true,
+    bingoActive: true,
+    crashActive: true,
   });
 
   const load = useCallback(async () => {
@@ -3446,6 +3562,26 @@ function BotsAdmin() {
     setBusy(bot.id);
     try { await adminBotsApi.updateBot(bot.id, { active: !bot.botPolicy.active }); await load(); }
     catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const getKenoPolicy = (bot: BotUser) => bot.botPolicy.games?.keno ?? bot.botPolicy;
+  const gamePolicyEnabled = (bot: BotUser, game: BotGameKey) =>
+    bot.botPolicy.games?.[game]?.active !== false;
+  const gameActive = (bot: BotUser, game: BotGameKey) =>
+    bot.botPolicy.active !== false && bot.botPolicy.games?.[game]?.active !== false;
+
+  const toggleGame = async (bot: BotUser, game: BotGameKey) => {
+    const next = !gamePolicyEnabled(bot, game);
+    const payload =
+      game === 'keno' ? { kenoActive: next } :
+      game === 'bingo' ? { bingoActive: next } :
+      { crashActive: next };
+    setBusy(`${bot.id}-${game}`);
+    try {
+      await adminBotsApi.updateBot(bot.id, payload);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
 
@@ -3484,13 +3620,18 @@ function BotsAdmin() {
     finally { setBusy(null); }
   };
 
-  const f = (key: keyof typeof form) => ({
+  const f = (key: 'displayName' | 'initialBalanceMinor' | 'ticketsPerRound' | 'spotCount') => ({
     value: form[key],
     onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [key]: typeof prev[key] === 'number' ? Number(e.target.value) : e.target.value })),
   });
 
   const activeBots = bots.filter(b => b.botPolicy?.active).length;
+  const activeByGame = {
+    keno: bots.filter((b) => gameActive(b, 'keno')).length,
+    bingo: bots.filter((b) => gameActive(b, 'bingo')).length,
+    crash: bots.filter((b) => gameActive(b, 'crash')).length,
+  };
 
   return (
     <div className="stack-lg">
@@ -3505,6 +3646,7 @@ function BotsAdmin() {
       <div className="adm-kpi-row">
         <Kpi label="Total Bots" value={String(bots.length)} color="#6366f1" />
         <Kpi label="Active" value={String(activeBots)} color="#10b981" />
+        <Kpi label="By Game" value={`K ${activeByGame.keno} / B ${activeByGame.bingo} / C ${activeByGame.crash}`} color="#38bdf8" />
         <Kpi label="Paused" value={String(bots.length - activeBots)} color="#94a3b8" />
         <Kpi label="Total Balance"
           value={`${formatCreditsFull(bots.reduce((s, b) => s + (b.walletBalanceMinor ?? 0), 0))} ETB`}
@@ -3530,6 +3672,18 @@ function BotsAdmin() {
               <input className="input" type="number" min={1} max={12} {...f('spotCount')} />
             </label>
           </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+            {BOT_GAME_KEYS.map((game) => (
+              <label key={game} className="adm-btn adm-btn-sm adm-btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={form[BOT_GAME_ACTIVE_KEYS[game]]}
+                  onChange={(e) => setForm((prev) => ({ ...prev, [BOT_GAME_ACTIVE_KEYS[game]]: e.target.checked }))}
+                />
+                {BOT_GAME_LABELS[game]} enabled
+              </label>
+            ))}
+          </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createBot}>
               {busy === 'create' ? 'Creating…' : 'Create Bot'}
@@ -3549,6 +3703,7 @@ function BotsAdmin() {
               {bots.map((bot) => {
                 const isEditing = editingId === bot.id;
                 const isTopping = topupId === bot.id;
+                const kenoPolicy = getKenoPolicy(bot);
                 return (
                   <div key={bot.id} style={{
                     borderBottom: '1px solid var(--border)',
@@ -3559,8 +3714,8 @@ function BotsAdmin() {
                       <div style={{ flex: 1, minWidth: 120 }}>
                         <strong style={{ fontSize: 13 }}>{bot.displayName}</strong>
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                          {bot.botPolicy?.ticketsPerRound}t · {bot.botPolicy?.spotCount}-spot
-                          · {bot.botPolicy?.drawParticipationCount ?? 0} draws played
+                          {kenoPolicy.ticketsPerRound}t · {kenoPolicy.spotCount}-spot
+                          · {kenoPolicy.drawParticipationCount ?? 0} Keno draws played
                         </div>
                       </div>
 
@@ -3574,6 +3729,23 @@ function BotsAdmin() {
                         </span>
                       </div>
 
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {BOT_GAME_KEYS.map((game) => {
+                          const effectiveActive = gameActive(bot, game);
+                          const configured = gamePolicyEnabled(bot, game);
+                          return (
+                            <button
+                              key={game}
+                              className={`adm-btn adm-btn-xs ${effectiveActive ? 'adm-btn-primary' : 'adm-btn-secondary'}`}
+                              disabled={busy === `${bot.id}-${game}`}
+                              title={bot.botPolicy.active === false ? 'Global bot switch is paused' : undefined}
+                              onClick={() => toggleGame(bot, game)}>
+                              {busy === `${bot.id}-${game}` ? '...' : `${BOT_GAME_LABELS[game]} ${configured ? 'on' : 'off'}`}
+                            </button>
+                          );
+                        })}
+                      </div>
+
                       {/* Action buttons */}
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         <button
@@ -3582,8 +3754,11 @@ function BotsAdmin() {
                             setEditingId(isEditing ? null : bot.id);
                             setTopupId(null);
                             setEditForm({
-                              ticketsPerRound: bot.botPolicy.ticketsPerRound,
-                              spotCount: bot.botPolicy.spotCount,
+                              ticketsPerRound: kenoPolicy.ticketsPerRound,
+                              spotCount: kenoPolicy.spotCount,
+                              kenoActive: gamePolicyEnabled(bot, 'keno'),
+                              bingoActive: gamePolicyEnabled(bot, 'bingo'),
+                              crashActive: gamePolicyEnabled(bot, 'crash'),
                             });
                           }}>
                           {isEditing ? 'Cancel' : 'Edit'}
@@ -3627,6 +3802,18 @@ function BotsAdmin() {
                             value={editForm.spotCount}
                             onChange={e => setEditForm(p => ({ ...p, spotCount: Number(e.target.value) }))} />
                         </label>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', minWidth: 220 }}>
+                          {BOT_GAME_KEYS.map((game) => (
+                            <label key={game} className="adm-btn adm-btn-xs adm-btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <input
+                                type="checkbox"
+                                checked={editForm[BOT_GAME_ACTIVE_KEYS[game]]}
+                                onChange={(e) => setEditForm((prev) => ({ ...prev, [BOT_GAME_ACTIVE_KEYS[game]]: e.target.checked }))}
+                              />
+                              {BOT_GAME_LABELS[game]}
+                            </label>
+                          ))}
+                        </div>
                         <button
                           className="adm-btn adm-btn-primary"
                           disabled={busy === bot.id + '-edit'}

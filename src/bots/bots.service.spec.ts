@@ -32,8 +32,12 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     getOne: jest.fn().mockResolvedValue(bot),
+    getMany: jest.fn().mockResolvedValue([bot]),
   };
-  const userRepository = { createQueryBuilder: jest.fn().mockReturnValue(queryBuilder) };
+  const userRepository = {
+    createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+    save: jest.fn().mockImplementation((x: unknown) => Promise.resolve(x)),
+  };
 
   const walletService = {
     ensureDefaultWallet: jest.fn().mockResolvedValue(undefined),
@@ -52,7 +56,7 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     {} as any, // crashService
   );
 
-  return { service, adminService, userRepoInManager, botNameRepository, bingoService };
+  return { service, adminService, userRepoInManager, userRepository, botNameRepository, bingoService };
 }
 
 describe('BotsService — bot funding is Master-Wallet-backed', () => {
@@ -82,6 +86,103 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
         expect.objectContaining({ amountMinor: 100000 }),
         expect.anything(),
       );
+    });
+
+    it('creates a normalized per-game policy with all games enabled by default', async () => {
+      const { service, userRepoInManager } = makeService({});
+
+      await service.createBot({ displayName: 'Bot Three', ticketsPerRound: 2, spotCount: 4 } as any);
+
+      expect(userRepoInManager.create).toHaveBeenCalledWith(expect.objectContaining({
+        productMetadata: {
+          botPolicy: expect.objectContaining({
+            active: true,
+            ticketsPerRound: 2,
+            spotCount: 4,
+            games: {
+              keno: expect.objectContaining({ active: true, ticketsPerRound: 2, spotCount: 4 }),
+              bingo: { active: true },
+              crash: { active: true },
+            },
+          }),
+        },
+      }));
+    });
+  });
+
+  describe('updatePolicy', () => {
+    it('updates one game flag without disabling the global bot account or other games', async () => {
+      const { service, userRepository } = makeService({
+        existingBot: {
+          id: 'bot-1',
+          productMetadata: {
+            botPolicy: {
+              active: true,
+              ticketsPerRound: 1,
+              spotCount: 3,
+              drawParticipationCount: 0,
+              games: {
+                keno: { active: true, ticketsPerRound: 1, spotCount: 3, drawParticipationCount: 0 },
+                bingo: { active: true },
+                crash: { active: true },
+              },
+            },
+          } as any,
+        },
+      });
+
+      const result = await service.updatePolicy('550e8400-e29b-41d4-a716-446655440000', { bingoActive: false } as any);
+
+      expect(result.botPolicy.active).toBe(true);
+      expect(result.botPolicy.games?.keno?.active).toBe(true);
+      expect(result.botPolicy.games?.bingo?.active).toBe(false);
+      expect(result.botPolicy.games?.crash?.active).toBe(true);
+      expect(userRepository.save).toHaveBeenCalledWith(expect.objectContaining({
+        productMetadata: expect.objectContaining({
+          botPolicy: expect.objectContaining({
+            active: true,
+            games: expect.objectContaining({
+              bingo: { active: false },
+            }),
+          }),
+        }),
+      }));
+    });
+
+    it('keeps legacy Keno fields mirrored when Keno policy is edited', async () => {
+      const { service } = makeService({
+        existingBot: {
+          id: 'bot-1',
+          productMetadata: {
+            botPolicy: {
+              active: true,
+              ticketsPerRound: 1,
+              spotCount: 3,
+              drawParticipationCount: 7,
+            },
+          } as any,
+        },
+      });
+
+      const result = await service.updatePolicy('550e8400-e29b-41d4-a716-446655440000', {
+        ticketsPerRound: 5,
+        spotCount: 6,
+        kenoActive: false,
+      } as any);
+
+      expect(result.botPolicy).toEqual(expect.objectContaining({
+        ticketsPerRound: 5,
+        spotCount: 6,
+        active: true,
+      }));
+      expect(result.botPolicy.games?.keno).toEqual(expect.objectContaining({
+        active: false,
+        ticketsPerRound: 5,
+        spotCount: 6,
+        drawParticipationCount: 7,
+      }));
+      expect(result.botPolicy.games?.bingo?.active).toBe(true);
+      expect(result.botPolicy.games?.crash?.active).toBe(true);
     });
   });
 

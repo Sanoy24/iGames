@@ -232,74 +232,6 @@ export class BingoService implements OnModuleInit {
 
   // ── Config ──────────────────────────────────────────────────────────────────
 
-  async listBotNames(): Promise<Array<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }>> {
-    const names = await this.botNameRepository.find({
-      order: { active: 'DESC', displayName: 'ASC', createdAt: 'ASC' },
-    });
-    return names.map((name) => this.toBotNameResponse(name));
-  }
-
-  async createBotName(dto: { displayName: string; active?: boolean }): Promise<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }> {
-    const displayName = this.normalizeBotName(dto.displayName);
-    if (!displayName) throw new BadRequestException('Bot name is required');
-
-    const existing = await this.botNameRepository.findOneBy({ displayName });
-    if (existing) throw new ConflictException('Bot name already exists');
-
-    const name = this.botNameRepository.create({
-      displayName,
-      active: dto.active ?? true,
-    });
-    return this.toBotNameResponse(await this.botNameRepository.save(name));
-  }
-
-  async importBotNames(dto: { names: string[] }): Promise<Array<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }>> {
-    const normalized = [...new Set(dto.names.map((name) => this.normalizeBotName(name)).filter(Boolean))];
-    if (normalized.length === 0) return [];
-
-    const existing = await this.botNameRepository.find({
-      where: { displayName: In(normalized) },
-      select: ['displayName'],
-    });
-    const existingNames = new Set(existing.map((row) => row.displayName));
-    const toCreate = normalized
-      .filter((name) => !existingNames.has(name))
-      .map((displayName) => this.botNameRepository.create({ displayName, active: true }));
-
-    if (toCreate.length === 0) return [];
-    return (await this.botNameRepository.save(toCreate)).map((name) => this.toBotNameResponse(name));
-  }
-
-  async updateBotName(
-    id: string,
-    dto: { displayName?: string; active?: boolean },
-  ): Promise<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }> {
-    const name = await this.botNameRepository.findOneBy({ id });
-    if (!name) throw new NotFoundException('Bot name not found');
-
-    if (dto.displayName !== undefined) {
-      const displayName = this.normalizeBotName(dto.displayName);
-      if (!displayName) throw new BadRequestException('Bot name is required');
-      if (displayName !== name.displayName) {
-        const conflict = await this.botNameRepository.findOneBy({ displayName });
-        if (conflict && conflict.id !== name.id) {
-          throw new ConflictException('Bot name already exists');
-        }
-      }
-      name.displayName = displayName;
-    }
-    if (dto.active !== undefined) {
-      name.active = dto.active;
-    }
-    return this.toBotNameResponse(await this.botNameRepository.save(name));
-  }
-
-  async deleteBotName(id: string): Promise<void> {
-    const name = await this.botNameRepository.findOneBy({ id });
-    if (!name) throw new NotFoundException('Bot name not found');
-    await this.botNameRepository.remove(name);
-  }
-
   async getBingoConfig(): Promise<BingoConfig> {
     let cfg = await this.bingoConfigRepository.findOneBy({ key: 'global' });
     if (!cfg) {
@@ -380,16 +312,7 @@ export class BingoService implements OnModuleInit {
     return out;
   }
 
-  private toBotNameResponse(name: BotName): { id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date } {
-    return {
-      id: name.id,
-      displayName: name.displayName,
-      active: name.active,
-      createdAt: name.createdAt,
-      updatedAt: name.updatedAt,
-    };
-  }
-
+  // Bot name CRUD lives in BotsService; Bingo only consumes the pool per room.
   private async hydrateRoomBotIdentities(
     room: BingoRoom,
     userIds: string[],
@@ -3221,7 +3144,11 @@ export class BingoService implements OnModuleInit {
     const rows: Array<{ id: string }> = await manager.query(
       `SELECT id FROM users
         WHERE JSON_EXTRACT(productMetadata, '$.botPolicy') IS NOT NULL
-          AND JSON_EXTRACT(productMetadata, '$.botPolicy.active') = true`,
+          AND JSON_EXTRACT(productMetadata, '$.botPolicy.active') = true
+          AND (
+            JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') IS NULL
+            OR JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') = true
+          )`,
     );
     return new Set(rows.map((r) => r.id));
   }

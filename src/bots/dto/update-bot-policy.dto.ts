@@ -13,6 +13,18 @@ export class UpdateBotPolicyDto {
   @ApiPropertyOptional({ example: false })
   @IsOptional() @IsBoolean()
   active?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow this bot to play Keno' })
+  @IsOptional() @IsBoolean()
+  kenoActive?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow this bot to play Bingo' })
+  @IsOptional() @IsBoolean()
+  bingoActive?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Allow this bot to play Crash' })
+  @IsOptional() @IsBoolean()
+  crashActive?: boolean;
 }
 
 export class TopupBotDto {

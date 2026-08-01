@@ -173,15 +173,37 @@ export class AdminController {
     @Query('limit') limit: string = '50',
     @Query('role') role?: string,
     @Query('search') search?: string,
+    @Query('isBot') isBot?: string,
+    @Query('status') status?: 'active' | 'suspended' | 'closed',
+    @Query('online') online?: string,
+    @Query('hasPhone') hasPhone?: string,
+    @Query('minBalanceMinor') minBalanceMinor?: string,
+    @Query('maxBalanceMinor') maxBalanceMinor?: string,
   ) {
+    const onlineIds = this.gameEventsGateway.getOnlineUserIds();
     const result = await this.usersService.listUsers(
       parseInt(page, 10) || 1,
       parseInt(limit, 10) || 50,
       role,
       search,
+      {
+        isBot: isBot === 'true' ? true : isBot === 'false' ? false : undefined,
+        status,
+        online: online === 'true' ? true : online === 'false' ? false : undefined,
+        onlineUserIds: [...onlineIds],
+        hasPhone: hasPhone === 'true' ? true : hasPhone === 'false' ? false : undefined,
+        minBalanceMinor: minBalanceMinor !== undefined ? parseInt(minBalanceMinor, 10) : undefined,
+        maxBalanceMinor: maxBalanceMinor !== undefined ? parseInt(maxBalanceMinor, 10) : undefined,
+      },
     );
-    const onlineIds = this.gameEventsGateway.getOnlineUserIds();
-    return { ...result, data: result.data.map((user) => ({ ...user, online: onlineIds.has(user.id) })) };
+    return {
+      ...result,
+      data: result.data.map((user) => ({
+        ...user,
+        online: onlineIds.has(user.id),
+        isBot: !!(user.productMetadata as { botPolicy?: unknown } | undefined)?.botPolicy,
+      })),
+    };
   }
 
   @Get('users/:id/activity')

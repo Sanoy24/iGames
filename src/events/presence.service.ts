@@ -38,6 +38,8 @@ export class PresenceService {
 
   private async computeBotCounts(): Promise<BotPresenceCounts> {
     const bot = "JSON_EXTRACT(u.productMetadata,'$.botPolicy') IS NOT NULL AND JSON_EXTRACT(u.productMetadata,'$.botPolicy.active') = true";
+    const gameBot = (game: 'keno' | 'bingo' | 'crash') =>
+      `${bot} AND (JSON_EXTRACT(u.productMetadata,'$.botPolicy.games.${game}.active') IS NULL OR JSON_EXTRACT(u.productMetadata,'$.botPolicy.games.${game}.active') = true)`;
     const scalar = async (sql: string): Promise<number> => {
       try {
         const rows: Array<{ c: number | string }> = await this.dataSource.query(sql);
@@ -53,19 +55,19 @@ export class PresenceService {
         `SELECT COUNT(DISTINCT t.userId) c FROM bingo_tickets t
            JOIN bingo_rooms r ON r.id = t.roomId
            JOIN users u ON u.id = t.userId
-          WHERE r.status IN ('open','running') AND t.status <> 'cancelled' AND ${bot}`,
+          WHERE r.status IN ('open','running') AND t.status <> 'cancelled' AND ${gameBot('bingo')}`,
       ),
       scalar(
         `SELECT COUNT(DISTINCT tk.userId) c FROM keno_tickets tk
            JOIN keno_draws d ON d.id = tk.drawId
            JOIN users u ON u.id = tk.userId
-          WHERE d.status IN ('open','locked') AND ${bot}`,
+          WHERE d.status IN ('open','locked') AND ${gameBot('keno')}`,
       ),
       scalar(
         `SELECT COUNT(DISTINCT b.userId) c FROM crash_bets b
            JOIN crash_rounds cr ON cr.id = b.roundId
            JOIN users u ON u.id = b.userId
-          WHERE cr.status IN ('waiting','running') AND ${bot}`,
+          WHERE cr.status IN ('waiting','running') AND ${gameBot('crash')}`,
       ),
       scalar(`SELECT COUNT(*) c FROM users u WHERE ${bot}`),
     ]);

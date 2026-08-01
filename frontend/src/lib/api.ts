@@ -656,6 +656,16 @@ export type BotUser = {
     spotCount: number;
     drawParticipationCount: number;
     active: boolean;
+    games?: {
+      keno?: {
+        active: boolean;
+        ticketsPerRound: number;
+        spotCount: number;
+        drawParticipationCount: number;
+      };
+      bingo?: { active: boolean };
+      crash?: { active: boolean };
+    };
   };
 };
 
@@ -669,9 +679,24 @@ export type BotNameRecord = {
 
 export const adminBotsApi = {
   listBots: () => api.get<BotUser[]>('/admin/bots').then((r) => r.data),
-  createBot: (dto: { displayName: string; initialBalanceMinor: number; ticketsPerRound: number; spotCount: number }) =>
+  createBot: (dto: {
+    displayName: string;
+    initialBalanceMinor: number;
+    ticketsPerRound: number;
+    spotCount: number;
+    kenoActive?: boolean;
+    bingoActive?: boolean;
+    crashActive?: boolean;
+  }) =>
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
-  updateBot: (id: string, dto: Partial<{ active: boolean; ticketsPerRound: number; spotCount: number }>) =>
+  updateBot: (id: string, dto: Partial<{
+    active: boolean;
+    ticketsPerRound: number;
+    spotCount: number;
+    kenoActive: boolean;
+    bingoActive: boolean;
+    crashActive: boolean;
+  }>) =>
     api.patch<BotUser>(`/admin/bots/${id}`, dto).then((r) => r.data),
   topupBot: (id: string, amountMinor: number) =>
     api.post<BotUser>(`/admin/bots/${id}/topup`, { amountMinor }).then((r) => r.data),
@@ -981,10 +1006,29 @@ export type AreaPlayerActivity = {
 
 // ── Admin: Users ───────────────────────────────────────────────────
 export const adminUsersApi = {
-  listUsers: (page = 1, limit = 50, role?: string, search?: string) => {
+  listUsers: (
+    page = 1,
+    limit = 50,
+    role?: string,
+    search?: string,
+    filters?: {
+      isBot?: boolean;
+      status?: 'active' | 'suspended' | 'closed';
+      online?: boolean;
+      hasPhone?: boolean;
+      minBalanceMinor?: number;
+      maxBalanceMinor?: number;
+    },
+  ) => {
     let url = `/admin/users?page=${page}&limit=${limit}`;
     if (role) url += `&role=${role}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
+    if (filters?.isBot !== undefined) url += `&isBot=${filters.isBot}`;
+    if (filters?.status) url += `&status=${filters.status}`;
+    if (filters?.online !== undefined) url += `&online=${filters.online}`;
+    if (filters?.hasPhone !== undefined) url += `&hasPhone=${filters.hasPhone}`;
+    if (filters?.minBalanceMinor !== undefined) url += `&minBalanceMinor=${filters.minBalanceMinor}`;
+    if (filters?.maxBalanceMinor !== undefined) url += `&maxBalanceMinor=${filters.maxBalanceMinor}`;
     return api.get<{ data: User[]; total: number; page: number; limit: number }>(url).then((r) => r.data);
   },
   updateUserStatus: (id: string, status: 'active' | 'suspended' | 'closed') =>

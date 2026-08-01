@@ -7,6 +7,8 @@ export type User = {
   status?: string;
   /** Server-computed — true when the user has a live socket connection right now. */
   online?: boolean;
+  /** Server-computed — true when this account is a house bot (productMetadata.botPolicy set). */
+  isBot?: boolean;
   lastLoginAt?: string;
   workStartHour?: number;
   workStartMinute?: number;

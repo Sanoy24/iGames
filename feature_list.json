@@ -1,7 +1,7 @@
 {
   "_meta": {
     "version": "1.0",
-    "updated": "2026-08-01",
+    "updated": "2026-08-02",
     "schema": "Each feature: id, area, title, behavior, status, verification, evidence, notes",
     "statuses": [
       "not_started",
@@ -644,6 +644,26 @@
       "verification": "npx tsc -p tsconfig.build.json --noEmit && npm run test:unit && cd frontend && npx tsc --noEmit && npm run build",
       "evidence": "frontend/src/pages/Bingo.tsx (autoMode effect filters room.tickets to status === 'active' before syncing the switch), src/bingo/bingo.service.spec.ts (setAutoClaim regression confirming the active-ticket scope). 231/231 backend unit tests, backend tsconfig.build clean, frontend tsc + build clean.",
       "notes": "The toggle is intentionally not locked by a single disqualified ticket. Only live tickets participate in the preference."
+    },
+    {
+      "id": "BE-29",
+      "area": "bots",
+      "title": "Centralized per-game bot policy",
+      "behavior": "Funded house bots are managed from one BotsService policy with a global master switch plus independent Keno/Bingo/Crash participation flags. Keno bot ticket settings live under games.keno and are mirrored to legacy top-level fields so existing bots remain compatible. Runtime hooks for Keno ticket buying, Bingo cartela reconciliation/win interval, Crash bets, Bingo active-bot lookup, and live bot presence counts all respect the relevant game flag.",
+      "status": "passing",
+      "verification": "npx tsc -p tsconfig.build.json --noEmit && npm run test:unit && npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage",
+      "evidence": "src/bots/bots.service.ts (normalizeBotPolicy, getActiveBots(game), per-game updatePolicy/createBot), src/bots/dto/create-bot.dto.ts and update-bot-policy.dto.ts (kenoActive/bingoActive/crashActive), src/bingo/bingo.service.ts (Bingo active-bot SQL and duplicate name CRUD removed), src/events/presence.service.ts (per-game bot counts), src/admin/admin.service.ts (paused bots still classified as bots). Backend tsconfig.build clean, configured unit suite 231/231 pass, bots.service.spec.ts 10/10 pass.",
+      "notes": "botPolicy.active is still the global master switch. Missing nested flags default to enabled to preserve old bot records."
+    },
+    {
+      "id": "FE-21",
+      "area": "frontend/admin",
+      "title": "Admin Bots hub per-game controls",
+      "behavior": "Admin -> Bots now shows per-game active counts, lets admins set Keno/Bingo/Crash participation when creating or editing a bot, and provides quick per-game row toggles without leaving the centralized Bots hub.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/lib/api.ts (BotUser.botPolicy.games plus create/update DTO fields), frontend/src/pages/Admin.tsx (per-game counts, create/edit checkboxes, row-level Keno/Bingo/Crash toggles). Frontend tsc clean and production build clean.",
+      "notes": "The UI treats game switches as configuration and global active as the effective master pause, matching D-29."
     }
   ]
 }

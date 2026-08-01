@@ -12,6 +12,7 @@ import { formatCredits, useStore } from '../store/useStore';
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gold',
   claimed: 'badge-violet',
+  awaiting_verification: 'badge-indigo',
   completed: 'badge-green',
   rejected: 'badge-red',
 };
@@ -51,6 +52,7 @@ export function Agent() {
   const [refInputs, setRefInputs] = useState<Record<string, string>>({});
   // Per-withdrawal payout rail the agent used; defaults to Telebirr.
   const [proofProvider, setProofProvider] = useState<Record<string, 'telebirr' | 'mpesa'>>({});
+  const [receiptFiles, setReceiptFiles] = useState<Record<string, File>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
@@ -162,11 +164,17 @@ export function Agent() {
         : 'Enter the Telebirr receipt number or link.');
       return;
     }
+    const receiptFile = receiptFiles[w.id];
+    if (!receiptFile) {
+      addToast('info', 'Attach a photo or PDF of the payout receipt.');
+      return;
+    }
     setBusyFor(w.id, true);
     try {
-      await agentApi.completeWithdrawal(w.id, provider, proof);
+      const { fileUrl } = await agentApi.uploadWithdrawalReceipt(receiptFile);
+      await agentApi.completeWithdrawal(w.id, provider, proof, fileUrl);
       await load();
-      addToast('success', 'Withdrawal verified and completed.');
+      addToast('success', 'Payout proof submitted — awaiting admin verification.');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {

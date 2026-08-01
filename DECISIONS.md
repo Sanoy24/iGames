@@ -156,6 +156,12 @@
 **Why**: A shared room-scoped map keeps every bot identity stable throughout the round without making the same visible bot name repeat across games. Admin control lets the pool be expanded, edited, activated, deactivated, or trimmed without code changes.
 **Constraints**: Within one room, bot names must be unique and phone suffixes should be unique whenever possible. Bot aliases used in settlement summaries and wallet recent-wins must match what players saw in-game, so write the alias into settlement metadata instead of re-deriving it later.
 
+### D-24: Bingo purchase-phase refunds lock in the final 3 seconds, and bot-only rooms self-cancel
+**Decided**: 2026-08-01
+**Decision**: Cartela refunds stay enabled during the Bingo buy window until the final 3 seconds, where they are locked both server-side and in the client UI. If the last real player leaves and only bot cartelas remain, the room is cancelled/reset and the bot cartelas are refunded before any draw can start.
+**Why**: The 3-second lock removes the last-second race where a room could otherwise flip from a valid buy window into a bot-only start at the same instant. Auto-cancelling bot-only rooms keeps the game from ever resolving a bot-vs-bot or empty round.
+**Constraints**: The lock is fixed at 3 seconds for now instead of adding a new bingo config field. Final draw validation must still check `realPlayers >= 1` even if the scheduler or client misses a cancellation tick.
+
 ---
 
 ## Wallet / Agents (continued)

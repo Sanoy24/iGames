@@ -432,6 +432,7 @@ const CartelaGrid = memo(
         mySet,
         pendingSet,
         salesOpen,
+        returnLocked,
         onTap,
     }: {
         gridSize: number;
@@ -439,6 +440,7 @@ const CartelaGrid = memo(
         mySet: Set<number>;
         pendingSet: Set<number>;
         salesOpen: boolean;
+        returnLocked: boolean;
         onTap: (n: number) => void;
     }) => {
         const cols = 10;
@@ -485,7 +487,9 @@ const CartelaGrid = memo(
                         textStyle = { color: '#f5f5f5', fontWeight: 900 };
                     }
 
-                    const canTap = salesOpen && !takenByOther && !pending;
+                    const canBuy = salesOpen && !takenByOther && !pending;
+                    const canRefund = mine && salesOpen && !pending && !returnLocked;
+                    const canTap = canBuy || canRefund;
 
                     return (
                         <motion.button
@@ -497,7 +501,7 @@ const CartelaGrid = memo(
                             style={{
                                 ...cellStyle,
                                 ...textStyle,
-                                cursor: canTap ? 'pointer' : 'default',
+                                cursor: canTap ? 'pointer' : mine && returnLocked ? 'not-allowed' : 'default',
                                 minWidth: 0,
                                 opacity: pending ? 0.45 : 1,
                             }}
@@ -2313,6 +2317,13 @@ export function Bingo({ onBack }: BingoProps) {
         ? Math.max(0, room.maxTickets - room.soldTickets)
         : 0;
     const salesOpen = room?.status === 'open';
+    const cartelaReturnsLocked =
+        phase === 'buy' &&
+        room?.status === 'open' &&
+        room.scheduledStartAt !== undefined &&
+        room.scheduledStartAt !== null &&
+        timeRemainingSecs !== null &&
+        timeRemainingSecs <= 3;
 
     // ── Paced reveal ─────────────────────────────────────────────────────────────
     // One shared cursor drives "now calling", the board and every card so they all
@@ -2542,6 +2553,7 @@ export function Bingo({ onBack }: BingoProps) {
             if (pendingCartelas.has(n)) return;
 
             const owned = myCartelaSet.has(n);
+            if (owned && cartelaReturnsLocked) return;
             if (!owned && takenSet.has(n)) return; // taken by someone else — locked
 
             setPendingCartelas((prev) => new Set(prev).add(n));
@@ -2598,6 +2610,7 @@ export function Bingo({ onBack }: BingoProps) {
             pendingCartelas,
             myCartelaSet,
             takenSet,
+            cartelaReturnsLocked,
             addToast,
             loadCurrent,
             setWallet,
@@ -2862,12 +2875,12 @@ export function Bingo({ onBack }: BingoProps) {
                                                         onClick={() =>
                                                             handleCartelaTap(n)
                                                         }
-                                                        disabled={busy}
+                                                        disabled={busy || cartelaReturnsLocked}
                                                         title={t(
                                                             'bingo.tapToRefund',
                                                         )}
                                                         className={`group flex items-center gap-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono font-black text-[11px] pl-2 pr-1.5 py-0.5 border border-emerald-400/30 transition ${
-                                                            busy
+                                                            busy || cartelaReturnsLocked
                                                                 ? 'opacity-50'
                                                                 : 'hover:bg-red-500/20 hover:text-red-300 hover:border-red-400/40'
                                                         }`}
@@ -2887,6 +2900,7 @@ export function Bingo({ onBack }: BingoProps) {
                                     mySet={myCartelaSet}
                                     pendingSet={pendingCartelas}
                                     salesOpen={salesOpen}
+                                    returnLocked={cartelaReturnsLocked}
                                     onTap={handleCartelaTap}
                                 />
                             </div>
@@ -2960,6 +2974,11 @@ export function Bingo({ onBack }: BingoProps) {
                                                         timeRemainingSecs % 60,
                                                     ).padStart(2, '0')}
                                                 </span>
+                                                {cartelaReturnsLocked && (
+                                                    <div className='mt-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-red-400'>
+                                                        Return locked
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (
                                             <div className='mt-1 text-center'>

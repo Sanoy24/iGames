@@ -39,6 +39,7 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     ensureDefaultWallet: jest.fn().mockResolvedValue(undefined),
     getDefaultWalletSummary: jest.fn().mockResolvedValue({ availableMinor: 0 }),
   };
+  const bingoService = {};
 
   const service = new BotsService(
     dataSource as any,
@@ -47,11 +48,11 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     walletService as any,
     adminService as any,
     {} as any, // kenoService
-    {} as any, // bingoService
+    bingoService as any, // bingoService
     {} as any, // crashService
   );
 
-  return { service, adminService, userRepoInManager, botNameRepository };
+  return { service, adminService, userRepoInManager, botNameRepository, bingoService };
 }
 
 describe('BotsService — bot funding is Master-Wallet-backed', () => {
@@ -137,5 +138,25 @@ describe('BotsService — Bingo bot names', () => {
     const result = await service.updateBotName('name-1', { active: false } as any);
 
     expect(result.active).toBe(false);
+  });
+});
+
+describe('BotsService — Bingo room top-up guard', () => {
+  it('cancels bot-only rooms instead of buying into them', async () => {
+    const { service, bingoService } = makeService({});
+    (service as any).getActiveBots = jest.fn().mockResolvedValue([
+      { id: 'bot-1', displayName: 'Bot One', productMetadata: { botPolicy: { ticketsPerRound: 1 } } },
+    ]);
+    (bingoService as any).getBingoConfig = jest.fn().mockResolvedValue({
+      botMaxRealPlayers: 10,
+      botWinMode: 'statistical',
+    });
+    (bingoService as any).countRealPlayersInRoom = jest.fn().mockResolvedValue(0);
+    (bingoService as any).cancelRoom = jest.fn().mockResolvedValue(undefined);
+
+    const changed = await service.topUpBotsForOpenRoom('550e8400-e29b-41d4-a716-446655440000');
+
+    expect(changed).toBe(true);
+    expect((bingoService as any).cancelRoom).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000');
   });
 });

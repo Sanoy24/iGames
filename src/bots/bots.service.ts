@@ -314,6 +314,19 @@ export class BotsService {
     const maxReal = cfg.botMaxRealPlayers ?? 0;
     if (maxReal <= 0) return false;
     const realPlayers = await this.bingoService.countRealPlayersInRoom(roomId);
+    if (realPlayers <= 0) {
+      let cancelled = false;
+      try {
+        await this.bingoService.cancelRoom(roomId);
+        cancelled = true;
+      } catch (error) {
+        this.logger.warn(
+          `Failed to cancel bot-only Bingo room ${roomId}`,
+          error instanceof Error ? error.stack : error,
+        );
+      }
+      return cancelled;
+    }
     if (realPlayers >= maxReal) return false;
 
     const state = await this.bingoService.getRoomState({ roomId });

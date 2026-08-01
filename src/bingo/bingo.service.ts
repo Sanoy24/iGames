@@ -20,14 +20,16 @@ import { BingoBotIdentity, BingoRoom, BingoPrizeTier, BingoWinMode } from './ent
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { BingoCard } from './entities/bingo-card.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { GamesService } from '../games/games.service';
 import { User } from '../users/entities/user.entity';
 import { BotName } from '../bots/entities/bot-name.entity';
 
 /** Prefilled/derash finishing places, in award order. */
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
-import { NotificationsService } from '../notifications/notifications.service';
-import { GamesService } from '../games/games.service';
+
+const FINAL_CARTELA_RETURN_LOCK_MS = 3_000;
 
 type RoomBotIdentity = BingoBotIdentity;
 
@@ -1543,6 +1545,9 @@ export class BingoService implements OnModuleInit {
       if (room.status !== 'open') {
         throw new ConflictException('Sales are closed — this cartela can no longer be refunded');
       }
+      if (room.scheduledStartAt && room.scheduledStartAt.getTime() - Date.now() <= FINAL_CARTELA_RETURN_LOCK_MS) {
+        throw new ConflictException('Cartela returns are locked in the final 3 seconds before the draw');
+      }
 
       const ticket = await manager.findOne(BingoTicket, {
         where: { roomId, userId, cartelaNumber: input.cartelaNumber, status: 'active' },
@@ -1584,6 +1589,11 @@ export class BingoService implements OnModuleInit {
       room.soldTickets = Math.max(0, room.soldTickets - 1);
       await manager.save(room);
 
+      const realPlayersRemaining = await this.countRealPlayersInRoom(room.id, manager);
+      if (realPlayersRemaining === 0) {
+        await this.cancelRoomWithRefundsInSession(room, manager, 'bingo_room_no_real_players');
+      }
+
       return { cartelaNumber: input.cartelaNumber, refundedMinor: ticket.stakeMinor };
     });
   }
@@ -1621,6 +1631,21 @@ export class BingoService implements OnModuleInit {
         this.logger.warn(`Cancelled empty running Bingo room ${validRoomId} (no tickets sold)`);
         const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
         return this.toRoomResponse(room, 0, takenSpots);
+      }
+
+      if (room.status === 'open') {
+        const currentSoldTickets = await this.countSoldTickets(validRoomId, manager);
+        const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
+        if (currentSoldTickets <= 0) {
+          return this.toRoomResponse(room, currentSoldTickets, takenSpots);
+        }
+
+        const realPlayers = await this.countRealPlayersInRoom(validRoomId, manager);
+        if (realPlayers <= 0) {
+          await this.cancelRoomWithRefundsInSession(room, manager, 'bingo_room_no_real_players');
+          this.logger.warn(`Cancelled Bingo room ${validRoomId} before start because no real players remained`);
+          return this.toRoomResponse(room, 0, takenSpots);
+        }
       }
 
       // Ball pool drawn from: line is fixed 90-ball, derash is fixed 75-ball
@@ -1756,43 +1781,8 @@ export class BingoService implements OnModuleInit {
         return this.toRoomResponse(room, soldTickets);
       }
 
-      const tickets = await manager.find(BingoTicket, {
-        where: { roomId: room.id, settlementStatus: 'pending' },
-      });
-
-      let totalRefundMinor = 0;
-      for (const ticket of tickets) {
-        totalRefundMinor += ticket.stakeMinor;
-        ticket.status = 'cancelled';
-        ticket.settlementStatus = 'settled';
-
-        const refundCredit = await this.walletService.creditInSession(
-          {
-            userId: ticket.userId,
-            amountMinor: ticket.stakeMinor,
-            entryType: 'refund',
-            sourceType: 'bingo_ticket',
-            sourceId: ticket.id,
-            idempotencyKey: `bingo-refund:${ticket.id}`,
-            metadata: { roomId: room.id, reason: 'bingo_room_cancelled' },
-          },
-          manager,
-        );
-
-        ticket.walletCredits.push(refundCredit);
-        await manager.save(ticket);
-      }
-
-      room.status = 'cancelled';
-      room.activeGuard = null; // free the active-game slot
-      room.settlementSummary = {
-        ticketCount: tickets.length,
-        totalRefundMinor,
-        reason: 'bingo_room_cancelled',
-      };
-
-      await manager.save(room);
-      return this.toRoomResponse(room, tickets.length);
+      await this.cancelRoomWithRefundsInSession(room, manager, 'bingo_room_cancelled');
+      return this.toRoomResponse(room, 0);
     });
   }
 
@@ -2995,6 +2985,52 @@ export class BingoService implements OnModuleInit {
       [roomId],
     );
     return Number(rows[0]?.c ?? 0);
+  }
+
+  private async cancelRoomWithRefundsInSession(
+    room: BingoRoom,
+    manager: EntityManager,
+    reason: string,
+  ): Promise<void> {
+    if (room.status === 'cancelled' || room.status === 'completed') return;
+
+    const tickets = await manager.find(BingoTicket, {
+      where: { roomId: room.id, settlementStatus: 'pending' },
+      order: { createdAt: 'ASC' },
+    });
+
+    let totalRefundMinor = 0;
+    for (const ticket of tickets) {
+      totalRefundMinor += ticket.stakeMinor;
+      ticket.status = 'cancelled';
+      ticket.settlementStatus = 'settled';
+
+      const refundCredit = await this.walletService.creditInSession(
+        {
+          userId: ticket.userId,
+          amountMinor: ticket.stakeMinor,
+          entryType: 'refund',
+          sourceType: 'bingo_ticket',
+          sourceId: ticket.id,
+          idempotencyKey: `bingo-refund:${ticket.id}`,
+          metadata: { roomId: room.id, reason },
+        },
+        manager,
+      );
+
+      ticket.walletCredits = [...(ticket.walletCredits ?? []), refundCredit];
+      await manager.save(ticket);
+    }
+
+    room.status = 'cancelled';
+    room.activeGuard = null;
+    room.soldTickets = 0;
+    room.settlementSummary = {
+      ticketCount: tickets.length,
+      totalRefundMinor,
+      reason,
+    };
+    await manager.save(room);
   }
 
   /** Count of non-cancelled cartelas a single user (bot or real) holds in the room. */

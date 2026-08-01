@@ -75,6 +75,14 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     }),
   };
 
+  const mockBotNameRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOneBy: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockImplementation((dto) => dto),
+    save: jest.fn().mockImplementation((value) => Promise.resolve(value)),
+    remove: jest.fn().mockResolvedValue(undefined),
+  };
+
   const mockTicketRepo = {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
@@ -126,22 +134,25 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     create: jest.fn().mockImplementation((dto) => dto),
   };
 
+  const walletService = { debitInSession: jest.fn(), creditInSession: jest.fn() };
+  const dataSource = { transaction: jest.fn() as any };
+
   const service = new BingoService(
-    { transaction: jest.fn() } as any,
+    dataSource as any,
     mockRoomRepo as any,
+    mockBotNameRepo as any,
     mockTicketRepo as any,
     mockCardRepo as any,
     mockConfigRepo as any,
     mockPatternRepo as any,
     new (require('./bingo-rules.service').BingoRulesService)(),
     { drawUniqueNumbers: jest.fn() } as any,
-    { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
+    walletService as any,
     { safeCreate: jest.fn(), create: jest.fn() } as any,
-    {} as any,
     { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
   );
 
-  return { service, mockRoomRepo };
+  return { service, mockRoomRepo, mockBotNameRepo, mockTicketRepo, mockCardRepo, mockConfigRepo, mockPatternRepo, walletService, dataSource };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -391,5 +402,136 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
     expect(ids).toHaveLength(0);
 
     void freshRoom; // referenced to avoid unused warning
+  });
+});
+
+describe('BingoService cartela lifecycle guards', () => {
+  it('rejects cartela returns during the final 3 seconds before the draw', async () => {
+    const { service, dataSource } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      soldTickets: 1,
+      scheduledStartAt: new Date(Date.now() + 2_000),
+    });
+    const userId = '550e8400-e29b-41d4-a716-446655440001';
+    const ticket = {
+      id: 'ticket-1',
+      userId,
+      roomId: room.id,
+      cartelaNumber: 7,
+      stakeMinor: 100,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+      cardId: null,
+    };
+    const manager = {
+      findOne: jest.fn().mockImplementation((entity: unknown, options: any) => {
+        if (options?.where?.id === room.id) return Promise.resolve(room);
+        return Promise.resolve(ticket);
+      }),
+      find: jest.fn(),
+      save: jest.fn().mockResolvedValue(undefined),
+      update: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue([{ c: 1 }]),
+      countBy: jest.fn().mockResolvedValue(1),
+    };
+    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
+
+    await expect(
+      service.releaseCartela({ userId, roomId: room.id, cartelaNumber: 7 }),
+    ).rejects.toThrow('Cartela returns are locked in the final 3 seconds before the draw');
+
+    expect(manager.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels the room and returns bot cartelas when the last real player leaves', async () => {
+    const { service, dataSource, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      soldTickets: 2,
+      scheduledStartAt: new Date(Date.now() + 20_000),
+    });
+    const userId = '550e8400-e29b-41d4-a716-446655440002';
+    const realTicket = {
+      id: 'ticket-1',
+      userId,
+      roomId: room.id,
+      cartelaNumber: 7,
+      stakeMinor: 100,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+      cardId: null,
+    };
+    const botTicket = {
+      id: 'bot-ticket-1',
+      userId: 'bot-1',
+      roomId: room.id,
+      cartelaNumber: 8,
+      stakeMinor: 100,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+      cardId: null,
+    };
+    const manager = {
+      findOne: jest.fn().mockImplementation((entity: unknown, options: any) => {
+        if (options?.where?.id === room.id) return Promise.resolve(room);
+        return Promise.resolve(realTicket);
+      }),
+      find: jest.fn().mockResolvedValue([botTicket]),
+      save: jest.fn().mockImplementation(async (value: any) => value),
+      update: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue([{ c: 0 }]),
+      countBy: jest.fn().mockResolvedValue(1),
+    };
+    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
+    walletService.creditInSession = jest.fn().mockResolvedValue({ id: 'credit-1' });
+
+    const result = await service.releaseCartela({ userId, roomId: room.id, cartelaNumber: 7 });
+
+    expect(result).toEqual({ cartelaNumber: 7, refundedMinor: 100 });
+    expect(room.status).toBe('cancelled');
+    expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
+    expect(manager.find).toHaveBeenCalled();
+  });
+
+  it('cancels bot-only rooms instead of starting the draw', async () => {
+    const { service, dataSource, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'line',
+      status: 'open',
+      soldTickets: 2,
+      scheduledStartAt: new Date(Date.now() - 1_000),
+    });
+    const botTicket = {
+      id: 'bot-ticket-1',
+      userId: 'bot-1',
+      roomId: room.id,
+      stakeMinor: 100,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+      cardId: null,
+    };
+    const manager = {
+      findOne: jest.fn().mockResolvedValue(room),
+      find: jest.fn().mockResolvedValue([botTicket]),
+      save: jest.fn().mockImplementation(async (value: any) => value),
+      update: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue([{ c: 0 }]),
+      countBy: jest.fn().mockResolvedValue(2),
+    };
+    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
+    walletService.creditInSession = jest.fn().mockResolvedValue({ id: 'credit-1' });
+
+    const result = await service.drawNextNumber(room.id);
+
+    expect(result.status).toBe('cancelled');
+    expect(room.status).toBe('cancelled');
+    expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
   });
 });

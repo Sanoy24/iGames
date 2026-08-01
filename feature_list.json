@@ -594,6 +594,26 @@
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
       "evidence": "frontend/src/lib/api.ts (adminBotsApi.listBotNames/createBotName/importBotNames/updateBotName/deleteBotName, BotNameRecord), frontend/src/pages/Admin.tsx (BotsSubTab + BotNamesAdmin).",
       "notes": "Placed inside the existing Bots hub rather than a new top-level tab so bot players and their Bingo identity pool stay together in one admin surface."
+    },
+    {
+      "id": "BE-25",
+      "area": "bingo",
+      "title": "Purchase-phase room cancellation when real players leave",
+      "behavior": "During the Bingo purchase countdown, cartela refunds are rejected in the final 3 seconds, the room auto-cancels if the last real player leaves, and bot-only rooms are refunded/reset instead of starting a draw. Final draw validation also refuses to start a room with zero real players.",
+      "status": "passing",
+      "verification": "npx tsc -p tsconfig.build.json --noEmit && npm run test:unit",
+      "evidence": "src/bingo/bingo.service.ts (FINAL_CARTELA_RETURN_LOCK_MS, releaseCartela lockout, cancelRoomWithRefundsInSession, drawNextNumber final validation, cancelRoom refactor), src/bots/bots.service.ts (topUpBotsForOpenRoom cancels bot-only rooms), src/bingo/bingo.service.spec.ts and src/bots/bots.service.spec.ts (new lifecycle guard tests). 228/228 backend unit tests, backend tsconfig.build clean.",
+      "notes": "Uses a fixed 3-second return lock rather than adding a new bingo config field. The room is cancelled/reset as soon as realPlayers reaches zero so bots never end up playing by themselves."
+    },
+    {
+      "id": "FE-20",
+      "area": "frontend/bingo",
+      "title": "Cartela return lock in the final 3 seconds",
+      "behavior": "The Bingo page now disables refund taps for owned cartelas in the last 3 seconds of the purchase countdown and shows a small 'Return locked' hint beside the timer. Buying an available cartela still works during the window.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (cartelaReturnsLocked, CartelaGrid returnLocked prop, handleCartelaTap guard, refund chip disabled state, countdown hint).",
+      "notes": "Frontend follows the server-side lock so the button state matches the rejection rule instead of surfacing a late error after the tap."
     }
   ]
 }

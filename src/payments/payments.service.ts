@@ -7,7 +7,9 @@ import { AdminService } from '../admin/admin.service';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 import { User } from '../users/entities/user.entity';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
+import { PreviewTelebirrReceiptDto } from './dto/preview-telebirr-receipt.dto';
 import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
+import { PreviewMpesaSmsDto } from './dto/preview-mpesa-sms.dto';
 import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
@@ -232,7 +234,7 @@ export class PaymentsService {
 
   async previewTelebirrReceipt(
     userId: string,
-    dto: SubmitTelebirrReceiptDto,
+    dto: PreviewTelebirrReceiptDto,
   ): Promise<TelebirrReceiptPreview> {
     const submittedReceipt = dto.receiptNo ?? dto.receiptUrl;
     if (!submittedReceipt) {
@@ -388,7 +390,7 @@ export class PaymentsService {
 
   // ── M-PESA ─────────────────────────────────────────────────────────
 
-  async previewMpesaSms(userId: string, dto: SubmitMpesaSmsDto): Promise<MpesaReceiptPreview> {
+  async previewMpesaSms(userId: string, dto: PreviewMpesaSmsDto): Promise<MpesaReceiptPreview> {
     const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
     await this.assertMeetsMinimum(verified.amountMinor);
     const p = verified.parsedSms;

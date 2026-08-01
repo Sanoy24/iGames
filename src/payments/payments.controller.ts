@@ -26,7 +26,9 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
+import { PreviewTelebirrReceiptDto } from './dto/preview-telebirr-receipt.dto';
 import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
+import { PreviewMpesaSmsDto } from './dto/preview-mpesa-sms.dto';
 import { PaymentsService } from './payments.service';
 import { AgentsService } from '../agents/agents.service';
 import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
@@ -106,7 +108,7 @@ export class PaymentsController {
   @ApiOkResponse({ description: 'Parsed receipt details — wallet is NOT credited' })
   previewTelebirrReceipt(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: SubmitTelebirrReceiptDto,
+    @Body() dto: PreviewTelebirrReceiptDto,
   ) {
     return this.paymentsService.previewTelebirrReceipt(user.id, dto);
   }
@@ -175,7 +177,7 @@ export class PaymentsController {
   @ApiOkResponse({ description: 'Parsed M-PESA SMS details — wallet is NOT credited' })
   previewMpesaSms(
     @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: SubmitMpesaSmsDto,
+    @Body() dto: PreviewMpesaSmsDto,
   ) {
     return this.paymentsService.previewMpesaSms(user.id, dto);
   }

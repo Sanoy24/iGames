@@ -311,19 +311,25 @@ export type CrashBet = {
 export type Withdrawal = {
   id: string;
   userId: string;
+  user?: User;
   amountMinor: number;
-  status: 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
+  status: 'pending' | 'claimed' | 'processing' | 'awaiting_verification' | 'completed' | 'rejected';
   destinationAccount: string;
   agentId?: string;
   agent?: User;
   claimedAt?: string;
+  /** The flat withdrawal fee, 100% credited to the agent — no platform split. */
   serviceChargeMinor?: number;
-  serviceFeeMinor?: number;
-  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
+  /** Agent-uploaded photo/PDF of the payout receipt, relative to /uploads/. */
+  receiptFileUrl?: string | null;
   adminNotes?: string;
+  /** Who/when the agent submitted completion proof (or, on the admin-bypass path, who/when admin settled it directly). */
   processedBy?: string;
   processedAt?: string;
+  /** Admin sign-off on the agent's submitted proof — set only via the new verification gate. */
+  verifiedBy?: string | null;
+  verifiedAt?: string | null;
   createdAt: string;
 };

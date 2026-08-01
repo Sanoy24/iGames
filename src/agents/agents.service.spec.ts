@@ -26,7 +26,7 @@ function makeService(input: {
   withdrawalFeeRanges?: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }>;
   claimedWithdrawal?: any;
   verifiedPayout?: any;
-  completeWithdrawalByAgentResult?: any;
+  recordAgentWithdrawalProofResult?: any;
 }) {
   const usersService = {
     findOnDutyAgent: jest.fn().mockResolvedValue(input.onDutyAgent ?? null),
@@ -42,7 +42,7 @@ function makeService(input: {
   const walletService = {
     getAvailableBalances: jest.fn().mockResolvedValue(input.balances ?? new Map()),
     getClaimedWithdrawalForAgent: jest.fn().mockResolvedValue(input.claimedWithdrawal),
-    completeWithdrawalByAgent: jest.fn().mockResolvedValue(input.completeWithdrawalByAgentResult),
+    recordAgentWithdrawalProof: jest.fn().mockResolvedValue(input.recordAgentWithdrawalProofResult),
   } as unknown as WalletService;
 
   // getAreaPlayerActivity fires 6 parallel queries (telebirr, mpesa, withdrawals,
@@ -263,18 +263,24 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
       claimedWithdrawal: { amountMinor: 25000, destinationAccount: '0911111111' },
     });
 
-    await service.completeWithdrawal('wd-1', 'agent-1', 'telebirr', 'proof-123');
+    await service.completeWithdrawal('wd-1', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r1.jpg');
 
     // 25,000 falls in the first tier (fee 1,000) → the agent must have paid the
-    // player 24,000, and completeWithdrawalByAgent gets the resolved flat fee.
+    // player 24,000, and recordAgentWithdrawalProof gets the resolved flat fee.
+    // Money does NOT move here — that only happens on admin verification.
     expect(withdrawalProofVerifier.verifyPayout).toHaveBeenCalledWith(
       expect.objectContaining({ expectedAmountMinor: 24000 }),
     );
-    expect(walletService.completeWithdrawalByAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ withdrawalId: 'wd-1', agentId: 'agent-1', feeMinor: 1000 }),
+    expect(walletService.recordAgentWithdrawalProof).toHaveBeenCalledWith(
+      expect.objectContaining({
+        withdrawalId: 'wd-1',
+        agentId: 'agent-1',
+        feeMinor: 1000,
+        receiptFileUrl: 'withdrawal-receipts/r1.jpg',
+      }),
     );
     // No more platform split — the old pct/superAdminUserId fields must be gone.
-    const call = (walletService.completeWithdrawalByAgent as jest.Mock).mock.calls[0][0];
+    const call = (walletService.recordAgentWithdrawalProof as jest.Mock).mock.calls[0][0];
     expect(call).not.toHaveProperty('serviceFeePct');
     expect(call).not.toHaveProperty('commissionPct');
     expect(call).not.toHaveProperty('superAdminUserId');
@@ -286,9 +292,9 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
       claimedWithdrawal: { amountMinor: 500000, destinationAccount: '0911111111' },
     });
 
-    await service.completeWithdrawal('wd-2', 'agent-1', 'telebirr', 'proof-123');
+    await service.completeWithdrawal('wd-2', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r2.jpg');
 
-    expect(walletService.completeWithdrawalByAgent).toHaveBeenCalledWith(
+    expect(walletService.recordAgentWithdrawalProof).toHaveBeenCalledWith(
       expect.objectContaining({ feeMinor: 10000 }),
     );
   });
@@ -300,9 +306,9 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
       claimedWithdrawal: { amountMinor: 5000, destinationAccount: '0911111111' },
     });
 
-    await expect(service.completeWithdrawal('wd-3', 'agent-1', 'telebirr', 'proof-123')).rejects.toThrow(
-      /fee configuration/i,
-    );
-    expect(walletService.completeWithdrawalByAgent).not.toHaveBeenCalled();
+    await expect(
+      service.completeWithdrawal('wd-3', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r3.jpg'),
+    ).rejects.toThrow(/fee configuration/i);
+    expect(walletService.recordAgentWithdrawalProof).not.toHaveBeenCalled();
   });
 });

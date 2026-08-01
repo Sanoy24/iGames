@@ -523,6 +523,30 @@ export class AdminService implements OnApplicationBootstrap {
     return { data, total, page, limit };
   }
 
+  /**
+   * Admin sign-off on a deposit, independent of crediting — the deposit is
+   * already credited (or rejected) by the time this runs, and this never
+   * touches the wallet/ledger. Purely a manual audit record layered on top.
+   */
+  async verifyDeposit(
+    provider: 'telebirr' | 'mpesa',
+    id: string,
+    verificationStatus: 'verified' | 'flagged',
+    adminUserId: string,
+  ): Promise<TelebirrDeposit | MpesaDeposit> {
+    const repo = provider === 'telebirr'
+      ? this.dataSource.getRepository(TelebirrDeposit)
+      : this.dataSource.getRepository(MpesaDeposit);
+
+    const deposit = await repo.findOneBy({ id });
+    if (!deposit) throw new NotFoundException('Deposit not found');
+
+    deposit.verificationStatus = verificationStatus;
+    deposit.verifiedBy = adminUserId;
+    deposit.verifiedAt = new Date();
+    return repo.save(deposit);
+  }
+
   async getPlatformStats() {
     // 1. Total active liabilities (money in wallets)
     const walletStats = await this.dataSource.getRepository(Wallet)

@@ -13,4 +13,11 @@ export class CompleteWithdrawalDto {
   @MinLength(6)
   @MaxLength(1000)
   proof: string;
+
+  /** Relative path (from the receipt-upload endpoint) to the agent's uploaded
+   * payout receipt — required evidence for the admin verification step. */
+  @IsString()
+  @MinLength(1)
+  @MaxLength(500)
+  receiptFileUrl: string;
 }

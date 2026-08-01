@@ -1,6 +1,24 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { mkdirSync } from 'fs';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  UnsupportedMediaTypeException,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 import { SkipThrottle } from '@nestjs/throttler';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -11,6 +29,13 @@ import { CompleteWithdrawalDto } from './dto/complete-withdrawal.dto';
 import { RejectWithdrawalDto } from './dto/reject-withdrawal.dto';
 import { TransferToUserDto } from './dto/transfer-to-user.dto';
 import { WalletService } from '../wallet/wallet.service';
+import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
+
+/** Minimal shape of a multer file (avoids depending on @types/multer). */
+type UploadedReceiptFile = { filename: string; mimetype: string; size: number };
+
+const WITHDRAWAL_RECEIPT_SUBDIR = 'withdrawal-receipts';
+const WITHDRAWAL_RECEIPT_DIR = join(UPLOADS_ROOT, WITHDRAWAL_RECEIPT_SUBDIR);
 
 @ApiTags('agent')
 @ApiBearerAuth()
@@ -149,7 +174,38 @@ export class AgentsController {
     @Body() dto: CompleteWithdrawalDto,
     @CurrentUser() agent: AuthenticatedUser,
   ) {
-    return this.agentsService.completeWithdrawal(id, agent.id, dto.provider, dto.proof);
+    return this.agentsService.completeWithdrawal(id, agent.id, dto.provider, dto.proof, dto.receiptFileUrl);
+  }
+
+  /** Upload a photo/PDF of the payout receipt — required proof alongside the FT
+   * number before completing a withdrawal, reviewed by an admin. */
+  @Post('withdrawals/receipts/upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          mkdirSync(WITHDRAWAL_RECEIPT_DIR, { recursive: true });
+          cb(null, WITHDRAWAL_RECEIPT_DIR);
+        },
+        filename: (_req, file, cb) => {
+          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      fileFilter: (_req, file, cb) => {
+        if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
+          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP, GIF images or PDF are allowed'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  @ApiOkResponse({ schema: { example: { fileUrl: 'withdrawal-receipts/<uuid>.jpg' } } })
+  uploadReceipt(@UploadedFile() file?: UploadedReceiptFile) {
+    if (!file) throw new BadRequestException('No receipt file uploaded');
+    return { fileUrl: `${WITHDRAWAL_RECEIPT_SUBDIR}/${file.filename}` };
   }
 
   @Post('wallet/transfer-to-user')

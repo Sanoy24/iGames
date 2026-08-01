@@ -1,7 +1,7 @@
 import { join } from 'path';
+import { UPLOADS_ROOT } from '../common/uploads.constants';
 
-/** Root directory served statically at /uploads (see main.ts). */
-export const UPLOADS_ROOT = join(process.cwd(), 'uploads');
+export { UPLOADS_ROOT };
 
 /** Sub-directory (relative to UPLOADS_ROOT) that broadcast images live in. */
 export const BROADCAST_IMAGE_SUBDIR = 'broadcasts';

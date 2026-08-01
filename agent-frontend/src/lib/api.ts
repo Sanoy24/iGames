@@ -316,9 +316,6 @@ export type PlatformStats = {
 export type SystemConfig = {
   telebirrCreditMinorPerBirr: number;
   welcomeBonusMinor: number;
-  withdrawalServiceChargePct: number;
-  withdrawalCommissionPct: number;
-  superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
@@ -327,6 +324,8 @@ export type SystemConfig = {
   agentRoomsEnabled?: boolean;
   /** % of a room's real-player GGR paid to the owning agent on completion. */
   agentRoomCommissionPct?: number;
+  /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
+  referralCommissionPct?: number;
 };
 
 export type AgentPerformance = {
@@ -737,7 +736,7 @@ export const adminWithdrawalsApi = {
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
-  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
+  getConfig: () => api.get<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> }>('/agent/config').then((r) => r.data),
   getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
   getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),

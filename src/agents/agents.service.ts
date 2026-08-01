@@ -94,6 +94,7 @@ export class AgentsService {
     agentId: string,
     provider: PayoutProvider,
     proof: string,
+    receiptFileUrl: string,
   ) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
@@ -122,12 +123,15 @@ export class AgentsService {
       creditMinorPerBirr,
     });
 
-    return this.walletService.completeWithdrawalByAgent({
+    // Records the proof only — money doesn't move until an admin verifies it
+    // (see WalletService.verifyAgentWithdrawal).
+    return this.walletService.recordAgentWithdrawalProof({
       withdrawalId,
       agentId,
       telebirrReference: verified.reference,
       paymentProvider: verified.provider,
       payoutVerification: verified.verification,
+      receiptFileUrl,
       feeMinor,
     });
   }

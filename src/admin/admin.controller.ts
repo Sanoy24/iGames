@@ -11,6 +11,8 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
+import { VerifyDepositDto } from './dto/verify-deposit.dto';
+import { VerifyWithdrawalDto } from './dto/verify-withdrawal.dto';
 import { CreateWithdrawalFeeRangeDto } from './dto/create-withdrawal-fee-range.dto';
 import { UpdateWithdrawalFeeRangeDto } from './dto/update-withdrawal-fee-range.dto';
 import { ConfigChangeType } from './entities/config-change-log.entity';
@@ -65,6 +67,15 @@ export class AdminController {
       parseInt(limit, 10) || 20,
       { status, agentId },
     );
+  }
+
+  @Patch('deposits/:id/verify')
+  verifyDeposit(
+    @Param('id') id: string,
+    @Body() dto: VerifyDepositDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.adminService.verifyDeposit(dto.provider, id, dto.verificationStatus, admin.id);
   }
 
   @Get('config')
@@ -276,6 +287,21 @@ export class AdminController {
     @CurrentUser() admin: AuthenticatedUser,
   ) {
     return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
+  }
+
+  /**
+   * Admin verification of an agent-submitted withdrawal (FT number + receipt) —
+   * only valid while status is 'awaiting_verification'. Approving is what
+   * actually releases the player's fund-hold and credits the agent; rejecting
+   * refunds the reservation. See WalletService.verifyAgentWithdrawal.
+   */
+  @Post('withdrawals/:id/verify')
+  verifyWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: VerifyWithdrawalDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.walletService.verifyAgentWithdrawal(id, dto.decision, admin.id, dto.notes);
   }
 
   // ── Admin Wallet Operations (shared house wallet — see AdminService) ──

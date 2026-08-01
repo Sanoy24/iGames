@@ -29,6 +29,8 @@ function makeService(input: {
     {} as unknown as DataSource,
     systemConfigRepository as any,
     {} as any, // platformStatsRepository
+    {} as any, // configChangeLogRepository
+    {} as any, // withdrawalFeeRangeRepository
     walletService as any,
     {} as any, // usersService
     {} as any, // agentsService

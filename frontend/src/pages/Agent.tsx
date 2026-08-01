@@ -12,6 +12,7 @@ import { formatCredits, useStore } from '../store/useStore';
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gold',
   claimed: 'badge-violet',
+  awaiting_verification: 'badge-indigo',
   completed: 'badge-green',
   rejected: 'badge-red',
 };
@@ -51,6 +52,7 @@ export function Agent() {
   const [refInputs, setRefInputs] = useState<Record<string, string>>({});
   // Per-withdrawal payout rail the agent used; defaults to Telebirr.
   const [proofProvider, setProofProvider] = useState<Record<string, 'telebirr' | 'mpesa'>>({});
+  const [receiptFiles, setReceiptFiles] = useState<Record<string, File>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
@@ -162,11 +164,17 @@ export function Agent() {
         : 'Enter the Telebirr receipt number or link.');
       return;
     }
+    const receiptFile = receiptFiles[w.id];
+    if (!receiptFile) {
+      addToast('info', 'Attach a photo or PDF of the payout receipt.');
+      return;
+    }
     setBusyFor(w.id, true);
     try {
-      await agentApi.completeWithdrawal(w.id, provider, proof);
+      const { fileUrl } = await agentApi.uploadWithdrawalReceipt(receiptFile);
+      await agentApi.completeWithdrawal(w.id, provider, proof, fileUrl);
       await load();
-      addToast('success', 'Withdrawal verified and completed.');
+      addToast('success', 'Payout proof submitted — awaiting admin verification.');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -411,14 +419,10 @@ export function Agent() {
                         <span style={{ color: 'var(--text-muted)' }}>Gross</span>
                         <span>{formatCredits(w.amountMinor)} ETB</span>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Service fee ({serviceFeePct}%)</span>
-                        <span>−{formatCredits(serviceFee)} ETB</span>
-                      </div>
-                      {commissionPct > 0 && (
+                      {fee > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Your commission ({commissionPct}%)</span>
-                          <span style={{ color: 'var(--accent)' }}>+{formatCredits(commission)} ETB</span>
+                          <span style={{ color: 'var(--text-muted)' }}>Your withdrawal fee</span>
+                          <span style={{ color: 'var(--accent)' }}>+{formatCredits(fee)} ETB</span>
                         </div>
                       )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
@@ -427,6 +431,14 @@ export function Agent() {
                       </div>
                     </div>
 
+                    {w.status !== 'claimed' ? (
+                      <div style={{
+                        background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)',
+                        borderRadius: 10, padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)',
+                      }}>
+                        Payout proof submitted — waiting on an admin to verify the FT number and receipt.
+                      </div>
+                    ) : (<>
                     {/* Payout proof — provider toggle + proof, verified server-side */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -462,13 +474,32 @@ export function Agent() {
                         disabled={isBusy}
                         style={{ width: '100%', resize: 'vertical' }}
                       />
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                          Payout receipt (photo/PDF) <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                          disabled={isBusy}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            setReceiptFiles((prev) => {
+                              const next = { ...prev };
+                              if (file) next[w.id] = file; else delete next[w.id];
+                              return next;
+                            });
+                          }}
+                          style={{ width: '100%', fontSize: 12 }}
+                        />
+                      </div>
                       <button
                         className="btn btn-primary btn-full"
-                        disabled={isBusy || !(refInputs[w.id] ?? '').trim()}
+                        disabled={isBusy || !(refInputs[w.id] ?? '').trim() || !receiptFiles[w.id]}
                         onClick={() => void handleComplete(w)}
                       >
                         <CheckCircle size={14} />
-                        {isBusy ? 'Verifying…' : 'Verify & Complete'}
+                        {isBusy ? 'Submitting…' : 'Submit Payout Proof'}
                       </button>
                     </div>
 
@@ -527,6 +558,7 @@ export function Agent() {
                         </motion.div>
                       )}
                     </AnimatePresence>
+                    </>)}
                   </div>
                 </motion.article>
               );

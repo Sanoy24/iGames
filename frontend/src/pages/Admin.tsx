@@ -29,6 +29,9 @@ import {
   type CreateBroadcastInput,
   type PlatformStats,
   type SystemConfig,
+  type WithdrawalFeeRange,
+  type CoverageGap,
+  type ConfigChangeLog,
 } from '../lib/api';
 import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
@@ -1085,7 +1088,8 @@ function AgentsAdmin() {
     workDaysOfWeek: [] as number[],
     deposit: true,
     withdraw: true,
-    status: 'active'
+    status: 'active',
+    referralCommissionPct: '' as string,
   });
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -1166,7 +1170,8 @@ function AgentsAdmin() {
       workDaysOfWeek: agent.workDaysOfWeek ?? [],
       deposit: agent.agentPermissions ? agent.agentPermissions.deposit : true,
       withdraw: agent.agentPermissions ? agent.agentPermissions.withdraw : true,
-      status: agent.status || 'active'
+      status: agent.status || 'active',
+      referralCommissionPct: agent.referralCommissionPct != null ? String(agent.referralCommissionPct) : '',
     });
   };
 
@@ -1194,7 +1199,8 @@ function AgentsAdmin() {
           deposit: editForm.deposit,
           withdraw: editForm.withdraw,
         },
-        status: editForm.status
+        status: editForm.status,
+        referralCommissionPct: editForm.referralCommissionPct.trim() === '' ? null : Number(editForm.referralCommissionPct),
       };
       if (editForm.password.trim() !== '') {
         payload.password = editForm.password;
@@ -1338,6 +1344,19 @@ function AgentsAdmin() {
                 <span>Withdrawal Permission</span>
               </label>
             </div>
+            <label className="adm-field">
+              <span>Referral Commission % Override <em className="adm-field-hint">— blank = use the global default</em></span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input className="input" type="number" min={0} max={100} placeholder="Global default" style={{ width: 140 }}
+                  value={editForm.referralCommissionPct}
+                  onChange={(e) => setEditForm((f) => ({ ...f, referralCommissionPct: e.target.value }))} />
+                {editForm.referralCommissionPct !== '' && (
+                  <button type="button" className="adm-btn" onClick={() => setEditForm((f) => ({ ...f, referralCommissionPct: '' }))}>
+                    Clear override
+                  </button>
+                )}
+              </div>
+            </label>
           </div>
           <div className="adm-panel-footer" style={{ display: 'flex', gap: 8 }}>
             <button className="adm-btn adm-btn-primary" disabled={updating} onClick={updateAgent}>
@@ -1463,14 +1482,12 @@ function ConfigAdmin() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
     telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
-    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, superAdminUserId: null,
     minDepositMinor: 0,
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
     agentRoomsEnabled: false, agentRoomCommissionPct: 0,
-    withdrawalFeeTiers: null,
+    referralCommissionPct: 0,
   });
-  const [admins, setAdmins] = useState<User[]>([]);
   const [perf, setPerf] = useState<AgentPerformance[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1478,16 +1495,13 @@ function ConfigAdmin() {
   const toFormValues = (c: SystemConfig): SystemConfig => ({
     telebirrCreditMinorPerBirr: c.telebirrCreditMinorPerBirr,
     welcomeBonusMinor: c.welcomeBonusMinor,
-    withdrawalServiceChargePct: c.withdrawalServiceChargePct,
-    withdrawalCommissionPct: c.withdrawalCommissionPct ?? 0,
-    superAdminUserId: c.superAdminUserId ?? null,
     minDepositMinor: c.minDepositMinor ?? 0,
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
     withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
     agentRoomsEnabled: c.agentRoomsEnabled ?? false,
     agentRoomCommissionPct: c.agentRoomCommissionPct ?? 0,
-    withdrawalFeeTiers: c.withdrawalFeeTiers ?? null,
+    referralCommissionPct: c.referralCommissionPct ?? 0,
   });
 
   useEffect(() => {
@@ -1495,10 +1509,6 @@ function ConfigAdmin() {
       .then((c) => { setConfig(c); setForm(toFormValues(c)); })
       .catch((e) => addToast('error', getErrorMessage(e)))
       .finally(() => setLoading(false));
-    // Load admins for the super-admin (service-fee recipient) picker.
-    adminUsersApi.listUsers(1, 100, 'admin')
-      .then((r) => setAdmins(r.data))
-      .catch(() => undefined);
     adminApi.getAgentPerformance()
       .then(setPerf)
       .catch(() => undefined);
@@ -1540,104 +1550,26 @@ function ConfigAdmin() {
       <div className="adm-panel">
         <div className="adm-panel-head">Withdrawal Rules</div>
         <div className="adm-field-grid">
-          {field('withdrawalServiceChargePct', 'Service Fee % → Super-Admin', 'platform cut, credited to the super-admin wallet')}
-          {field('withdrawalCommissionPct', 'Commission % → Agent', 'earned by the agent who processes the withdrawal')}
-          <label className="adm-field">
-            <span>Super-Admin (service-fee recipient)<em className="adm-field-hint"> — wallet that receives service fees</em></span>
-            <select
-              className="input"
-              value={form.superAdminUserId ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, superAdminUserId: e.target.value || null }))}
-            >
-              <option value="">None (track in stats only)</option>
-              {admins.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.displayName ?? 'Admin'}{a.phoneNumber ? ` · ${a.phoneNumber}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
           {field('withdrawalMinAmountMinor', 'Minimum Withdrawal (ETB)', '0 = no minimum')}
           {field('withdrawalMaxAmountMinor', 'Maximum Withdrawal (ETB)', '0 = no limit')}
           {field('maxPendingWithdrawalsPerUser', 'Max Pending per User')}
         </div>
         <p className="adm-field-hint" style={{ marginTop: 8 }}>
-          Both cuts come out of the gross withdrawal — the user receives gross minus service fee minus commission.
+          The withdrawal fee itself is configured below, by amount range — the agent who completes the
+          withdrawal keeps 100% of it, there is no platform cut.
         </p>
+      </div>
 
-        {/* ── Tiered Fee Schedule ── */}
-        <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div>
-              <span style={{ fontWeight: 700, fontSize: 13 }}>Tiered Service Fee Schedule</span>
-              <em className="adm-field-hint" style={{ display: 'block', marginTop: 2 }}>
-                When tiers are set, they override the flat "Service Fee %" above. The highest matching tier (by min amount) wins.
-              </em>
-            </div>
-            <button
-              className="adm-btn adm-btn-primary"
-              onClick={() => setForm((f) => ({
-                ...f,
-                withdrawalFeeTiers: [...(f.withdrawalFeeTiers ?? []), { minAmountMinor: 0, feePct: 0 }],
-              }))}
-            >
-              <Plus size={12} /> Add Tier
-            </button>
-          </div>
+      <WithdrawalFeeRangesAdmin />
 
-          {(!form.withdrawalFeeTiers || form.withdrawalFeeTiers.length === 0) ? (
-            <p className="adm-field-hint">No tiers — flat rate applies. Add a tier to enable tiered pricing.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* Header */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
-                <span>Min Amount (ETB)</span>
-                <span>Fee %</span>
-                <span></span>
-              </div>
-              {form.withdrawalFeeTiers.map((tier, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="input"
-                    type="number" min={0} step={1}
-                    value={tier.minAmountMinor}
-                    onChange={(e) => setForm((f) => {
-                      const tiers = [...(f.withdrawalFeeTiers ?? [])];
-                      tiers[i] = { ...tiers[i], minAmountMinor: Number(e.target.value) };
-                      return { ...f, withdrawalFeeTiers: tiers };
-                    })}
-                    placeholder="0"
-                  />
-                  <input
-                    className="input"
-                    type="number" min={0} max={100} step={0.1}
-                    value={tier.feePct}
-                    onChange={(e) => setForm((f) => {
-                      const tiers = [...(f.withdrawalFeeTiers ?? [])];
-                      tiers[i] = { ...tiers[i], feePct: Number(e.target.value) };
-                      return { ...f, withdrawalFeeTiers: tiers };
-                    })}
-                    placeholder="5"
-                  />
-                  <button
-                    className="adm-icon-btn"
-                    title="Remove tier"
-                    onClick={() => setForm((f) => ({
-                      ...f,
-                      withdrawalFeeTiers: (f.withdrawalFeeTiers ?? []).filter((_, j) => j !== i),
-                    }))}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              ))}
-              <p className="adm-field-hint" style={{ marginTop: 4 }}>
-                Example: 0 ETB→5%, 50,000 ETB→3%, 200,000 ETB→2% means small withdrawals pay 5%, large ones pay 2%.
-              </p>
-            </div>
-          )}
+      <div className="adm-panel">
+        <div className="adm-panel-head">Referral Commission</div>
+        <div className="adm-field-grid">
+          {field('referralCommissionPct', 'Global Default Commission %', "paid to a player's referring agent, on that player's Bingo GGR. An agent's own override (set on their agent profile) takes priority over this default.")}
         </div>
       </div>
+
+      <ConfigHistoryAdmin />
 
       <div className="adm-panel">
         <div className="adm-panel-head">Bingo — Agent-owned Rooms</div>
@@ -1707,8 +1639,250 @@ function ConfigAdmin() {
       </button>
       {config && (
         <p className="adm-save-note">
-          Current: {config.withdrawalServiceChargePct}% charge · min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} ETB
+          Current: min {formatCredits(config.withdrawalMinAmountMinor)} · max {config.withdrawalMaxAmountMinor > 0 ? formatCredits(config.withdrawalMaxAmountMinor) : '∞'} ETB
         </p>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Withdrawal Fee Ranges — flat fee tiers by withdrawal amount. Each row is its
+// own entity/endpoint (not batched into the main config save), so overlap is
+// validated server-side immediately on every add/edit/toggle.
+// ══════════════════════════════════════════════════════════════════
+type FeeRangeDraft = { minAmountMinor: string; maxAmountMinor: string; feeMinor: string };
+const EMPTY_RANGE_DRAFT: FeeRangeDraft = { minAmountMinor: '', maxAmountMinor: '', feeMinor: '' };
+
+function WithdrawalFeeRangesAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [ranges, setRanges] = useState<WithdrawalFeeRange[]>([]);
+  const [coverageGaps, setCoverageGaps] = useState<CoverageGap[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [newRange, setNewRange] = useState<FeeRangeDraft>(EMPTY_RANGE_DRAFT);
+  const [edits, setEdits] = useState<Record<string, FeeRangeDraft>>({});
+
+  const load = () => {
+    adminApi.listWithdrawalFeeRanges()
+      .then((r) => { setRanges(r.ranges); setCoverageGaps(r.coverageGaps); })
+      .catch((e) => addToast('error', getErrorMessage(e)))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const draftFor = (r: WithdrawalFeeRange): FeeRangeDraft =>
+    edits[r.id] ?? {
+      minAmountMinor: String(r.minAmountMinor),
+      maxAmountMinor: r.maxAmountMinor === null ? '' : String(r.maxAmountMinor),
+      feeMinor: String(r.feeMinor),
+    };
+
+  const create = async () => {
+    const minAmountMinor = Number(newRange.minAmountMinor);
+    const feeMinor = Number(newRange.feeMinor);
+    if (!Number.isFinite(minAmountMinor) || !Number.isFinite(feeMinor)) {
+      addToast('error', 'Enter valid numbers for min amount and fee.');
+      return;
+    }
+    const maxAmountMinor = newRange.maxAmountMinor.trim() === '' ? null : Number(newRange.maxAmountMinor);
+    setSaving(true);
+    try {
+      await adminApi.createWithdrawalFeeRange({ minAmountMinor, maxAmountMinor, feeMinor });
+      setNewRange(EMPTY_RANGE_DRAFT);
+      addToast('success', 'Fee range added.');
+      load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+
+  const saveEdit = async (r: WithdrawalFeeRange) => {
+    const draft = draftFor(r);
+    const minAmountMinor = Number(draft.minAmountMinor);
+    const feeMinor = Number(draft.feeMinor);
+    if (!Number.isFinite(minAmountMinor) || !Number.isFinite(feeMinor)) {
+      addToast('error', 'Enter valid numbers for min amount and fee.');
+      return;
+    }
+    const maxAmountMinor = draft.maxAmountMinor.trim() === '' ? null : Number(draft.maxAmountMinor);
+    setSaving(true);
+    try {
+      await adminApi.updateWithdrawalFeeRange(r.id, { minAmountMinor, maxAmountMinor, feeMinor });
+      setEdits((e) => { const next = { ...e }; delete next[r.id]; return next; });
+      addToast('success', 'Fee range updated.');
+      load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+
+  const toggleActive = async (r: WithdrawalFeeRange) => {
+    setSaving(true);
+    try {
+      await adminApi.updateWithdrawalFeeRange(r.id, { active: !r.active });
+      load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+
+  const remove = async (r: WithdrawalFeeRange) => {
+    setSaving(true);
+    try {
+      await adminApi.deleteWithdrawalFeeRange(r.id);
+      addToast('success', 'Fee range deleted.');
+      load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="adm-panel">
+      <div className="adm-panel-head">Withdrawal Fee Ranges</div>
+      <p className="adm-field-hint" style={{ padding: '0 16px' }}>
+        The fee for a withdrawal is looked up by amount from these active ranges. The agent who completes the
+        withdrawal keeps 100% of the matched fee. Ranges must not overlap.
+      </p>
+
+      {coverageGaps.length > 0 && (
+        <div style={{
+          margin: '8px 16px', padding: '8px 12px', borderRadius: 8,
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+          fontSize: 12, color: 'var(--danger, #ef4444)',
+        }}>
+          <strong>Coverage gap:</strong>{' '}
+          {coverageGaps.map((g, i) => (
+            <span key={i}>
+              {i > 0 && ', '}
+              {formatCredits(g.fromMinor)}–{g.toMinor === null ? '∞' : formatCredits(g.toMinor)} ETB has no active fee range
+            </span>
+          ))}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="adm-empty">Loading fee ranges…</div>
+      ) : (
+        <table className="adm-table">
+          <thead>
+            <tr className="adm-tr">
+              <th>Min (ETB)</th><th>Max (ETB)</th><th>Fee (ETB)</th><th>Active</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {ranges.map((r) => {
+              const draft = draftFor(r);
+              const dirty = !!edits[r.id];
+              return (
+                <tr key={r.id} className="adm-tr" style={{ opacity: r.active ? 1 : 0.5 }}>
+                  <td>
+                    <input className="input" type="number" min={0} style={{ width: 100 }}
+                      value={draft.minAmountMinor}
+                      onChange={(e) => setEdits((ed) => ({ ...ed, [r.id]: { ...draftFor(r), minAmountMinor: e.target.value } }))} />
+                  </td>
+                  <td>
+                    <input className="input" type="number" min={0} style={{ width: 100 }}
+                      placeholder="∞"
+                      value={draft.maxAmountMinor}
+                      onChange={(e) => setEdits((ed) => ({ ...ed, [r.id]: { ...draftFor(r), maxAmountMinor: e.target.value } }))} />
+                  </td>
+                  <td>
+                    <input className="input" type="number" min={0} style={{ width: 100 }}
+                      value={draft.feeMinor}
+                      onChange={(e) => setEdits((ed) => ({ ...ed, [r.id]: { ...draftFor(r), feeMinor: e.target.value } }))} />
+                  </td>
+                  <td>
+                    <button className="adm-btn" disabled={saving} onClick={() => toggleActive(r)}>
+                      {r.active ? 'Active' : 'Inactive'}
+                    </button>
+                  </td>
+                  <td style={{ display: 'flex', gap: 6 }}>
+                    {dirty && (
+                      <button className="adm-btn adm-btn-primary" disabled={saving} onClick={() => saveEdit(r)}>Save</button>
+                    )}
+                    <button className="adm-icon-btn" title="Delete range" disabled={saving} onClick={() => remove(r)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className="adm-tr">
+              <td>
+                <input className="input" type="number" min={0} style={{ width: 100 }} placeholder="1"
+                  value={newRange.minAmountMinor}
+                  onChange={(e) => setNewRange((f) => ({ ...f, minAmountMinor: e.target.value }))} />
+              </td>
+              <td>
+                <input className="input" type="number" min={0} style={{ width: 100 }} placeholder="∞"
+                  value={newRange.maxAmountMinor}
+                  onChange={(e) => setNewRange((f) => ({ ...f, maxAmountMinor: e.target.value }))} />
+              </td>
+              <td>
+                <input className="input" type="number" min={0} style={{ width: 100 }} placeholder="0"
+                  value={newRange.feeMinor}
+                  onChange={(e) => setNewRange((f) => ({ ...f, feeMinor: e.target.value }))} />
+              </td>
+              <td colSpan={2}>
+                <button className="adm-btn adm-btn-primary" disabled={saving} onClick={create}>
+                  <Plus size={12} /> Add Range
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Config Change History — before/after audit trail for referral-commission
+// and withdrawal-fee-range changes.
+// ══════════════════════════════════════════════════════════════════
+function ConfigHistoryAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [logs, setLogs] = useState<ConfigChangeLog[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    adminApi.getConfigHistory({ limit: 50 })
+      .then((r) => setLogs(r.data))
+      .catch((e) => addToast('error', getErrorMessage(e)))
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const CONFIG_TYPE_LABEL: Record<ConfigChangeLog['configType'], string> = {
+    global_referral_commission: 'Global referral commission %',
+    agent_referral_commission: 'Agent referral commission override',
+    withdrawal_fee_range: 'Withdrawal fee range',
+  };
+
+  return (
+    <div className="adm-panel">
+      <div className="adm-panel-head">Config Change History</div>
+      {loading ? (
+        <div className="adm-empty">Loading history…</div>
+      ) : logs.length === 0 ? (
+        <div className="adm-empty">No configuration changes recorded yet.</div>
+      ) : (
+        <table className="adm-table">
+          <thead>
+            <tr className="adm-tr">
+              <th>When</th><th>What</th><th>From</th><th>To</th><th>Changed By</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.map((log) => (
+              <tr key={log.id} className="adm-tr">
+                <td className="adm-td-muted">{new Date(log.createdAt).toLocaleString()}</td>
+                <td>{CONFIG_TYPE_LABEL[log.configType]}{log.entityId ? ` (${log.entityId.slice(-6)})` : ''}</td>
+                <td className="adm-td-muted">{log.previousValue ?? '—'}</td>
+                <td>{log.newValue ?? '—'}</td>
+                <td className="adm-td-muted">{log.changedByAdminId.slice(-6)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );

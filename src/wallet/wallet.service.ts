@@ -757,7 +757,7 @@ export class WalletService {
 
   async getAllWithdrawals(): Promise<Withdrawal[]> {
     return this.withdrawalRepository.find({
-      relations: ['user'],
+      relations: ['user', 'agent'],
       order: { createdAt: 'DESC' }
     });
   }
@@ -772,7 +772,9 @@ export class WalletService {
 
   async getAgentWithdrawals(agentId: string): Promise<Withdrawal[]> {
     return this.withdrawalRepository.find({
-      where: { agentId, status: In(['claimed', 'processing']) },
+      // Include awaiting_verification so a submitted-but-not-yet-verified payout
+      // stays visible to the agent (status badge only — no action left for them).
+      where: { agentId, status: In(['claimed', 'processing', 'awaiting_verification']) },
       relations: ['user'],
       order: { claimedAt: 'DESC' }
     });
@@ -842,34 +844,42 @@ export class WalletService {
     return saved;
   }
 
-  async completeWithdrawalByAgent(input: {
+  /**
+   * Step A of the agent withdrawal flow — the agent submits payout proof (FT
+   * number + receipt file). This does NOT move any money: no fund-hold release,
+   * no agent credit. It just records the proof and parks the withdrawal at
+   * `awaiting_verification` for an admin to review. See `verifyAgentWithdrawal`
+   * for the step that actually moves money.
+   */
+  async recordAgentWithdrawalProof(input: {
     withdrawalId: string;
     agentId: string;
     telebirrReference: string;
     paymentProvider?: 'telebirr' | 'mpesa';
     payoutVerification?: Record<string, unknown>;
+    receiptFileUrl: string;
     feeMinor: number;
   }): Promise<Withdrawal> {
-    const settled = await this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
-      const walletRepo = manager.getRepository(Wallet);
 
       const withdrawal = await withdrawalRepo.findOneBy({
         id: input.withdrawalId,
         status: 'claimed',
-        agentId: input.agentId
+        agentId: input.agentId,
       });
 
       if (!withdrawal) {
         throw new ConflictException('Withdrawal not found or not assigned to you');
       }
 
-      // Dedupe the payout proof: the same receipt/confirmation code must not settle
-      // two withdrawals. Checked inside the transaction so two concurrent completes
-      // can't both slip through.
+      // Dedupe the payout proof: the same receipt/confirmation code must not be
+      // used for two withdrawals, whether the other one is still awaiting
+      // verification or already completed. Checked inside the transaction so two
+      // concurrent submissions can't both slip through.
       const reference = input.telebirrReference.trim();
       const reused = await withdrawalRepo.findOne({
-        where: { telebirrReference: reference, status: 'completed' },
+        where: { telebirrReference: reference, status: In(['awaiting_verification', 'completed']) },
         select: { id: true },
       });
       if (reused && reused.id !== withdrawal.id) {
@@ -877,110 +887,181 @@ export class WalletService {
       }
 
       // A single flat fee (from the matched WithdrawalFeeRange), 100% to the
-      // processing agent — no platform split. The user nets the rest.
+      // processing agent — no platform split. Resolved and persisted NOW so a
+      // fee-range edit between submission and admin verification can't change
+      // what's owed later.
       const feeMinor = Math.max(0, Math.floor(input.feeMinor));
       const netAmountMinor = withdrawal.amountMinor - feeMinor;
-
       if (netAmountMinor <= 0) {
         throw new BadRequestException('The withdrawal fee would consume the entire withdrawal amount');
       }
 
-      // Settle the user's reservation
-      const wallet = await walletRepo.findOne({
-        where: { userId: withdrawal.userId, currencyCode: 'CREDIT' },
-        lock: { mode: 'pessimistic_write' }
-      });
-
-      if (!wallet || wallet.reservedMinor < withdrawal.amountMinor) {
-        throw new ConflictException('Insufficient reserved balance on user wallet');
-      }
-
-      wallet.reservedMinor -= withdrawal.amountMinor;
-      await walletRepo.save(wallet);
-
-      // Credit the agent's wallet: the payout-custody amount the user receives
-      // (reconciles the cash the agent paid out) plus their earned fee.
-      await this.ensureDefaultWallet(input.agentId, manager);
-      await this.creditInSession(
-        {
-          userId: input.agentId,
-          amountMinor: netAmountMinor,
-          entryType: 'agent_receipt',
-          sourceType: 'withdrawal',
-          sourceId: withdrawal.id,
-          idempotencyKey: `agent-receipt:${withdrawal.id}`,
-          metadata: {
-            withdrawalId: withdrawal.id,
-            userId: withdrawal.userId,
-            grossAmountMinor: withdrawal.amountMinor,
-            feeMinor,
-            kind: 'payout_custody',
-          },
-        },
-        manager,
-      );
-
-      if (feeMinor > 0) {
-        await this.creditInSession(
-          {
-            userId: input.agentId,
-            amountMinor: feeMinor,
-            entryType: 'agent_receipt',
-            sourceType: 'withdrawal',
-            sourceId: withdrawal.id,
-            idempotencyKey: `agent-withdrawal-fee:${withdrawal.id}`,
-            metadata: {
-              withdrawalId: withdrawal.id,
-              userId: withdrawal.userId,
-              grossAmountMinor: withdrawal.amountMinor,
-              kind: 'withdrawal_fee',
-            },
-          },
-          manager,
-        );
-      }
-
-      withdrawal.status = 'completed';
+      withdrawal.status = 'awaiting_verification';
       withdrawal.serviceChargeMinor = feeMinor;
       withdrawal.netAmountMinor = netAmountMinor;
       withdrawal.telebirrReference = reference;
       withdrawal.paymentProvider = input.paymentProvider ?? null;
       withdrawal.payoutVerification = input.payoutVerification ?? null;
+      withdrawal.receiptFileUrl = input.receiptFileUrl;
       withdrawal.processedAt = new Date();
       withdrawal.processedBy = input.agentId;
-      await withdrawalRepo.save(withdrawal);
+      return withdrawalRepo.save(withdrawal);
+    });
+  }
 
-      await this.recordAgentAction(
-        {
-          agentId: input.agentId,
-          userId: withdrawal.userId,
-          withdrawalId: withdrawal.id,
-          amountMinor: withdrawal.amountMinor,
-          ledgerEntryId: `agent-receipt:${withdrawal.id}`,
-          actionType: 'withdrawal_completed',
-          metadata: {
-            destinationAccount: withdrawal.destinationAccount,
-            netAmountMinor,
-            feeMinor,
-            telebirrReference: withdrawal.telebirrReference,
+  /**
+   * Step B — an admin reviews the agent-submitted FT number + receipt. THIS is
+   * where money actually moves: approving releases the player's fund-hold and
+   * credits the agent (custody + fee), using the amounts already resolved and
+   * stored in Step A. Rejecting refunds the reservation back to the player's
+   * available balance — a dispute-resolution call, since the agent may have
+   * already paid the player in cash; any real-world discrepancy is resolved
+   * with the agent manually, outside this flow.
+   */
+  async verifyAgentWithdrawal(
+    withdrawalId: string,
+    decision: 'approve' | 'reject',
+    adminUserId: string,
+    notes?: string,
+  ): Promise<Withdrawal> {
+    if (decision === 'reject' && (notes?.trim().length ?? 0) < 15) {
+      throw new BadRequestException('Rejection notes must be at least 15 characters');
+    }
+
+    const settled = await this.dataSource.transaction(async (manager) => {
+      const withdrawalRepo = manager.getRepository(Withdrawal);
+      const walletRepo = manager.getRepository(Wallet);
+
+      const withdrawal = await withdrawalRepo.findOneBy({ id: withdrawalId, status: 'awaiting_verification' });
+      if (!withdrawal) {
+        throw new ConflictException('Withdrawal not found or not awaiting verification');
+      }
+
+      const wallet = await walletRepo.findOne({
+        where: { userId: withdrawal.userId, currencyCode: 'CREDIT' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!wallet) throw new NotFoundException('Wallet not found');
+      if (wallet.reservedMinor < withdrawal.amountMinor) {
+        throw new ConflictException('Insufficient reserved balance on user wallet');
+      }
+
+      if (decision === 'approve') {
+        wallet.reservedMinor -= withdrawal.amountMinor;
+        await walletRepo.save(wallet);
+
+        const feeMinor = withdrawal.serviceChargeMinor;
+        const netAmountMinor = withdrawal.netAmountMinor ?? withdrawal.amountMinor - feeMinor;
+
+        await this.ensureDefaultWallet(withdrawal.agentId!, manager);
+        await this.creditInSession(
+          {
+            userId: withdrawal.agentId!,
+            amountMinor: netAmountMinor,
+            entryType: 'agent_receipt',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal.id,
+            idempotencyKey: `agent-receipt:${withdrawal.id}`,
+            metadata: {
+              withdrawalId: withdrawal.id,
+              userId: withdrawal.userId,
+              grossAmountMinor: withdrawal.amountMinor,
+              feeMinor,
+              kind: 'payout_custody',
+            },
           },
-        },
-        manager,
-      );
+          manager,
+        );
 
-      if (feeMinor > 0) {
+        if (feeMinor > 0) {
+          await this.creditInSession(
+            {
+              userId: withdrawal.agentId!,
+              amountMinor: feeMinor,
+              entryType: 'agent_receipt',
+              sourceType: 'withdrawal',
+              sourceId: withdrawal.id,
+              idempotencyKey: `agent-withdrawal-fee:${withdrawal.id}`,
+              metadata: {
+                withdrawalId: withdrawal.id,
+                userId: withdrawal.userId,
+                grossAmountMinor: withdrawal.amountMinor,
+                kind: 'withdrawal_fee',
+              },
+            },
+            manager,
+          );
+        }
+
+        withdrawal.status = 'completed';
+        withdrawal.verifiedBy = adminUserId;
+        withdrawal.verifiedAt = new Date();
+        await withdrawalRepo.save(withdrawal);
+
+        await this.recordAgentAction(
+          {
+            agentId: withdrawal.agentId!,
+            userId: withdrawal.userId,
+            withdrawalId: withdrawal.id,
+            amountMinor: withdrawal.amountMinor,
+            ledgerEntryId: `agent-receipt:${withdrawal.id}`,
+            actionType: 'withdrawal_completed',
+            metadata: {
+              destinationAccount: withdrawal.destinationAccount,
+              netAmountMinor,
+              feeMinor,
+              telebirrReference: withdrawal.telebirrReference,
+            },
+          },
+          manager,
+        );
+
+        if (feeMinor > 0) {
+          await manager.query(`
+            INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
+            VALUES ('global', ?)
+            ON DUPLICATE KEY UPDATE totalServiceChargesMinor = totalServiceChargesMinor + ?
+          `, [feeMinor, feeMinor]);
+        }
+      } else {
+        wallet.reservedMinor -= withdrawal.amountMinor;
+        wallet.availableMinor += withdrawal.amountMinor;
+        await walletRepo.save(wallet);
+
+        withdrawal.status = 'rejected';
+        withdrawal.adminNotes = notes?.trim();
+        withdrawal.verifiedBy = adminUserId;
+        withdrawal.verifiedAt = new Date();
+        await withdrawalRepo.save(withdrawal);
+
+        await this.ledgerService.createEntry(
+          {
+            userId: withdrawal.userId,
+            walletId: wallet.id,
+            currencyCode: 'CREDIT',
+            amountMinor: withdrawal.amountMinor,
+            direction: 'credit',
+            entryType: 'refund',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal.id,
+            balanceAfterMinor: wallet.availableMinor,
+            metadata: { action: 'reject_agent_verification', reason: notes?.trim() || 'Admin rejected agent verification' },
+          },
+          manager,
+        );
+
         await manager.query(`
-          INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
+          INSERT INTO platform_stats (\`key\`, totalRefundsMinor)
           VALUES ('global', ?)
-          ON DUPLICATE KEY UPDATE totalServiceChargesMinor = totalServiceChargesMinor + ?
-        `, [feeMinor, feeMinor]);
+          ON DUPLICATE KEY UPDATE totalRefundsMinor = totalRefundsMinor + ?
+        `, [withdrawal.amountMinor, withdrawal.amountMinor]);
       }
 
       this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));
       return withdrawal;
     });
 
-    await this.notifyWithdrawalSettled(settled);
+    await this.notifyWithdrawalSettled(settled, notes);
     return settled;
   }
 

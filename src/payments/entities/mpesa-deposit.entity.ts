@@ -1,5 +1,6 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { DepositVerificationStatus } from './telebirr-deposit.entity';
 
 export type MpesaDepositStatus = 'credited' | 'rejected';
 
@@ -37,6 +38,10 @@ export class MpesaDeposit {
   /** The M-PESA confirmation/transaction code — unique, so a receipt can't be reused. */
   @Column({ type: 'varchar', length: 32, unique: true })
   confirmationCode: string;
+
+  /** Player-uploaded photo/PDF of the physical receipt, relative to /uploads/. */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  receiptFileUrl?: string | null;
 
   @Column({ type: 'bigint', transformer: bigintTransformer })
   amountMinor: number;
@@ -79,6 +84,20 @@ export class MpesaDeposit {
   /** Why it fell back to the Master Wallet instead of the agent's own wallet, if it did. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   fundingFallbackReason?: string | null;
+
+  /**
+   * Admin sign-off, independent of `status`/crediting — this deposit is already
+   * credited (or rejected) by the time an admin reviews it; verifying/flagging
+   * here never blocks or reverses that. Purely a manual audit record.
+   */
+  @Column({ type: 'enum', enum: ['unverified', 'verified', 'flagged'], default: 'unverified' })
+  verificationStatus: DepositVerificationStatus;
+
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  verifiedBy?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verifiedAt?: Date | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

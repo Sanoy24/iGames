@@ -1,7 +1,13 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Index, ManyToOne } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 
-export type WithdrawalStatus = 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
+export type WithdrawalStatus =
+  | 'pending'
+  | 'claimed'
+  | 'processing'
+  | 'awaiting_verification'
+  | 'completed'
+  | 'rejected';
 
 const bigintTransformer = {
   to: (value: number | null) => value,
@@ -26,7 +32,7 @@ export class Withdrawal {
 
   @Column({
     type: 'enum',
-    enum: ['pending', 'claimed', 'processing', 'completed', 'rejected'],
+    enum: ['pending', 'claimed', 'processing', 'awaiting_verification', 'completed', 'rejected'],
     default: 'pending',
   })
   @Index()
@@ -72,9 +78,20 @@ export class Withdrawal {
   @Column({ type: 'json', nullable: true })
   payoutVerification?: Record<string, unknown> | null;
 
+  /** Agent-uploaded photo/PDF of the payout receipt, relative to /uploads/. */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  receiptFileUrl?: string | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   adminNotes?: string;
 
+  /**
+   * Who/when completion was SUBMITTED. For the agent-driven flow this is the
+   * agent's proof submission (status -> 'awaiting_verification'), NOT final
+   * settlement — money doesn't move until an admin verifies (see verifiedBy/At
+   * below). Unchanged/still-final for the separate admin-direct `processWithdrawal`
+   * bypass path (admin is both submitter and approver there).
+   */
   @Column({ type: 'varchar', length: 36, nullable: true })
   processedBy?: string;
 
@@ -83,6 +100,17 @@ export class Withdrawal {
 
   @Column({ type: 'timestamp', nullable: true })
   processedAt?: Date;
+
+  /**
+   * Admin sign-off on the agent's submitted proof — THIS is what actually
+   * releases the player's fund-hold and credits the agent (see
+   * WalletService.verifyAgentWithdrawal). Null until an admin acts.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  verifiedBy?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  verifiedAt?: Date | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

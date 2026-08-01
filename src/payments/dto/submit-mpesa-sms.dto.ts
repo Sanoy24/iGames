@@ -9,4 +9,11 @@ export class SubmitMpesaSmsDto {
   @MinLength(20)
   @MaxLength(1000)
   sms: string;
+
+  @ApiProperty({
+    description: 'Relative path (from POST /payments/receipts/upload) to the uploaded receipt photo/PDF.'
+  })
+  @IsString()
+  @MinLength(1)
+  receiptFileUrl: string;
 }

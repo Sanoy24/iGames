@@ -1,4 +1,22 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, UseGuards } from '@nestjs/common';
+import { mkdirSync } from 'fs';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  UnsupportedMediaTypeException,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -11,6 +29,13 @@ import { SubmitTelebirrReceiptDto } from './dto/submit-telebirr-receipt.dto';
 import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
 import { PaymentsService } from './payments.service';
 import { AgentsService } from '../agents/agents.service';
+import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
+
+/** Minimal shape of a multer file (avoids depending on @types/multer). */
+type UploadedReceiptFile = { filename: string; mimetype: string; size: number };
+
+const DEPOSIT_RECEIPT_SUBDIR = 'deposit-receipts';
+const DEPOSIT_RECEIPT_DIR = join(UPLOADS_ROOT, DEPOSIT_RECEIPT_SUBDIR);
 
 @ApiTags('payments')
 @ApiBearerAuth()
@@ -84,6 +109,39 @@ export class PaymentsController {
     @Body() dto: SubmitTelebirrReceiptDto,
   ) {
     return this.paymentsService.previewTelebirrReceipt(user.id, dto);
+  }
+
+  /** Upload a photo/PDF of the physical receipt — required proof alongside the
+   * FT number, reviewed by an admin. Returns a relative path under /uploads/. */
+  @Roles('player')
+  @Post('receipts/upload')
+  @Throttle({ strict: { ttl: 60_000, limit: 12 } })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          mkdirSync(DEPOSIT_RECEIPT_DIR, { recursive: true });
+          cb(null, DEPOSIT_RECEIPT_DIR);
+        },
+        filename: (_req, file, cb) => {
+          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      fileFilter: (_req, file, cb) => {
+        if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
+          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP, GIF images or PDF are allowed'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  @ApiOkResponse({ schema: { example: { fileUrl: 'deposit-receipts/<uuid>.jpg' } } })
+  uploadReceipt(@UploadedFile() file?: UploadedReceiptFile) {
+    if (!file) throw new BadRequestException('No receipt file uploaded');
+    return { fileUrl: `${DEPOSIT_RECEIPT_SUBDIR}/${file.filename}` };
   }
 
   @Roles('player')

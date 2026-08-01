@@ -1,5 +1,5 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { IsOptional, IsString, Matches, MinLength } from 'class-validator';
 
 export class SubmitTelebirrReceiptDto {
   @ApiPropertyOptional({
@@ -16,4 +16,11 @@ export class SubmitTelebirrReceiptDto {
   @IsOptional()
   @IsString()
   receiptUrl?: string;
+
+  @ApiProperty({
+    description: 'Relative path (from POST /payments/receipts/upload) to the uploaded receipt photo/PDF.'
+  })
+  @IsString()
+  @MinLength(1)
+  receiptFileUrl: string;
 }

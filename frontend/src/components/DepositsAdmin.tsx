@@ -16,6 +16,11 @@ const FALLBACK_REASON_LABEL: Record<string, string> = {
   insufficient_agent_balance: 'insufficient agent balance',
   no_agent_matched: 'no agent matched',
 };
+const VERIFICATION_BADGE: Record<string, string> = {
+  unverified: 'badge-gold',
+  verified: 'badge-green',
+  flagged: 'badge-red',
+};
 
 export function DepositsAdmin() {
   const [provider, setProvider] = useState<'telebirr' | 'mpesa'>('telebirr');
@@ -25,6 +30,7 @@ export function DepositsAdmin() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [verifying, setVerifying] = useState<string | null>(null);
 
   const limit = 20;
 
@@ -56,6 +62,18 @@ export function DepositsAdmin() {
     setPage(1);
   };
 
+  const verify = async (id: string, verificationStatus: 'verified' | 'flagged') => {
+    setVerifying(id);
+    try {
+      await adminDepositsApi.verifyDeposit(provider, id, verificationStatus);
+      await load();
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setVerifying(null);
+    }
+  };
+
   return (
     <div className="adm-panel">
       <div className="adm-panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -82,19 +100,23 @@ export function DepositsAdmin() {
             <tr className="adm-tr">
               <th>Date/Time</th>
               <th>Player</th>
+              <th>Phone</th>
               <th>Agent</th>
               <th>Amount</th>
               <th>Status</th>
               <th>Funded By</th>
               <th>Reason</th>
-              <th>Reference</th>
+              <th>FT Number</th>
+              <th>Receipt</th>
+              <th>Verification</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {loading && data.length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr>
+              <tr><td colSpan={12} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr>
             ) : data.length === 0 ? (
-              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>No deposits found.</td></tr>
+              <tr><td colSpan={12} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>No deposits found.</td></tr>
             ) : (
               data.map((row) => {
                 const reference = row.receiptNo ?? row.confirmationCode;
@@ -104,10 +126,12 @@ export function DepositsAdmin() {
                 const reason = row.status === 'credited'
                   ? (row.fundingFallbackReason ? FALLBACK_REASON_LABEL[row.fundingFallbackReason] ?? row.fundingFallbackReason : '—')
                   : (rejectionError ?? '—');
+                const verificationStatus = row.verificationStatus ?? 'unverified';
                 return (
                   <tr className="adm-tr" key={row.id}>
                     <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(row.createdAt).toLocaleString()}</td>
                     <td style={{ fontSize: 12 }}>{row.user?.displayName ?? row.userId?.slice(0, 8)}</td>
+                    <td style={{ fontSize: 12 }}>{row.user?.phoneNumber ?? '—'}</td>
                     <td style={{ fontSize: 12 }}>{row.agent?.displayName ?? '—'}</td>
                     <td>{formatCreditsFull(row.amountMinor)} ETB</td>
                     <td><span className={`badge ${row.status === 'credited' ? 'badge-green' : 'badge-red'}`}>{row.status}</span></td>
@@ -118,6 +142,23 @@ export function DepositsAdmin() {
                     </td>
                     <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={reason}>{reason}</td>
                     <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{reference}</td>
+                    <td style={{ fontSize: 11 }}>
+                      {row.receiptFileUrl
+                        ? <a href={`/uploads/${row.receiptFileUrl}`} target="_blank" rel="noreferrer">View</a>
+                        : '—'}
+                    </td>
+                    <td style={{ fontSize: 11 }}>
+                      <span className={`badge ${VERIFICATION_BADGE[verificationStatus]}`}>{verificationStatus}</span>
+                      {row.verifiedBy && (
+                        <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                          by {row.verifiedBy.slice(0, 8)}{row.verifiedAt ? ` · ${new Date(row.verifiedAt).toLocaleString()}` : ''}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn btn-sm btn-ghost" disabled={verifying === row.id} onClick={() => verify(row.id, 'verified')}>Verify</button>
+                      <button className="btn btn-sm btn-ghost" disabled={verifying === row.id} onClick={() => verify(row.id, 'flagged')}>Flag</button>
+                    </td>
                   </tr>
                 );
               })

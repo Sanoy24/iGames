@@ -131,6 +131,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const [showTopup,      setShowTopup]      = useState(false);
   const [provider,       setProvider]       = useState<DepositProvider>('telebirr');
   const [receiptInput,   setReceiptInput]   = useState('');
+  const [receiptFile,    setReceiptFile]    = useState<File | null>(null);
   const [isPreviewing,   setIsPreviewing]   = useState(false);
   const [preview,        setPreview]        = useState<NormalizedPreview | null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
@@ -225,15 +226,18 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
 
   const handleTopup = async () => {
     if (!receiptInput.trim()) return;
+    if (!receiptFile) { addToast('error', 'Please attach a photo or PDF of your receipt'); return; }
     setIsSubmitting(true);
     try {
+      const { fileUrl } = await paymentsApi.uploadReceipt(receiptFile);
       if (provider === 'mpesa') {
-        await paymentsApi.submitMpesaSms(receiptInput.trim());
+        await paymentsApi.submitMpesaSms(receiptInput.trim(), fileUrl);
       } else {
-        await paymentsApi.submitTelebirrReceipt(receiptInput.trim());
+        await paymentsApi.submitTelebirrReceipt(receiptInput.trim(), fileUrl);
       }
       addToast('success', 'Deposit confirmed! Your account has been credited.');
       setReceiptInput('');
+      setReceiptFile(null);
       setPreview(null);
       setShowTopup(false);
       await loadWallet();
@@ -250,11 +254,13 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     if (next === provider) return;
     setProvider(next);
     setReceiptInput('');
+    setReceiptFile(null);
     setPreview(null);
   };
 
   const resetTopup = () => {
     setReceiptInput('');
+    setReceiptFile(null);
     setPreview(null);
   };
 
@@ -609,6 +615,20 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                         )}
                       </div>
                     </div>
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                        Attach a photo or PDF of the receipt <span style={{ color: 'var(--danger)' }}>*</span>
+                      </label>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                        onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
+                        style={{ width: '100%' }}
+                      />
+                      {receiptFile && (
+                        <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 4 }}>{receiptFile.name}</div>
+                      )}
+                    </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
                         className="btn btn-secondary"
@@ -620,7 +640,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                       <button
                         className="btn btn-success"
                         onClick={handleTopup}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || !receiptFile}
                         style={{ flex: 2 }}
                       >
                         {isSubmitting

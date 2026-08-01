@@ -187,16 +187,24 @@ export const paymentsApi = {
   previewTelebirrReceipt: (rawText: string) =>
     api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
 
-  submitTelebirrReceipt: (rawText: string) =>
-    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
+  submitTelebirrReceipt: (rawText: string, receiptFileUrl: string) =>
+    api.post('/payments/telebirr/receipts', { ...extractTelebirrReceiptBody(rawText), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
 
   // M-Pesa is verified from the pasted confirmation SMS (optionally cross-checked
   // against a portal server-side), so it can also exceed the default — give it 45s.
   previewMpesaSms: (sms: string) =>
     api.post<MpesaPreview>('/payments/mpesa/preview', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
 
-  submitMpesaSms: (sms: string) =>
-    api.post('/payments/mpesa/receipts', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
+  submitMpesaSms: (sms: string, receiptFileUrl: string) =>
+    api.post('/payments/mpesa/receipts', { sms: sms.trim(), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+
+  /** Upload a photo/PDF of the physical receipt before submitting — returns a
+   * relative path (e.g. "deposit-receipts/<uuid>.jpg") to pass as receiptFileUrl. */
+  uploadReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/payments/receipts/upload', form).then((r) => r.data);
+  },
 
   getActiveAgent: () =>
     api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
@@ -786,6 +794,10 @@ export const adminWithdrawalsApi = {
   listWithdrawals: () => api.get<Withdrawal[]>('/admin/withdrawals').then((r) => r.data),
   processWithdrawal: (id: string, action: 'approve' | 'reject', adminNotes?: string) =>
     api.post<Withdrawal>(`/admin/withdrawals/${id}/process`, { action, adminNotes }).then((r) => r.data),
+  /** Admin sign-off on an agent-submitted withdrawal (status 'awaiting_verification') —
+   * approve is what actually releases the fund-hold and credits the agent. */
+  verifyWithdrawal: (id: string, decision: 'approve' | 'reject', notes?: string) =>
+    api.post<Withdrawal>(`/admin/withdrawals/${id}/verify`, { decision, notes }).then((r) => r.data),
 };
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
@@ -799,8 +811,15 @@ export const agentApi = {
   claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
   rejectWithdrawal: (id: string, remarks: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/reject`, { remarks }).then((r) => r.data),
-  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string) =>
-    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof }, { timeout: 45000 }).then((r) => r.data),
+  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string, receiptFileUrl: string) =>
+    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof, receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+  /** Upload a photo/PDF of the payout receipt before completing — returns a
+   * relative path (e.g. "withdrawal-receipts/<uuid>.jpg") to pass as receiptFileUrl. */
+  uploadWithdrawalReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/agent/withdrawals/receipts/upload', form).then((r) => r.data);
+  },
   transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
 
@@ -1073,5 +1092,7 @@ export const adminGameTransactionsApi = {
 
 export const adminDepositsApi = {
   getDeposits: (provider: 'telebirr' | 'mpesa', page?: number, limit?: number, status?: 'credited' | 'rejected') =>
-    api.get<{ data: any[], total: number }>('/admin/deposits', { params: { provider, page, limit, status } }).then((r) => r.data)
+    api.get<{ data: any[], total: number }>('/admin/deposits', { params: { provider, page, limit, status } }).then((r) => r.data),
+  verifyDeposit: (provider: 'telebirr' | 'mpesa', id: string, verificationStatus: 'verified' | 'flagged') =>
+    api.patch(`/admin/deposits/${id}/verify`, { provider, verificationStatus }).then((r) => r.data),
 };

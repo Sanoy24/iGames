@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Bot, Context, InlineKeyboard, Keyboard, webhookCallback } from 'grammy';
 import { UsersService } from '../users/users.service';
 import { normalizeEthiopianPhone } from '../common/phone.util';
+import { describeTelegramUpdate } from './telegram-update.util';
 
 /**
  * A separate, standalone Telegram bot for AGENTS only (e.g. @yaho_agent_bot) —
@@ -100,7 +101,7 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
       // Telegram redeliver the same update forever and pile up pending_update_count.
       // Always ack Telegram so the queue keeps moving; the real error is logged here.
       this.logger.error(
-        `Unhandled error processing agent bot webhook update: ${err instanceof Error ? err.message : err}`,
+        `Unhandled error processing agent bot webhook update (${describeTelegramUpdate(req.body)}): ${err instanceof Error ? err.message : err}`,
         err instanceof Error ? err.stack : undefined,
       );
       if (!res.headersSent) res.status(200).send('OK');

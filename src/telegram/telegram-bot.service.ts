@@ -18,6 +18,7 @@ import {
     webhookCallback,
 } from 'grammy';
 import { REDIS_CLIENT } from '../redis/redis.constants';
+import { describeTelegramUpdate } from './telegram-update.util';
 import { parseReferralPayload } from '../common/referral-code.util';
 import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { UsersService } from '../users/users.service';
@@ -287,7 +288,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             // Telegram redeliver the same update forever and pile up pending_update_count.
             // Always ack Telegram so the queue keeps moving; the real error is logged here.
             this.logger.error(
-                `Unhandled error processing webhook update: ${err instanceof Error ? err.message : err}`,
+                `Unhandled error processing webhook update (${describeTelegramUpdate(req.body)}): ${err instanceof Error ? err.message : err}`,
                 err instanceof Error ? err.stack : undefined,
             );
             if (!res.headersSent) res.status(200).send('OK');

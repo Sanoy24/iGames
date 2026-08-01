@@ -28,6 +28,7 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
   private readonly logger = new Logger(AgentBotService.name);
   private bot: Bot | undefined;
   private isPolling = false;
+  private readonly linkedAgentCache = new Map<number, string>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -108,6 +109,22 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
     }
   }
 
+  /**
+   * Run noncritical follow-up work after the webhook can be acknowledged.
+   * This keeps the agent bot from spending the full webhook timeout budget on
+   * extra DB reads and reply messages.
+   */
+  private deferTask(taskName: string, task: () => Promise<void>): void {
+    setImmediate(() => {
+      void task().catch((err) => {
+        this.logger.error(
+          `Deferred agent-bot task failed (${taskName}): ${err instanceof Error ? err.message : err}`,
+          err instanceof Error ? err.stack : undefined,
+        );
+      });
+    });
+  }
+
   private contactRequestKeyboard(): Keyboard {
     return new Keyboard()
       .requestContact('📱 Share My Phone Number')
@@ -129,21 +146,25 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   private registerCommands(bot: Bot, miniAppUrl: string): void {
-    bot.command('start', async (ctx) => {
-      await ctx.reply(
-        'Welcome to the iGames Agent Panel.\n\n' +
-        'Share your registered phone number to link your agent account:',
-        { reply_markup: this.contactRequestKeyboard() },
-      );
+    bot.command('start', (ctx) => {
+      this.deferTask('agent:/start', async () => {
+        await ctx.reply(
+          'Welcome to the iGames Agent Panel.\n\n' +
+          'Share your registered phone number to link your agent account:',
+          { reply_markup: this.contactRequestKeyboard() },
+        );
+      });
     });
 
-    bot.on('message:contact', async (ctx) => {
+    bot.on('message:contact', (ctx) => {
       const contact = ctx.message.contact;
       const telegramUserId = ctx.from?.id;
 
       if (!contact.phone_number || (contact.user_id && contact.user_id !== telegramUserId)) {
-        await ctx.reply('Please share your own phone number using the button provided.', {
-          reply_markup: this.contactRequestKeyboard(),
+        this.deferTask('agent:contact:invalid', async () => {
+          await ctx.reply('Please share your own phone number using the button provided.', {
+            reply_markup: this.contactRequestKeyboard(),
+          });
         });
         return;
       }
@@ -151,79 +172,85 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
 
       const normalized = normalizeEthiopianPhone(contact.phone_number);
       if (!normalized) {
-        await ctx.reply('That does not look like a valid Ethiopian phone number.', {
-          reply_markup: this.contactRequestKeyboard(),
+        this.deferTask('agent:contact:bad-phone', async () => {
+          await ctx.reply('That does not look like a valid Ethiopian phone number.', {
+            reply_markup: this.contactRequestKeyboard(),
+          });
         });
         return;
       }
 
-      let agent;
-      try {
-        agent = await this.usersService.findAgentByPhone(normalized);
-      } catch (err) {
-        this.logger.error('Agent lookup failed', err instanceof Error ? err.stack : err);
-        await ctx.reply('Something went wrong looking up your account. Please try again.');
-        return;
-      }
+      this.deferTask(`agent:contact:${telegramUserId}`, async () => {
+        let agent;
+        try {
+          agent = await this.usersService.findAgentByPhone(normalized);
+        } catch (err) {
+          this.logger.error('Agent lookup failed', err instanceof Error ? err.stack : err);
+          await ctx.reply('Something went wrong looking up your account. Please try again.');
+          return;
+        }
 
-      if (!agent) {
+        if (!agent) {
+          await ctx.reply(
+            'No agent account was found for this number. Contact your admin if you believe this is a mistake.',
+          );
+          return;
+        }
+
+        if (agent.status === 'suspended' || agent.status === 'closed') {
+          await ctx.reply('Your agent account is not active. Contact your admin.');
+          return;
+        }
+
+        try {
+          await this.usersService.linkTelegramIdentityToUser(
+            agent.id,
+            {
+              telegramUserId: String(telegramUserId),
+              username: ctx.from?.username,
+              firstName: ctx.from?.first_name,
+              lastName: ctx.from?.last_name,
+              languageCode: ctx.from?.language_code,
+            },
+            'agent',
+          );
+        } catch (err) {
+          this.logger.error(`Failed to link Telegram identity for agent ${agent.id}`, err instanceof Error ? err.stack : err);
+          await ctx.reply(
+            err instanceof Error && err.message.includes('already linked')
+              ? 'This Telegram account is already linked to a different account.'
+              : 'Something went wrong linking your account. Please try again.',
+          );
+          return;
+        }
+
+        this.linkedAgentCache.set(telegramUserId, agent.id);
+
+        // Location is mandatory for agents: ask for it now and withhold the panel
+        // button until it's shared. Falls straight through to the panel if this
+        // agent already shared one on a previous link.
+        let alreadyShared = false;
+        try {
+          alreadyShared = await this.usersService.hasSharedLocation(agent.id);
+        } catch (err) {
+          this.logger.error(`Failed to check shared location for agent ${agent.id}`, err instanceof Error ? err.stack : err);
+        }
+
+        if (!alreadyShared) {
+          await ctx.reply(
+            `Linked! Welcome, ${agent.displayName}.\n\n` +
+            `One more step — share your location so we know which area you operate in:`,
+            { reply_markup: this.locationRequestKeyboard() },
+          );
+          return;
+        }
+
         await ctx.reply(
-          'No agent account was found for this number. Contact your admin if you believe this is a mistake.',
+          `Linked! Welcome, ${agent.displayName}.`,
+          { reply_markup: { remove_keyboard: true } as never },
         );
-        return;
-      }
-
-      if (agent.status === 'suspended' || agent.status === 'closed') {
-        await ctx.reply('Your agent account is not active. Contact your admin.');
-        return;
-      }
-
-      try {
-        await this.usersService.linkTelegramIdentityToUser(
-          agent.id,
-          {
-            telegramUserId: String(telegramUserId),
-            username: ctx.from?.username,
-            firstName: ctx.from?.first_name,
-            lastName: ctx.from?.last_name,
-            languageCode: ctx.from?.language_code,
-          },
-          'agent',
-        );
-      } catch (err) {
-        this.logger.error(`Failed to link Telegram identity for agent ${agent.id}`, err instanceof Error ? err.stack : err);
-        await ctx.reply(
-          err instanceof Error && err.message.includes('already linked')
-            ? 'This Telegram account is already linked to a different account.'
-            : 'Something went wrong linking your account. Please try again.',
-        );
-        return;
-      }
-
-      // Location is mandatory for agents: ask for it now and withhold the panel
-      // button until it's shared. Falls straight through to the panel if this
-      // agent already shared one on a previous link.
-      let alreadyShared = false;
-      try {
-        alreadyShared = await this.usersService.hasSharedLocation(agent.id);
-      } catch (err) {
-        this.logger.error(`Failed to check shared location for agent ${agent.id}`, err instanceof Error ? err.stack : err);
-      }
-
-      if (!alreadyShared) {
-        await ctx.reply(
-          `Linked! Welcome, ${agent.displayName}.\n\n` +
-          `One more step — share your location so we know which area you operate in:`,
-          { reply_markup: this.locationRequestKeyboard() },
-        );
-        return;
-      }
-
-      await ctx.reply(
-        `Linked! Welcome, ${agent.displayName}.`,
-        { reply_markup: { remove_keyboard: true } as never },
-      );
-      await this.sendPanelButton(ctx, miniAppUrl);
+        await this.sendPanelButton(ctx, miniAppUrl);
+      });
     });
 
     // Mandatory first-time agent location step. This pin is now the live signal
@@ -231,68 +258,79 @@ export class AgentBotService implements OnApplicationBootstrap, OnApplicationShu
     // /updatelocation below for refreshing it), but it still does NOT itself
     // grant area access — visibility for an agent is governed by
     // User.assignedAgentId equality, never by pin proximity.
-    bot.on('message:location', async (ctx) => {
+    bot.on('message:location', (ctx) => {
       const telegramUserId = ctx.from?.id;
       if (!telegramUserId) return;
 
       const { latitude, longitude } = ctx.message.location;
 
-      const agentId = await this.resolveLinkedAgentId(telegramUserId);
-      if (!agentId) {
-        await ctx.reply('Please share your phone number first to link your agent account.', {
-          reply_markup: this.contactRequestKeyboard(),
-        });
-        return;
-      }
+      this.deferTask(`agent:location:${telegramUserId}`, async () => {
+        const agentId = await this.resolveLinkedAgentId(telegramUserId);
+        if (!agentId) {
+          await ctx.reply('Please share your phone number first to link your agent account.', {
+            reply_markup: this.contactRequestKeyboard(),
+          });
+          return;
+        }
 
-      try {
-        await this.usersService.setAgentSharedLocation(agentId, latitude, longitude);
-      } catch (err) {
-        this.logger.error(`Failed to save shared location for agent ${agentId}`, err instanceof Error ? err.stack : err);
-        await ctx.reply('Could not save your location — please try again.', {
-          reply_markup: this.locationRequestKeyboard(),
-        });
-        return;
-      }
+        try {
+          await this.usersService.setAgentSharedLocation(agentId, latitude, longitude);
+        } catch (err) {
+          this.logger.error(`Failed to save shared location for agent ${agentId}`, err instanceof Error ? err.stack : err);
+          await ctx.reply('Could not save your location — please try again.', {
+            reply_markup: this.locationRequestKeyboard(),
+          });
+          return;
+        }
 
-      await ctx.reply('Location saved. Thank you!', {
-        reply_markup: { remove_keyboard: true } as never,
+        await ctx.reply('Location saved. Thank you!', {
+          reply_markup: { remove_keyboard: true } as never,
+        });
+        await this.sendPanelButton(ctx, miniAppUrl);
       });
-      await this.sendPanelButton(ctx, miniAppUrl);
     });
 
     // Re-entry point for the same location step above — an agent's pin is
     // otherwise never refreshed after first link, which would make GPS-based
     // player matching drift stale as agents move between areas or shifts.
     // message:location's unconditional overwrite handles the actual save.
-    bot.command('updatelocation', async (ctx) => {
+    bot.command('updatelocation', (ctx) => {
       const telegramUserId = ctx.from?.id;
       if (!telegramUserId) return;
 
-      const agentId = await this.resolveLinkedAgentId(telegramUserId);
-      if (!agentId) {
-        await ctx.reply('Please share your phone number first to link your agent account:', {
-          reply_markup: this.contactRequestKeyboard(),
-        });
-        return;
-      }
+      this.deferTask(`agent:updatelocation:${telegramUserId}`, async () => {
+        const agentId = await this.resolveLinkedAgentId(telegramUserId);
+        if (!agentId) {
+          await ctx.reply('Please share your phone number first to link your agent account:', {
+            reply_markup: this.contactRequestKeyboard(),
+          });
+          return;
+        }
 
-      await ctx.reply('Share your current location to update it:', {
-        reply_markup: this.locationRequestKeyboard(),
+        await ctx.reply('Share your current location to update it:', {
+          reply_markup: this.locationRequestKeyboard(),
+        });
       });
     });
 
-    bot.on('message:text', async (ctx) => {
-      await ctx.reply('Send /start to link your agent account.');
+    bot.on('message:text', (ctx) => {
+      this.deferTask('agent:text', async () => {
+        await ctx.reply('Send /start to link your agent account.');
+      });
     });
   }
 
   /** The linked agent's user id for this Telegram account, or null if unlinked. */
   private async resolveLinkedAgentId(telegramUserId: number): Promise<string | null> {
+    const cached = this.linkedAgentCache.get(telegramUserId);
+    if (cached) return cached;
     try {
       const linked = await this.usersService.findAgentPhoneByTelegramId(String(telegramUserId));
       if (!linked) return null;
       const agent = await this.usersService.findAgentByPhone(linked.phoneNumber);
+      if (agent?.id) {
+        this.linkedAgentCache.set(telegramUserId, agent.id);
+      }
       return agent?.id ?? null;
     } catch (err) {
       this.logger.error(`Failed to resolve agent for Telegram user ${telegramUserId}`, err instanceof Error ? err.stack : err);

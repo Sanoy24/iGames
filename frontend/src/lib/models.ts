@@ -192,6 +192,7 @@ export type BingoRoom = {
   houseEdgePct: number;
   prizeMinor: number;
   takenSpots?: number[];
+  cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
 };
 
@@ -228,6 +229,7 @@ export type BingoConfig = {
   defaultFullHouseMinor: number;
   drawIntervalSeconds: number;
   salesWindowSeconds?: number;
+  cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
   defaultWinMode?: string;
   defaultNumberRange?: number;

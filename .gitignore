@@ -11,3 +11,6 @@ yarn-error.log*
 .vitepress/
 # Admin broadcast image uploads (persisted on disk, not source)
 uploads/
+# Vendored tesseract.js language data — fetched by scripts/fetch-tessdata.js
+# (postinstall), not committed; see TelebirrScreenshotOcrService.
+tessdata/

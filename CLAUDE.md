@@ -1,4 +1,4 @@
-# iGames Contributor Guide
+<!-- # iGames Contributor Guide
 
 This repo is building an audit-conscious NestJS + MySQL backend for Keno and 90-ball Bingo. Treat the backend as ledger-ready credits from day one: no real-money payments, KYC, AML, tax, or jurisdiction-specific compliance should be added unless explicitly requested. The first client may be a Telegram Bot and Telegram Mini App, but the backend must remain standalone and saleable as its own product.
 
@@ -71,4 +71,4 @@ This repo is building an audit-conscious NestJS + MySQL backend for Keno and 90-
 - Telegram Mini Apps: https://core.telegram.org/bots/webapps
 - Telegram Login Widget: https://core.telegram.org/bots/telegram-login
 - OWASP API Security Top 10: https://owasp.org/API-Security/
-- GLI standards library: https://gaminglabs.com/gli-standards/
+- GLI standards library: https://gaminglabs.com/gli-standards/ -->

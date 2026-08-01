@@ -47,6 +47,10 @@ export class BingoConfig {
   @Column({ type: 'int', default: 40 })
   salesWindowSeconds: number;
 
+  /** Seconds before the scheduled draw when cartela buys/refunds are frozen. */
+  @Column({ type: 'int', default: 3 })
+  cartelaChangeLockSeconds: number;
+
   /** Seconds the completed-room result is shown before advancing to the next room. */
   @Column({ type: 'int', default: 10 })
   resultDisplaySeconds: number;

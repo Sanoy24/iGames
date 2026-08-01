@@ -29,8 +29,6 @@ import { BotName } from '../bots/entities/bot-name.entity';
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
 
-const FINAL_CARTELA_RETURN_LOCK_MS = 3_000;
-
 type RoomBotIdentity = BingoBotIdentity;
 
 // ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
@@ -131,6 +129,7 @@ export type BingoRoomResponse = {
   houseEdgePct: number;
   prizeMinor: number;
   takenSpots?: number[];
+  cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
 };
 
@@ -316,6 +315,7 @@ export class BingoService implements OnModuleInit {
         defaultFullHouseMinor: 100000,
         drawIntervalSeconds: 2,
         salesWindowSeconds: 40,
+        cartelaChangeLockSeconds: 3,
         resultDisplaySeconds: 10,
         defaultWinMode: 'prefilled',
         defaultNumberRange: 75,
@@ -473,12 +473,11 @@ export class BingoService implements OnModuleInit {
 
     const identities = await this.hydrateRoomBotIdentities(room, [user.id], manager);
     const identity = identities[user.id];
-    const displayName = identity
-      ? this.formatBotDisplayName(identity.displayName, identity.phoneSuffix)
-      : user.displayName ?? 'Bot';
+    const displayName = identity?.displayName ?? user.displayName ?? 'Bot';
+    const phoneLast4 = identity?.phoneSuffix ?? (user.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
     return {
       displayName,
-      phoneLast4: '',
+      phoneLast4,
       phoneSuffix: identity?.phoneSuffix,
       isBot: true,
     };
@@ -510,6 +509,26 @@ export class BingoService implements OnModuleInit {
     if (wasEmpty) {
       room.scheduledStartAt = new Date(Date.now() + this.startCountdownDelayMs(cfg));
     }
+  }
+
+  /**
+   * Shared freeze window before a room starts.
+   *
+   * Once the countdown enters this window, cartela changes must stop for both
+   * humans and bots so the room cannot flip from "has real players" to
+   * "bot-only" on the boundary tick.
+   */
+  private isCartelaChangeLocked(
+    room: Pick<BingoRoom, 'status' | 'scheduledStartAt' | 'cartelaChangeLockSeconds'>,
+    nowMs = Date.now(),
+  ): boolean {
+    const lockSeconds = Math.max(0, room.cartelaChangeLockSeconds ?? 3);
+    return (
+      lockSeconds > 0 &&
+      room.status === 'open' &&
+      room.scheduledStartAt !== null &&
+      room.scheduledStartAt.getTime() - nowMs <= lockSeconds * 1000
+    );
   }
 
   /**
@@ -693,6 +712,7 @@ export class BingoService implements OnModuleInit {
       patternPrizes: [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
       rankingMode: cfg.prefilledRankingMode ?? 'race',
+      cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
       scheduledStartAt: null,
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -1132,6 +1152,7 @@ export class BingoService implements OnModuleInit {
       patternPrizes: dto.patternPrizes ?? [],
       houseEdgePct: cfg.houseEdgePct ?? 20,
       rankingMode: cfg.prefilledRankingMode ?? 'race',
+      cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
       scheduledStartAt: dto.scheduledStartAt ? new Date(dto.scheduledStartAt) : new Date(),
       drawnNumbers: [],
       rngAuditLogIds: [],
@@ -1299,12 +1320,13 @@ export class BingoService implements OnModuleInit {
     cartelaNumbers?: number[];
     idempotencyKey: string;
     selectedNumbers?: number[];
+    skipBotReconcile?: boolean;
   }): Promise<BingoTicketResponse[]> {
     await this.gamesService.assertPlayable('bingo');
     const userId = this.validateUuid(input.userId, 'userId');
     const roomId = this.validateUuid(input.roomId, 'roomId');
 
-    return await this.dataSource.transaction(async (manager) => {
+    const tickets = await this.dataSource.transaction(async (manager) => {
       const existingTickets = await manager.find(BingoTicket, {
         where: { userId, roomId, purchaseIdempotencyKey: input.idempotencyKey },
       });
@@ -1319,6 +1341,9 @@ export class BingoService implements OnModuleInit {
 
       if (!room) throw new NotFoundException('Bingo room not found');
       if (room.status !== 'open') throw new ConflictException('Bingo room is not open for ticket sales');
+      if (this.isCartelaChangeLocked(room)) {
+        throw new ConflictException('Cartela changes are locked near the draw start');
+      }
 
       // ── Per-user cartela cap (admin config; 0 = unlimited) ───────────────────
       // Counts how many cartelas this purchase adds and rejects if it would push
@@ -1516,6 +1541,17 @@ export class BingoService implements OnModuleInit {
 
       return createdTickets.map((ticket) => this.toTicketResponse(ticket));
     });
+
+    if (!input.skipBotReconcile) {
+      await this.reconcileBotCartelasInRoom(roomId).catch((err) =>
+        this.logger.warn(
+          `Failed to reconcile Bingo bots after purchase in room ${roomId}`,
+          err instanceof Error ? err.stack : err,
+        ),
+      );
+    }
+
+    return tickets;
   }
 
   /**
@@ -1529,11 +1565,12 @@ export class BingoService implements OnModuleInit {
     userId: string;
     roomId: string;
     cartelaNumber: number;
+    skipBotReconcile?: boolean;
   }): Promise<{ cartelaNumber: number; refundedMinor: number }> {
     const userId = this.validateUuid(input.userId, 'userId');
     const roomId = this.validateUuid(input.roomId, 'roomId');
 
-    return await this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const room = await manager.findOne(BingoRoom, {
         where: { id: roomId },
         lock: { mode: 'pessimistic_write' },
@@ -1545,8 +1582,8 @@ export class BingoService implements OnModuleInit {
       if (room.status !== 'open') {
         throw new ConflictException('Sales are closed — this cartela can no longer be refunded');
       }
-      if (room.scheduledStartAt && room.scheduledStartAt.getTime() - Date.now() <= FINAL_CARTELA_RETURN_LOCK_MS) {
-        throw new ConflictException('Cartela returns are locked in the final 3 seconds before the draw');
+      if (this.isCartelaChangeLocked(room)) {
+        throw new ConflictException('Cartela changes are locked near the draw start');
       }
 
       const ticket = await manager.findOne(BingoTicket, {
@@ -1596,6 +1633,17 @@ export class BingoService implements OnModuleInit {
 
       return { cartelaNumber: input.cartelaNumber, refundedMinor: ticket.stakeMinor };
     });
+
+    if (!input.skipBotReconcile) {
+      await this.reconcileBotCartelasInRoom(roomId).catch((err) =>
+        this.logger.warn(
+          `Failed to reconcile Bingo bots after refund in room ${roomId}`,
+          err instanceof Error ? err.stack : err,
+        ),
+      );
+    }
+
+    return result;
   }
 
   // ── Draw ─────────────────────────────────────────────────────────────────────
@@ -2121,10 +2169,8 @@ export class BingoService implements OnModuleInit {
     const display = winnerUser
       ? await this.resolveDisplayedNameForUser(room, winnerUser, manager)
       : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
-    const displayedName = overrideDisplayName
-      ? (display.phoneSuffix ? this.formatBotDisplayName(overrideDisplayName, display.phoneSuffix) : overrideDisplayName)
-      : display.displayName;
-    const phoneLast4 = overrideDisplayName ? '' : display.phoneLast4;
+    const displayedName = overrideDisplayName ?? display.displayName;
+    const phoneLast4 = display.phoneLast4;
 
     winner.wonTiers = [...(winner.wonTiers ?? []), place];
     winner.payoutMinor += prizeMinor;
@@ -2987,6 +3033,15 @@ export class BingoService implements OnModuleInit {
     return Number(rows[0]?.c ?? 0);
   }
 
+  /** Free cartela numbers that can still be assigned in a prefilled room. */
+  private async listAvailableCartelaNumbers(roomId: string): Promise<number[]> {
+    const cards = await this.bingoCardRepository.find({
+      where: { roomId, assignedTicketId: IsNull() },
+      order: { cartelaNumber: 'ASC' },
+    });
+    return cards.map((card) => card.cartelaNumber).filter((n) => Number.isFinite(n));
+  }
+
   private async cancelRoomWithRefundsInSession(
     room: BingoRoom,
     manager: EntityManager,
@@ -3041,6 +3096,15 @@ export class BingoService implements OnModuleInit {
       : this.bingoTicketRepository.countBy(where);
   }
 
+  /** All bot userIds in the system, active or paused. */
+  private async getBotUserIds(manager: EntityManager): Promise<Set<string>> {
+    const rows: Array<{ id: string }> = await manager.query(
+      `SELECT id FROM users
+        WHERE JSON_EXTRACT(productMetadata, '$.botPolicy') IS NOT NULL`,
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
   /**
    * Open rooms with an active or just-expired buy-window countdown (first ticket
    * sold, scheduledStartAt stamped). Used by the scheduler to progressively top up
@@ -3051,6 +3115,105 @@ export class BingoService implements OnModuleInit {
     return this.bingoRoomRepository.find({
       where: { status: 'open', soldTickets: MoreThan(0), scheduledStartAt: Not(IsNull()) },
     });
+  }
+
+  /**
+   * Reconcile the room's bot cartelas to the current human demand.
+   * Prefilled Bingo bots mirror the live human cartela count while the room is
+   * open, and stand down entirely once the room has enough real players or none
+   * at all. Returns true if any bot purchase/refund/cancel action happened.
+   */
+  async reconcileBotCartelasInRoom(roomId: string): Promise<boolean> {
+    const validRoomId = this.validateUuid(roomId, 'roomId');
+    const room = await this.bingoRoomRepository.findOneBy({ id: validRoomId });
+    if (!room || room.status !== 'open') return false;
+
+    const cfg = await this.getBingoConfig();
+    const realPlayers = await this.countRealPlayersInRoom(validRoomId);
+    if (realPlayers <= 0) {
+      await this.cancelRoom(validRoomId).catch(() => undefined);
+      return true;
+    }
+    if (this.isCartelaChangeLocked(room)) {
+      return false;
+    }
+
+    const currentBotCartelas = await this.countBotCartelasInRoom(validRoomId);
+    const totalCartelas = await this.countSoldTickets(validRoomId);
+    const shouldParticipate = (cfg.botMaxRealPlayers ?? 0) > 0 && realPlayers < (cfg.botMaxRealPlayers ?? 0);
+
+    if (room.winMode !== 'prefilled') {
+      return false;
+    }
+
+    const realCartelas = Math.max(0, totalCartelas - currentBotCartelas);
+    const desiredBotCartelas = shouldParticipate ? realCartelas : 0;
+    if (desiredBotCartelas === currentBotCartelas) return false;
+
+    const allBotIds = await this.getBotUserIds(this.bingoRoomRepository.manager);
+    const activeBotIds = await this.getActiveBotUserIds(this.bingoRoomRepository.manager);
+    const botIdsForPurchase = [...activeBotIds].filter((id) => allBotIds.has(id));
+    if (botIdsForPurchase.length === 0 && desiredBotCartelas > currentBotCartelas) {
+      return false;
+    }
+    if (desiredBotCartelas > currentBotCartelas && botIdsForPurchase.length > 0) {
+      await this.ensureRoomBotIdentities(validRoomId, botIdsForPurchase);
+    }
+
+    let changed = false;
+    if (desiredBotCartelas > currentBotCartelas) {
+      const freeCartelas = await this.listAvailableCartelaNumbers(validRoomId);
+      let remaining = Math.min(desiredBotCartelas - currentBotCartelas, freeCartelas.length);
+      const shuffledBotIds = this.shuffle(botIdsForPurchase);
+
+      for (let index = 0; remaining > 0 && index < shuffledBotIds.length; index += 1) {
+        const botId = shuffledBotIds[index];
+        const botsLeft = shuffledBotIds.length - index;
+        const take = Math.max(1, Math.min(remaining, Math.ceil(remaining / botsLeft)));
+        const cartelaNumbers = freeCartelas.splice(0, take);
+        if (cartelaNumbers.length === 0) break;
+
+        const ownedSoFar = await this.countUserCartelasInRoom(botId, validRoomId);
+        const idempotencyKey = `bot-bingo:${validRoomId}:${botId}:${ownedSoFar}`;
+        try {
+          await this.purchaseTickets({
+            userId: botId,
+            roomId: validRoomId,
+            cartelaNumbers,
+            idempotencyKey,
+            skipBotReconcile: true,
+          });
+          remaining -= cartelaNumbers.length;
+          changed = true;
+        } catch {
+          // Bot may be out of balance or the room may have filled since we read it.
+        }
+      }
+    } else {
+      const botTicketRows = await this.bingoTicketRepository.find({
+        where: { roomId: validRoomId, status: Not('cancelled') },
+        order: { createdAt: 'ASC' },
+      });
+      const botTickets = botTicketRows.filter((ticket) => allBotIds.has(ticket.userId));
+      const toRelease = botTickets.slice(0, currentBotCartelas - desiredBotCartelas);
+
+      for (const ticket of toRelease) {
+        if (ticket.cartelaNumber == null) continue;
+        try {
+          await this.releaseCartela({
+            userId: ticket.userId,
+            roomId: validRoomId,
+            cartelaNumber: ticket.cartelaNumber,
+            skipBotReconcile: true,
+          });
+          changed = true;
+        } catch {
+          // If a bot cartela is already gone, just leave the rest to the next sync.
+        }
+      }
+    }
+
+    return changed;
   }
 
   /** Set of active (house-controlled) bot userIds. */
@@ -3148,6 +3311,7 @@ export class BingoService implements OnModuleInit {
       houseEdgePct,
       prizeMinor,
       takenSpots: room.winMode === 'prefilled' ? (takenSpots ?? []) : undefined,
+      cartelaChangeLockSeconds: room.cartelaChangeLockSeconds ?? 3,
     };
   }
 

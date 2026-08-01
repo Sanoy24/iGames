@@ -190,6 +190,23 @@ export const paymentsApi = {
   submitTelebirrReceipt: (rawText: string, receiptFileUrl?: string) =>
     api.post('/payments/telebirr/receipts', { ...extractTelebirrReceiptBody(rawText), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
 
+  /** Same submit endpoint, given an already-known receipt number (e.g. from
+   * the screenshot/OCR flow) instead of raw SMS text to re-parse. */
+  submitTelebirrReceiptByNo: (receiptNo: string, receiptFileUrl?: string) =>
+    api.post('/payments/telebirr/receipts', { receiptNo, receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+
+  /** Upload a screenshot of the Telebirr app's "Successful" screen — OCR reads
+   * the transaction number server-side, then verifies it the same way the
+   * text-paste flow does. The screenshot is stored and its path returned as
+   * `fileUrl`, so it doubles as the receipt photo (no separate upload needed). */
+  previewTelebirrScreenshot: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api
+      .post<TelebirrPreview & { receiptNo: string; fileUrl: string }>('/payments/telebirr/preview-screenshot', form, { timeout: 45000 })
+      .then((r) => r.data);
+  },
+
   // M-Pesa is verified from the pasted confirmation SMS (optionally cross-checked
   // against a portal server-side), so it can also exceed the default — give it 45s.
   previewMpesaSms: (sms: string) =>

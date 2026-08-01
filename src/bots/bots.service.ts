@@ -293,26 +293,13 @@ export class BotsService {
 
   /**
    * Called by the scheduler on every tick for open rooms with an active buy-window
-   * countdown. Tops bots up toward a time-based target (a growing fraction of their
-   * eventual total allotment) instead of buying it all in one lump, so the room's
-   * displayed player count / pot climb progressively through the countdown instead
-   * of jumping once right before the draw starts. Once scheduledStartAt has passed,
-   * the elapsed fraction naturally saturates at 1, so this same method also serves
-   * as the final top-off to the full target — no separate "last minute" call needed.
-   * Idempotent per increment — safe to call every second per room.
-   * Returns true if any bot purchase happened this call.
+   * countdown. Bot demand is delegated to BingoService so the same live human-
+   * demand rule handles bot buys, bot refunds, and the final freeze window.
+   * Returns true if any bot purchase or refund happened this call.
    */
   async topUpBotsForOpenRoom(roomId: string): Promise<boolean> {
     const bots = await this.getActiveBots();
     if (bots.length === 0) return false;
-
-    // ── Liquidity threshold ──────────────────────────────────────────────────
-    // Bots only join while a room has FEWER than botMaxRealPlayers real players.
-    // At or above it (a healthy room), bots stay out and real players compete on a
-    // fair draw. 0 = bots never auto-join.
-    const cfg = await this.bingoService.getBingoConfig();
-    const maxReal = cfg.botMaxRealPlayers ?? 0;
-    if (maxReal <= 0) return false;
     const realPlayers = await this.bingoService.countRealPlayersInRoom(roomId);
     if (realPlayers <= 0) {
       let cancelled = false;
@@ -327,87 +314,7 @@ export class BotsService {
       }
       return cancelled;
     }
-    if (realPlayers >= maxReal) return false;
-
-    const state = await this.bingoService.getRoomState({ roomId });
-    if (state.status !== 'open' || !state.scheduledStartAt || !state.soldTickets) return false;
-    await this.bingoService.ensureRoomBotIdentities(roomId, bots.map((bot) => bot.id));
-
-    // ── Buy-window progress ──────────────────────────────────────────────────
-    // 0 at the moment the countdown was stamped (first ticket sold), 1 at/after
-    // scheduledStartAt. Drives how much of the eventual target bots should hold
-    // "so far" — the delta between that and what they already hold is bought now.
-    const salesWindowMs = this.bingoService.startCountdownDelayMs(cfg);
-    const startAtMs = new Date(state.scheduledStartAt).getTime();
-    const elapsedMs = Date.now() - (startAtMs - salesWindowMs);
-    const fraction = Math.min(1, Math.max(0, elapsedMs / salesWindowMs));
-
-    // Flooding modes buy MOST of the free cartelas so a bot wins the majority of
-    // low-player rounds on a genuinely fair draw (statistical/hybrid). Off/guaranteed
-    // take only a light, human-looking number (guaranteed steers at settlement).
-    const flood = cfg.botWinMode === 'statistical' || cfg.botWinMode === 'hybrid';
-
-    // Derash rooms are bought by cartela number, not by count.
-    const isPrefilled = state.winMode === 'prefilled';
-    const freeCartelas: number[] = [];
-    if (isPrefilled) {
-      const taken = new Set(state.takenSpots ?? []);
-      for (let n = 1; n <= (state.gridSize ?? 75); n += 1) {
-        if (!taken.has(n)) freeCartelas.push(n);
-      }
-      for (let i = freeCartelas.length - 1; i > 0; i -= 1) {
-        const j = randomInt(0, i + 1);
-        [freeCartelas[i], freeCartelas[j]] = [freeCartelas[j], freeCartelas[i]];
-      }
-    }
-
-    const alreadyBoughtByBots = await this.bingoService.countBotCartelasInRoom(roomId);
-
-    // Total cartelas bots will collectively end up with. Flood → most of the grid,
-    // always leaving a buffer of free cartelas so real players can still join.
-    // Otherwise → the sum of each bot's light per-round count. Pool size includes
-    // what bots already hold so the target doesn't shrink as they buy into it.
-    const poolSize = freeCartelas.length + alreadyBoughtByBots;
-    const buffer = Math.max(5, Math.ceil(poolSize * 0.15));
-    const lightTotal = bots.reduce(
-      (s, b) => s + Math.min((b.productMetadata!.botPolicy as BotPolicy).ticketsPerRound ?? 1, 5),
-      0,
-    );
-    const grabTarget = isPrefilled
-      ? (flood ? Math.max(0, poolSize - buffer) : Math.min(poolSize, lightTotal))
-      : lightTotal;
-
-    const targetSoFar = Math.floor(grabTarget * fraction);
-    let need = targetSoFar - alreadyBoughtByBots;
-    if (need <= 0) return false;
-    if (isPrefilled) need = Math.min(need, freeCartelas.length);
-
-    let bought = false;
-    let remaining = need;
-    for (const bot of bots) {
-      if (remaining <= 0) break;
-      const policy = bot.productMetadata!.botPolicy as BotPolicy;
-      const perBotCap = Math.max(1, Math.min(policy.ticketsPerRound ?? 1, 5));
-      const take = Math.min(perBotCap, remaining, isPrefilled ? freeCartelas.length : remaining);
-      if (take <= 0) continue;
-      const ownedSoFar = await this.bingoService.countUserCartelasInRoom(bot.id, roomId);
-      const idempotencyKey = `bot-bingo:${roomId}:${bot.id}:${ownedSoFar}`;
-      try {
-        if (isPrefilled) {
-          const cartelaNumbers = freeCartelas.splice(0, take);
-          if (cartelaNumbers.length === 0) continue;
-          await this.bingoService.purchaseTickets({ userId: bot.id, roomId, cartelaNumbers, idempotencyKey });
-          remaining -= cartelaNumbers.length;
-        } else {
-          await this.bingoService.purchaseTickets({ userId: bot.id, roomId, count: take, idempotencyKey });
-          remaining -= take;
-        }
-        bought = true;
-      } catch {
-        // Room full, insufficient balance, or duplicate key — skip silently
-      }
-    }
-    return bought;
+    return this.bingoService.reconcileBotCartelasInRoom(roomId);
   }
 
   /**

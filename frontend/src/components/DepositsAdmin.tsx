@@ -107,6 +107,7 @@ export function DepositsAdmin() {
               <th>Funded By</th>
               <th>Reason</th>
               <th>FT Number</th>
+              <th>Receipt Link</th>
               <th>Receipt</th>
               <th>Verification</th>
               <th></th>
@@ -114,9 +115,9 @@ export function DepositsAdmin() {
           </thead>
           <tbody>
             {loading && data.length === 0 ? (
-              <tr><td colSpan={12} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr>
+              <tr><td colSpan={13} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr>
             ) : data.length === 0 ? (
-              <tr><td colSpan={12} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>No deposits found.</td></tr>
+              <tr><td colSpan={13} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>No deposits found.</td></tr>
             ) : (
               data.map((row) => {
                 const reference = row.receiptNo ?? row.confirmationCode;
@@ -142,6 +143,11 @@ export function DepositsAdmin() {
                     </td>
                     <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={reason}>{reason}</td>
                     <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{reference}</td>
+                    <td style={{ fontSize: 11 }}>
+                      {provider === 'telebirr' && row.receiptNo
+                        ? <a href={`https://transactioninfo.ethiotelecom.et/receipt/${encodeURIComponent(row.receiptNo)}`} target="_blank" rel="noreferrer">Open</a>
+                        : '—'}
+                    </td>
                     <td style={{ fontSize: 11 }}>
                       {row.receiptFileUrl
                         ? <a href={`/uploads/${row.receiptFileUrl}`} target="_blank" rel="noreferrer">View</a>

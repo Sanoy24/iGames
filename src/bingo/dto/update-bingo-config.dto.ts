@@ -33,6 +33,9 @@ export class UpdateBingoConfigDto {
   salesWindowSeconds?: number;
 
   @IsOptional() @IsInt() @Min(0)
+  cartelaChangeLockSeconds?: number;
+
+  @IsOptional() @IsInt() @Min(0)
   resultDisplaySeconds?: number;
 
   @IsOptional() @IsIn(['line', 'pattern', 'prefilled'])

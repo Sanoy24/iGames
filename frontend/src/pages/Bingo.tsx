@@ -487,7 +487,7 @@ const CartelaGrid = memo(
                         textStyle = { color: '#f5f5f5', fontWeight: 900 };
                     }
 
-                    const canBuy = salesOpen && !takenByOther && !pending;
+                    const canBuy = salesOpen && !takenByOther && !pending && !returnLocked;
                     const canRefund = mine && salesOpen && !pending && !returnLocked;
                     const canTap = canBuy || canRefund;
 
@@ -2317,13 +2317,16 @@ export function Bingo({ onBack }: BingoProps) {
         ? Math.max(0, room.maxTickets - room.soldTickets)
         : 0;
     const salesOpen = room?.status === 'open';
-    const cartelaReturnsLocked =
+    const cartelaChangeLockSeconds = Math.max(0, room?.cartelaChangeLockSeconds ?? 3);
+    const cartelaChangesLocked =
         phase === 'buy' &&
         room?.status === 'open' &&
+        cartelaChangeLockSeconds > 0 &&
         room.scheduledStartAt !== undefined &&
         room.scheduledStartAt !== null &&
         timeRemainingSecs !== null &&
-        timeRemainingSecs <= 3;
+        timeRemainingSecs <= cartelaChangeLockSeconds;
+    const cartelaReturnsLocked = cartelaChangesLocked;
 
     // ── Paced reveal ─────────────────────────────────────────────────────────────
     // One shared cursor drives "now calling", the board and every card so they all
@@ -2516,7 +2519,7 @@ export function Bingo({ onBack }: BingoProps) {
 
     // ── Buy ──────────────────────────────────────────────────────────────────────
     const buyTickets = async () => {
-        if (!room || !salesOpen || alreadyBought) return;
+        if (!room || !salesOpen || alreadyBought || cartelaChangesLocked) return;
         setBuying(true);
         try {
             const bought = await bingoApi.purchaseTickets(
@@ -2542,7 +2545,8 @@ export function Bingo({ onBack }: BingoProps) {
 
     // Instant buy-or-refund on a single tap. Tapping an available cartela buys it
     // immediately; tapping one you already own (while sales are open) refunds it.
-    // A per-cartela pending guard prevents a double-tap from firing twice.
+    // The final freeze window blocks both directions, and a per-cartela pending
+    // guard prevents a double-tap from firing twice.
     const handleCartelaTap = useCallback(
         async (n: number) => {
             if (!room || room.status !== 'open') return;
@@ -2554,6 +2558,7 @@ export function Bingo({ onBack }: BingoProps) {
 
             const owned = myCartelaSet.has(n);
             if (owned && cartelaReturnsLocked) return;
+            if (!owned && cartelaChangesLocked) return;
             if (!owned && takenSet.has(n)) return; // taken by someone else — locked
 
             setPendingCartelas((prev) => new Set(prev).add(n));
@@ -2875,12 +2880,12 @@ export function Bingo({ onBack }: BingoProps) {
                                                         onClick={() =>
                                                             handleCartelaTap(n)
                                                         }
-                                                        disabled={busy || cartelaReturnsLocked}
+                                                        disabled={busy || cartelaChangesLocked}
                                                         title={t(
                                                             'bingo.tapToRefund',
                                                         )}
                                                         className={`group flex items-center gap-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono font-black text-[11px] pl-2 pr-1.5 py-0.5 border border-emerald-400/30 transition ${
-                                                            busy || cartelaReturnsLocked
+                                                            busy || cartelaChangesLocked
                                                                 ? 'opacity-50'
                                                                 : 'hover:bg-red-500/20 hover:text-red-300 hover:border-red-400/40'
                                                         }`}
@@ -2976,7 +2981,7 @@ export function Bingo({ onBack }: BingoProps) {
                                                 </span>
                                                 {cartelaReturnsLocked && (
                                                     <div className='mt-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-red-400'>
-                                                        Return locked
+                                                        Cartela changes locked
                                                     </div>
                                                 )}
                                             </div>
@@ -3148,13 +3153,19 @@ export function Bingo({ onBack }: BingoProps) {
                             </div>
                             <motion.button
                                 whileHover={
-                                    !buying && remainingTickets > 0
+                                    !buying &&
+                                    remainingTickets > 0 &&
+                                    !cartelaChangesLocked
                                         ? { scale: 1.02, y: -2 }
                                         : {}
                                 }
                                 whileTap={{ scale: 0.97 }}
                                 onClick={buyTickets}
-                                disabled={buying || remainingTickets <= 0}
+                                disabled={
+                                    buying ||
+                                    remainingTickets <= 0 ||
+                                    cartelaChangesLocked
+                                }
                                 className='btn btn-primary btn-full py-3.5 text-base font-black'
                             >
                                 {buying ? (

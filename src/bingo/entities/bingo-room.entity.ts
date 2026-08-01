@@ -66,6 +66,10 @@ export class BingoRoom {
   @Index()
   scheduledStartAt: Date | null;
 
+  /** Seconds before scheduledStartAt when cartela changes lock for this room. */
+  @Column({ type: 'int', default: 3 })
+  cartelaChangeLockSeconds: number;
+
   @Column({ type: 'json' })
   drawnNumbers: number[];
 

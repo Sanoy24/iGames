@@ -264,13 +264,15 @@ export class UsersService {
    * the normalized `+2519XXXXXXXX` phone. Returns the normalized phone, or null
    * when the shared number is not a valid Ethiopian mobile number.
    */
-  async setTelegramPhone(input: TelegramIdentityInput & { phoneNumber: string }): Promise<string | null> {
+  async setTelegramPhone(
+    input: TelegramIdentityInput & { phoneNumber: string },
+  ): Promise<{ phoneNumber: string; userId: string } | null> {
     const normalized = normalizeEthiopianPhone(input.phoneNumber);
     if (!normalized) return null;
 
     const { user } = await this.findOrCreateTelegramUser(input);
     await this.userRepository.update(user.id, { phoneNumber: normalized });
-    return normalized;
+    return { phoneNumber: normalized, userId: user.id };
   }
 
   /**

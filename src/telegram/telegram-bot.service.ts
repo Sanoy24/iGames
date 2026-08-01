@@ -46,6 +46,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     // In-memory cache: telegramUserId → phone (avoids repeated DB writes on /start)
     private readonly phoneCache = new Map<number, string>();
+    // Opportunistic cache for the internal user behind a Telegram account.
+    private readonly internalUserCache = new Map<number, string>();
 
     constructor(
         private readonly configService: ConfigService,
@@ -273,6 +275,21 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    /**
+     * Run a follow-up outside the webhook's critical path.
+     * We still log failures, but the update can be acknowledged immediately.
+     */
+    private deferTask(taskName: string, task: () => Promise<void>): void {
+        setImmediate(() => {
+            void task().catch((err) => {
+                this.logger.error(
+                    `Deferred Telegram task failed (${taskName}): ${err instanceof Error ? err.message : err}`,
+                    err instanceof Error ? err.stack : undefined,
+                );
+            });
+        });
+    }
+
     public async handleWebhookRequest(req: any, res: any) {
         if (!this.bot) {
             res.status(500).send('Bot not initialized');
@@ -486,10 +503,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         telegramUserId?: number,
     ): Promise<string | null> {
         if (!telegramUserId) return null;
+        const cached = this.internalUserCache.get(telegramUserId);
+        if (cached) return cached;
         try {
             const user = await this.usersService.findByTelegramUserId(
                 String(telegramUserId),
             );
+            if (user?.id) {
+                this.internalUserCache.set(telegramUserId, user.id);
+            }
             return user?.id ?? null;
         } catch (err) {
             this.logger.error(
@@ -504,7 +526,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         if (!this.bot) return;
 
         // /start — request phone number before showing the Play button
-        this.bot.command('start', async (ctx) => {
+        this.bot.command('start', (ctx) => {
+            this.deferTask('player:/start', async () => {
             const firstName = ctx.from?.first_name ?? 'Player';
             const userId = ctx.from?.id;
 
@@ -534,6 +557,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                     `ለመጀመር እና የቴሌብር ክፍያ ለማንቃት እባክዎ ስልክ ቁጥርዎን ያጋሩ፦`,
                 { reply_markup: this.contactRequestKeyboard() },
             );
+            });
         });
 
         // Handle contact sharing
@@ -557,7 +581,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             // before the Mini App has ever opened, so the account may not exist yet.
             // We AWAIT this so the Play button only appears once the phone is durably
             // saved (the Mini App login refuses to start without it).
-            let savedPhone: string | null = null;
+            let savedPhone: { phoneNumber: string; userId: string } | null =
+                null;
             if (userId) {
                 try {
                     savedPhone = await this.usersService.setTelegramPhone({
@@ -585,29 +610,38 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             }
 
             if (userId) {
-                this.phoneCache.set(userId, savedPhone);
+                this.phoneCache.set(userId, savedPhone.phoneNumber);
+                this.internalUserCache.set(userId, savedPhone.userId);
                 this.logger.log(
-                    `Stored phone ${savedPhone} for Telegram user ${userId}`,
+                    `Stored phone ${savedPhone.phoneNumber} for Telegram user ${userId}`,
                 );
-
-                // The account now exists, so a referral code parked on /start can
-                // finally be attributed.
-                const internalUserId = await this.resolveInternalUserId(userId);
-                if (internalUserId) {
-                    await this.applyPendingReferral(userId, internalUserId);
-                }
             }
 
-            // Phone is durably saved; now offer to connect them with an agent.
-            await this.promptForAgentMatch(ctx, miniAppUrl);
+            this.deferTask(`player:contact:${userId ?? 'unknown'}`, async () => {
+                // The account now exists, so a referral code parked on /start can
+                // finally be attributed.
+                if (userId) {
+                    await this.applyPendingReferral(userId, savedPhone.userId);
+                }
+
+                // Phone is durably saved; now offer to connect them with an agent.
+                await this.promptForAgentMatch(ctx, miniAppUrl);
+            });
         });
 
         // Location shared as a pin — match it onto the nearest on-duty agent.
         this.bot.on('message:location', async (ctx) => {
             const { latitude, longitude } = ctx.message.location;
-            const internalUserId = await this.resolveInternalUserId(
-                ctx.from?.id,
-            );
+            const [internalUserId, matched] = await Promise.all([
+                this.resolveInternalUserId(ctx.from?.id),
+                this.usersService.matchAgentFromCoords(latitude, longitude).catch((err) => {
+                    this.logger.error(
+                        'Failed to match shared location to an agent',
+                        err as Error,
+                    );
+                    return null;
+                }),
+            ]);
 
             if (!internalUserId) {
                 await ctx.reply('Please share your phone number first.', {
@@ -616,32 +650,21 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                 return;
             }
 
-            let matched: { id: string; name: string; distanceMeters: number } | null = null;
-            try {
-                matched = await this.usersService.matchAgentFromCoords(
-                    latitude,
-                    longitude,
-                );
-            } catch (err) {
-                this.logger.error(
-                    'Failed to match shared location to an agent',
-                    err as Error,
-                );
-            }
-
             // Outside every on-duty agent's radius (or lookup failed) — don't guess, ask.
             if (!matched) {
-                const listed = await this.sendAgentList(
-                    ctx,
-                    `We couldn't find an on-duty agent near that spot.`,
-                );
-                if (!listed) {
-                    await this.finishLocationStep(
+                this.deferTask('player:location:no-agent', async () => {
+                    const listed = await this.sendAgentList(
                         ctx,
-                        miniAppUrl,
-                        'Tap below to start playing:',
+                        `We couldn't find an on-duty agent near that spot.`,
                     );
-                }
+                    if (!listed) {
+                        await this.finishLocationStep(
+                            ctx,
+                            miniAppUrl,
+                            'Tap below to start playing:',
+                        );
+                    }
+                });
                 return;
             }
 
@@ -656,9 +679,37 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                     `Failed to save agent match for user ${internalUserId}`,
                     err as Error,
                 );
+                this.deferTask('player:location:assignment-failed', async () => {
+                    const listed = await this.sendAgentList(
+                        ctx,
+                        'Something went wrong connecting you with an agent.',
+                    );
+                    if (!listed) {
+                        await this.finishLocationStep(
+                            ctx,
+                            miniAppUrl,
+                            'Tap below to start playing:',
+                        );
+                    }
+                });
+                return;
+            }
+
+            this.deferTask(`player:location:${internalUserId}`, async () => {
+                await this.finishLocationStep(
+                    ctx,
+                    miniAppUrl,
+                    `Got it — we've connected you with ${matched.name}.\n\nTap below to start playing:`,
+                );
+            });
+        });
+
+        // "Choose from a list" — declared before the catch-all text handler so it wins.
+        this.bot.hears(LOCATION_PICK_FROM_LIST_TEXT, (ctx) => {
+            this.deferTask('player:location:list', async () => {
                 const listed = await this.sendAgentList(
                     ctx,
-                    'Something went wrong connecting you with an agent.',
+                    'Which agent would you like to connect with?',
                 );
                 if (!listed) {
                     await this.finishLocationStep(
@@ -667,29 +718,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                         'Tap below to start playing:',
                     );
                 }
-                return;
-            }
-
-            await this.finishLocationStep(
-                ctx,
-                miniAppUrl,
-                `Got it — we've connected you with ${matched.name}.\n\nTap below to start playing:`,
-            );
-        });
-
-        // "Choose from a list" — declared before the catch-all text handler so it wins.
-        this.bot.hears(LOCATION_PICK_FROM_LIST_TEXT, async (ctx) => {
-            const listed = await this.sendAgentList(
-                ctx,
-                'Which agent would you like to connect with?',
-            );
-            if (!listed) {
-                await this.finishLocationStep(
-                    ctx,
-                    miniAppUrl,
-                    'Tap below to start playing:',
-                );
-            }
+            });
         });
 
         // An agent was picked from the inline dropdown.

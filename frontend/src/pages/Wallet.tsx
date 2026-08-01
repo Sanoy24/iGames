@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy, LifeBuoy, ChevronRight } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowUpToLine, ArrowDownToLine, CheckCircle, X, RefreshCw, Wallet as WalletIcon, TrendingUp, Search, Phone, User as UserIcon, Copy, LifeBuoy, ChevronRight, Image as ImageIcon } from 'lucide-react';
 import type { LedgerEntry, Withdrawal } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
 import { formatCreditsFull, formatDateTimeFull, getErrorMessage } from '../lib/utils';
 import { authApi, walletApi, paymentsApi, type ActiveAgent } from '../lib/api';
+import { consumeOpenDepositRequest } from '../lib/walletIntent';
 
 // Deposit provider the player is using. Both flows paste a confirmation from the
 // same on-duty agent; only the parse/verify endpoint differs.
@@ -135,6 +136,15 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const [isPreviewing,   setIsPreviewing]   = useState(false);
   const [preview,        setPreview]        = useState<NormalizedPreview | null>(null);
   const [isSubmitting,   setIsSubmitting]   = useState(false);
+
+  // Telebirr-only alternative to pasting SMS text: upload a screenshot of the
+  // app's "Successful" screen and let server-side OCR find the transaction
+  // number. `ocrReceiptNo`/`ocrFileUrl` carry that result into Step 2 so submit
+  // doesn't need to re-parse text or re-upload the (already-saved) screenshot.
+  const [depositMode,    setDepositMode]    = useState<'sms' | 'screenshot'>('sms');
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [ocrReceiptNo,   setOcrReceiptNo]   = useState<string | null>(null);
+  const [ocrFileUrl,     setOcrFileUrl]     = useState<string | null>(null);
   const [activeAgent,    setActiveAgent]    = useState<ActiveAgent | null>(null);
   const [agentList,      setAgentList]      = useState<ActiveAgent[]>([]);
   const [agentLoading,   setAgentLoading]   = useState(false);
@@ -167,30 +177,43 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
 
   useEffect(() => { void loadWallet(); }, [loadWallet]);
 
-  const toggleTopup = () => {
-    setShowTopup((open) => {
-      const next = !open;
-      if (next) {
-        setShowWithdraw(false);
-        setAgentLoading(true);
-        paymentsApi.getActiveAgents()
-          .then((list) => {
-            setAgentList(list);
-            // Default to the primary (first) on-duty agent; the player can switch
-            // when more than one is available.
-            setActiveAgent(list[0] ?? null);
-          })
-          .catch(() => { setAgentList([]); setActiveAgent(null); })
-          .finally(() => setAgentLoading(false));
-        paymentsApi.getConfig()
-          .then((c) => setMinDepositMinor(c.minDepositMinor))
-          .catch(() => setMinDepositMinor(0));
-      } else {
-        resetTopup();
-      }
-      return next;
-    });
+  const receiptInputRef = useRef<HTMLTextAreaElement>(null);
+
+  const openTopup = () => {
+    setShowWithdraw(false);
+    setShowTopup(true);
+    setAgentLoading(true);
+    paymentsApi.getActiveAgents()
+      .then((list) => {
+        setAgentList(list);
+        // Default to the primary (first) on-duty agent; the player can switch
+        // when more than one is available.
+        setActiveAgent(list[0] ?? null);
+      })
+      .catch(() => { setAgentList([]); setActiveAgent(null); })
+      .finally(() => setAgentLoading(false));
+    paymentsApi.getConfig()
+      .then((c) => setMinDepositMinor(c.minDepositMinor))
+      .catch(() => setMinDepositMinor(0));
+    // Land the player straight in the paste box — no extra tap to start typing.
+    requestAnimationFrame(() => receiptInputRef.current?.focus());
   };
+
+  const toggleTopup = () => {
+    if (showTopup) {
+      resetTopup();
+      setShowTopup(false);
+    } else {
+      openTopup();
+    }
+  };
+
+  // Home's "Deposit" quick-action requests this panel open on arrival instead
+  // of landing on the Wallet page and requiring a second "Top Up" tap.
+  useEffect(() => {
+    if (consumeOpenDepositRequest()) openTopup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePreview = async () => {
     if (!receiptInput.trim()) return;
@@ -225,6 +248,25 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   };
 
   const handleTopup = async () => {
+    // Screenshot flow already has a verified receiptNo + saved fileUrl from
+    // handleScreenshotSelect — submit that directly, no text to re-parse.
+    if (depositMode === 'screenshot') {
+      if (!ocrReceiptNo) return;
+      setIsSubmitting(true);
+      try {
+        await paymentsApi.submitTelebirrReceiptByNo(ocrReceiptNo, ocrFileUrl ?? undefined);
+        addToast('success', 'Deposit confirmed! Your account has been credited.');
+        resetTopup();
+        setShowTopup(false);
+        await loadWallet();
+      } catch (e) {
+        addToast('error', getErrorMessage(e));
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     if (!receiptInput.trim()) return;
     setIsSubmitting(true);
     try {
@@ -245,9 +287,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         await paymentsApi.submitTelebirrReceipt(receiptInput.trim(), fileUrl);
       }
       addToast('success', 'Deposit confirmed! Your account has been credited.');
-      setReceiptInput('');
-      setReceiptFile(null);
-      setPreview(null);
+      resetTopup();
       setShowTopup(false);
       await loadWallet();
     } catch (e) {
@@ -257,19 +297,62 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     }
   };
 
+  // OCR is trusted only to find the transaction number — the returned preview
+  // (amount/payer/status) comes from the same verified Ethiotelecom fetch the
+  // paste flow uses, so Step 2 renders identically either way.
+  const handleScreenshotSelect = async (file: File | null) => {
+    setPreview(null);
+    setOcrReceiptNo(null);
+    setOcrFileUrl(null);
+    if (!file) return;
+    setIsOcrProcessing(true);
+    try {
+      const r = await paymentsApi.previewTelebirrScreenshot(file);
+      setOcrReceiptNo(r.receiptNo);
+      setOcrFileUrl(r.fileUrl);
+      setPreview({
+        ref: r.receiptNo,
+        amountMinor: r.amountMinor,
+        payerName: r.payerName,
+        payerPhone: r.payerPhone,
+        receiverName: r.receiverName,
+        date: r.date,
+      });
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  };
+
   // Switching provider clears any in-progress paste/preview so the two flows
   // never cross-contaminate.
   const switchProvider = (next: DepositProvider) => {
     if (next === provider) return;
     setProvider(next);
+    setDepositMode('sms');
     setReceiptInput('');
     setReceiptFile(null);
+    setOcrReceiptNo(null);
+    setOcrFileUrl(null);
+    setPreview(null);
+  };
+
+  const switchDepositMode = (next: 'sms' | 'screenshot') => {
+    if (next === depositMode) return;
+    setDepositMode(next);
+    setReceiptInput('');
+    setReceiptFile(null);
+    setOcrReceiptNo(null);
+    setOcrFileUrl(null);
     setPreview(null);
   };
 
   const resetTopup = () => {
     setReceiptInput('');
     setReceiptFile(null);
+    setOcrReceiptNo(null);
+    setOcrFileUrl(null);
     setPreview(null);
   };
 
@@ -447,10 +530,37 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                   })}
                 </div>
 
+                {/* SMS vs Screenshot — Telebirr only, and only before a preview is showing */}
+                {provider === 'telebirr' && !preview && (
+                  <div style={{ display: 'flex', gap: 18, marginBottom: 14, borderBottom: '1px solid var(--border)' }}>
+                    {(['sms', 'screenshot'] as const).map((m) => {
+                      const selected = depositMode === m;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => switchDepositMode(m)}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            padding: '0 2px 10px', fontSize: 13, fontWeight: 700,
+                            color: selected ? 'var(--danger)' : 'var(--text-muted)',
+                            borderBottom: selected ? '2px solid var(--danger)' : '2px solid transparent',
+                            marginBottom: -1,
+                          }}
+                        >
+                          {m === 'sms' ? 'SMS' : 'Screenshot'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
                 <p className="text-muted" style={{ fontSize: 13, marginBottom: minDepositMinor > 0 ? 8 : 14 }}>
                   {provider === 'mpesa'
                     ? 'Send your M-Pesa transfer to the agent below, then paste the confirmation SMS you receive.'
-                    : 'Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.'}
+                    : depositMode === 'screenshot'
+                      ? 'Send your Telebirr transfer to the agent below, then upload a screenshot of the "Successful" confirmation screen.'
+                      : 'Send your Telebirr transfer to the agent below, then paste your SMS confirmation message or the receipt link.'}
                 </p>
                 {minDepositMinor > 0 && (
                   <p style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700, margin: '0 0 14px' }}>
@@ -549,10 +659,56 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                   </div>
                 )}
 
+                {/* Step 1 — screenshot upload (Telebirr only) */}
+                {!preview && provider === 'telebirr' && depositMode === 'screenshot' && (
+                  <>
+                    <label
+                      htmlFor="deposit-screenshot-input"
+                      style={{
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        gap: 6, padding: '28px 12px', borderRadius: 10, cursor: isOcrProcessing ? 'default' : 'pointer',
+                        border: '1px dashed var(--border)', background: 'rgba(255,255,255,0.02)',
+                        marginBottom: 12, textAlign: 'center',
+                      }}
+                    >
+                      {isOcrProcessing ? (
+                        <>
+                          <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
+                          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Reading receipt…</span>
+                        </>
+                      ) : (
+                        <>
+                          <ImageIcon size={20} style={{ color: 'var(--text-muted)' }} />
+                          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)' }}>Upload screenshot</span>
+                        </>
+                      )}
+                    </label>
+                    <input
+                      id="deposit-screenshot-input"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      disabled={isOcrProcessing}
+                      onChange={(e) => { void handleScreenshotSelect(e.target.files?.[0] ?? null); e.target.value = ''; }}
+                      style={{ display: 'none' }}
+                    />
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '-4px 0 0' }}>
+                      Couldn't find a transaction number?{' '}
+                      <button
+                        type="button"
+                        onClick={() => switchDepositMode('sms')}
+                        style={{ background: 'none', border: 'none', padding: 0, color: 'var(--gold)', fontWeight: 700, cursor: 'pointer', fontSize: 11 }}
+                      >
+                        Paste the SMS instead
+                      </button>
+                    </p>
+                  </>
+                )}
+
                 {/* Step 1 — paste & verify */}
-                {!preview && (
+                {!preview && !(provider === 'telebirr' && depositMode === 'screenshot') && (
                   <>
                     <textarea
+                      ref={receiptInputRef}
                       className="input"
                       rows={4}
                       placeholder={provider === 'mpesa'
@@ -624,20 +780,26 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                         )}
                       </div>
                     </div>
-                    <div style={{ marginBottom: 12 }}>
-                      <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                        Attach a photo or PDF of the receipt (optional)
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                        onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
-                        style={{ width: '100%' }}
-                      />
-                      {receiptFile && (
-                        <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 4 }}>{receiptFile.name}</div>
-                      )}
-                    </div>
+                    {ocrFileUrl ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--green)', marginBottom: 12 }}>
+                        <ImageIcon size={13} /> Screenshot attached as receipt proof
+                      </div>
+                    ) : (
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                          Attach a photo or PDF of the receipt (optional)
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                          onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
+                          style={{ width: '100%' }}
+                        />
+                        {receiptFile && (
+                          <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 4 }}>{receiptFile.name}</div>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button
                         className="btn btn-secondary"

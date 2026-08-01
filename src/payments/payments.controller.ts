@@ -31,13 +31,19 @@ import { SubmitMpesaSmsDto } from './dto/submit-mpesa-sms.dto';
 import { PreviewMpesaSmsDto } from './dto/preview-mpesa-sms.dto';
 import { PaymentsService } from './payments.service';
 import { AgentsService } from '../agents/agents.service';
+import { TelebirrScreenshotOcrService } from './telebirr-screenshot.service';
 import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
+import { readFile } from 'fs/promises';
 
 /** Minimal shape of a multer file (avoids depending on @types/multer). */
 type UploadedReceiptFile = { filename: string; mimetype: string; size: number };
+type UploadedScreenshotFile = UploadedReceiptFile & { path: string };
 
 const DEPOSIT_RECEIPT_SUBDIR = 'deposit-receipts';
 const DEPOSIT_RECEIPT_DIR = join(UPLOADS_ROOT, DEPOSIT_RECEIPT_SUBDIR);
+
+// Screenshots only — no PDF, unlike the general receipt-photo upload below.
+const SCREENSHOT_MIME_TYPES = RECEIPT_MIME_TYPES.filter((t) => t !== 'application/pdf');
 
 @ApiTags('payments')
 @ApiBearerAuth()
@@ -47,6 +53,7 @@ export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly agentsService: AgentsService,
+    private readonly telebirrScreenshotOcrService: TelebirrScreenshotOcrService,
   ) {}
 
   /**
@@ -111,6 +118,52 @@ export class PaymentsController {
     @Body() dto: PreviewTelebirrReceiptDto,
   ) {
     return this.paymentsService.previewTelebirrReceipt(user.id, dto);
+  }
+
+  /**
+   * Alternative to pasting the SMS/receipt link: upload a screenshot of the
+   * Telebirr app's "Successful" confirmation screen. OCR (tesseract.js) is
+   * used ONLY to read the "Transaction Number" off the image — the returned
+   * preview (amount/payer/status) still comes from fetching the real
+   * Ethiotelecom receipt page, exactly like the text-paste flow. The saved
+   * screenshot doubles as the receipt photo, so no separate upload is needed.
+   */
+  @Roles('player')
+  @Post('telebirr/preview-screenshot')
+  @Throttle({ strict: { ttl: 60_000, limit: 12 } })
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          mkdirSync(DEPOSIT_RECEIPT_DIR, { recursive: true });
+          cb(null, DEPOSIT_RECEIPT_DIR);
+        },
+        filename: (_req, file, cb) => {
+          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      fileFilter: (_req, file, cb) => {
+        if (!SCREENSHOT_MIME_TYPES.includes(file.mimetype)) {
+          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP or GIF screenshots are allowed'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  @ApiOkResponse({ description: 'Parsed receipt details (from OCR + verified fetch) — wallet is NOT credited' })
+  async previewTelebirrScreenshot(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFile() file?: UploadedScreenshotFile,
+  ) {
+    if (!file) throw new BadRequestException('No screenshot uploaded');
+    const imageBuffer = await readFile(file.path);
+    const receiptNo = await this.telebirrScreenshotOcrService.extractTransactionNumber(imageBuffer);
+    const preview = await this.paymentsService.previewTelebirrReceipt(user.id, { receiptNo });
+    return { ...preview, receiptNo, fileUrl: `${DEPOSIT_RECEIPT_SUBDIR}/${file.filename}` };
   }
 
   /** Upload a photo/PDF of the physical receipt — required proof alongside the

@@ -2449,6 +2449,7 @@ function BingoAdmin() {
     defaultFullHouseMinor: 100000,
     drawIntervalSeconds: 2,
     salesWindowSeconds: 40,
+    cartelaChangeLockSeconds: 3,
     resultDisplaySeconds: 10,
     defaultWinMode: 'prefilled',
     defaultNumberRange: 75,
@@ -2500,6 +2501,7 @@ function BingoAdmin() {
         defaultFullHouseMinor: c.defaultFullHouseMinor,
         drawIntervalSeconds: c.drawIntervalSeconds,
         salesWindowSeconds: c.salesWindowSeconds ?? 40,
+        cartelaChangeLockSeconds: c.cartelaChangeLockSeconds ?? 3,
         resultDisplaySeconds: c.resultDisplaySeconds ?? 10,
         defaultWinMode: c.defaultWinMode ?? 'prefilled',
         defaultNumberRange: c.defaultNumberRange ?? 75,
@@ -2737,6 +2739,12 @@ function BingoAdmin() {
               <span>Buy-in / Sales Window (seconds)</span>
               <input className="input" type="number" min={5} max={600} value={cfgForm.salesWindowSeconds ?? 40}
                 onChange={(e) => setCfgForm((f) => ({ ...f, salesWindowSeconds: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Cartela Change Freeze (seconds before start)</span>
+              <input className="input" type="number" min={0} max={60} value={cfgForm.cartelaChangeLockSeconds ?? 3}
+                onChange={(e) => setCfgForm((f) => ({ ...f, cartelaChangeLockSeconds: Number(e.target.value) }))} />
+              <span className="adm-field-hint">Locks both cartela buys and refunds near the scheduled start. Set to 0 to disable the freeze.</span>
             </label>
             <label className="adm-field">
               <span>Result Display (seconds)</span>

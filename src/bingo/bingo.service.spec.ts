@@ -406,13 +406,14 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
 });
 
 describe('BingoService cartela lifecycle guards', () => {
-  it('rejects cartela returns during the final 3 seconds before the draw', async () => {
+  it('rejects cartela returns during the freeze window before the draw', async () => {
     const { service, dataSource } = makeService({ rooms: [] });
     const room = makeRoom({
       winMode: 'prefilled',
       status: 'open',
       soldTickets: 1,
-      scheduledStartAt: new Date(Date.now() + 2_000),
+      scheduledStartAt: new Date(Date.now() + 4_000),
+      cartelaChangeLockSeconds: 5,
     });
     const userId = '550e8400-e29b-41d4-a716-446655440001';
     const ticket = {
@@ -441,7 +442,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
     await expect(
       service.releaseCartela({ userId, roomId: room.id, cartelaNumber: 7 }),
-    ).rejects.toThrow('Cartela returns are locked in the final 3 seconds before the draw');
+    ).rejects.toThrow('Cartela changes are locked near the draw start');
 
     expect(manager.findOne).toHaveBeenCalledTimes(1);
   });
@@ -533,5 +534,55 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(result.status).toBe('cancelled');
     expect(room.status).toBe('cancelled');
     expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects cartela purchases in the freeze window before the draw', async () => {
+    const { service, dataSource, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      scheduledStartAt: new Date(Date.now() + 4_000),
+      cartelaChangeLockSeconds: 5,
+    });
+    const manager = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(room),
+    };
+    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
+
+    await expect(
+      service.purchaseTickets({
+        userId: '550e8400-e29b-41d4-a716-446655440000',
+        roomId: room.id,
+        cartelaNumbers: [1],
+        idempotencyKey: 'purchase-lock-test',
+      }),
+    ).rejects.toThrow('Cartela changes are locked near the draw start');
+
+    expect(walletService.debitInSession).not.toHaveBeenCalled();
+  });
+
+  it('skips bot reconcile when the room enters the freeze window', async () => {
+    const { service, mockRoomRepo } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      scheduledStartAt: new Date(Date.now() + 4_000),
+      cartelaChangeLockSeconds: 5,
+    });
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+      botMaxRealPlayers: 10,
+      botWinMode: 'statistical',
+    } as any);
+    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
+    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
+    const releaseSpy = jest.spyOn(service, 'releaseCartela').mockResolvedValue({ cartelaNumber: 1, refundedMinor: 100 } as any);
+
+    const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+    expect(changed).toBe(false);
+    expect(purchaseSpy).not.toHaveBeenCalled();
+    expect(releaseSpy).not.toHaveBeenCalled();
   });
 });

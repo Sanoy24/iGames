@@ -156,11 +156,29 @@
 **Why**: A shared room-scoped map keeps every bot identity stable throughout the round without making the same visible bot name repeat across games. Admin control lets the pool be expanded, edited, activated, deactivated, or trimmed without code changes.
 **Constraints**: Within one room, bot names must be unique and phone suffixes should be unique whenever possible. Bot aliases used in settlement summaries and wallet recent-wins must match what players saw in-game, so write the alias into settlement metadata instead of re-deriving it later.
 
-### D-24: Bingo purchase-phase refunds lock in the final 3 seconds, and bot-only rooms self-cancel
+### D-24: Bingo purchase-phase cartela changes freeze near the draw, and bot-only rooms self-cancel
+**Decided**: 2026-08-01  
+**Decision**: Cartela changes stay enabled during the Bingo buy window until the configured freeze window near the scheduled draw, where buys and refunds are locked both server-side and in the client UI. If the last real player leaves and only bot cartelas remain, the room is cancelled/reset and the bot cartelas are refunded before any draw can start.
+**Why**: Freezing cartela changes removes the last-second race where a room could otherwise flip from a valid buy window into a bot-only start at the same instant. Auto-cancelling bot-only rooms keeps the game from ever resolving a bot-vs-bot or empty round.
+**Constraints**: The default freeze is 3 seconds, but the active room snapshots the configured duration so Admin can tune it. Final draw validation must still check `realPlayers >= 1` even if the scheduler or client misses a cancellation tick.
+
+### D-25: Telegram webhook handlers must return fast and defer noncritical follow-ups
 **Decided**: 2026-08-01
-**Decision**: Cartela refunds stay enabled during the Bingo buy window until the final 3 seconds, where they are locked both server-side and in the client UI. If the last real player leaves and only bot cartelas remain, the room is cancelled/reset and the bot cartelas are refunded before any draw can start.
-**Why**: The 3-second lock removes the last-second race where a room could otherwise flip from a valid buy window into a bot-only start at the same instant. Auto-cancelling bot-only rooms keeps the game from ever resolving a bot-vs-bot or empty round.
-**Constraints**: The lock is fixed at 3 seconds for now instead of adding a new bingo config field. Final draw validation must still check `realPlayers >= 1` even if the scheduler or client misses a cancellation tick.
+**Decision**: Telegram webhook handlers keep the durable state mutations synchronous, but move referral attribution and reply-heavy follow-up messaging into deferred tasks via `setImmediate`.
+**Why**: grammY's webhook mode times out after 10 seconds if the update handler is still busy. The onboarding flow was spending that budget on extra DB lookups plus multiple Telegram replies, which is exactly the kind of work that should happen after the webhook has been acknowledged.
+**Constraints**: Any new Telegram onboarding step must be split into a critical path (state write / validation) and a deferred path (optional prompts, markup edits, follow-up replies). Keep `ctx.answerCallbackQuery()` and other user-spinner responses as quick as possible; do not reintroduce long reply chains into the webhook critical path.
+
+### D-26: Bingo bots reconcile to live human cartela demand, not a timer fraction
+**Decided**: 2026-08-01  
+**Decision**: For prefilled Bingo rooms, bot participation now reconciles from the current human cartela count whenever a player buys or returns cartelas, and the scheduler delegates to the same reconciliation path. Bot winners keep the base alias and masked 4-digit suffix in separate fields so the live win popup and final result overlay can reuse the exact same rendering path as human winners.
+**Why**: The old time-fraction top-up pattern made bot buying look bursty and suspicious. Mirroring the current human cartela count makes bot activity look like another player on the room, while the shared result payload shape removes the last visible bot-vs-human UI split.
+**Constraints**: Keep the zero-real-player guard intact so bot-only rooms still cancel/reset. Bot win payloads must continue to carry `winnerDisplayName` and `winnerPhoneLast4` separately so the frontend can render them with the same components as human wins.
+
+### D-27: Bingo cartela changes freeze together in the configured final window
+**Decided**: 2026-08-01  
+**Decision**: Once a Bingo room enters its configured freeze window before the scheduled start, both cartela buys and cartela refunds are rejected, and bot reconciliation also stands down. The room then either starts with the remaining real players or cancels/reset if none remain.
+**Why**: Locking only refunds still leaves a boundary race where a human can leave at the exact start tick while bots are being topped up. Freezing buys, refunds, and bot reconcile under the same rule removes that last-second split-brain behavior.
+**Constraints**: The freeze duration is configured in Bingo settings with a 3-second default. Any new cartela-change path must use the same shared lock helper so the scheduler, purchase endpoint, refund endpoint, and bot reconcile cannot diverge.
 
 ---
 

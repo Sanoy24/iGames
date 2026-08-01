@@ -2525,7 +2525,9 @@ function BingoAdmin() {
         prefilledThirdPatternId: c.prefilledThirdPatternId ?? null,
         prefilledFourthPatternId: c.prefilledFourthPatternId ?? null,
         prefilledFifthPatternId: c.prefilledFifthPatternId ?? null,
-        botAliasPool: c.botAliasPool ?? null,
+        botAliasPool: c.botAliasPool 
+          ? (() => { try { return JSON.parse(c.botAliasPool).join(', '); } catch { return c.botAliasPool; } })() 
+          : null,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -2537,7 +2539,14 @@ function BingoAdmin() {
   const saveConfig = async () => {
     setBusy('cfg');
     try {
-      const updated = await adminBingoApi.updateConfig(cfgForm);
+      const payload = { ...cfgForm };
+      if (payload.botAliasPool) {
+        const aliases = payload.botAliasPool.split(',').map(s => s.trim()).filter(Boolean);
+        payload.botAliasPool = aliases.length > 0 ? JSON.stringify(aliases) : null;
+      } else {
+        payload.botAliasPool = null;
+      }
+      const updated = await adminBingoApi.updateConfig(payload);
       setCfg(updated);
       addToast('success', 'Bingo settings saved.');
       setShowSettings(false);
@@ -2833,16 +2842,8 @@ function BingoAdmin() {
                 className="input"
                 rows={3}
                 placeholder={'e.g. Abrsh, Derash, Yonas, Tigist, Hailu, Mekdes, Surafel'}
-                value={
-                  cfgForm.botAliasPool
-                    ? (() => { try { return JSON.parse(cfgForm.botAliasPool).join(', '); } catch { return cfgForm.botAliasPool; } })()
-                    : ''
-                }
-                onChange={(e) => {
-                  const raw = e.target.value.trim();
-                  const aliases = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-                  setCfgForm((f) => ({ ...f, botAliasPool: aliases.length > 0 ? JSON.stringify(aliases) : null }));
-                }}
+                value={cfgForm.botAliasPool ?? ''}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botAliasPool: e.target.value }))}
                 style={{ resize: 'vertical', fontFamily: 'inherit' }}
               />
               <span className="adm-field-hint">

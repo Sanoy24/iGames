@@ -11,6 +11,9 @@ import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
+import { CreateWithdrawalFeeRangeDto } from './dto/create-withdrawal-fee-range.dto';
+import { UpdateWithdrawalFeeRangeDto } from './dto/update-withdrawal-fee-range.dto';
+import { ConfigChangeType } from './entities/config-change-log.entity';
 import { AdminTopupDto, AdminTransferToAgentDto } from './dto/wallet-ops.dto';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { AssignAgentLocationsDto } from '../locations/dto/assign-agent-locations.dto';
@@ -70,8 +73,53 @@ export class AdminController {
   }
 
   @Post('config')
-  updateConfig(@Body() dto: UpdateSystemConfigDto) {
-    return this.adminService.updateSystemConfig(dto);
+  updateConfig(
+    @Body() dto: UpdateSystemConfigDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.adminService.updateSystemConfig(dto, admin.id);
+  }
+
+  @Get('config-history')
+  getConfigHistory(
+    @Query('configType') configType?: ConfigChangeType,
+    @Query('entityId') entityId?: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.adminService.listConfigChanges(configType, entityId, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+  }
+
+  // ── Withdrawal fee ranges ─────────────────────────────────────────
+
+  @Get('withdrawal-fee-ranges')
+  listWithdrawalFeeRanges() {
+    return this.adminService.listWithdrawalFeeRanges();
+  }
+
+  @Post('withdrawal-fee-ranges')
+  createWithdrawalFeeRange(
+    @Body() dto: CreateWithdrawalFeeRangeDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.adminService.createWithdrawalFeeRange(dto, admin.id);
+  }
+
+  @Patch('withdrawal-fee-ranges/:id')
+  updateWithdrawalFeeRange(
+    @Param('id') id: string,
+    @Body() dto: UpdateWithdrawalFeeRangeDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.adminService.updateWithdrawalFeeRange(id, dto, admin.id);
+  }
+
+  @Delete('withdrawal-fee-ranges/:id')
+  deleteWithdrawalFeeRange(
+    @Param('id') id: string,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.adminService.deleteWithdrawalFeeRange(id, admin.id);
   }
 
   // ── Users ─────────────────────────────────────────────────────────
@@ -153,8 +201,9 @@ export class AdminController {
   updateAgent(
     @Param('id') id: string,
     @Body() dto: UpdateAgentDto,
+    @CurrentUser() admin: AuthenticatedUser,
   ) {
-    return this.usersService.updateAgentUser(id, dto);
+    return this.adminService.updateAgentWithAudit(id, dto, admin.id);
   }
 
   @Patch('agents/:id/on-duty')

@@ -1,10 +1,16 @@
-import { ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager, In } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { SystemConfig } from './entities/system-config.entity';
 import { PlatformStats } from './entities/platform-stats.entity';
+import { ConfigChangeLog, ConfigChangeType } from './entities/config-change-log.entity';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
+import { CreateWithdrawalFeeRangeDto } from './dto/create-withdrawal-fee-range.dto';
+import { UpdateWithdrawalFeeRangeDto } from './dto/update-withdrawal-fee-range.dto';
+import { UpdateAgentDto } from './dto/update-agent.dto';
+import { WithdrawalFeeRange } from '../wallet/entities/withdrawal-fee-range.entity';
+import { assertNoOverlap, computeCoverageGaps } from '../wallet/withdrawal-fee-range.util';
 import { AgentsService } from '../agents/agents.service';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
@@ -36,6 +42,10 @@ export class AdminService implements OnApplicationBootstrap {
     private readonly systemConfigRepository: Repository<SystemConfig>,
     @InjectRepository(PlatformStats)
     private readonly platformStatsRepository: Repository<PlatformStats>,
+    @InjectRepository(ConfigChangeLog)
+    private readonly configChangeLogRepository: Repository<ConfigChangeLog>,
+    @InjectRepository(WithdrawalFeeRange)
+    private readonly withdrawalFeeRangeRepository: Repository<WithdrawalFeeRange>,
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
     private readonly agentsService: AgentsService,
@@ -65,8 +75,9 @@ export class AdminService implements OnApplicationBootstrap {
     return config;
   }
 
-  async updateSystemConfig(update: UpdateSystemConfigDto): Promise<SystemConfig> {
+  async updateSystemConfig(update: UpdateSystemConfigDto, adminUserId: string): Promise<SystemConfig> {
     let config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    const previousReferralPct = config?.referralCommissionPct ?? 0;
     if (!config) {
       config = this.systemConfigRepository.create({
         key: 'global',
@@ -75,7 +86,161 @@ export class AdminService implements OnApplicationBootstrap {
     } else {
       Object.assign(config, update);
     }
-    return await this.systemConfigRepository.save(config);
+    const saved = await this.systemConfigRepository.save(config);
+
+    if (update.referralCommissionPct !== undefined && update.referralCommissionPct !== previousReferralPct) {
+      await this.logConfigChange({
+        configType: 'global_referral_commission',
+        entityId: null,
+        previousValue: previousReferralPct,
+        newValue: saved.referralCommissionPct,
+        changedByAdminId: adminUserId,
+      });
+    }
+
+    return saved;
+  }
+
+  // ── Config change audit trail ────────────────────────────────────────
+
+  private async logConfigChange(entry: {
+    configType: ConfigChangeType;
+    entityId: string | null;
+    previousValue: unknown;
+    newValue: unknown;
+    changedByAdminId: string;
+  }): Promise<void> {
+    const log = this.configChangeLogRepository.create({
+      configType: entry.configType,
+      entityId: entry.entityId,
+      previousValue: entry.previousValue === undefined ? null : JSON.stringify(entry.previousValue),
+      newValue: entry.newValue === undefined ? null : JSON.stringify(entry.newValue),
+      changedByAdminId: entry.changedByAdminId,
+    });
+    await this.configChangeLogRepository.save(log);
+  }
+
+  async listConfigChanges(
+    configType: ConfigChangeType | undefined,
+    entityId: string | undefined,
+    page: number,
+    limit: number,
+  ): Promise<{ data: ConfigChangeLog[]; total: number; page: number; limit: number }> {
+    const [data, total] = await this.configChangeLogRepository.findAndCount({
+      where: {
+        ...(configType ? { configType } : {}),
+        ...(entityId ? { entityId } : {}),
+      },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { data, total, page, limit };
+  }
+
+  /** Updates an agent and, if their referral-commission override changed, logs it. */
+  async updateAgentWithAudit(agentId: string, dto: UpdateAgentDto, adminUserId: string): Promise<User> {
+    const before = await this.usersService.findById(agentId);
+    const previousPct = before?.referralCommissionPct ?? null;
+    const updated = await this.usersService.updateAgentUser(agentId, dto);
+    if (dto.referralCommissionPct !== undefined && dto.referralCommissionPct !== previousPct) {
+      await this.logConfigChange({
+        configType: 'agent_referral_commission',
+        entityId: agentId,
+        previousValue: previousPct,
+        newValue: updated.referralCommissionPct ?? null,
+        changedByAdminId: adminUserId,
+      });
+    }
+    return updated;
+  }
+
+  // ── Withdrawal fee ranges ─────────────────────────────────────────────
+
+  async listWithdrawalFeeRanges(): Promise<{ ranges: WithdrawalFeeRange[]; coverageGaps: ReturnType<typeof computeCoverageGaps> }> {
+    const ranges = await this.withdrawalFeeRangeRepository.find({ order: { minAmountMinor: 'ASC' } });
+    const active = ranges.filter((r) => r.active);
+    return { ranges, coverageGaps: computeCoverageGaps(active, 1) };
+  }
+
+  async createWithdrawalFeeRange(dto: CreateWithdrawalFeeRangeDto, adminUserId: string): Promise<WithdrawalFeeRange> {
+    if (dto.maxAmountMinor !== undefined && dto.maxAmountMinor !== null && dto.maxAmountMinor < dto.minAmountMinor) {
+      throw new BadRequestException('maxAmountMinor must be greater than or equal to minAmountMinor');
+    }
+    const active = dto.active ?? true;
+    if (active) {
+      const existingActive = await this.withdrawalFeeRangeRepository.find({ where: { active: true } });
+      assertNoOverlap(
+        { minAmountMinor: dto.minAmountMinor, maxAmountMinor: dto.maxAmountMinor ?? null },
+        existingActive,
+      );
+    }
+
+    const range = this.withdrawalFeeRangeRepository.create({
+      minAmountMinor: dto.minAmountMinor,
+      maxAmountMinor: dto.maxAmountMinor ?? null,
+      feeMinor: dto.feeMinor,
+      active,
+    });
+    const saved = await this.withdrawalFeeRangeRepository.save(range);
+
+    await this.logConfigChange({
+      configType: 'withdrawal_fee_range',
+      entityId: saved.id,
+      previousValue: null,
+      newValue: saved,
+      changedByAdminId: adminUserId,
+    });
+    return saved;
+  }
+
+  async updateWithdrawalFeeRange(
+    id: string,
+    dto: UpdateWithdrawalFeeRangeDto,
+    adminUserId: string,
+  ): Promise<WithdrawalFeeRange> {
+    const range = await this.withdrawalFeeRangeRepository.findOneBy({ id });
+    if (!range) throw new NotFoundException('Withdrawal fee range not found');
+    const previousValue = { ...range };
+
+    const nextMin = dto.minAmountMinor ?? range.minAmountMinor;
+    const nextMax = dto.maxAmountMinor !== undefined ? dto.maxAmountMinor : range.maxAmountMinor;
+    const nextActive = dto.active ?? range.active;
+    if (nextMax !== null && nextMax < nextMin) {
+      throw new BadRequestException('maxAmountMinor must be greater than or equal to minAmountMinor');
+    }
+    if (nextActive) {
+      const otherActive = await this.withdrawalFeeRangeRepository.find({ where: { active: true } });
+      assertNoOverlap({ id: range.id, minAmountMinor: nextMin, maxAmountMinor: nextMax }, otherActive, range.id);
+    }
+
+    range.minAmountMinor = nextMin;
+    range.maxAmountMinor = nextMax;
+    if (dto.feeMinor !== undefined) range.feeMinor = dto.feeMinor;
+    range.active = nextActive;
+    const saved = await this.withdrawalFeeRangeRepository.save(range);
+
+    await this.logConfigChange({
+      configType: 'withdrawal_fee_range',
+      entityId: saved.id,
+      previousValue,
+      newValue: saved,
+      changedByAdminId: adminUserId,
+    });
+    return saved;
+  }
+
+  async deleteWithdrawalFeeRange(id: string, adminUserId: string): Promise<void> {
+    const range = await this.withdrawalFeeRangeRepository.findOneBy({ id });
+    if (!range) throw new NotFoundException('Withdrawal fee range not found');
+    await this.withdrawalFeeRangeRepository.remove(range);
+    await this.logConfigChange({
+      configType: 'withdrawal_fee_range',
+      entityId: id,
+      previousValue: range,
+      newValue: null,
+      changedByAdminId: adminUserId,
+    });
   }
 
   // ── Master Wallet (shared across every admin account) ───────────────

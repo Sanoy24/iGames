@@ -35,6 +35,8 @@ export type User = {
   sharedLocationAt?: string | null;
   /** An agent's shareable referral code (players never have one). */
   referralCode?: string | null;
+  /** This agent's referral-commission % override. Null = use the global default. */
+  referralCommissionPct?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };

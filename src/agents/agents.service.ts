@@ -7,6 +7,8 @@ import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
+import { WithdrawalFeeRange } from '../wallet/entities/withdrawal-fee-range.entity';
+import { resolveWithdrawalFeeMinor } from '../wallet/withdrawal-fee-range.util';
 import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
 import { buildReferralPayload } from '../common/referral-code.util';
 import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
@@ -18,6 +20,8 @@ export class AgentsService {
     private readonly agentShiftRepository: Repository<AgentShift>,
     @InjectRepository(SystemConfig)
     private readonly systemConfigRepository: Repository<SystemConfig>,
+    @InjectRepository(WithdrawalFeeRange)
+    private readonly withdrawalFeeRangeRepository: Repository<WithdrawalFeeRange>,
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
     private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
@@ -27,32 +31,13 @@ export class AgentsService {
   // ── Config (agent-accessible) ────────────────────────────────────
 
   async getAgentConfig(): Promise<{
-    withdrawalServiceChargePct: number;
-    withdrawalCommissionPct: number;
-    withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+    withdrawalFeeRanges: WithdrawalFeeRange[];
   }> {
-    const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    return {
-      withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0,
-      withdrawalCommissionPct: config?.withdrawalCommissionPct ?? 0,
-      withdrawalFeeTiers: config?.withdrawalFeeTiers ?? null,
-    };
-  }
-
-  /** Resolve the effective service-fee % for a given withdrawal amount.
-   * If tiered config is present it takes precedence over the flat pct. */
-  static resolveServiceFeePct(
-    amountMinor: number,
-    flatPct: number,
-    tiers?: { minAmountMinor: number; feePct: number }[] | null,
-  ): number {
-    if (!tiers || tiers.length === 0) return flatPct;
-    const sorted = [...tiers].sort((a, b) => a.minAmountMinor - b.minAmountMinor);
-    let resolved = flatPct;
-    for (const tier of sorted) {
-      if (amountMinor >= tier.minAmountMinor) resolved = tier.feePct;
-    }
-    return resolved;
+    const withdrawalFeeRanges = await this.withdrawalFeeRangeRepository.find({
+      where: { active: true },
+      order: { minAmountMinor: 'ASC' },
+    });
+    return { withdrawalFeeRanges };
   }
 
   // ── Withdrawals ────────────────────────────────────────────────────
@@ -112,28 +97,21 @@ export class AgentsService {
   ) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
-    // Read fee/commission split and the designated super-admin from system config.
     const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
-    const commissionPct = config?.withdrawalCommissionPct ?? 0;
-    const superAdminUserId = config?.superAdminUserId ?? null;
     const creditMinorPerBirr = config?.telebirrCreditMinorPerBirr ?? 1;
 
     // The withdrawal must be claimed by THIS agent, and we need its destination
     // (the player's phone) and amount to check the payout proof against.
     const withdrawal = await this.walletService.getClaimedWithdrawalForAgent(withdrawalId, agentId);
 
-    // Resolve the effective service fee (flat % or tiered % depending on config).
-    const serviceFeePct = AgentsService.resolveServiceFeePct(
-      withdrawal.amountMinor,
-      config?.withdrawalServiceChargePct ?? 0,
-      config?.withdrawalFeeTiers,
-    );
+    // Resolve the flat fee for this amount from the admin-configured ranges. The
+    // agent keeps 100% of it — no platform split.
+    const activeRanges = await this.withdrawalFeeRangeRepository.find({ where: { active: true } });
+    const feeMinor = resolveWithdrawalFeeMinor(withdrawal.amountMinor, activeRanges);
 
-    // The player receives the net amount (gross − service fee − commission); that
-    // is exactly what the agent must have paid out.
-    const serviceFeeMinor = Math.floor((withdrawal.amountMinor * serviceFeePct) / 100);
-    const commissionMinor = Math.floor((withdrawal.amountMinor * commissionPct) / 100);
-    const expectedAmountMinor = withdrawal.amountMinor - serviceFeeMinor - commissionMinor;
+    // The player receives the net amount (gross − fee); that is exactly what the
+    // agent must have paid out.
+    const expectedAmountMinor = withdrawal.amountMinor - feeMinor;
 
     // Verify the agent actually paid the player before releasing frozen coins.
     const verified = await this.withdrawalProofVerifier.verifyPayout({
@@ -150,9 +128,7 @@ export class AgentsService {
       telebirrReference: verified.reference,
       paymentProvider: verified.provider,
       payoutVerification: verified.verification,
-      serviceFeePct,
-      commissionPct,
-      superAdminUserId,
+      feeMinor,
     });
   }
 

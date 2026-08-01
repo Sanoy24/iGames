@@ -77,9 +77,10 @@ export class WalletController {
   @ApiOkResponse({
     schema: {
       example: {
-        withdrawalServiceChargePct: 5,
-        withdrawalCommissionPct: 1,
-        withdrawalFeeTiers: [{ minAmountMinor: 100000, feePct: 2 }]
+        withdrawalFeeRanges: [
+          { minAmountMinor: 100, maxAmountMinor: 50000, feeMinor: 1000 },
+          { minAmountMinor: 50001, maxAmountMinor: null, feeMinor: 10000 },
+        ]
       }
     }
   })

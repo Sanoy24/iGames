@@ -15,6 +15,7 @@ import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
+import { WithdrawalFeeRange } from './entities/withdrawal-fee-range.entity';
 import { User } from '../users/entities/user.entity';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
@@ -72,6 +73,8 @@ export class WalletService {
     private readonly withdrawalRepository: Repository<Withdrawal>,
     @InjectRepository(SystemConfig)
     private readonly systemConfigRepository: Repository<SystemConfig>,
+    @InjectRepository(WithdrawalFeeRange)
+    private readonly withdrawalFeeRangeRepository: Repository<WithdrawalFeeRange>,
     private readonly ledgerService: LedgerService,
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly notificationsService: NotificationsService
@@ -500,15 +503,18 @@ export class WalletService {
   /** Player-facing withdrawal fee config, so the withdraw form can show a fee
    * estimate before submission without requiring the agent role. */
   async getWithdrawalFeeConfig(): Promise<{
-    withdrawalServiceChargePct: number;
-    withdrawalCommissionPct: number;
-    withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+    withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }>;
   }> {
-    const config = await this.systemConfigRepository.findOneBy({ key: 'global' });
+    const ranges = await this.withdrawalFeeRangeRepository.find({
+      where: { active: true },
+      order: { minAmountMinor: 'ASC' },
+    });
     return {
-      withdrawalServiceChargePct: config?.withdrawalServiceChargePct ?? 0,
-      withdrawalCommissionPct: config?.withdrawalCommissionPct ?? 0,
-      withdrawalFeeTiers: config?.withdrawalFeeTiers ?? null,
+      withdrawalFeeRanges: ranges.map((r) => ({
+        minAmountMinor: r.minAmountMinor,
+        maxAmountMinor: r.maxAmountMinor,
+        feeMinor: r.feeMinor,
+      })),
     };
   }
 
@@ -842,9 +848,7 @@ export class WalletService {
     telebirrReference: string;
     paymentProvider?: 'telebirr' | 'mpesa';
     payoutVerification?: Record<string, unknown>;
-    serviceFeePct: number;
-    commissionPct: number;
-    superAdminUserId?: string | null;
+    feeMinor: number;
   }): Promise<Withdrawal> {
     const settled = await this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
@@ -872,15 +876,13 @@ export class WalletService {
         throw new ConflictException('This payment proof has already been used for another withdrawal');
       }
 
-      // Two cuts from the gross: a platform service fee (to the super-admin) and
-      // an agent commission (to the processing agent). The user nets the rest.
-      const serviceFeeMinor = Math.floor(withdrawal.amountMinor * input.serviceFeePct / 100);
-      const commissionMinor = Math.floor(withdrawal.amountMinor * input.commissionPct / 100);
-      const totalChargeMinor = serviceFeeMinor + commissionMinor;
-      const netAmountMinor = withdrawal.amountMinor - totalChargeMinor;
+      // A single flat fee (from the matched WithdrawalFeeRange), 100% to the
+      // processing agent — no platform split. The user nets the rest.
+      const feeMinor = Math.max(0, Math.floor(input.feeMinor));
+      const netAmountMinor = withdrawal.amountMinor - feeMinor;
 
       if (netAmountMinor <= 0) {
-        throw new BadRequestException('Service fee and commission would consume the entire withdrawal amount');
+        throw new BadRequestException('The withdrawal fee would consume the entire withdrawal amount');
       }
 
       // Settle the user's reservation
@@ -897,7 +899,7 @@ export class WalletService {
       await walletRepo.save(wallet);
 
       // Credit the agent's wallet: the payout-custody amount the user receives
-      // (reconciles the cash the agent paid out) plus their earned commission.
+      // (reconciles the cash the agent paid out) plus their earned fee.
       await this.ensureDefaultWallet(input.agentId, manager);
       await this.creditInSession(
         {
@@ -911,51 +913,27 @@ export class WalletService {
             withdrawalId: withdrawal.id,
             userId: withdrawal.userId,
             grossAmountMinor: withdrawal.amountMinor,
-            serviceFeeMinor,
-            commissionMinor,
+            feeMinor,
             kind: 'payout_custody',
           },
         },
         manager,
       );
 
-      if (commissionMinor > 0) {
+      if (feeMinor > 0) {
         await this.creditInSession(
           {
             userId: input.agentId,
-            amountMinor: commissionMinor,
+            amountMinor: feeMinor,
             entryType: 'agent_receipt',
             sourceType: 'withdrawal',
             sourceId: withdrawal.id,
-            idempotencyKey: `agent-commission:${withdrawal.id}`,
+            idempotencyKey: `agent-withdrawal-fee:${withdrawal.id}`,
             metadata: {
               withdrawalId: withdrawal.id,
               userId: withdrawal.userId,
               grossAmountMinor: withdrawal.amountMinor,
-              kind: 'commission',
-            },
-          },
-          manager,
-        );
-      }
-
-      // Credit the designated super-admin's wallet with the service fee.
-      if (serviceFeeMinor > 0 && input.superAdminUserId && input.superAdminUserId !== input.agentId) {
-        await this.ensureDefaultWallet(input.superAdminUserId, manager);
-        await this.creditInSession(
-          {
-            userId: input.superAdminUserId,
-            amountMinor: serviceFeeMinor,
-            entryType: 'adjustment',
-            sourceType: 'withdrawal',
-            sourceId: withdrawal.id,
-            idempotencyKey: `platform-service-fee:${withdrawal.id}`,
-            metadata: {
-              withdrawalId: withdrawal.id,
-              userId: withdrawal.userId,
-              agentId: input.agentId,
-              grossAmountMinor: withdrawal.amountMinor,
-              kind: 'service_fee',
+              kind: 'withdrawal_fee',
             },
           },
           manager,
@@ -963,9 +941,7 @@ export class WalletService {
       }
 
       withdrawal.status = 'completed';
-      withdrawal.serviceChargeMinor = totalChargeMinor;
-      withdrawal.serviceFeeMinor = serviceFeeMinor;
-      withdrawal.commissionMinor = commissionMinor;
+      withdrawal.serviceChargeMinor = feeMinor;
       withdrawal.netAmountMinor = netAmountMinor;
       withdrawal.telebirrReference = reference;
       withdrawal.paymentProvider = input.paymentProvider ?? null;
@@ -985,20 +961,19 @@ export class WalletService {
           metadata: {
             destinationAccount: withdrawal.destinationAccount,
             netAmountMinor,
-            serviceFeeMinor,
-            commissionMinor,
+            feeMinor,
             telebirrReference: withdrawal.telebirrReference,
           },
         },
         manager,
       );
 
-      if (serviceFeeMinor > 0) {
+      if (feeMinor > 0) {
         await manager.query(`
           INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
           VALUES ('global', ?)
           ON DUPLICATE KEY UPDATE totalServiceChargesMinor = totalServiceChargesMinor + ?
-        `, [serviceFeeMinor, serviceFeeMinor]);
+        `, [feeMinor, feeMinor]);
       }
 
       this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));

@@ -7,6 +7,7 @@ import { AgentsService } from './agents.service';
 import { AgentShift } from './entities/agent-shift.entity';
 import { UsersModule } from '../users/users.module';
 import { SystemConfig } from '../admin/entities/system-config.entity';
+import { WithdrawalFeeRange } from '../wallet/entities/withdrawal-fee-range.entity';
 import { TelebirrReceiptClientModule } from '../payments/telebirr-receipt-client.module';
 import { MpesaReceiptClientModule } from '../payments/mpesa-receipt-client.module';
 import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
@@ -14,7 +15,7 @@ import { WithdrawalProofVerifierService } from './withdrawal-proof-verifier.serv
 @Module({
   imports: [
     JwtModule.register({}),
-    TypeOrmModule.forFeature([AgentShift, SystemConfig]),
+    TypeOrmModule.forFeature([AgentShift, SystemConfig, WithdrawalFeeRange]),
     WalletModule,
     UsersModule,
     TelebirrReceiptClientModule,

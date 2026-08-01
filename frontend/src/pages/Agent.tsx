@@ -41,7 +41,7 @@ export function Agent() {
 
   const [available, setAvailable] = useState<Withdrawal[]>([]);
   const [mine, setMine] = useState<Withdrawal[]>([]);
-  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number } | null>(null);
+  const [config, setConfig] = useState<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
   const [perf, setPerf] = useState<AgentSelfPerformance | null>(null);
   const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -174,11 +174,14 @@ export function Agent() {
     }
   };
 
-  const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
-  const commissionPct = config?.withdrawalCommissionPct ?? 0;
-  const feeOf = (gross: number) => Math.floor((gross * serviceFeePct) / 100);
-  const commissionOf = (gross: number) => Math.floor((gross * commissionPct) / 100);
-  const netAmount = (gross: number) => gross - feeOf(gross) - commissionOf(gross);
+  // The agent keeps 100% of the flat fee — no platform split.
+  const feeOf = (gross: number): number => {
+    const match = config?.withdrawalFeeRanges.find(
+      (r) => gross >= r.minAmountMinor && (r.maxAmountMinor === null || gross <= r.maxAmountMinor),
+    );
+    return match ? match.feeMinor : 0;
+  };
+  const netAmount = (gross: number) => gross - feeOf(gross);
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -216,7 +219,7 @@ export function Agent() {
       }}>
         {[
           { key: 'balance', label: t('agent.balance'), value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
-          { key: 'feeComm', label: t('agent.feeComm'), value: `${serviceFeePct}/${commissionPct}%` },
+          { key: 'feeComm', label: t('agent.feeComm'), value: `${config?.withdrawalFeeRanges.length ?? 0} tiers` },
           { key: 'pool', label: t('agent.pool'), value: String(available.length) },
           { key: 'active', label: t('agent.active'), value: String(mine.length) },
         ].map(({ key, label, value, accent }) => (
@@ -353,8 +356,7 @@ export function Agent() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {mine.map((w) => {
               const net = netAmount(w.amountMinor);
-              const serviceFee = feeOf(w.amountMinor);
-              const commission = commissionOf(w.amountMinor);
+              const fee = feeOf(w.amountMinor);
               const isBusy = busy[w.id] ?? false;
               return (
                 <motion.article

@@ -23,6 +23,10 @@ function makeService(input: {
   referralCode?: string;
   referredPlayers?: number;
   botUsername?: string;
+  withdrawalFeeRanges?: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }>;
+  claimedWithdrawal?: any;
+  verifiedPayout?: any;
+  completeWithdrawalByAgentResult?: any;
 }) {
   const usersService = {
     findOnDutyAgent: jest.fn().mockResolvedValue(input.onDutyAgent ?? null),
@@ -30,13 +34,15 @@ function makeService(input: {
     listPlayersByAssignedAgentId: jest.fn().mockResolvedValue(
       input.listPlayersResult ?? { data: [], total: 0, page: 1, limit: 20, totalPages: 0 },
     ),
-    findById: jest.fn().mockResolvedValue(input.findByIdResult),
+    findById: jest.fn().mockResolvedValue(input.findByIdResult ?? makeAgent({})),
     ensureAgentReferralCode: jest.fn().mockResolvedValue(input.referralCode ?? 'ABC234'),
     countReferredPlayers: jest.fn().mockResolvedValue(input.referredPlayers ?? 0),
   } as unknown as UsersService;
 
   const walletService = {
     getAvailableBalances: jest.fn().mockResolvedValue(input.balances ?? new Map()),
+    getClaimedWithdrawalForAgent: jest.fn().mockResolvedValue(input.claimedWithdrawal),
+    completeWithdrawalByAgent: jest.fn().mockResolvedValue(input.completeWithdrawalByAgentResult),
   } as unknown as WalletService;
 
   // getAreaPlayerActivity fires 6 parallel queries (telebirr, mpesa, withdrawals,
@@ -48,6 +54,17 @@ function makeService(input: {
       callIndex++;
       return Promise.resolve(rows);
     }),
+    findOneBy: jest.fn().mockResolvedValue({ telebirrCreditMinorPerBirr: 1 }),
+  };
+
+  const withdrawalFeeRangeRepository = {
+    find: jest.fn().mockResolvedValue(input.withdrawalFeeRanges ?? []),
+  };
+
+  const withdrawalProofVerifier = {
+    verifyPayout: jest.fn().mockResolvedValue(
+      input.verifiedPayout ?? { reference: 'ref-1', provider: 'telebirr', verification: {} },
+    ),
   };
 
   const configService = {
@@ -59,13 +76,14 @@ function makeService(input: {
   const service = new AgentsService(
     {} as any, // agentShiftRepository
     systemConfigRepository as any,
+    withdrawalFeeRangeRepository as any,
     walletService,
     usersService,
-    {} as any, // withdrawalProofVerifier
+    withdrawalProofVerifier as any,
     configService as any,
   );
 
-  return { service, usersService, walletService, systemConfigRepository, configService };
+  return { service, usersService, walletService, systemConfigRepository, withdrawalFeeRangeRepository, withdrawalProofVerifier, configService };
 }
 
 describe('AgentsService — deposit-agent listing excludes zero-balance agents', () => {
@@ -230,5 +248,61 @@ describe('AgentsService — deposit-agent listing excludes zero-balance agents',
       expect(result.games.keno).toEqual({ played: 3, won: 0, stakedMinor: 300, payoutMinor: 0 });
       expect(result.games.crash).toEqual({ played: 1, won: 1, stakedMinor: 100, payoutMinor: 250 });
     });
+  });
+});
+
+describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', () => {
+  const ranges = [
+    { minAmountMinor: 1, maxAmountMinor: 50000, feeMinor: 1000 },
+    { minAmountMinor: 50001, maxAmountMinor: null, feeMinor: 10000 },
+  ];
+
+  it('resolves the fee from the matching range and passes it through as a single flat feeMinor', async () => {
+    const { service, walletService, withdrawalProofVerifier } = makeService({
+      withdrawalFeeRanges: ranges,
+      claimedWithdrawal: { amountMinor: 25000, destinationAccount: '0911111111' },
+    });
+
+    await service.completeWithdrawal('wd-1', 'agent-1', 'telebirr', 'proof-123');
+
+    // 25,000 falls in the first tier (fee 1,000) → the agent must have paid the
+    // player 24,000, and completeWithdrawalByAgent gets the resolved flat fee.
+    expect(withdrawalProofVerifier.verifyPayout).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedAmountMinor: 24000 }),
+    );
+    expect(walletService.completeWithdrawalByAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ withdrawalId: 'wd-1', agentId: 'agent-1', feeMinor: 1000 }),
+    );
+    // No more platform split — the old pct/superAdminUserId fields must be gone.
+    const call = (walletService.completeWithdrawalByAgent as jest.Mock).mock.calls[0][0];
+    expect(call).not.toHaveProperty('serviceFeePct');
+    expect(call).not.toHaveProperty('commissionPct');
+    expect(call).not.toHaveProperty('superAdminUserId');
+  });
+
+  it('resolves the open-ended top tier for large amounts', async () => {
+    const { service, walletService } = makeService({
+      withdrawalFeeRanges: ranges,
+      claimedWithdrawal: { amountMinor: 500000, destinationAccount: '0911111111' },
+    });
+
+    await service.completeWithdrawal('wd-2', 'agent-1', 'telebirr', 'proof-123');
+
+    expect(walletService.completeWithdrawalByAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ feeMinor: 10000 }),
+    );
+  });
+
+  it('rejects the withdrawal instead of silently charging zero when no active range covers the amount', async () => {
+    const gappy = [{ minAmountMinor: 1, maxAmountMinor: 500, feeMinor: 10 }];
+    const { service, walletService } = makeService({
+      withdrawalFeeRanges: gappy,
+      claimedWithdrawal: { amountMinor: 5000, destinationAccount: '0911111111' },
+    });
+
+    await expect(service.completeWithdrawal('wd-3', 'agent-1', 'telebirr', 'proof-123')).rejects.toThrow(
+      /fee configuration/i,
+    );
+    expect(walletService.completeWithdrawalByAgent).not.toHaveBeenCalled();
   });
 });

@@ -144,9 +144,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
   const [withdrawPhone,  setWithdrawPhone]  = useState('');
   const [isWithdrawing,  setIsWithdrawing]  = useState(false);
   const [withdrawFeeConfig, setWithdrawFeeConfig] = useState<{
-    withdrawalServiceChargePct: number;
-    withdrawalCommissionPct: number;
-    withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+    withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }>;
   } | null>(null);
 
   const loadWallet = useCallback(async () => {
@@ -277,17 +275,13 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     });
   };
 
-  /** Mirror of AgentsService.resolveServiceFeePct — same logic, client side. */
-  const resolveFeePct = (amountMinor: number): number => {
-    if (!withdrawFeeConfig) return 0;
-    const { withdrawalServiceChargePct: flat, withdrawalFeeTiers: tiers } = withdrawFeeConfig;
-    if (!tiers || tiers.length === 0) return flat;
-    const sorted = [...tiers].sort((a, b) => a.minAmountMinor - b.minAmountMinor);
-    let pct = flat;
-    for (const tier of sorted) {
-      if (amountMinor >= tier.minAmountMinor) pct = tier.feePct;
-    }
-    return pct;
+  /** Mirror of AgentsService/resolveWithdrawalFeeMinor — same lookup, client side. */
+  const resolveFeeMinor = (amountMinor: number): number | null => {
+    if (!withdrawFeeConfig) return null;
+    const match = withdrawFeeConfig.withdrawalFeeRanges.find(
+      (r) => amountMinor >= r.minAmountMinor && (r.maxAmountMinor === null || amountMinor <= r.maxAmountMinor),
+    );
+    return match ? match.feeMinor : null;
   };
 
   const handleWithdraw = async () => {
@@ -704,12 +698,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                   const raw = parseFloat(withdrawAmount);
                   if (isNaN(raw) || raw <= 0 || !withdrawFeeConfig) return null;
                   const amtMinor = Math.round(raw);
-                  const feePct  = resolveFeePct(amtMinor);
-                  const commPct = withdrawFeeConfig.withdrawalCommissionPct ?? 0;
-                  const feeMinor  = Math.floor(amtMinor * feePct / 100);
-                  const commMinor = Math.floor(amtMinor * commPct / 100);
-                  const netMinor  = amtMinor - feeMinor - commMinor;
-                  if (feeMinor === 0 && commMinor === 0) return null;
+                  const feeMinor = resolveFeeMinor(amtMinor);
+                  if (feeMinor === null) return null;
+                  const netMinor = amtMinor - feeMinor;
+                  if (feeMinor === 0) return null;
                   return (
                     <div style={{
                       marginBottom: 12, padding: '10px 12px',
@@ -719,15 +711,9 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     }}>
                       <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--gold)' }}>Fee Breakdown</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--text-muted)' }}>
-                        <span>Service fee ({feePct}%)</span>
+                        <span>Withdrawal fee</span>
                         <span style={{ color: '#ef4444' }}>−{new Intl.NumberFormat().format(feeMinor)} ETB</span>
                       </div>
-                      {commMinor > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, color: 'var(--text-muted)' }}>
-                          <span>Agent commission ({commPct}%)</span>
-                          <span style={{ color: '#ef4444' }}>−{new Intl.NumberFormat().format(commMinor)} ETB</span>
-                        </div>
-                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 6, fontWeight: 700, color: 'var(--green)' }}>
                         <span>You receive</span>
                         <span>{new Intl.NumberFormat().format(netMinor)} ETB</span>

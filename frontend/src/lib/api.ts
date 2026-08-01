@@ -140,7 +140,7 @@ export const walletApi = {
     api.post<Withdrawal>('/wallet/withdraw', { amountMinor, destinationAccount }).then((r) => r.data),
   getWithdrawals: () => api.get<Withdrawal[]>('/wallet/withdrawals').then((r) => r.data),
   getWithdrawalFeeConfig: () =>
-    api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number; withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null }>('/wallet/withdrawal-fee-config').then((r) => r.data),
+    api.get<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> }>('/wallet/withdrawal-fee-config').then((r) => r.data),
 };
 
 // ── Payments ──────────────────────────────────────────────────────
@@ -337,9 +337,6 @@ export type PlatformStats = {
 export type SystemConfig = {
   telebirrCreditMinorPerBirr: number;
   welcomeBonusMinor: number;
-  withdrawalServiceChargePct: number;
-  withdrawalCommissionPct: number;
-  superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
@@ -348,8 +345,31 @@ export type SystemConfig = {
   agentRoomsEnabled?: boolean;
   /** % of a room's real-player GGR paid to the owning agent on completion. */
   agentRoomCommissionPct?: number;
-  /** Tiered withdrawal fee schedule. When set, overrides flat withdrawalServiceChargePct. */
-  withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+  /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
+  referralCommissionPct?: number;
+};
+
+export type WithdrawalFeeRange = {
+  id: string;
+  minAmountMinor: number;
+  /** Null = open-ended ("and above"). */
+  maxAmountMinor: number | null;
+  feeMinor: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CoverageGap = { fromMinor: number; toMinor: number | null };
+
+export type ConfigChangeLog = {
+  id: string;
+  configType: 'global_referral_commission' | 'agent_referral_commission' | 'withdrawal_fee_range';
+  entityId: string | null;
+  previousValue: string | null;
+  newValue: string | null;
+  changedByAdminId: string;
+  createdAt: string;
 };
 
 export type AgentPerformance = {
@@ -384,6 +404,16 @@ export const adminApi = {
   getOverview: () => api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
   getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
   updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
+  getConfigHistory: (params?: { configType?: ConfigChangeLog['configType']; entityId?: string; page?: number; limit?: number }) =>
+    api.get<{ data: ConfigChangeLog[]; total: number; page: number; limit: number }>('/admin/config-history', { params }).then((r) => r.data),
+  listWithdrawalFeeRanges: () =>
+    api.get<{ ranges: WithdrawalFeeRange[]; coverageGaps: CoverageGap[] }>('/admin/withdrawal-fee-ranges').then((r) => r.data),
+  createWithdrawalFeeRange: (dto: { minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number; active?: boolean }) =>
+    api.post<WithdrawalFeeRange>('/admin/withdrawal-fee-ranges', dto).then((r) => r.data),
+  updateWithdrawalFeeRange: (id: string, dto: Partial<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number; active: boolean }>) =>
+    api.patch<WithdrawalFeeRange>(`/admin/withdrawal-fee-ranges/${id}`, dto).then((r) => r.data),
+  deleteWithdrawalFeeRange: (id: string) =>
+    api.delete<void>(`/admin/withdrawal-fee-ranges/${id}`).then((r) => r.data),
   getAgentPerformance: () => api.get<AgentPerformance[]>('/admin/agents/performance').then((r) => r.data),
   /** The Master Wallet — the ONE shared system wallet every admin account operates on (see backend AdminService). */
   getHouseWallet: () => api.get<Wallet>('/admin/wallet/house').then((r) => r.data),
@@ -760,7 +790,7 @@ export const adminWithdrawalsApi = {
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
-  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number; withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null }>('/agent/config').then((r) => r.data),
+  getConfig: () => api.get<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> }>('/agent/config').then((r) => r.data),
   getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
   getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),

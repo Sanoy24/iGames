@@ -283,11 +283,19 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0; /* let grid children shrink below content size instead of overflowing */
 }
-.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-.stat-card strong { font-size: 14px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display); }
+.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-card strong { font-size: 14px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-@media (max-width: 520px) { .stats-grid { grid-template-columns: 1fr; } }
+/* Stay 3-column even on narrow phones — just tighten spacing instead of
+   stacking into three full-width rows (which reads as excessively tall). */
+@media (max-width: 380px) {
+  .stats-grid { gap: 6px; }
+  .stat-card { padding: 8px 6px; gap: 2px; }
+  .stat-label { font-size: 9px; letter-spacing: 0.3px; }
+  .stat-card strong { font-size: 12px; }
+}
 
 /* ── Hero sub-panel ───────────────────────────────────────── */
 .hero-subpanel { background: linear-gradient(135deg, #1a1d2e 0%, var(--surface) 100%); }

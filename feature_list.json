@@ -574,6 +574,26 @@
       "verification": "npx tsc -p tsconfig.build.json --noEmit && npx jest --no-coverage --forceExit && npx nest build",
       "evidence": "src/support/support.service.ts (approveRefundRequest now opens its own transaction and calls adminService.creditFromMasterWallet), src/support/support.module.ts (+AdminModule import), src/support/support.service.spec.ts (NEW, first spec for this service — 3 cases: correct targetUserId/amountMinor/entryType passed inside a transaction, amount defaults to the requested amount, over-the-requested-amount rejected before ever touching the Master Wallet). src/bots/bots.service.ts (createBot + topupBot both route through adminService.creditFromMasterWallet), src/bots/bots.module.ts (+AdminModule import), src/bots/bots.service.spec.ts (NEW, first spec for this service — 3 cases: initial balance funded correctly, default 100000 minor units when unspecified, top-up funded correctly). 443/443 backend unit tests (was 437, +6 new), tsc + nest build clean.",
       "notes": "User simply replied 'yes' to the two open follow-ups from BE-WALLET-01 (support refunds + bot funding), confirming both should be included. No new design decisions needed — both reuse the AdminService.creditFromMasterWallet primitive built in BE-WALLET-01 unchanged. The only new judgment call made here (not explicitly asked) was verifying module-import safety before wiring AdminModule into two more modules, given NestJS's DI container will hard-fail at boot on a genuine circular module dependency."
+    },
+    {
+      "id": "BE-24",
+      "area": "bingo",
+      "title": "Admin-managed Bingo bot name pool and room-scoped identity map",
+      "behavior": "Bingo bots now draw from an admin-managed BotName pool (add/edit/activate/deactivate/delete/import). Each Bingo room persists a botIdentityMap so every bot gets one unique display name + masked 4-digit suffix for that game only. Names are randomized per room, duplicate names are avoided within the room, and suffixes are unique within the room whenever possible. Bot aliases are written into settlement metadata so admin summaries and wallet recent-wins views show the same visible identity the players saw.",
+      "status": "passing",
+      "verification": "npx tsc -p tsconfig.build.json --noEmit && npx jest src/bots/bots.service.spec.ts src/bingo/bingo.service.spec.ts --no-coverage --forceExit && cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "src/bots/entities/bot-name.entity.ts, src/bots/dto/create-bot-name.dto.ts, src/bots/bots.controller.ts, src/bots/bots.service.ts, src/bingo/entities/bingo-room.entity.ts (botIdentityMap), src/bingo/bingo.service.ts (ensureRoomBotIdentities / resolveDisplayedNameForUser / settlement metadata), src/wallet/wallet.service.ts getRecentPlatformWins COALESCE(displayName). 225/225 backend unit tests, backend tsconfig.build clean, frontend tsc + build clean.",
+      "notes": "Room-scoped identity is intentionally persisted on the BingoRoom so a bot keeps the same visible alias/suffix throughout a game while different rooms randomize independently. The admin pool is the only source of display names; fallback names are only for exhaustion or missing data."
+    },
+    {
+      "id": "FE-19",
+      "area": "frontend/admin",
+      "title": "Bots hub name-pool subtab for Bingo bot identities",
+      "behavior": "The existing Admin -> Bots hub now includes a dedicated Bingo Name Pool subtab with create, bulk import, edit, activate/deactivate, and delete flows. The UI shows live counts for total/active/inactive names and a bulk-import queue preview, keeping the name pool manageable from the dashboard.",
+      "status": "passing",
+      "verification": "cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/lib/api.ts (adminBotsApi.listBotNames/createBotName/importBotNames/updateBotName/deleteBotName, BotNameRecord), frontend/src/pages/Admin.tsx (BotsSubTab + BotNamesAdmin).",
+      "notes": "Placed inside the existing Bots hub rather than a new top-level tab so bot players and their Bingo identity pool stay together in one admin surface."
     }
   ]
 }

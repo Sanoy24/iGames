@@ -226,13 +226,18 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
 
   const handleTopup = async () => {
     if (!receiptInput.trim()) return;
-    if (!receiptFile) { addToast('error', 'Please attach a photo or PDF of your receipt'); return; }
     setIsSubmitting(true);
     try {
-      const { fileUrl } = await paymentsApi.uploadReceipt(receiptFile);
-      if (!fileUrl) {
-        addToast('error', 'Receipt upload failed — please try attaching the file again');
-        return;
+      // Photo/PDF attachment is optional — the pasted SMS text or receipt
+      // link is enough to verify and credit the deposit on its own.
+      let fileUrl: string | undefined;
+      if (receiptFile) {
+        const uploaded = await paymentsApi.uploadReceipt(receiptFile);
+        if (!uploaded.fileUrl) {
+          addToast('error', 'Receipt upload failed — please try attaching the file again');
+          return;
+        }
+        fileUrl = uploaded.fileUrl;
       }
       if (provider === 'mpesa') {
         await paymentsApi.submitMpesaSms(receiptInput.trim(), fileUrl);
@@ -621,7 +626,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                     </div>
                     <div style={{ marginBottom: 12 }}>
                       <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                        Attach a photo or PDF of the receipt <span style={{ color: 'var(--danger)' }}>*</span>
+                        Attach a photo or PDF of the receipt (optional)
                       </label>
                       <input
                         type="file"
@@ -644,7 +649,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                       <button
                         className="btn btn-success"
                         onClick={handleTopup}
-                        disabled={isSubmitting || !receiptFile}
+                        disabled={isSubmitting}
                         style={{ flex: 2 }}
                       >
                         {isSubmitting

@@ -7,6 +7,7 @@ import { BingoModule } from '../bingo/bingo.module';
 import { CrashModule } from '../crash/crash.module';
 import { KenoModule } from '../keno/keno.module';
 import { User } from '../users/entities/user.entity';
+import { BotName } from './entities/bot-name.entity';
 import { WalletModule } from '../wallet/wallet.module';
 import { AdminModule } from '../admin/admin.module';
 import { BotsController } from './bots.controller';
@@ -15,7 +16,7 @@ import { BotsService } from './bots.service';
 @Module({
   imports: [
     JwtModule.register({}),
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, BotName]),
     WalletModule,
     AdminModule,
     KenoModule,

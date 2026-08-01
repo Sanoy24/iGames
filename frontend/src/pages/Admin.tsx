@@ -24,6 +24,7 @@ import {
   type BingoRoundDetails,
   type BingoRoundTicket,
   type BotUser,
+  type BotNameRecord,
   type BroadcastButton,
   type BroadcastMessage,
   type CreateBroadcastInput,
@@ -3364,9 +3365,10 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
 //   • Liquidity: funded player accounts that fake Keno/Bingo/Crash activity.
 //   • Werk Flega: cosmetic AI maze opponents (name/colour/skill, no wallet).
 // ══════════════════════════════════════════════════════════════════
-type BotsSubTab = 'liquidity' | 'werk';
+type BotsSubTab = 'liquidity' | 'names' | 'werk';
 const BOTS_SUBTABS: Array<{ id: BotsSubTab; label: string }> = [
   { id: 'liquidity', label: 'Liquidity (Keno/Bingo/Crash)' },
+  { id: 'names', label: 'Bingo Name Pool' },
   { id: 'werk', label: '⛏️ Werk Flega' },
 ];
 
@@ -3382,9 +3384,10 @@ function BotsHub() {
         ))}
       </div>
       {sub === 'liquidity' && <BotsAdmin />}
+      {sub === 'names' && <BotNamesAdmin />}
       {sub === 'werk' && (
         <div>
-          <SectionHead title="Werk Flega bots" sub="Cosmetic AI opponents drawn into each maze game. Edit / add / disable — the next game reflects it." />
+          <SectionHead title="Werk Flega bots" sub="Cosmetic AI opponents drawn into each maze game. Edit / add / disable – the next game reflects it." />
           <WerkBotManager />
         </div>
       )}
@@ -3665,6 +3668,286 @@ function BotsAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Agent Actions (Audit Trail)
 // ══════════════════════════════════════════════════════════════════
+function BotNamesAdmin() {
+  const addToast = useStore((s) => s.addToast);
+  const [names, setNames] = useState<BotNameRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [createForm, setCreateForm] = useState({ displayName: 'Abebe', active: true });
+  const [bulkText, setBulkText] = useState('Abebe\nHana\nSamuel');
+  const [editForm, setEditForm] = useState({ displayName: '', active: true });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setNames(await adminBotsApi.listBotNames());
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const createName = async () => {
+    const displayName = createForm.displayName.trim();
+    if (!displayName) {
+      addToast('error', 'Enter a bot name');
+      return;
+    }
+    setBusy('create-name');
+    try {
+      await adminBotsApi.createBotName({ displayName, active: createForm.active });
+      addToast('success', `Bot name "${displayName}" created.`);
+      setCreateForm({ displayName: '', active: true });
+      setShowCreate(false);
+      await load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const importNames = async () => {
+    const parsed = bulkText
+      .split(/[\n,;]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (parsed.length === 0) {
+      addToast('error', 'Paste at least one bot name');
+      return;
+    }
+    setBusy('import-names');
+    try {
+      const created = await adminBotsApi.importBotNames({ names: parsed });
+      addToast('success', `Imported ${created.length} bot name${created.length === 1 ? '' : 's'}.`);
+      setShowImport(false);
+      await load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleActive = async (name: BotNameRecord) => {
+    setBusy(`${name.id}-active`);
+    try {
+      await adminBotsApi.updateBotName(name.id, { active: !name.active });
+      await load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveEdit = async (name: BotNameRecord) => {
+    const displayName = editForm.displayName.trim();
+    if (!displayName) {
+      addToast('error', 'Enter a bot name');
+      return;
+    }
+    setBusy(`${name.id}-edit`);
+    try {
+      await adminBotsApi.updateBotName(name.id, { displayName, active: editForm.active });
+      setEditingId(null);
+      await load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteName = async (name: BotNameRecord) => {
+    if (!confirm(`Delete bot name "${name.displayName}"?`)) return;
+    setBusy(`${name.id}-delete`);
+    try {
+      await adminBotsApi.deleteBotName(name.id);
+      addToast('success', `Bot name "${name.displayName}" deleted.`);
+      await load();
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const activeNames = names.filter((name) => name.active).length;
+  const importCount = bulkText.split(/[\n,;]/).map((entry) => entry.trim()).filter(Boolean).length;
+
+  return (
+    <div className="stack-lg">
+      <SectionHead title="Bingo Bot Name Pool" sub="Admin-managed aliases used to give Bingo bots unique identities in each game.">
+        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-btn adm-btn-primary" onClick={() => setShowCreate((v) => !v)}>
+          {showCreate ? <X size={13} /> : <Plus size={13} />}{showCreate ? 'Close' : 'Add Name'}
+        </button>
+      </SectionHead>
+
+      <div className="adm-kpi-row">
+        <Kpi label="Total Names" value={String(names.length)} color="#6366f1" />
+        <Kpi label="Active" value={String(activeNames)} color="#10b981" />
+        <Kpi label="Inactive" value={String(names.length - activeNames)} color="#94a3b8" />
+        <Kpi label="Import Queue" value={String(importCount)} color="#f59e0b" />
+      </div>
+
+      {showCreate && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">Add One Name</div>
+          <div className="adm-field-grid">
+            <label className="adm-field">
+              <span>Display Name</span>
+              <input
+                className="input"
+                value={createForm.displayName}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, displayName: e.target.value }))}
+              />
+            </label>
+            <label className="adm-field">
+              <span>Status</span>
+              <select
+                className="input"
+                value={createForm.active ? 'active' : 'inactive'}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, active: e.target.value === 'active' }))}
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+          </div>
+          <div className="adm-panel-footer">
+            <button className="adm-btn adm-btn-primary" disabled={busy === 'create-name'} onClick={createName}>
+              {busy === 'create-name' ? 'Saving…' : 'Create Name'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">
+          Bulk Import
+          <button className="adm-btn adm-btn-xs adm-btn-secondary" onClick={() => setShowImport((v) => !v)}>
+            {showImport ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        {showImport && (
+          <>
+            <div className="adm-field">
+              <span>Paste names separated by new lines, commas, or semicolons</span>
+              <textarea
+                className="input"
+                rows={6}
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+              />
+            </div>
+            <div className="adm-panel-footer">
+              <button className="adm-btn adm-btn-primary" disabled={busy === 'import-names'} onClick={importNames}>
+                {busy === 'import-names' ? 'Importing…' : 'Import Names'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="adm-panel" style={{ overflowX: 'auto' }}>
+        {loading && names.length === 0
+          ? <div className="adm-empty">Loading bot names…</div>
+          : names.length === 0
+          ? <div className="adm-empty">No bot names yet. Add a few so Bingo bots can rotate naturally.</div>
+          : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              {names.map((name) => {
+                const isEditing = editingId === name.id;
+                return (
+                  <div key={name.id} style={{ borderBottom: '1px solid var(--border)', padding: '12px 0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: 160 }}>
+                        <strong style={{ fontSize: 13 }}>{name.displayName}</strong>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                          Updated {formatRelativeTime(name.updatedAt)} · Created {formatRelativeTime(name.createdAt)}
+                        </div>
+                      </div>
+
+                      <span className={`badge ${name.active ? 'badge-green' : 'badge-red'}`}>
+                        {name.active ? 'Active' : 'Inactive'}
+                      </span>
+
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          className="adm-btn adm-btn-xs adm-btn-secondary"
+                          onClick={() => {
+                            setEditingId(isEditing ? null : name.id);
+                            setEditForm({ displayName: name.displayName, active: name.active });
+                          }}
+                        >
+                          {isEditing ? 'Cancel' : 'Edit'}
+                        </button>
+                        <button
+                          className={`adm-btn adm-btn-xs ${name.active ? 'adm-btn-warning' : 'adm-btn-secondary'}`}
+                          disabled={busy === `${name.id}-active`}
+                          onClick={() => toggleActive(name)}
+                        >
+                          {busy === `${name.id}-active` ? '…' : name.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button
+                          className="adm-btn adm-btn-xs adm-btn-danger"
+                          disabled={busy === `${name.id}-delete`}
+                          onClick={() => deleteName(name)}
+                        >
+                          {busy === `${name.id}-delete` ? '…' : 'Delete'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {isEditing && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <label className="adm-field" style={{ flex: 1, minWidth: 160 }}>
+                          <span>Display Name</span>
+                          <input
+                            className="input"
+                            value={editForm.displayName}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, displayName: e.target.value }))}
+                          />
+                        </label>
+                        <label className="adm-field" style={{ width: 180 }}>
+                          <span>Status</span>
+                          <select
+                            className="input"
+                            value={editForm.active ? 'active' : 'inactive'}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, active: e.target.value === 'active' }))}
+                          >
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                          </select>
+                        </label>
+                        <button
+                          className="adm-btn adm-btn-primary"
+                          disabled={busy === `${name.id}-edit`}
+                          onClick={() => saveEdit(name)}
+                          style={{ alignSelf: 'flex-end', marginBottom: 2 }}
+                        >
+                          {busy === `${name.id}-edit` ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
 function AgentActionsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [ledgerActions, setLedgerActions] = useState<AgentLedgerAction[]>([]);

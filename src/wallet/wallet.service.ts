@@ -160,7 +160,7 @@ export class WalletService {
       .createQueryBuilder('le')
       .innerJoin('le.user', 'u')
       .select([
-        'u.displayName AS displayName',
+        'COALESCE(JSON_UNQUOTE(JSON_EXTRACT(le.metadata, "$.displayName")), u.displayName) AS displayName',
         'le.amountMinor AS amountMinor',
         'le.sourceType AS sourceType',
         'le.createdAt AS createdAt',

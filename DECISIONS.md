@@ -150,6 +150,12 @@
 **Why**: Previously every surface read one cursor, so numbers lit up on the board/cards at the same instant they entered "now calling" — and the caller's entrance animation made it look last. The user wanted a clear now-calling → grid → ticket → window order.
 **Constraint**: Each trailing cursor **snaps backwards instantly** (room switch/reset) but lags going forward. Don't collapse the board/ticket back onto `revealedNumbers`. All three delays sit comfortably inside the `REVEAL_BASE_MS` (1.5s) per-ball cadence.
 
+### D-23: Bingo bot identity pool is admin-managed and room-scoped
+**Decided**: 2026-08-01
+**Decision**: Bingo bot display names come from an admin-managed `bot_names` pool, while each `BingoRoom` persists its own `botIdentityMap` of `{ displayName, phoneSuffix }` per bot user id for that specific game.
+**Why**: A shared room-scoped map keeps every bot identity stable throughout the round without making the same visible bot name repeat across games. Admin control lets the pool be expanded, edited, activated, deactivated, or trimmed without code changes.
+**Constraints**: Within one room, bot names must be unique and phone suffixes should be unique whenever possible. Bot aliases used in settlement summaries and wallet recent-wins must match what players saw in-game, so write the alias into settlement metadata instead of re-deriving it later.
+
 ---
 
 ## Wallet / Agents (continued)

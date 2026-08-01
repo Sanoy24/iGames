@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException
@@ -15,9 +16,12 @@ import { User } from '../users/entities/user.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { AdminService } from '../admin/admin.service';
 import { CreateBotDto } from './dto/create-bot.dto';
+import { CreateBotNameDto, ImportBotNamesDto } from './dto/create-bot-name.dto';
 import { UpdateBotPolicyDto } from './dto/update-bot-policy.dto';
+import { UpdateBotNameDto } from './dto/update-bot-name.dto';
 import { KenoTicket } from '../keno/entities/keno-ticket.entity';
 import { KenoDraw } from '../keno/entities/keno-draw.entity';
+import { BotName } from './entities/bot-name.entity';
 
 export type BotPolicy = {
   ticketsPerRound: number;
@@ -33,6 +37,14 @@ export type BotResponse = {
   walletBalanceMinor?: number;
 };
 
+export type BotNameResponse = {
+  id: string;
+  displayName: string;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 @Injectable()
 export class BotsService {
   private readonly logger = new Logger(BotsService.name);
@@ -41,6 +53,8 @@ export class BotsService {
     private readonly dataSource: DataSource,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(BotName)
+    private readonly botNameRepository: Repository<BotName>,
     private readonly walletService: WalletService,
     private readonly adminService: AdminService,
     private readonly kenoService: KenoService,
@@ -136,6 +150,74 @@ export class BotsService {
     });
     const ws = await this.walletService.getDefaultWalletSummary(bot.id);
     return { ...this.toBotResponse(bot), walletBalanceMinor: ws.availableMinor };
+  }
+
+  async listBotNames(): Promise<BotNameResponse[]> {
+    const names = await this.botNameRepository.find({
+      order: { active: 'DESC', displayName: 'ASC', createdAt: 'ASC' },
+    });
+    return names.map((name) => this.toBotNameResponse(name));
+  }
+
+  async createBotName(dto: CreateBotNameDto): Promise<BotNameResponse> {
+    const displayName = this.normalizeBotName(dto.displayName);
+    if (!displayName) {
+      throw new BadRequestException('Bot name is required');
+    }
+
+    const existing = await this.botNameRepository.findOneBy({ displayName });
+    if (existing) {
+      throw new ConflictException('Bot name already exists');
+    }
+
+    const saved = await this.botNameRepository.save(
+      this.botNameRepository.create({ displayName, active: dto.active ?? true }),
+    );
+    return this.toBotNameResponse(saved);
+  }
+
+  async importBotNames(dto: ImportBotNamesDto): Promise<BotNameResponse[]> {
+    const normalized = [...new Set(dto.names.map((name) => this.normalizeBotName(name)).filter(Boolean))];
+    if (normalized.length === 0) return [];
+
+    const existing = await this.botNameRepository.find({
+      where: { displayName: In(normalized) },
+      select: ['displayName'],
+    });
+    const existingNames = new Set(existing.map((row) => row.displayName));
+    const toCreate = normalized
+      .filter((name) => !existingNames.has(name))
+      .map((displayName) => this.botNameRepository.create({ displayName, active: true }));
+
+    if (toCreate.length === 0) return [];
+    return (await this.botNameRepository.save(toCreate)).map((name) => this.toBotNameResponse(name));
+  }
+
+  async updateBotName(id: string, dto: UpdateBotNameDto): Promise<BotNameResponse> {
+    const name = await this.botNameRepository.findOneBy({ id });
+    if (!name) throw new NotFoundException('Bot name not found');
+
+    if (dto.displayName !== undefined) {
+      const displayName = this.normalizeBotName(dto.displayName);
+      if (!displayName) throw new BadRequestException('Bot name is required');
+      if (displayName !== name.displayName) {
+        const conflict = await this.botNameRepository.findOneBy({ displayName });
+        if (conflict && conflict.id !== name.id) {
+          throw new ConflictException('Bot name already exists');
+        }
+      }
+      name.displayName = displayName;
+    }
+    if (dto.active !== undefined) {
+      name.active = dto.active;
+    }
+    return this.toBotNameResponse(await this.botNameRepository.save(name));
+  }
+
+  async deleteBotName(id: string): Promise<void> {
+    const name = await this.botNameRepository.findOneBy({ id });
+    if (!name) throw new NotFoundException('Bot name not found');
+    await this.botNameRepository.remove(name);
   }
 
   async updatePolicy(botId: string, dto: UpdateBotPolicyDto): Promise<BotResponse> {
@@ -236,6 +318,7 @@ export class BotsService {
 
     const state = await this.bingoService.getRoomState({ roomId });
     if (state.status !== 'open' || !state.scheduledStartAt || !state.soldTickets) return false;
+    await this.bingoService.ensureRoomBotIdentities(roomId, bots.map((bot) => bot.id));
 
     // ── Buy-window progress ──────────────────────────────────────────────────
     // 0 at the moment the countdown was stamped (first ticket sold), 1 at/after
@@ -453,6 +536,20 @@ export class BotsService {
     };
   }
 
+  private normalizeBotName(displayName: string): string {
+    return (displayName ?? '').trim().replace(/\s+/g, ' ');
+  }
+
+  private toBotNameResponse(name: BotName): BotNameResponse {
+    return {
+      id: name.id,
+      displayName: name.displayName,
+      active: name.active,
+      createdAt: name.createdAt,
+      updatedAt: name.updatedAt,
+    };
+  }
+
   private validateUuid(value: string, name: string): string {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(value)) {
@@ -461,3 +558,5 @@ export class BotsService {
     return value;
   }
 }
+
+

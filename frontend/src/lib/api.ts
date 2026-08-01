@@ -187,7 +187,7 @@ export const paymentsApi = {
   previewTelebirrReceipt: (rawText: string) =>
     api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
 
-  submitTelebirrReceipt: (rawText: string, receiptFileUrl: string) =>
+  submitTelebirrReceipt: (rawText: string, receiptFileUrl?: string) =>
     api.post('/payments/telebirr/receipts', { ...extractTelebirrReceiptBody(rawText), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
 
   // M-Pesa is verified from the pasted confirmation SMS (optionally cross-checked
@@ -195,7 +195,7 @@ export const paymentsApi = {
   previewMpesaSms: (sms: string) =>
     api.post<MpesaPreview>('/payments/mpesa/preview', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
 
-  submitMpesaSms: (sms: string, receiptFileUrl: string) =>
+  submitMpesaSms: (sms: string, receiptFileUrl?: string) =>
     api.post('/payments/mpesa/receipts', { sms: sms.trim(), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
 
   /** Upload a photo/PDF of the physical receipt before submitting — returns a
@@ -642,6 +642,14 @@ export type BotUser = {
   };
 };
 
+export type BotNameRecord = {
+  id: string;
+  displayName: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export const adminBotsApi = {
   listBots: () => api.get<BotUser[]>('/admin/bots').then((r) => r.data),
   createBot: (dto: { displayName: string; initialBalanceMinor: number; ticketsPerRound: number; spotCount: number }) =>
@@ -652,6 +660,15 @@ export const adminBotsApi = {
     api.post<BotUser>(`/admin/bots/${id}/topup`, { amountMinor }).then((r) => r.data),
   deleteBot: (id: string) =>
     api.delete(`/admin/bots/${id}`).then((r) => r.data),
+  listBotNames: () => api.get<BotNameRecord[]>('/admin/bots/names').then((r) => r.data),
+  createBotName: (dto: { displayName: string; active?: boolean }) =>
+    api.post<BotNameRecord>('/admin/bots/names', dto).then((r) => r.data),
+  importBotNames: (dto: { names: string[] }) =>
+    api.post<BotNameRecord[]>('/admin/bots/names/import', dto).then((r) => r.data),
+  updateBotName: (id: string, dto: Partial<{ displayName: string; active: boolean }>) =>
+    api.patch<BotNameRecord>(`/admin/bots/names/${id}`, dto).then((r) => r.data),
+  deleteBotName: (id: string) =>
+    api.delete(`/admin/bots/names/${id}`).then((r) => r.data),
 };
 
 // ── Admin: Agents ─────────────────────────────────────────────────

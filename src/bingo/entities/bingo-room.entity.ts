@@ -11,6 +11,10 @@ export type BingoPrizeTier =
   | '4th'
   | '5th';
 export type BingoWinMode = 'line' | 'pattern' | 'prefilled';
+export type BingoBotIdentity = {
+  displayName: string;
+  phoneSuffix: string;
+};
 
 export class BingoPrizeConfig {
   oneLineMinor: number;
@@ -55,7 +59,7 @@ export class BingoRoom {
 
   /**
    * When the buy-window countdown ends and drawing begins. NULL means the room
-   * is IDLE — created but not yet started. It is stamped (now + countdown) only
+   * is IDLE - created but not yet started. It is stamped (now + countdown) only
    * when the FIRST ticket is sold, so an unplayed room never draws or completes.
    */
   @Column({ type: 'timestamp', nullable: true })
@@ -77,7 +81,7 @@ export class BingoRoom {
   @Column({ type: 'json', nullable: true })
   settlementSummary?: Record<string, unknown>;
 
-  /** 'line' = 90-ball 3×9, 'pattern' = 5×5 pattern card, 'prefilled' = numbered grid lottery. */
+  /** 'line' = 90-ball 3x9, 'pattern' = 5x5 pattern card, 'prefilled' = numbered grid lottery. */
   @Column({ type: 'varchar', length: 10, default: 'prefilled' })
   winMode: BingoWinMode;
 
@@ -85,15 +89,19 @@ export class BingoRoom {
   @Column({ type: 'int', default: 90 })
   numberRange: number;
 
-  /** Grid size for prefilled mode — total cartela cards available (e.g. 75). */
+  /** Grid size for prefilled mode - total cartela cards available (e.g. 75). */
   @Column({ type: 'int', default: 75 })
   gridSize: number;
 
-  /** Active patterns and their prizes — only relevant when winMode === 'pattern'. */
+  /** Active patterns and their prizes - only relevant when winMode === 'pattern'. */
   @Column({ type: 'json', default: '[]' })
   patternPrizes: BingoPatternPrize[];
 
-  /** House edge % at time of room creation — winner receives (100 - houseEdgePct)% of pot. */
+  /** Room-scoped bot aliases + masked phone suffixes for Bingo display. */
+  @Column({ type: 'json', nullable: true })
+  botIdentityMap?: Record<string, BingoBotIdentity>;
+
+  /** House edge % at time of room creation - winner receives (100 - houseEdgePct)% of pot. */
   @Column({ type: 'int', default: 20 })
   houseEdgePct: number;
 
@@ -109,8 +117,8 @@ export class BingoRoom {
    * DB-level "one active game at a time" guard. Set to 1 while the room is open
    * or running, and NULL once it completes or is cancelled. The UNIQUE index
    * lets MySQL hold at most one non-NULL row (multiple NULLs are allowed), so
-   * two concurrent creators — even across separate backend instances or when
-   * the Redis lock is unavailable — cannot both open an active room; the second
+   * two concurrent creators - even across separate backend instances or when
+   * the Redis lock is unavailable - cannot both open an active room; the second
    * INSERT fails with a duplicate-key error.
    */
   @Column({ type: 'tinyint', nullable: true })
@@ -132,7 +140,7 @@ export class BingoRoom {
   // Millisecond precision: findRunningRoomIdsDue() gates the next draw on
   // `updatedAt <= NOW() - INTERVAL drawIntervalSeconds SECOND`. A whole-second
   // TIMESTAMP truncates the commit time to the floor second, which alone was
-  // worth up to ~1s of jitter in the gap between draws — read by players as
+  // worth up to ~1s of jitter in the gap between draws - read by players as
   // calls landing unevenly fast/slow. See ensureBingoRoomUpdatedAtPrecision()
   // in ensure-schema.ts for the one-off ALTER that upgrades an existing column.
   @UpdateDateColumn({ type: 'timestamp', precision: 3 })

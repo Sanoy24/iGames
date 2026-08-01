@@ -7,6 +7,7 @@ import {
   OnModuleInit
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { randomInt } from 'crypto';
 import { Repository, EntityManager, DataSource, In, IsNull, LessThan, LessThanOrEqual, MoreThan, Not, FindOptionsWhere } from 'typeorm';
 import { RngService } from '../rng/rng.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -15,17 +16,20 @@ import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
 import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
 import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo-pattern.dto';
 import { BingoConfig } from './entities/bingo-config.entity';
-import { BingoRoom, BingoPrizeTier, BingoWinMode } from './entities/bingo-room.entity';
+import { BingoBotIdentity, BingoRoom, BingoPrizeTier, BingoWinMode } from './entities/bingo-room.entity';
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { BingoCard } from './entities/bingo-card.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { User } from '../users/entities/user.entity';
+import { BotName } from '../bots/entities/bot-name.entity';
 
 /** Prefilled/derash finishing places, in award order. */
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
 import { NotificationsService } from '../notifications/notifications.service';
 import { GamesService } from '../games/games.service';
+
+type RoomBotIdentity = BingoBotIdentity;
 
 // ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
 
@@ -159,6 +163,8 @@ export class BingoService implements OnModuleInit {
     private readonly dataSource: DataSource,
     @InjectRepository(BingoRoom)
     private readonly bingoRoomRepository: Repository<BingoRoom>,
+    @InjectRepository(BotName)
+    private readonly botNameRepository: Repository<BotName>,
     @InjectRepository(BingoTicket)
     private readonly bingoTicketRepository: Repository<BingoTicket>,
     @InjectRepository(BingoCard)
@@ -225,6 +231,74 @@ export class BingoService implements OnModuleInit {
 
   // ── Config ──────────────────────────────────────────────────────────────────
 
+  async listBotNames(): Promise<Array<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }>> {
+    const names = await this.botNameRepository.find({
+      order: { active: 'DESC', displayName: 'ASC', createdAt: 'ASC' },
+    });
+    return names.map((name) => this.toBotNameResponse(name));
+  }
+
+  async createBotName(dto: { displayName: string; active?: boolean }): Promise<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }> {
+    const displayName = this.normalizeBotName(dto.displayName);
+    if (!displayName) throw new BadRequestException('Bot name is required');
+
+    const existing = await this.botNameRepository.findOneBy({ displayName });
+    if (existing) throw new ConflictException('Bot name already exists');
+
+    const name = this.botNameRepository.create({
+      displayName,
+      active: dto.active ?? true,
+    });
+    return this.toBotNameResponse(await this.botNameRepository.save(name));
+  }
+
+  async importBotNames(dto: { names: string[] }): Promise<Array<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }>> {
+    const normalized = [...new Set(dto.names.map((name) => this.normalizeBotName(name)).filter(Boolean))];
+    if (normalized.length === 0) return [];
+
+    const existing = await this.botNameRepository.find({
+      where: { displayName: In(normalized) },
+      select: ['displayName'],
+    });
+    const existingNames = new Set(existing.map((row) => row.displayName));
+    const toCreate = normalized
+      .filter((name) => !existingNames.has(name))
+      .map((displayName) => this.botNameRepository.create({ displayName, active: true }));
+
+    if (toCreate.length === 0) return [];
+    return (await this.botNameRepository.save(toCreate)).map((name) => this.toBotNameResponse(name));
+  }
+
+  async updateBotName(
+    id: string,
+    dto: { displayName?: string; active?: boolean },
+  ): Promise<{ id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date }> {
+    const name = await this.botNameRepository.findOneBy({ id });
+    if (!name) throw new NotFoundException('Bot name not found');
+
+    if (dto.displayName !== undefined) {
+      const displayName = this.normalizeBotName(dto.displayName);
+      if (!displayName) throw new BadRequestException('Bot name is required');
+      if (displayName !== name.displayName) {
+        const conflict = await this.botNameRepository.findOneBy({ displayName });
+        if (conflict && conflict.id !== name.id) {
+          throw new ConflictException('Bot name already exists');
+        }
+      }
+      name.displayName = displayName;
+    }
+    if (dto.active !== undefined) {
+      name.active = dto.active;
+    }
+    return this.toBotNameResponse(await this.botNameRepository.save(name));
+  }
+
+  async deleteBotName(id: string): Promise<void> {
+    const name = await this.botNameRepository.findOneBy({ id });
+    if (!name) throw new NotFoundException('Bot name not found');
+    await this.botNameRepository.remove(name);
+  }
+
   async getBingoConfig(): Promise<BingoConfig> {
     let cfg = await this.bingoConfigRepository.findOneBy({ key: 'global' });
     if (!cfg) {
@@ -264,6 +338,148 @@ export class BingoService implements OnModuleInit {
       await this.bingoConfigRepository.save(cfg);
     }
     return cfg;
+  }
+
+  private isBotUser(user?: Pick<User, 'productMetadata'> | null): boolean {
+    return !!user?.productMetadata?.botPolicy;
+  }
+
+  private normalizeBotName(displayName: string): string {
+    return (displayName ?? '').trim().replace(/\s+/g, ' ');
+  }
+
+  private formatBotPhoneSuffix(phoneSuffix: string): string {
+    return `09******${phoneSuffix.padStart(4, '0')}`;
+  }
+
+  private formatBotDisplayName(displayName: string, phoneSuffix: string): string {
+    return `${displayName} (${this.formatBotPhoneSuffix(phoneSuffix)})`;
+  }
+
+  private pickUniqueBotSuffix(usedSuffixes: Set<string>): string {
+    if (usedSuffixes.size >= 10_000) {
+      return String(randomInt(0, 10_000)).padStart(4, '0');
+    }
+
+    let suffix = String(randomInt(0, 10_000)).padStart(4, '0');
+    while (usedSuffixes.has(suffix)) {
+      suffix = String(randomInt(0, 10_000)).padStart(4, '0');
+    }
+    usedSuffixes.add(suffix);
+    return suffix;
+  }
+
+  private shuffle<T>(values: T[]): T[] {
+    const out = [...values];
+    for (let i = out.length - 1; i > 0; i -= 1) {
+      const j = randomInt(0, i + 1);
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  }
+
+  private toBotNameResponse(name: BotName): { id: string; displayName: string; active: boolean; createdAt: Date; updatedAt: Date } {
+    return {
+      id: name.id,
+      displayName: name.displayName,
+      active: name.active,
+      createdAt: name.createdAt,
+      updatedAt: name.updatedAt,
+    };
+  }
+
+  private async hydrateRoomBotIdentities(
+    room: BingoRoom,
+    userIds: string[],
+    manager?: EntityManager,
+  ): Promise<Record<string, RoomBotIdentity>> {
+    const runner = manager ?? this.bingoRoomRepository.manager;
+    const roomRepo = runner.getRepository(BingoRoom);
+    const botRepo = runner.getRepository(BotName);
+    const userRepo = runner.getRepository(User);
+
+    const requestedIds = [...new Set(userIds.filter(Boolean))];
+    if (requestedIds.length === 0) {
+      return (room.botIdentityMap ?? {}) as Record<string, RoomBotIdentity>;
+    }
+
+    const users = await userRepo.find({
+      where: { id: In(requestedIds) },
+      select: ['id', 'displayName', 'productMetadata'],
+      order: { createdAt: 'ASC' },
+    });
+    const activeBots = users.filter((user) => this.isBotUser(user));
+    if (activeBots.length === 0) {
+      return (room.botIdentityMap ?? {}) as Record<string, RoomBotIdentity>;
+    }
+
+    const identityMap = { ...((room.botIdentityMap ?? {}) as Record<string, RoomBotIdentity>) };
+    const usedNames = new Set(Object.values(identityMap).map((identity) => identity.displayName));
+    const usedSuffixes = new Set(Object.values(identityMap).map((identity) => identity.phoneSuffix));
+    const activeNames = this.shuffle(
+      (await botRepo.find({
+        where: { active: true },
+        order: { displayName: 'ASC', createdAt: 'ASC' },
+      })).map((row) => this.normalizeBotName(row.displayName)).filter(Boolean),
+    ).filter((name) => !usedNames.has(name));
+
+    let fallbackIndex = 1;
+    for (const bot of this.shuffle(activeBots)) {
+      if (identityMap[bot.id]) continue;
+      const baseName = activeNames.shift() ?? this.normalizeBotName(bot.displayName);
+      const displayName = baseName || `Bot ${fallbackIndex++}`;
+      const uniqueDisplayName = usedNames.has(displayName)
+        ? `${displayName} ${fallbackIndex++}`
+        : displayName;
+      usedNames.add(uniqueDisplayName);
+      const phoneSuffix = this.pickUniqueBotSuffix(usedSuffixes);
+      identityMap[bot.id] = {
+        displayName: uniqueDisplayName,
+        phoneSuffix,
+      };
+    }
+
+    const next = Object.keys(identityMap).length > 0 ? identityMap : (room.botIdentityMap ?? {});
+    if (JSON.stringify(room.botIdentityMap ?? {}) !== JSON.stringify(next)) {
+      room.botIdentityMap = next;
+      await roomRepo.save(room);
+    }
+    return next;
+  }
+
+  async ensureRoomBotIdentities(roomId: string, userIds: string[], manager?: EntityManager): Promise<Record<string, RoomBotIdentity>> {
+    const runner = manager ?? this.bingoRoomRepository.manager;
+    const room = await runner.getRepository(BingoRoom).findOneBy({ id: roomId });
+    if (!room) throw new NotFoundException('Bingo room not found');
+    return this.hydrateRoomBotIdentities(room, userIds, manager);
+  }
+
+  private async resolveDisplayedNameForUser(
+    room: BingoRoom,
+    user: Pick<User, 'id' | 'displayName' | 'phoneNumber' | 'productMetadata'>,
+    manager?: EntityManager,
+  ): Promise<{ displayName: string; phoneLast4: string; phoneSuffix?: string; isBot: boolean }> {
+    const isBot = this.isBotUser(user);
+    if (!isBot) {
+      return {
+        displayName: user.displayName ?? 'Player',
+        phoneLast4: (user.phoneNumber ?? '').replace(/\D/g, '').slice(-4),
+        phoneSuffix: undefined,
+        isBot: false,
+      };
+    }
+
+    const identities = await this.hydrateRoomBotIdentities(room, [user.id], manager);
+    const identity = identities[user.id];
+    const displayName = identity
+      ? this.formatBotDisplayName(identity.displayName, identity.phoneSuffix)
+      : user.displayName ?? 'Bot';
+    return {
+      displayName,
+      phoneLast4: '',
+      phoneSuffix: identity?.phoneSuffix,
+      isBot: true,
+    };
   }
 
   /**
@@ -1027,6 +1243,34 @@ export class BingoService implements OnModuleInit {
     const totalPotMinor = soldTickets * room.ticketPriceMinor;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const totalPaidOutMinor = tickets.reduce((sum, t) => sum + Number(t.payoutMinor), 0);
+    const ticketRows = await Promise.all(
+      tickets.map(async (t) => {
+        const display = t.user
+          ? await this.resolveDisplayedNameForUser(room, t.user, this.bingoRoomRepository.manager)
+          : { displayName: 'Player', phoneLast4: '', isBot: false };
+        return {
+          id: t.id,
+          userId: t.userId,
+          userName: display.displayName,
+          phoneLast4: display.phoneLast4,
+          isBot: display.isBot,
+          cartelaNumber: t.cartelaNumber ?? null,
+          status: t.status,
+          settlementStatus: t.settlementStatus,
+          autoClaim: t.autoClaim ?? true,
+          stakeMinor: t.stakeMinor,
+          payoutMinor: Number(t.payoutMinor),
+          wonTiers: t.wonTiers ?? [],
+          disqualifiedReason: t.disqualifiedReason ?? null,
+          disqualifiedWonRound: t.disqualifiedWonRound ?? false,
+          forfeitedWinMinor: Number(t.forfeitedWinMinor ?? 0),
+          forfeitedPlaces: t.forfeitedPlaces ?? [],
+          grid: t.grid,
+          markedNumbers: t.markedNumbers ?? [],
+          createdAt: t.createdAt,
+        };
+      }),
+    );
 
     return {
       room: {
@@ -1042,33 +1286,9 @@ export class BingoService implements OnModuleInit {
         totalPaidOutMinor,
         houseEdgePct,
       },
-      tickets: tickets.map((t) => ({
-        id: t.id,
-        userId: t.userId,
-        userName: t.user?.displayName ?? 'Player',
-        phoneLast4: (t.user?.phoneNumber ?? '').replace(/\D/g, '').slice(-4),
-        isBot: !!(t.user?.productMetadata as Record<string, unknown> | undefined)?.botPolicy,
-        cartelaNumber: t.cartelaNumber ?? null,
-        status: t.status,
-        settlementStatus: t.settlementStatus,
-        autoClaim: t.autoClaim ?? true,
-        stakeMinor: t.stakeMinor,
-        payoutMinor: Number(t.payoutMinor),
-        wonTiers: t.wonTiers ?? [],
-        // Manual-mode disqualification audit — lets an agent answer "why wasn't I
-        // paid?": the card won but a premature BINGO call forfeited it to the house.
-        disqualifiedReason: t.disqualifiedReason ?? null,
-        disqualifiedWonRound: t.disqualifiedWonRound ?? false,
-        forfeitedWinMinor: Number(t.forfeitedWinMinor ?? 0),
-        forfeitedPlaces: t.forfeitedPlaces ?? [],
-        grid: t.grid,
-        markedNumbers: t.markedNumbers ?? [],
-        createdAt: t.createdAt,
-      })),
+      tickets: ticketRows,
     };
   }
-
-  // ── Ticket purchase ──────────────────────────────────────────────────────────
 
   async purchaseTickets(input: {
     userId: string;
@@ -1904,6 +2124,17 @@ export class BingoService implements OnModuleInit {
     const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName } = input;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+    const winnerUser = await manager.findOne(User, {
+      where: { id: winner.userId },
+      select: ['displayName', 'phoneNumber', 'productMetadata'],
+    });
+    const display = winnerUser
+      ? await this.resolveDisplayedNameForUser(room, winnerUser, manager)
+      : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
+    const displayedName = overrideDisplayName
+      ? (display.phoneSuffix ? this.formatBotDisplayName(overrideDisplayName, display.phoneSuffix) : overrideDisplayName)
+      : display.displayName;
+    const phoneLast4 = overrideDisplayName ? '' : display.phoneLast4;
 
     winner.wonTiers = [...(winner.wonTiers ?? []), place];
     winner.payoutMinor += prizeMinor;
@@ -1926,6 +2157,7 @@ export class BingoService implements OnModuleInit {
             patternId: pattern.id,
             totalPotMinor,
             prizePoolMinor,
+            displayName: displayedName,
           },
         },
         manager,
@@ -1934,17 +2166,6 @@ export class BingoService implements OnModuleInit {
     }
 
     await manager.save(winner);
-
-    const winnerUser = await manager.findOne(User, {
-      where: { id: winner.userId },
-      select: ['displayName', 'phoneNumber', 'productMetadata'],
-    });
-    const isBot = !!(winnerUser?.productMetadata as any)?.botPolicy?.active;
-    // When an alias is active, show no phone (untraceable) and the alias name.
-    const displayedName = overrideDisplayName ?? winnerUser?.displayName ?? 'Player';
-    const phoneLast4 = overrideDisplayName
-      ? ''
-      : (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
 
     room.settledTiers = [...room.settledTiers, place];
     room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
@@ -1955,7 +2176,7 @@ export class BingoService implements OnModuleInit {
         winnerId: winner.id,
         winnerDisplayName: displayedName,
         winnerPhoneLast4: phoneLast4,
-        winnerIsBot: isBot,
+        winnerIsBot: display.isBot,
         winnerCartelaNumber: winner.cartelaNumber,
         // Winner card so every client in the room can render the result.
         winnerGrid: winner.grid,
@@ -2000,9 +2221,12 @@ export class BingoService implements OnModuleInit {
 
     const dqUser = await manager.findOne(User, {
       where: { id: dqTicket.userId },
-      select: ['displayName', 'phoneNumber'],
+      select: ['displayName', 'phoneNumber', 'productMetadata'],
     });
-    const phoneLast4 = (dqUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
+    const display = dqUser
+      ? await this.resolveDisplayedNameForUser(room, dqUser, manager)
+      : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
+    const phoneLast4 = display.phoneLast4;
 
     // Close the place to everyone (settled) but with NO paying winner.
     room.settledTiers = [...room.settledTiers, place];
@@ -2016,7 +2240,7 @@ export class BingoService implements OnModuleInit {
         // The disqualified winning card — shown in the reveal, flagged.
         winnerId: dqTicket.id,
         winnerUserId: dqTicket.userId,
-        winnerDisplayName: dqUser?.displayName ?? 'Player',
+        winnerDisplayName: display.displayName,
         winnerPhoneLast4: phoneLast4,
         winnerCartelaNumber: dqTicket.cartelaNumber,
         winnerGrid: dqTicket.grid,
@@ -2491,6 +2715,14 @@ export class BingoService implements OnModuleInit {
       }
 
       if (winner) {
+        const winnerUser = await manager.findOne(User, {
+          where: { id: winner.userId },
+          select: ['displayName', 'phoneNumber', 'productMetadata'],
+        });
+        const display = winnerUser
+          ? await this.resolveDisplayedNameForUser(room, winnerUser, manager)
+          : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
+
         winner.wonTiers = [...winner.wonTiers, 'full_house'];
         winner.payoutMinor += prizePotMinor;
         winner.status = 'won';
@@ -2508,6 +2740,7 @@ export class BingoService implements OnModuleInit {
               metadata: {
                 roomId: room.id,
                 tier: 'full_house',
+                displayName: display.displayName,
                 drawnNumbers: room.drawnNumbers,
                 completedLines: winner.completedLines,
                 totalPotMinor,
@@ -2520,7 +2753,6 @@ export class BingoService implements OnModuleInit {
         }
         await manager.save(winner);
 
-        const winnerUser = await manager.findOne(User, { where: { id: winner.userId }, select: ['displayName'] });
         room.settledTiers = [...room.settledTiers, 'full_house'];
         room.winnersByTier = { ...room.winnersByTier, full_house: [winner.id] };
         room.settlementSummary = {
@@ -2528,7 +2760,7 @@ export class BingoService implements OnModuleInit {
           full_house: {
             winnerCount: 1,
             winnerId: winner.id,
-            winnerDisplayName: winnerUser?.displayName ?? 'Player',
+            winnerDisplayName: display.displayName,
             prizeMinor: prizePotMinor,
             totalPotMinor,
             houseEdgePct,
@@ -2589,6 +2821,17 @@ export class BingoService implements OnModuleInit {
       const patternConfig = patternPrizeMap.get(pattern.id);
       const prizeMinor = patternConfig?.prizeMinor ?? 0;
       const shares = this.bingoRulesService.splitPrizeMinor(prizeMinor, winners.length);
+      const winnerUsers = await Promise.all(
+        winners.map((t) =>
+          manager.findOne(User, { where: { id: t.userId }, select: ['displayName', 'phoneNumber', 'productMetadata'] }),
+        ),
+      );
+      const winnerDisplays = await Promise.all(
+        winnerUsers.map((u) =>
+          u ? this.resolveDisplayedNameForUser(room, u, manager) : Promise.resolve({ displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false }),
+        ),
+      );
+      const winnerDisplayNames = winnerDisplays.map((d) => d.displayName);
 
       for (const [index, ticket] of winners.entries()) {
         const share = shares[index];
@@ -2608,6 +2851,7 @@ export class BingoService implements OnModuleInit {
                 roomId: room.id,
                 patternId: pattern.id,
                 patternName: pattern.name,
+                displayName: winnerDisplays[index]?.displayName ?? 'Player',
                 drawnNumbers: room.drawnNumbers,
               },
             },
@@ -2617,11 +2861,6 @@ export class BingoService implements OnModuleInit {
         }
         await manager.save(ticket);
       }
-
-      const winnerUsers = await Promise.all(
-        winners.map((t) => manager.findOne(User, { where: { id: t.userId }, select: ['displayName'] })),
-      );
-      const winnerDisplayNames = winnerUsers.map((u) => u?.displayName ?? 'Player');
 
       room.settledTiers = [...room.settledTiers, pattern.id];
       room.winnersByTier = { ...room.winnersByTier, [pattern.id]: winners.map((t) => t.id) };
@@ -2904,3 +3143,4 @@ export class BingoService implements OnModuleInit {
     return value;
   }
 }
+

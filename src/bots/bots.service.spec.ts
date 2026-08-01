@@ -9,6 +9,13 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
   const creditFromMasterWallet = input.creditFromMasterWallet
     ?? jest.fn().mockResolvedValue({ wallet: {}, ledgerEntry: { id: 'ledger-1' } });
   const adminService = { creditFromMasterWallet };
+  const botNameRepository = {
+    find: jest.fn().mockResolvedValue([]),
+    findOneBy: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockImplementation((x: unknown) => ({ id: 'name-1', createdAt: new Date('2026-08-01T00:00:00.000Z'), updatedAt: new Date('2026-08-01T00:00:00.000Z'), ...x as object })),
+    save: jest.fn().mockImplementation((x: unknown) => Promise.resolve(x)),
+    remove: jest.fn().mockResolvedValue(undefined),
+  };
 
   const userRepoInManager = {
     create: jest.fn().mockImplementation((x: unknown) => ({ id: 'bot-1', ...x as object })),
@@ -36,6 +43,7 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
   const service = new BotsService(
     dataSource as any,
     userRepository as any,
+    botNameRepository as any,
     walletService as any,
     adminService as any,
     {} as any, // kenoService
@@ -43,7 +51,7 @@ function makeService(input: { creditFromMasterWallet?: jest.Mock; existingBot?: 
     {} as any, // crashService
   );
 
-  return { service, adminService, userRepoInManager };
+  return { service, adminService, userRepoInManager, botNameRepository };
 }
 
 describe('BotsService — bot funding is Master-Wallet-backed', () => {
@@ -95,5 +103,39 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
         expect.anything(),
       );
     });
+  });
+});
+
+describe('BotsService — Bingo bot names', () => {
+  it('creates trimmed active bot names', async () => {
+    const { service, botNameRepository } = makeService({});
+    botNameRepository.findOneBy.mockResolvedValue(null);
+    botNameRepository.save.mockImplementation(async (value) => value);
+
+    const result = await service.createBotName({ displayName: '  Abebe  ', active: false } as any);
+
+    expect(botNameRepository.create).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'Abebe', active: false }));
+    expect(result).toEqual(expect.objectContaining({ displayName: 'Abebe', active: false }));
+  });
+
+  it('imports many names while skipping duplicates and blanks', async () => {
+    const { service, botNameRepository } = makeService({});
+    botNameRepository.find.mockResolvedValue([{ displayName: 'Abebe' }]);
+    botNameRepository.save.mockImplementation(async (values) => values);
+
+    const result = await service.importBotNames({ names: ['Abebe', ' Hana ', '', 'Samuel', 'Samuel'] } as any);
+
+    expect(botNameRepository.create).toHaveBeenCalledTimes(2);
+    expect(result.map((row) => row.displayName)).toEqual(['Hana', 'Samuel']);
+  });
+
+  it('toggles a bot name active state', async () => {
+    const { service, botNameRepository } = makeService({});
+    botNameRepository.findOneBy.mockResolvedValue({ id: 'name-1', displayName: 'Abebe', active: true });
+    botNameRepository.save.mockImplementation(async (value) => value);
+
+    const result = await service.updateBotName('name-1', { active: false } as any);
+
+    expect(result.active).toBe(false);
   });
 });

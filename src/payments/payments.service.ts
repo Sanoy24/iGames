@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
-import { WalletService } from '../wallet/wallet.service';
+import { WalletService, WalletMutationResult } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AdminService } from '../admin/admin.service';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
@@ -12,7 +12,6 @@ import { TelebirrDeposit } from './entities/telebirr-deposit.entity';
 import { MpesaDeposit } from './entities/mpesa-deposit.entity';
 import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.service';
 import { MpesaReceiptVerifierService } from './mpesa-receipt-verifier.service';
-import { computeDepositCommissionMinor } from './deposit-commission';
 
 export type TelebirrReceiptPreview = {
   receiptNo: string;
@@ -164,48 +163,71 @@ export class PaymentsService {
   }
 
   /**
-   * Phase 4 — agent deposit commission. When a deposit that is attributed to an
-   * agent is credited, pay that agent a configured % of the deposit as commission,
-   * in the SAME transaction as the player credit (never a wallet mutation without a
-   * ledger entry). Idempotent on the deposit reference, so a duplicate submit or a
-   * retry can never double-pay. No-op when the rate is 0 or rounds to nothing.
+   * Chooses where a deposit's player-credit is funded from: the matched agent's
+   * OWN wallet first — they already received this money for real, into their
+   * personal Telebirr/M-Pesa account — falling back to the Master Wallet only
+   * when the agent can't cover it (inactive, or insufficient balance). Callers
+   * persist `fundedBy`/`fundingFallbackReason` on the deposit row for
+   * traceability. The receiving player's ledger history is identical either
+   * way (same `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/`metadata`),
+   * only the debit side differs.
    */
-  private async creditAgentDepositCommission(
+  private async fundDepositCredit(
     manager: EntityManager,
     input: {
-      agentId: string;
+      agentId: string | undefined;
       userId: string;
-      provider: 'telebirr' | 'mpesa';
-      reference: string;
-      depositAmountMinor: number;
-      depositCommissionPct: number;
+      amountMinor: number;
+      sourceType: string;
+      sourceId: string;
+      idempotencyKey: string;
+      metadata: Record<string, unknown>;
     },
-  ): Promise<number> {
-    const commissionMinor = computeDepositCommissionMinor(input.depositAmountMinor, input.depositCommissionPct);
-    if (commissionMinor <= 0) return 0;
+  ): Promise<{ walletCredit: WalletMutationResult; fundedBy: 'agent_wallet' | 'master_wallet'; fundingFallbackReason?: string }> {
+    let fundingFallbackReason: string | undefined;
 
-    // Commission is not backed by any external real-money event of its own — it
-    // must be funded from the Master Wallet like every other credit, not minted.
-    await this.adminService.creditFromMasterWallet(
+    if (!input.agentId) {
+      fundingFallbackReason = 'no_agent_matched';
+    } else {
+      const agent = await manager.getRepository(User).findOneBy({ id: input.agentId });
+      if (!agent || agent.status !== 'active') {
+        fundingFallbackReason = 'agent_inactive';
+      } else {
+        try {
+          const walletCredit = await this.walletService.fundUserCreditFromAgent(
+            {
+              agentId: input.agentId,
+              targetUserId: input.userId,
+              amountMinor: input.amountMinor,
+              entryType: 'deposit',
+              sourceType: input.sourceType,
+              sourceId: input.sourceId,
+              idempotencyKey: input.idempotencyKey,
+              metadata: input.metadata,
+            },
+            manager,
+          );
+          return { walletCredit, fundedBy: 'agent_wallet' };
+        } catch (error) {
+          if (!(error instanceof ConflictException)) throw error;
+          fundingFallbackReason = 'insufficient_agent_balance';
+        }
+      }
+    }
+
+    const walletCredit = await this.adminService.creditFromMasterWallet(
       {
-        targetUserId: input.agentId,
-        amountMinor: commissionMinor,
-        entryType: 'agent_receipt',
-        sourceType: 'deposit_commission',
-        sourceId: input.reference,
-        idempotencyKey: `deposit-commission:${input.provider}:${input.reference}`,
-        metadata: {
-          provider: input.provider,
-          reference: input.reference,
-          userId: input.userId,
-          depositAmountMinor: input.depositAmountMinor,
-          depositCommissionPct: input.depositCommissionPct,
-          kind: 'deposit_commission',
-        },
+        targetUserId: input.userId,
+        amountMinor: input.amountMinor,
+        entryType: 'deposit',
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        idempotencyKey: input.idempotencyKey,
+        metadata: input.metadata,
       },
       manager,
     );
-    return commissionMinor;
+    return { walletCredit, fundedBy: 'master_wallet', fundingFallbackReason };
   }
 
   async previewTelebirrReceipt(
@@ -248,7 +270,6 @@ export class PaymentsService {
 
     // Enforce the admin-configured minimum deposit before crediting.
     await this.assertMeetsMinimum(verified.amountMinor);
-    const depositCommissionPct = (await this.adminService.getSystemConfig()).depositCommissionPct ?? 0;
 
     let credited = false;
     const result = await this.dataSource.transaction(async (manager) => {
@@ -282,28 +303,27 @@ export class PaymentsService {
       });
       await depositRepo.save(deposit);
 
-      // Funded from the Master Wallet — the admin's ETB float backs every
-      // deposit credit, so this fails (and the whole submission rolls back) if
-      // the Master Wallet can't cover it, rather than minting for free.
-      const walletCredit = await this.adminService.creditFromMasterWallet(
-        {
-          targetUserId: userId,
-          amountMinor: verified.amountMinor,
-          entryType: 'deposit',
-          sourceType: 'telebirr_receipt',
-          sourceId: verified.receiptNo,
-          idempotencyKey: `telebirr:${verified.receiptNo}`,
-          metadata: {
-            receiptNo: verified.receiptNo,
-            payerName: verified.parsedReceipt.payer_name,
-            payerPhone: verified.parsedReceipt.payer_phone,
-            transactionStatus: verified.parsedReceipt.transaction_status
-          }
-        },
-        manager
-      );
+      // Prefer funding the player's credit from the matched agent's OWN
+      // wallet — they already received this money for real — falling back to
+      // the Master Wallet only if the agent can't cover it.
+      const { walletCredit, fundedBy, fundingFallbackReason } = await this.fundDepositCredit(manager, {
+        agentId: deposit.agentId,
+        userId,
+        amountMinor: verified.amountMinor,
+        sourceType: 'telebirr_receipt',
+        sourceId: verified.receiptNo,
+        idempotencyKey: `telebirr:${verified.receiptNo}`,
+        metadata: {
+          receiptNo: verified.receiptNo,
+          payerName: verified.parsedReceipt.payer_name,
+          payerPhone: verified.parsedReceipt.payer_phone,
+          transactionStatus: verified.parsedReceipt.transaction_status
+        }
+      });
 
       deposit.walletCredit = walletCredit;
+      deposit.fundedBy = fundedBy;
+      deposit.fundingFallbackReason = fundingFallbackReason ?? undefined;
       await depositRepo.save(deposit);
       credited = true;
 
@@ -333,15 +353,6 @@ export class PaymentsService {
             },
           }),
         );
-
-        await this.creditAgentDepositCommission(manager, {
-          agentId: deposit.agentId,
-          userId,
-          provider: 'telebirr',
-          reference: deposit.receiptNo,
-          depositAmountMinor: deposit.amountMinor,
-          depositCommissionPct,
-        });
       }
 
       return this.toResponse(deposit);
@@ -392,7 +403,6 @@ export class PaymentsService {
   async submitMpesaSms(userId: string, dto: SubmitMpesaSmsDto): Promise<MpesaDepositResponse> {
     const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
     await this.assertMeetsMinimum(verified.amountMinor);
-    const depositCommissionPct = (await this.adminService.getSystemConfig()).depositCommissionPct ?? 0;
 
     let credited = false;
     const result = await this.dataSource.transaction(async (manager) => {
@@ -424,25 +434,25 @@ export class PaymentsService {
       });
       await depositRepo.save(deposit);
 
-      // Funded from the Master Wallet — see the matching Telebirr comment above.
-      const walletCredit = await this.adminService.creditFromMasterWallet(
-        {
-          targetUserId: userId,
-          amountMinor: verified.amountMinor,
-          entryType: 'deposit',
-          sourceType: 'mpesa_receipt',
-          sourceId: verified.confirmationCode,
-          idempotencyKey: `mpesa:${verified.confirmationCode}`,
-          metadata: {
-            confirmationCode: verified.confirmationCode,
-            receiverName: verified.parsedSms.counterpartyName,
-            receiverPhone: verified.parsedSms.counterpartyPhone,
-          },
+      // Prefer funding from the matched agent's own wallet — see the matching
+      // Telebirr comment above.
+      const { walletCredit, fundedBy, fundingFallbackReason } = await this.fundDepositCredit(manager, {
+        agentId: deposit.agentId,
+        userId,
+        amountMinor: verified.amountMinor,
+        sourceType: 'mpesa_receipt',
+        sourceId: verified.confirmationCode,
+        idempotencyKey: `mpesa:${verified.confirmationCode}`,
+        metadata: {
+          confirmationCode: verified.confirmationCode,
+          receiverName: verified.parsedSms.counterpartyName,
+          receiverPhone: verified.parsedSms.counterpartyPhone,
         },
-        manager,
-      );
+      });
 
       deposit.walletCredit = walletCredit;
+      deposit.fundedBy = fundedBy;
+      deposit.fundingFallbackReason = fundingFallbackReason ?? undefined;
       await depositRepo.save(deposit);
       credited = true;
 
@@ -470,15 +480,6 @@ export class PaymentsService {
             },
           }),
         );
-
-        await this.creditAgentDepositCommission(manager, {
-          agentId: deposit.agentId,
-          userId,
-          provider: 'mpesa',
-          reference: deposit.confirmationCode,
-          depositAmountMinor: deposit.amountMinor,
-          depositCommissionPct,
-        });
       }
 
       return this.toMpesaResponse(deposit);

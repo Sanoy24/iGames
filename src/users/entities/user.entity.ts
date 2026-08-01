@@ -97,12 +97,21 @@ export class User {
   /**
    * An AGENT's own shareable referral code (players never have one). Handed out as
    * a `t.me/<bot>?start=ref_<code>` deep link; a player arriving through it gets
-   * `referredByAgentId` set to this agent. Attribution only — it does not create a
-   * payout path of its own (agent commission stays per-deposit and per-room).
+   * `referredByAgentId` set to this agent, which drives referral-commission payouts
+   * (see `referralCommissionPct` below and `BingoService.settleReferralCommission`).
    */
   @Column({ type: 'varchar', length: 16, nullable: true })
   @Index({ unique: true })
   referralCode?: string | null;
+
+  /**
+   * AGENT-specific override of the global `SystemConfig.referralCommissionPct` —
+   * the % of a referred player's Bingo GGR this agent earns. Null = no override,
+   * use the global default; this doubles as the enable/disable toggle from the
+   * admin UI (clearing it disables the override, it does not zero the commission).
+   */
+  @Column({ type: 'int', nullable: true })
+  referralCommissionPct?: number | null;
 
   /**
    * Where the player says they came from, picked during registration. This is the

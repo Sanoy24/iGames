@@ -15,30 +15,6 @@ export class SystemConfig {
   @Column({ type: 'int', default: 0 })
   welcomeBonusMinor: number;
 
-  /** Service fee % of a withdrawal that goes to the platform super-admin. */
-  @Column({ type: 'int', default: 0 })
-  withdrawalServiceChargePct: number;
-
-  /** Commission % of a withdrawal earned by the agent who processed it. */
-  @Column({ type: 'int', default: 0 })
-  withdrawalCommissionPct: number;
-
-  /**
-   * Commission % of a credited DEPOSIT earned by the agent whose Telebirr/M-PESA
-   * account received it. Credited to the agent's wallet in the same transaction as
-   * the player credit. 0 = no deposit commission (deposits still attribute the
-   * agent, just without a payout).
-   */
-  @Column({ type: 'int', default: 0 })
-  depositCommissionPct: number;
-
-  /**
-   * User id of the designated super-admin whose wallet receives withdrawal
-   * service fees. Null = fees are only tracked in platform_stats (no wallet credit).
-   */
-  @Column({ type: 'varchar', length: 36, nullable: true })
-  superAdminUserId?: string | null;
-
   /**
    * Internal user id of the Master Wallet — a dedicated system account (no
    * login, no Telegram/password identity, roles: []) that is NOT any individual
@@ -81,19 +57,13 @@ export class SystemConfig {
   agentRoomCommissionPct: number;
 
   /**
-   * Tiered withdrawal service fee configuration. Each tier specifies a minimum
-   * amount (in minor units) and the fee percentage that applies when the
-   * withdrawal amount is >= minAmountMinor. Tiers are evaluated in ascending
-   * order of minAmountMinor; the last matching tier wins. When absent, the flat
-   * withdrawalServiceChargePct applies. Example:
-   * [
-   *   { minAmountMinor: 0, feePct: 5 },
-   *   { minAmountMinor: 50000, feePct: 3 },
-   *   { minAmountMinor: 200000, feePct: 2 },
-   * ]
+   * Global default % of a referred player's Bingo GGR credited to the referring
+   * agent (see User.referredByAgentId), independent of room ownership. An
+   * agent's own `User.referralCommissionPct` overrides this when set. 0 = no
+   * referral commission paid unless an agent has an explicit override.
    */
-  @Column({ type: 'json', nullable: true })
-  withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+  @Column({ type: 'int', default: 0 })
+  referralCommissionPct: number;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

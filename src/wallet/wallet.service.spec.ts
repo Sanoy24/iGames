@@ -279,4 +279,75 @@ describe('WalletService — unit (mocked repos)', () => {
       expect(userRepo.findOneBy).toHaveBeenCalledWith({ phoneNumber: '+251912345678' });
     });
   });
+
+  // Manager-scoped sibling of transferAgentToUser, used by PaymentsService to
+  // fund a deposit's player-credit from the matched agent's own wallet inside
+  // the deposit's existing transaction.
+  describe('fundUserCreditFromAgent', () => {
+    function makeSessionManager(agentWallet: Wallet, userWallet: Wallet) {
+      return {
+        getRepository: jest.fn().mockImplementation((entity) => {
+          if (entity?.name === 'WagerLimit') {
+            return { findOneBy: jest.fn().mockResolvedValue(null), save: jest.fn(), create: jest.fn((x: unknown) => x) };
+          }
+          // Wallet repo — ensureDefaultWallet uses findOneBy, the debit/credit lock uses findOne.
+          return {
+            findOneBy: jest.fn().mockImplementation(({ userId }: { userId: string }) =>
+              Promise.resolve(userId === agentWallet.userId ? agentWallet : userWallet)),
+            findOne: jest.fn().mockImplementation(({ where }: { where: { userId: string } }) =>
+              Promise.resolve(where.userId === agentWallet.userId ? agentWallet : userWallet)),
+            save: jest.fn().mockImplementation((w: Wallet) => Promise.resolve(w)),
+            create: jest.fn().mockImplementation((x: unknown) => x),
+          };
+        }),
+        query: jest.fn().mockResolvedValue(undefined),
+      } as unknown as EntityManager;
+    }
+
+    const fundingInput = {
+      agentId: 'agent-1',
+      targetUserId: 'user-2',
+      amountMinor: 1_000,
+      entryType: 'deposit' as const,
+      sourceType: 'telebirr_receipt',
+      sourceId: 'REC1',
+      idempotencyKey: 'telebirr:REC1',
+    };
+
+    it('debits the agent wallet and credits the target user wallet using the caller-supplied manager (no new transaction)', async () => {
+      const { service, mockDataSource, mockLedgerService } = makeService({});
+      mockLedgerService.findIdempotencyRecord = jest.fn().mockResolvedValue(null);
+
+      const agentWallet = makeWallet({ id: 'wallet-agent', userId: 'agent-1', availableMinor: 5_000 });
+      const userWallet = makeWallet({ id: 'wallet-user', userId: 'user-2', availableMinor: 0 });
+      const manager = makeSessionManager(agentWallet, userWallet);
+
+      const result = await service.fundUserCreditFromAgent(fundingInput, manager);
+
+      expect(mockDataSource.transaction).not.toHaveBeenCalled();
+      expect(result.wallet).toBeDefined();
+      expect(mockLedgerService.createEntry).toHaveBeenCalledTimes(2);
+      // Debit side is a distinct sourceType so it's traceable separately from the credit.
+      expect(mockLedgerService.createEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'agent-1', direction: 'debit', sourceType: 'agent_deposit_funding' }),
+        expect.anything(),
+      );
+      expect(mockLedgerService.createEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-2', direction: 'credit', sourceType: 'telebirr_receipt' }),
+        expect.anything(),
+      );
+    });
+
+    it('throws ConflictException (and never credits the user) when the agent wallet balance is insufficient', async () => {
+      const { service, mockLedgerService } = makeService({});
+      mockLedgerService.findIdempotencyRecord = jest.fn().mockResolvedValue(null);
+
+      const agentWallet = makeWallet({ id: 'wallet-agent', userId: 'agent-1', availableMinor: 100 });
+      const userWallet = makeWallet({ id: 'wallet-user', userId: 'user-2', availableMinor: 0 });
+      const manager = makeSessionManager(agentWallet, userWallet);
+
+      await expect(service.fundUserCreditFromAgent(fundingInput, manager)).rejects.toBeInstanceOf(ConflictException);
+      expect(mockLedgerService.createEntry).not.toHaveBeenCalled();
+    });
+  });
 });

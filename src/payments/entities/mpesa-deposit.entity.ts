@@ -72,6 +72,14 @@ export class MpesaDeposit {
   @Column({ type: 'json', nullable: true })
   walletCredit?: Record<string, unknown>;
 
+  /** Which wallet actually funded the player credit (only set when status is 'credited'). */
+  @Column({ type: 'enum', enum: ['agent_wallet', 'master_wallet'], nullable: true })
+  fundedBy?: 'agent_wallet' | 'master_wallet';
+
+  /** Why it fell back to the Master Wallet instead of the agent's own wallet, if it did. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  fundingFallbackReason?: string | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

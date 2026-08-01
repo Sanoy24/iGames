@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Activity, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
+  Activity, Banknote, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
   Image as ImageIcon, LifeBuoy, MapPin, Megaphone, Play, Plus, RefreshCw, Send, Settings,
   Shield, Trash2, Users, Wallet, X, History
 } from 'lucide-react';
@@ -38,8 +38,9 @@ import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
 import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
+import { DepositsAdmin } from '../components/DepositsAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'support' | 'games' | 'game-transactions' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'deposits' | 'support' | 'games' | 'game-transactions' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -54,6 +55,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'bots',        label: 'Bots',        icon: <Bot size={15} /> },
   { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
+  { id: 'deposits',    label: 'Deposits',    icon: <Banknote size={15} /> },
   { id: 'support',     label: 'Support',     icon: <LifeBuoy size={15} /> },
   { id: 'games',       label: 'Games',       icon: <Dices size={15} /> },
   { id: 'game-transactions', label: 'Game Trans', icon: <History size={15} /> },
@@ -1461,7 +1463,7 @@ function ConfigAdmin() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [form, setForm] = useState<SystemConfig>({
     telebirrCreditMinorPerBirr: 1, welcomeBonusMinor: 0,
-    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, depositCommissionPct: 0, superAdminUserId: null,
+    withdrawalServiceChargePct: 0, withdrawalCommissionPct: 0, superAdminUserId: null,
     minDepositMinor: 0,
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
@@ -1478,7 +1480,6 @@ function ConfigAdmin() {
     welcomeBonusMinor: c.welcomeBonusMinor,
     withdrawalServiceChargePct: c.withdrawalServiceChargePct,
     withdrawalCommissionPct: c.withdrawalCommissionPct ?? 0,
-    depositCommissionPct: c.depositCommissionPct ?? 0,
     superAdminUserId: c.superAdminUserId ?? null,
     minDepositMinor: c.minDepositMinor ?? 0,
     withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
@@ -1533,7 +1534,6 @@ function ConfigAdmin() {
           {field('telebirrCreditMinorPerBirr', 'ETB per Birr deposited', '1 = flat (10 Birr → 10 ETB)')}
           {field('minDepositMinor', 'Minimum Deposit (ETB)', '0 = no minimum')}
           {field('welcomeBonusMinor', 'Welcome Bonus (ETB)', '0 = disabled')}
-          {field('depositCommissionPct', 'Deposit Commission % → Agent', 'earned by the agent whose account received the deposit')}
         </div>
       </div>
 
@@ -4291,6 +4291,7 @@ export function Admin() {
           {tab === 'bots'          && <BotsHub />}
           {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
+          {tab === 'deposits'      && <DepositsAdmin />}
           {tab === 'support'       && <SupportConsole />}
           {tab === 'games'         && <GamesAdmin />}
           {tab === 'game-transactions' && <GameTransactionsAdmin />}

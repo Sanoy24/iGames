@@ -23,6 +23,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { LedgerEntry, LedgerEntryType } from '../ledger/entities/ledger-entry.entity';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
+import { MpesaDeposit } from '../payments/entities/mpesa-deposit.entity';
 import { AgentActionLog } from '../agents/entities/agent-action-log.entity';
 
 @Injectable()
@@ -304,6 +305,7 @@ export class AdminService implements OnApplicationBootstrap {
 
         return {
           id: room.id,
+          createdAt: room.createdAt,
           gameType: 'Bingo',
           ticketsSold: room.soldTickets,
           singleStake: room.ticketPriceMinor,
@@ -318,6 +320,42 @@ export class AdminService implements OnApplicationBootstrap {
     );
 
     return { data: transactions, total, page, limit };
+  }
+
+  /**
+   * Paginated deposit history for one provider at a time (Telebirr or M-PESA),
+   * covering credited AND rejected rows so admins can see exactly which agent
+   * or the Master Wallet funded a deposit, or why it was rejected — the
+   * `fundedBy`/`fundingFallbackReason` columns and `verification.error` are
+   * the traceability trail for this. Kept as two separately-paginated,
+   * per-provider queries (rather than a merged UNION feed) since the two
+   * providers are already treated as parallel-but-separate lists elsewhere
+   * (see `getUserActivity`'s deposits.telebirr/deposits.mpesa split).
+   */
+  async listDeposits(
+    provider: 'telebirr' | 'mpesa',
+    page: number,
+    limit: number,
+    filters: { status?: 'credited' | 'rejected'; agentId?: string },
+  ) {
+    const skip = (page - 1) * limit;
+    const where: Record<string, unknown> = {};
+    if (filters.status) where.status = filters.status;
+    if (filters.agentId) where.agentId = filters.agentId;
+
+    const repo = provider === 'telebirr'
+      ? this.dataSource.getRepository(TelebirrDeposit)
+      : this.dataSource.getRepository(MpesaDeposit);
+
+    const [data, total] = await repo.findAndCount({
+      where,
+      relations: ['user', 'agent'],
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    return { data, total, page, limit };
   }
 
   async getPlatformStats() {

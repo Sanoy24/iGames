@@ -48,6 +48,22 @@ export class AdminController {
     return this.adminService.getGameTransactions(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
   }
 
+  @Get('deposits')
+  listDeposits(
+    @Query('provider') provider: 'telebirr' | 'mpesa' = 'telebirr',
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20',
+    @Query('status') status?: 'credited' | 'rejected',
+    @Query('agentId') agentId?: string,
+  ) {
+    return this.adminService.listDeposits(
+      provider === 'mpesa' ? 'mpesa' : 'telebirr',
+      parseInt(page, 10) || 1,
+      parseInt(limit, 10) || 20,
+      { status, agentId },
+    );
+  }
+
   @Get('config')
   getConfig() {
     return this.adminService.getSystemConfig();

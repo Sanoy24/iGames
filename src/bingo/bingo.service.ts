@@ -272,7 +272,7 @@ export class BingoService implements OnModuleInit {
    * ticket of an idle room is sold, so the countdown length is unchanged; only
    * the moment it STARTS moves from room-creation to first-purchase.
    */
-  private startCountdownDelayMs(cfg: BingoConfig): number {
+  startCountdownDelayMs(cfg: BingoConfig): number {
     const salesWindowMs = Math.max((cfg.salesWindowSeconds ?? 40) * 1000, MIN_BINGO_SALES_WINDOW_MS);
     return Math.max((cfg.autoRepeatIntervalMinutes ?? 0) * 60_000, salesWindowMs);
   }
@@ -677,6 +677,78 @@ export class BingoService implements OnModuleInit {
       );
     } catch (err) {
       this.logger.error('settleAgentRoomCommission failed', err instanceof Error ? err.stack : err);
+    }
+  }
+
+  /**
+   * Credit each REFERRING agent (User.referredByAgentId) their commission on the
+   * REAL-player GGR their own referred players generated in this room — independent
+   * of room ownership, so it composes with `settleAgentRoomCommission` above rather
+   * than replacing it (a player referred by Agent A playing in Agent B's owned room
+   * pays both). Commission % is per-agent (`User.referralCommissionPct`) if set,
+   * else the global `SystemConfig.referralCommissionPct` default. Idempotent per
+   * (room, agent) — `bingo-referral-commission:<roomId>:<agentId>`.
+   */
+  async settleReferralCommission(roomId: string): Promise<void> {
+    try {
+      const room = await this.bingoRoomRepository.findOneBy({ id: roomId });
+      if (!room || room.status !== 'completed') return;
+
+      const cfgRows: Array<{ pct: number | string | null }> = await this.bingoRoomRepository.query(
+        "SELECT referralCommissionPct pct FROM system_configs WHERE `key` = 'global' LIMIT 1",
+      );
+      const globalPct = Number(cfgRows[0]?.pct ?? 0);
+
+      const rows: Array<{ agentId: string; staked: number | string; payout: number | string }> =
+        await this.bingoRoomRepository.query(
+          `SELECT u.referredByAgentId AS agentId,
+                  COALESCE(SUM(t.stakeMinor),0) staked,
+                  COALESCE(SUM(t.payoutMinor),0) payout
+             FROM bingo_tickets t
+             JOIN users u ON u.id = t.userId
+            WHERE t.roomId = ? AND t.status <> 'cancelled'
+              AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+              AND u.referredByAgentId IS NOT NULL
+            GROUP BY u.referredByAgentId`,
+          [roomId],
+        );
+      if (rows.length === 0) return;
+
+      const agentIds = rows.map((r) => r.agentId);
+      const agents = await this.bingoRoomRepository.manager.findBy(User, { id: In(agentIds) });
+      const overridePctByAgentId = new Map(agents.map((a) => [a.id, a.referralCommissionPct ?? null]));
+
+      for (const row of rows) {
+        const ggrMinor = Number(row.staked) - Number(row.payout);
+        if (ggrMinor <= 0) continue;
+
+        const overridePct = overridePctByAgentId.get(row.agentId) ?? null;
+        const pct = overridePct ?? globalPct;
+        if (pct <= 0) continue;
+
+        const commissionMinor = Math.floor((ggrMinor * pct) / 100);
+        if (commissionMinor <= 0) continue;
+
+        await this.dataSource.transaction(async (manager) => {
+          await this.walletService.creditInSession(
+            {
+              userId: row.agentId,
+              amountMinor: commissionMinor,
+              entryType: 'agent_receipt',
+              sourceType: 'bingo_referral_commission',
+              sourceId: room.id,
+              idempotencyKey: `bingo-referral-commission:${room.id}:${row.agentId}`,
+              metadata: { roomId: room.id, ggrMinor, commissionPct: pct, kind: 'referral_commission' },
+            },
+            manager,
+          );
+        });
+        this.logger.log(
+          `Referral commission: room ${roomId} → agent ${row.agentId} credited ${commissionMinor} (${pct}% of referred-player GGR ${ggrMinor})`,
+        );
+      }
+    } catch (err) {
+      this.logger.error('settleReferralCommission failed', err instanceof Error ? err.stack : err);
     }
   }
 
@@ -2640,6 +2712,40 @@ export class BingoService implements OnModuleInit {
       [roomId],
     );
     return Number(rows[0]?.c ?? 0);
+  }
+
+  /** Count of non-cancelled cartelas held by bots in the room (one ticket row = one cartela). */
+  async countBotCartelasInRoom(roomId: string, manager?: EntityManager): Promise<number> {
+    const runner = manager ?? this.bingoTicketRepository.manager;
+    const rows: Array<{ c: number | string }> = await runner.query(
+      `SELECT COUNT(*) AS c
+         FROM bingo_tickets t
+         JOIN users u ON u.id = t.userId
+        WHERE t.roomId = ? AND t.status <> 'cancelled'
+          AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NOT NULL`,
+      [roomId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  /** Count of non-cancelled cartelas a single user (bot or real) holds in the room. */
+  async countUserCartelasInRoom(userId: string, roomId: string, manager?: EntityManager): Promise<number> {
+    const where: FindOptionsWhere<BingoTicket> = { userId, roomId, status: Not('cancelled') };
+    return manager
+      ? manager.countBy(BingoTicket, where)
+      : this.bingoTicketRepository.countBy(where);
+  }
+
+  /**
+   * Open rooms with an active or just-expired buy-window countdown (first ticket
+   * sold, scheduledStartAt stamped). Used by the scheduler to progressively top up
+   * bot cartela purchases throughout the countdown instead of one lump buy at the
+   * end — no time-bound filter here since the caller derives elapsed fraction itself.
+   */
+  async findOpenRoomsWithCountdown(): Promise<BingoRoom[]> {
+    return this.bingoRoomRepository.find({
+      where: { status: 'open', soldTickets: MoreThan(0), scheduledStartAt: Not(IsNull()) },
+    });
   }
 
   /** Set of active (house-controlled) bot userIds. */

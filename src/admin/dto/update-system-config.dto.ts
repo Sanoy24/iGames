@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -10,31 +10,6 @@ export class UpdateSystemConfigDto {
   @IsInt()
   @Min(0)
   welcomeBonusMinor?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  withdrawalServiceChargePct?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  withdrawalCommissionPct?: number;
-
-  /** % of a credited deposit paid as commission to the receiving agent. */
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  depositCommissionPct?: number;
-
-  /** User id of the super-admin whose wallet receives service fees (null = none). */
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @IsString()
-  superAdminUserId?: string | null;
 
   /** Minimum accepted Telebirr deposit (minor units). 0 = no minimum. */
   @IsOptional()
@@ -69,11 +44,10 @@ export class UpdateSystemConfigDto {
   @Max(100)
   agentRoomCommissionPct?: number;
 
-  /**
-   * Tiered withdrawal fee schedule. Pass null to clear (flat pct reverts to
-   * withdrawalServiceChargePct). Each entry: { minAmountMinor, feePct }.
-   */
+  /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
   @IsOptional()
-  @IsArray()
-  withdrawalFeeTiers?: { minAmountMinor: number; feePct: number }[] | null;
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  referralCommissionPct?: number;
 }

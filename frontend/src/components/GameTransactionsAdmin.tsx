@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { History } from 'lucide-react';
+import { History, Download } from 'lucide-react';
 import { adminGameTransactionsApi } from '../lib/api';
 import { getErrorMessage, formatCreditsFull } from '../lib/utils';
 
@@ -30,23 +30,55 @@ export function GameTransactionsAdmin() {
     void load();
   }, [load]);
 
+  const exportToCsv = () => {
+    if (!data || data.length === 0) return;
+    const headers = ['Date/Time', 'ID', 'Game Type', 'Tickets Sold', 'Single Stake (ETB)', 'Players', 'Bots', 'Bot Tickets', 'Agents', 'Amount Bot Won (ETB)', 'Real e-Money Earned (ETB)'];
+    const rows = data.map(r => [
+      `"${new Date(r.createdAt).toLocaleString()}"`,
+      r.id,
+      r.gameType,
+      r.ticketsSold,
+      (r.singleStake / 100).toFixed(2),
+      r.numberOfPlayers,
+      r.numberOfBots,
+      r.ticketsTakenByBot,
+      `"${r.agents || ''}"`,
+      (r.amountBotWon / 100).toFixed(2),
+      (r.realEmoneyEarned / 100).toFixed(2)
+    ]);
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `game-transactions-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 16, margin: 0 }}>
+    <div className="adm-panel">
+      <div className="adm-panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <History size={18} /> Game Transactions
-        </h2>
-        <button className="btn btn-sm btn-ghost" onClick={load} disabled={loading}>
-          Refresh
-        </button>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm btn-ghost" onClick={exportToCsv} disabled={data.length === 0}>
+            <Download size={14} /> Export CSV
+          </button>
+          <button className="btn btn-sm btn-ghost" onClick={load} disabled={loading} style={{ margin: 0 }}>
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {error && <div className="adm-error-box" style={{ marginBottom: 12 }}>{error}</div>}
+      {error && <div className="adm-error-box" style={{ margin: '12px 16px' }}>{error}</div>}
 
-      <div className="table-responsive">
-        <table className="table">
+      <div className="adm-table-wrap">
+        <table className="adm-table">
           <thead>
-            <tr>
+            <tr className="adm-tr">
+              <th>Date/Time</th>
               <th>ID</th>
               <th>Game Type</th>
               <th>Tickets Sold</th>
@@ -61,12 +93,13 @@ export function GameTransactionsAdmin() {
           </thead>
           <tbody>
             {loading && data.length === 0 ? (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr>
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: 20 }}>Loading...</td></tr>
             ) : data.length === 0 ? (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>No completed games found.</td></tr>
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>No completed games found.</td></tr>
             ) : (
               data.map((row) => (
-                <tr key={row.id}>
+                <tr className="adm-tr" key={row.id}>
+                  <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(row.createdAt).toLocaleString()}</td>
                   <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{row.id.slice(0, 8)}...</td>
                   <td><span className="badge badge-indigo">{row.gameType}</span></td>
                   <td>{row.ticketsSold}</td>
@@ -87,15 +120,15 @@ export function GameTransactionsAdmin() {
       </div>
 
       {total > limit && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Showing {(page - 1) * limit + 1} - {Math.min(page * limit, total)} of {total}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            Page <strong>{page}</strong> of <strong>{Math.ceil(total / limit)}</strong> ({total} entries)
           </span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-sm btn-ghost" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1 || loading}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1 || loading}>
               Previous
             </button>
-            <button className="btn btn-sm btn-ghost" onClick={() => setPage((p) => p + 1)} disabled={page * limit >= total || loading}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setPage((p) => p + 1)} disabled={page * limit >= total || loading}>
               Next
             </button>
           </div>

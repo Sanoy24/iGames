@@ -1258,6 +1258,61 @@ export class WalletService {
     });
   }
 
+  /**
+   * Session-scoped sibling of `transferAgentToUser` — same agent-debit/user-credit
+   * shape, but takes the CALLER's own `manager` instead of opening a new
+   * transaction, so it can be composed inside an already-open transaction (e.g.
+   * deposit crediting in `PaymentsService`), the same way `AdminService.
+   * creditFromMasterWallet` is manager-scoped for the same reason. The credit
+   * side uses the caller's `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/
+   * `metadata` unchanged, so the receiving wallet's ledger history reads
+   * identically regardless of which wallet actually funded it. Throws (and lets
+   * the caller decide what to do) if the agent's wallet can't cover the amount —
+   * `debitInSession` already throws `ConflictException` for that.
+   */
+  async fundUserCreditFromAgent(
+    input: {
+      agentId: string;
+      targetUserId: string;
+      amountMinor: number;
+      entryType: LedgerEntryType;
+      sourceType: string;
+      sourceId: string;
+      idempotencyKey: string;
+      metadata?: Record<string, unknown>;
+    },
+    manager: EntityManager,
+  ): Promise<WalletMutationResult> {
+    await this.ensureDefaultWallet(input.agentId, manager);
+    await this.ensureDefaultWallet(input.targetUserId, manager);
+
+    await this.debitInSession(
+      {
+        userId: input.agentId,
+        amountMinor: input.amountMinor,
+        entryType: 'adjustment',
+        sourceType: 'agent_deposit_funding',
+        sourceId: input.sourceId,
+        idempotencyKey: `${input.idempotencyKey}:agent-debit`,
+        metadata: { ...input.metadata, targetUserId: input.targetUserId, fundedSourceType: input.sourceType },
+      },
+      manager,
+    );
+
+    return this.creditInSession(
+      {
+        userId: input.targetUserId,
+        amountMinor: input.amountMinor,
+        entryType: input.entryType,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        idempotencyKey: input.idempotencyKey,
+        metadata: input.metadata,
+      },
+      manager,
+    );
+  }
+
   private async recordAgentAction(
     input: {
       agentId: string;

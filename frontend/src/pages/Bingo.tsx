@@ -1113,7 +1113,6 @@ function LivePlaceWinPopup({
         (entry.winnerGrid as Array<Array<number | null>> | undefined) ?? null;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
-    const isBot = !!entry.winnerIsBot;
     const name = (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
     const prize = (entry.prizeMinor as number | undefined) ?? 0;
@@ -1162,11 +1161,10 @@ function LivePlaceWinPopup({
                     <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
                         <span
                             className='rounded-lg px-3 py-1 font-black text-white'
-                            style={{ background: disqualified ? '#b91c1c' : isBot ? '#4f46e5' : '#2f8f4f' }}
+                            style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
                         >
                             {name}
-                            {isBot && <span className='ml-1.5 text-[10px] uppercase text-indigo-200'>(Bot)</span>}
-                            {last4 && !isBot ? ` ( *${last4} )` : ''}
+                            {last4 ? ` ( *${last4} )` : ''}
                         </span>
                         <span>
                             {disqualified
@@ -1425,14 +1423,11 @@ function RoomResultOverlay({
                                             <span className='text-sm leading-none'>
                                                 {PLACE_MEDAL[place]}
                                             </span>
-                                            <span className={`text-[11px] font-black truncate ${!!entry.winnerIsBot ? 'text-indigo-400' : 'text-white'}`}>
+                                            <span className='text-[11px] font-black truncate text-white'>
                                                 {(entry.winnerDisplayName as
                                                     | string
                                                     | undefined) ?? tr('bingo.player')}
-                                                {!!entry.winnerIsBot && (
-                                                    <span className='ml-1.5 text-[9px] uppercase text-indigo-300'>(Bot)</span>
-                                                )}
-                                                {entry.winnerPhoneLast4 && !entry.winnerIsBot ? (
+                                                {entry.winnerPhoneLast4 ? (
                                                     <span className='text-slate-400'>
                                                         {' '}
                                                         *

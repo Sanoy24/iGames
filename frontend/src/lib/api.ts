@@ -339,8 +339,6 @@ export type SystemConfig = {
   welcomeBonusMinor: number;
   withdrawalServiceChargePct: number;
   withdrawalCommissionPct: number;
-  /** % of a credited deposit paid as commission to the receiving agent. */
-  depositCommissionPct?: number;
   superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;
@@ -1039,6 +1037,11 @@ export default api;
 
   
 export const adminGameTransactionsApi = {
-  getGameTransactions: (page?: number, limit?: number) => 
+  getGameTransactions: (page?: number, limit?: number) =>
     api.get<{ data: any[], total: number }>('/admin/game-transactions', { params: { page, limit } }).then((r) => r.data)
-}; 
+};
+
+export const adminDepositsApi = {
+  getDeposits: (provider: 'telebirr' | 'mpesa', page?: number, limit?: number, status?: 'credited' | 'rejected') =>
+    api.get<{ data: any[], total: number }>('/admin/deposits', { params: { provider, page, limit, status } }).then((r) => r.data)
+};

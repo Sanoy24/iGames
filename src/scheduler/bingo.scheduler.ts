@@ -114,6 +114,11 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
             await this.bingoService.settleAgentRoomCommission(updated.id).catch((err) =>
               this.logger.error('Agent room commission failed', err instanceof Error ? err.stack : err),
             );
+            // Independent of room ownership: pay each referring agent their cut of
+            // their own referred players' GGR in this room.
+            await this.bingoService.settleReferralCommission(updated.id).catch((err) =>
+              this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
+            );
             try {
               await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
             } catch (err) {
@@ -136,6 +141,25 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         }
       }));
 
+      // Progressively top up bot cartela purchases for rooms mid-countdown (or
+      // just-expired but not yet picked up below), so the displayed player count
+      // and pot climb through the buy window instead of jumping once at the end.
+      if (!this.shuttingDown && bingoPlayable) {
+        try {
+          const openRooms = await this.bingoService.findOpenRoomsWithCountdown();
+          for (const room of openRooms) {
+            if (this.shuttingDown) break;
+            const changed = await this.botsService.topUpBotsForOpenRoom(room.id);
+            if (changed) {
+              const updated = await this.bingoService.getRoomState({ roomId: room.id });
+              this.gameEventsGateway.emitBingoRoomUpdated(updated);
+            }
+          }
+        } catch (error) {
+          this.logger.error('Bingo bot top-up failed', error instanceof Error ? error.stack : error);
+        }
+      }
+
       // Auto-start rooms whose scheduledStartAt has passed (skipped while paused).
       // Per-agent mode starts one game per owner; shared mode starts one globally.
       const roomsToStart = bingoPlayable
@@ -146,8 +170,10 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       for (const room of roomsToStart) {
         if (this.shuttingDown) break;
         try {
-          // Have bots buy last-minute tickets before the first draw (idempotent)
-          await this.botsService.buyTicketsForBingoRoom(room.id);
+          // Final top-off: the periodic top-up above already brings bots to ~100%
+          // of target by scheduledStartAt (fraction saturates at 1), this just
+          // catches any room whose countdown expired between ticks.
+          await this.botsService.topUpBotsForOpenRoom(room.id);
           this.logger.log(`Auto-starting Bingo room ${room.id}`);
           const updated = await this.bingoService.drawNextNumber(room.id);
           this.gameEventsGateway.emitBingoRoomUpdated(updated);

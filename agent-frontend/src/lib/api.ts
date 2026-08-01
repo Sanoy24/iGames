@@ -318,8 +318,6 @@ export type SystemConfig = {
   welcomeBonusMinor: number;
   withdrawalServiceChargePct: number;
   withdrawalCommissionPct: number;
-  /** % of a credited deposit paid as commission to the receiving agent. */
-  depositCommissionPct?: number;
   superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;

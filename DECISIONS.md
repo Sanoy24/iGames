@@ -187,7 +187,7 @@
 **Constraints**: Any future Bingo UI sync must filter `room.tickets` by `status === 'active'` before deciding the switch state. Disqualified cards remain excluded from validation and settlement as before.
 
 ### D-29: Bots use one global master switch plus per-game policy
-**Decided**: 2026-08-02
+**Decided**: 2026-08-01
 **Decision**: Bot management is centralized in `BotsService` and Admin -> Bots. `botPolicy.active` remains the global master switch, while `botPolicy.games.keno.active`, `botPolicy.games.bingo.active`, and `botPolicy.games.crash.active` decide whether the bot participates in each game. Keno-specific settings live under `games.keno` and are mirrored to the legacy top-level fields.
 **Why**: A single global toggle is too blunt once the same funded bot accounts participate in Keno, Bingo, and Crash. Per-game flags let admins pause suspicious or unbalanced behavior in one game without removing liquidity from the others.
 **Constraints**: Missing nested game flags default to enabled for backward compatibility with existing bots. Runtime entry points must request active bots for the specific game (`keno`, `bingo`, or `crash`) rather than using a generic active-bot list. Bingo bot-name CRUD belongs to `BotsService`; `BingoService` only consumes the shared name pool when assigning room-scoped identities.

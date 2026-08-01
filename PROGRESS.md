@@ -6,7 +6,7 @@
 
 ## Current Verified State
 
-**Date**: 2026-08-02
+**Date**: 2026-08-01
 **Branch**: `migration/mysql` (this session's work is **uncommitted** in the working tree)  
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
@@ -57,7 +57,7 @@
 ---
 
 ## Session Record
-### Session: 2026-08-02 (centralized per-game bot management)
+### Session: 2026-08-01 (centralized per-game bot management)
 
 **Goal**: Centralize bot controls so each game can opt bots in/out independently from one Admin Bots hub.
 
@@ -66,6 +66,7 @@
 - **Per-game bot policy** - `botPolicy.games` now carries independent Keno/Bingo/Crash participation flags, with Keno ticket settings nested under `games.keno` and mirrored to the legacy top-level fields for backward compatibility.
 - **Runtime routing by game** - Keno bot tickets, Bingo cartela reconciliation/win interval, Crash bot bets, Bingo active-bot queries, and live bot presence counts now respect the relevant per-game flag while keeping `botPolicy.active` as the global master switch.
 - **Centralized admin surface** - Admin -> Bots now shows per-game counts, create/edit per-game checkboxes, and quick Keno/Bingo/Crash row toggles. Bingo bot-name CRUD remains under `BotsService`; the duplicate name-admin methods were removed from `BingoService`, which now only consumes the shared pool for room identities.
+- **Bot audit trail** - bot create/top-up/delete and runtime game actions now write to `bot_action_logs`, and the Admin Bots hub can page through recent bot actions per bot/game.
 - **Bot accounting/reporting safety** - admin Bingo history now classifies any `botPolicy` account as a bot even if globally paused, so paused bots do not get counted as real-player activity.
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **231/231** pass; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` **10/10** pass; `cd frontend && npx tsc --noEmit && npm run build` clean.

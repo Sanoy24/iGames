@@ -230,6 +230,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     setIsSubmitting(true);
     try {
       const { fileUrl } = await paymentsApi.uploadReceipt(receiptFile);
+      if (!fileUrl) {
+        addToast('error', 'Receipt upload failed — please try attaching the file again');
+        return;
+      }
       if (provider === 'mpesa') {
         await paymentsApi.submitMpesaSms(receiptInput.trim(), fileUrl);
       } else {

@@ -129,6 +129,12 @@ export class BingoRoom {
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 
-  @UpdateDateColumn({ type: 'timestamp' })
+  // Millisecond precision: findRunningRoomIdsDue() gates the next draw on
+  // `updatedAt <= NOW() - INTERVAL drawIntervalSeconds SECOND`. A whole-second
+  // TIMESTAMP truncates the commit time to the floor second, which alone was
+  // worth up to ~1s of jitter in the gap between draws — read by players as
+  // calls landing unevenly fast/slow. See ensureBingoRoomUpdatedAtPrecision()
+  // in ensure-schema.ts for the one-off ALTER that upgrades an existing column.
+  @UpdateDateColumn({ type: 'timestamp', precision: 3 })
   updatedAt: Date;
 }

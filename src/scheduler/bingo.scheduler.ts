@@ -1,5 +1,4 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { BotsService } from '../bots/bots.service';
 import { GamesService } from '../games/games.service';
@@ -10,11 +9,20 @@ import { TelegramBotService } from '../telegram/telegram-bot.service';
 const BINGO_DRAW_LOCK_KEY = 'igames:bingo:draw-lock';
 const BINGO_DRAW_LOCK_TTL_MS = 120_000;
 
+// Standard `cron` (what @nestjs/schedule's @Cron runs on) only resolves to whole
+// seconds, so a draw that becomes due at e.g. +2.1s doesn't fire until the next
+// 1s boundary — up to ~1s of jitter on top of the configured drawIntervalSeconds,
+// which read to players as calls landing "fast" then "slow". A self-rescheduling
+// setTimeout loop instead ticks at sub-second resolution and reschedules only
+// after each run finishes (not fixed-rate), so slow ticks can't pile up.
+const SCHEDULER_TICK_MS = 250;
+
 @Injectable()
 export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(BingoScheduler.name);
   private isRunning = false;
   private shuttingDown = false;
+  private tickTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly bingoService: BingoService,
@@ -45,22 +53,39 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         error instanceof Error ? error.stack : error
       );
     }
+
+    this.scheduleNextTick();
   }
 
   onApplicationShutdown() {
     this.shuttingDown = true;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = null;
+    }
+  }
+
+  private scheduleNextTick(): void {
+    if (this.shuttingDown) return;
+    this.tickTimer = setTimeout(() => {
+      this.drawNextNumbers()
+        .catch((error) =>
+          this.logger.error('Bingo scheduler tick failed', error instanceof Error ? error.stack : error),
+        )
+        .finally(() => this.scheduleNextTick());
+    }, SCHEDULER_TICK_MS);
   }
 
   /**
-   * Runs every second. Draws the next number only for running rooms whose last
-   * draw is older than the configured drawIntervalSeconds, so draw cadence is
-   * config-driven (default ~1 ball every couple of seconds) instead of a fixed
-   * slow 5s. The room status and drawnNumbers array act as the database-level
-   * guard against duplicate draws across instances.
+   * Ticks at SCHEDULER_TICK_MS resolution (self-rescheduled, not fixed-rate).
+   * Draws the next number only for running rooms whose last draw is older than
+   * the configured drawIntervalSeconds, so draw cadence is config-driven
+   * (default ~1 ball every couple of seconds) instead of a fixed slow 5s. The
+   * room status and drawnNumbers array act as the database-level guard against
+   * duplicate draws across instances.
    *
    * After each completed room, auto-creates the next room using config defaults.
    */
-  @Cron(CronExpression.EVERY_SECOND)
   async drawNextNumbers(): Promise<void> {
     if (this.isRunning || this.shuttingDown) {
       return;

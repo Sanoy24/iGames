@@ -2450,17 +2450,18 @@ export function Bingo({ onBack }: BingoProps) {
 
     const alreadyBought = myTickets.length > 0;
 
-    // Keep the Auto switch in sync with the server (source of truth). A card in
-    // manual mode reports autoClaim === false, so if any of my cards is manual the
-    // switch shows OFF. Re-derives on every poll so a refresh never desyncs it —
-    // except while a toggle is in flight, so an older poll can't flip it back
-    // (which would hide the BINGO buttons for a beat).
+    // Keep the Auto switch in sync with the server (source of truth). Only ACTIVE
+    // cards participate in the Auto/Manual preference, so a disqualified card must
+    // not force the switch OFF for the player's remaining live cards. Re-derives on
+    // every poll so a refresh never desyncs it — except while a toggle is in
+    // flight, so an older poll can't flip it back (which would hide the BINGO
+    // buttons for a beat).
     const autoBusyRef = useRef(false);
     useEffect(() => {
         if (autoBusyRef.current) return;
-        const tix = room?.tickets ?? [];
-        if (tix.length > 0)
-            setAutoMode(tix.every((t) => t.autoClaim !== false));
+        const activeTickets = (room?.tickets ?? []).filter((t) => t.status === 'active');
+        if (activeTickets.length > 0)
+            setAutoMode(activeTickets.every((t) => t.autoClaim !== false));
     }, [room?.tickets]);
 
     const toggleAuto = async () => {

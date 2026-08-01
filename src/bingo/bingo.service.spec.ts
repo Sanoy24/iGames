@@ -89,6 +89,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     findOneBy: jest.fn().mockResolvedValue(null),
     count: jest.fn().mockResolvedValue(0),
     countBy: jest.fn().mockResolvedValue(0),
+    update: jest.fn().mockResolvedValue({ affected: 0 }),
     createQueryBuilder: jest.fn().mockReturnValue({
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
@@ -584,5 +585,24 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(changed).toBe(false);
     expect(purchaseSpy).not.toHaveBeenCalled();
     expect(releaseSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('BingoService.setAutoClaim — active-card scope', () => {
+  it('updates only active tickets so disqualified cards cannot pin the toggle OFF', async () => {
+    const { service, mockTicketRepo } = makeService({ rooms: [] });
+
+    await expect(
+      service.setAutoClaim({
+        userId: '550e8400-e29b-41d4-a716-446655440099',
+        roomId: '550e8400-e29b-41d4-a716-446655440088',
+        auto: true,
+      }),
+    ).resolves.toEqual({ autoClaim: true, updated: 0 });
+
+    expect(mockTicketRepo.update).toHaveBeenCalledWith(
+      { userId: '550e8400-e29b-41d4-a716-446655440099', roomId: '550e8400-e29b-41d4-a716-446655440088', status: 'active' },
+      { autoClaim: true },
+    );
   });
 });

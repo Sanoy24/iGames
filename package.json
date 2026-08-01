@@ -18,8 +18,7 @@
     "test:unit": "jest src/keno/keno-rules.service.spec.ts src/bingo/bingo-rules.service.spec.ts src/bingo/bingo-leaderboard.spec.ts src/rng/rng.service.spec.ts src/wallet/wallet.service.spec.ts src/crash/crash.service.spec.ts src/keno/keno.service.spec.ts src/bingo/bingo.service.spec.ts src/agents/referral-commission.util.spec.ts src/wallet/withdrawal-fee-range.util.spec.ts src/agents/agents.service.spec.ts src/common/agent-duty.util.spec.ts --forceExit --no-coverage",
     "test:unit:watch": "jest src/keno/keno-rules.service.spec.ts src/bingo/bingo-rules.service.spec.ts src/bingo/bingo-leaderboard.spec.ts src/rng/rng.service.spec.ts src/wallet/wallet.service.spec.ts src/crash/crash.service.spec.ts src/keno/keno.service.spec.ts src/bingo/bingo.service.spec.ts src/agents/referral-commission.util.spec.ts src/wallet/withdrawal-fee-range.util.spec.ts src/agents/agents.service.spec.ts src/common/agent-duty.util.spec.ts --watch",
     "seed:dev": "node scripts/seed-dev.mjs",
-    "seed:bingo-patterns": "ts-node scripts/seed-bingo-patterns.ts",
-    "postinstall": "node scripts/fetch-tessdata.js"
+    "seed:bingo-patterns": "ts-node scripts/seed-bingo-patterns.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

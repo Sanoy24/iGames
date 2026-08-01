@@ -180,6 +180,12 @@
 **Why**: Locking only refunds still leaves a boundary race where a human can leave at the exact start tick while bots are being topped up. Freezing buys, refunds, and bot reconcile under the same rule removes that last-second split-brain behavior.
 **Constraints**: The freeze duration is configured in Bingo settings with a 3-second default. Any new cartela-change path must use the same shared lock helper so the scheduler, purchase endpoint, refund endpoint, and bot reconcile cannot diverge.
 
+### D-28: Bingo Auto/Manual toggle ignores disqualified cards
+**Decided**: 2026-08-01
+**Decision**: The Bingo Auto/Manual switch is derived from ACTIVE tickets only. A disqualified cartela stays disqualified, but it must not force the player's remaining live cartelas into Manual mode. The backend still updates only `status: 'active'` tickets when the player toggles Auto on/off.
+**Why**: Manual-vs-auto is a preference for live cards, not a punishment state for one ticket. If a disqualified card could pin the switch OFF, a player with multiple cartelas would lose automatic play on the cards that are still eligible to win.
+**Constraints**: Any future Bingo UI sync must filter `room.tickets` by `status === 'active'` before deciding the switch state. Disqualified cards remain excluded from validation and settlement as before.
+
 ---
 
 ## Wallet / Agents (continued)

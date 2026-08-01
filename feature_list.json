@@ -634,6 +634,16 @@
       "verification": "npx tsc -p tsconfig.build.json --noEmit && npm run test:unit",
       "evidence": "src/bingo/bingo.service.ts (reconcileBotCartelasInRoom, purchaseTickets/releaseCartela bot sync hook, resolveDisplayedNameForUser bot suffix shape, awardDerashPlace/awardDerashPlaceToHouse winnerPhoneLast4), src/bots/bots.service.ts (topUpBotsForOpenRoom now delegates to BingoService reconciliation), frontend/src/pages/Bingo.tsx (same LivePlaceWinPopup/RoomResultOverlay shape consumes winnerDisplayName + winnerPhoneLast4). 228/228 backend unit tests, backend tsconfig.build clean.",
       "notes": "This centralizes bot room behavior in the Bingo service so buy/refund actions and scheduler top-up all use the same room-demand rule."
+    },
+    {
+      "id": "BE-28",
+      "area": "bingo",
+      "title": "Auto/Manual toggle ignores disqualified cartelas",
+      "behavior": "If a player disqualifies one cartela in Manual mode, the remaining active cartelas still obey the Auto/Manual toggle normally. The Bingo page derives the switch state from ACTIVE tickets only, so a disqualified cartela cannot pin the player in Manual mode or block automatic award checks for the cards that are still live.",
+      "status": "passing",
+      "verification": "npx tsc -p tsconfig.build.json --noEmit && npm run test:unit && cd frontend && npx tsc --noEmit && npm run build",
+      "evidence": "frontend/src/pages/Bingo.tsx (autoMode effect filters room.tickets to status === 'active' before syncing the switch), src/bingo/bingo.service.spec.ts (setAutoClaim regression confirming the active-ticket scope). 231/231 backend unit tests, backend tsconfig.build clean, frontend tsc + build clean.",
+      "notes": "The toggle is intentionally not locked by a single disqualified ticket. Only live tickets participate in the preference."
     }
   ]
 }

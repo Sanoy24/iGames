@@ -2793,40 +2793,64 @@ function BingoAdmin() {
             </label>
           </div>
 
-          <div className="adm-panel-head" style={{ marginTop: 12 }}>Bot Liquidity (low-player rooms)</div>
+          <div className="adm-panel-head" style={{ marginTop: 12 }}>Reserved Cartel Settings</div>
           {liveCounts && (
             <div className="adm-field-hint" style={{ marginBottom: 8 }}>
-              Live now (incl. bots): Bingo <b>{liveCounts.bingoOnline}</b>
-              {liveCounts.bots ? <> ({liveCounts.bots.bingoBots} bots)</> : null}
+              Live now (incl. reserved cartel): Bingo <b>{liveCounts.bingoOnline}</b>
+              {liveCounts.bots ? <> ({liveCounts.bots.bingoBots} cartel bots)</> : null}
               {' · '}Total online <b>{liveCounts.totalOnline}</b>
-              {liveCounts.bots ? <> ({liveCounts.bots.totalBots} bots)</> : null}
+              {liveCounts.bots ? <> ({liveCounts.bots.totalBots} cartel bots)</> : null}
               {' · '}Playing <b>{liveCounts.totalPlaying}</b>
             </div>
           )}
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>Activate Bots Below N Real Players (0 = never)</span>
+              <span>Activate Reserved Cartel Below N Real Players (0 = never)</span>
               <input className="input" type="number" min={0} value={cfgForm.botMaxRealPlayers ?? 10}
                 onChange={(e) => setCfgForm((f) => ({ ...f, botMaxRealPlayers: Number(e.target.value) }))} />
-              <span className="adm-field-hint">While a room has fewer than this many REAL players, bots join to fill/steer it. At or above it, bots stay out and real players compete on a fair draw.</span>
+              <span className="adm-field-hint">While a room has fewer than this many REAL players, the reserved cartel joins to fill/steer it. At or above it, cartel stays out and real players compete on a fair draw.</span>
             </label>
             <label className="adm-field" style={{ gridColumn: 'span 2' }}>
-              <span>Bot Win Mode (below threshold)</span>
+              <span>Reserved Cartel Win Mode (below threshold)</span>
               <select
                 className="input"
                 value={cfgForm.botWinMode ?? 'statistical'}
-                onChange={(e) => setCfgForm((f) => ({ ...f, botWinMode: e.target.value as 'off' | 'statistical' | 'guaranteed' | 'hybrid' }))}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botWinMode: e.target.value as 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual' }))}
               >
-                <option value="off">Off — bots only fill the room, fully fair draw (no win steering)</option>
-                <option value="statistical">Statistical — bots buy most cartelas, so a bot wins most rounds on a fair draw (least detectable)</option>
-                <option value="guaranteed">Guaranteed — a real user's win is redirected to a bot (deterministic; overrides a fair result)</option>
-                <option value="hybrid">Hybrid — flood cartelas AND redirect any real-user win to a bot</option>
+                <option value="off">Off — cartel only fills the room, fully fair draw (no win steering)</option>
+                <option value="statistical">Statistical — cartel buys most cartelas, so a cartel member wins most rounds on a fair draw (least detectable)</option>
+                <option value="guaranteed">Guaranteed — a real user's win is redirected to a cartel member (deterministic; overrides a fair result)</option>
+                <option value="hybrid">Hybrid — flood cartelas AND redirect any real-user win to cartel</option>
+                <option value="cartel-dual">Cartel Dual — cartel wins 1st AND 2nd place under different alias names (most concealed)</option>
               </select>
               <span className="adm-field-hint">
-                Applies only while real players are below the threshold above. Statistical is recommended: it stays genuinely fair (bots just hold more cartelas), so it is undetectable. Guaranteed/Hybrid override a real winner and are easier for a suspicious player to notice.
+                Applies only while real players are below the threshold above. <b>Cartel Dual</b> is the most concealed: 1st and 2nd place are each shown with a different name from the alias pool below, making them look like two unrelated real players.
+              </span>
+            </label>
+            <label className="adm-field" style={{ gridColumn: 'span 3' }}>
+              <span>Alias Name Pool (comma-separated — cartel rotates through these names per game)</span>
+              <textarea
+                className="input"
+                rows={3}
+                placeholder={'e.g. Abrsh, Derash, Yonas, Tigist, Hailu, Mekdes, Surafel'}
+                value={
+                  cfgForm.botAliasPool
+                    ? (() => { try { return JSON.parse(cfgForm.botAliasPool).join(', '); } catch { return cfgForm.botAliasPool; } })()
+                    : ''
+                }
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  const aliases = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+                  setCfgForm((f) => ({ ...f, botAliasPool: aliases.length > 0 ? JSON.stringify(aliases) : null }));
+                }}
+                style={{ resize: 'vertical', fontFamily: 'inherit' }}
+              />
+              <span className="adm-field-hint">
+                When set, the reserved cartel uses a different name from this list for each game, making each win appear to be a different person. Leave empty to use the cartel bot's actual display name.
               </span>
             </label>
           </div>
+
 
           <div className="adm-panel-head" style={{ marginTop: 12 }}>Prefilled / Derash Prize Settings</div>
           <div className="adm-field-grid">

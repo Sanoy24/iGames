@@ -42,8 +42,9 @@ import { PoolAdmin } from '../components/PoolAdmin';
 import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
 import { DepositsAdmin } from '../components/DepositsAdmin';
+import { SettlementsAdmin } from '../components/SettlementsAdmin';
 
-type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'deposits' | 'support' | 'games' | 'game-transactions' | 'config' | 'emoney' | 'account';
+type AdminTab = 'overview' | 'players' | 'agents' | 'locations' | 'agent-actions' | 'keno' | 'bingo' | 'pool' | 'werk' | 'bots' | 'broadcast' | 'withdrawals' | 'deposits' | 'settlements' | 'support' | 'games' | 'game-transactions' | 'config' | 'emoney' | 'account';
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'overview',    label: 'Overview',    icon: <Activity size={15} /> },
@@ -59,6 +60,7 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
   { id: 'broadcast',   label: 'Broadcast',   icon: <Megaphone size={15} /> },
   { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
   { id: 'deposits',    label: 'Deposits',    icon: <Banknote size={15} /> },
+  { id: 'settlements', label: 'Settlements', icon: <Banknote size={15} /> },
   { id: 'support',     label: 'Support',     icon: <LifeBuoy size={15} /> },
   { id: 'games',       label: 'Games',       icon: <Dices size={15} /> },
   { id: 'game-transactions', label: 'Game Trans', icon: <History size={15} /> },
@@ -1925,10 +1927,37 @@ function WithdrawalsAdmin() {
     finally { setBusy(null); }
   };
 
+  const verify = async (id: string, decision: 'approve' | 'reject') => {
+    if (decision === 'reject') {
+      const note = (notes[id] ?? '').trim();
+      if (note.length < 15) {
+        addToast('error', 'Rejection notes must be at least 15 characters.');
+        return;
+      }
+    }
+    setBusy(`verify-${decision}-${id}`);
+    try {
+      await adminWithdrawalsApi.verifyWithdrawal(id, decision, notes[id]);
+      addToast('success', decision === 'approve'
+        ? 'Verified — fund-hold released and agent credited.'
+        : 'Rejected — reservation refunded to the player.');
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
   const pending = withdrawals.filter((w) => w.status === 'pending' || (w.status as string) === 'processing');
+  const awaitingVerification = withdrawals.filter((w) => (w.status as string) === 'awaiting_verification');
   const done = withdrawals.filter((w) => w.status === 'completed' || w.status === 'rejected');
 
-  const W_STATUS: Record<string, string> = { pending: 'badge-gold', claimed: 'badge-violet', processing: 'badge-violet', completed: 'badge-green', rejected: 'badge-red' };
+  const W_STATUS: Record<string, string> = {
+    pending: 'badge-gold',
+    claimed: 'badge-violet',
+    processing: 'badge-violet',
+    awaiting_verification: 'badge-indigo',
+    completed: 'badge-green',
+    rejected: 'badge-red',
+  };
 
   return (
     <div className="stack-lg">
@@ -1986,6 +2015,61 @@ function WithdrawalsAdmin() {
             )}
           </div>
 
+          {/* Awaiting Verification — agent submitted FT number + receipt, money has
+              NOT moved yet. Approve is what actually releases the fund-hold and
+              credits the agent. */}
+          {awaitingVerification.length > 0 && (
+            <div className="adm-panel">
+              <div className="adm-panel-head">
+                Awaiting Verification
+                <span className="adm-badge-count">{awaitingVerification.length}</span>
+              </div>
+              <p className="adm-field-hint" style={{ padding: '0 16px' }}>
+                Player balance and agent credit are held until you verify. Only reject if you're confident
+                the agent did NOT actually pay the player — resolve any cash discrepancy with the agent directly.
+              </p>
+              <div className="adm-list">
+                {awaitingVerification.map((w) => (
+                  <div key={w.id} className="adm-w-row">
+                    <div className="adm-w-main" onClick={() => setExpanded(expanded === w.id ? null : w.id)}>
+                      <div className="adm-w-info">
+                        <strong>{formatCredits(w.amountMinor)} ETB</strong>
+                        <span className="adm-td-muted">Agent: {w.agent?.displayName ?? w.agentId?.slice(0, 8) ?? '—'}</span>
+                        <span className="adm-td-muted">FT: {w.telebirrReference ?? '—'}</span>
+                        {w.receiptFileUrl && (
+                          <a href={`/uploads/${w.receiptFileUrl}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                            View receipt
+                          </a>
+                        )}
+                      </div>
+                      <div className="adm-w-right">
+                        <span className={`badge ${W_STATUS[w.status] ?? 'badge-indigo'}`}>{w.status}</span>
+                        {expanded === w.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </div>
+                    </div>
+                    {expanded === w.id && (
+                      <div className="adm-w-expand">
+                        <input className="input" placeholder="Rejection notes (required to reject, min 15 chars)"
+                          value={notes[w.id] ?? ''}
+                          onChange={(e) => setNotes((n) => ({ ...n, [w.id]: e.target.value }))} />
+                        <div className="adm-w-actions">
+                          <button className="adm-btn adm-btn-success" disabled={!!busy}
+                            onClick={() => verify(w.id, 'approve')}>
+                            {busy === `verify-approve-${w.id}` ? '…' : 'Verify & Complete'}
+                          </button>
+                          <button className="adm-btn adm-btn-danger" disabled={!!busy || (notes[w.id] ?? '').trim().length < 15}
+                            onClick={() => verify(w.id, 'reject')}>
+                            {busy === `verify-reject-${w.id}` ? '…' : 'Reject'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* History */}
           {done.length > 0 && (
             <div className="adm-panel">
@@ -1994,14 +2078,28 @@ function WithdrawalsAdmin() {
                 <span className="adm-badge-count">{done.length}</span>
               </div>
               <table className="adm-table">
-                <thead><tr><th>Amount</th><th>Phone</th><th>Status</th><th>Processed</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Amount</th><th>Phone</th><th>Agent</th><th>Fee</th><th>FT Number</th>
+                    <th>Receipt</th><th>Status</th><th>Processed</th><th>Verified By</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {done.map((w) => (
                     <tr key={w.id} className="adm-tr">
                       <td><strong>{formatCredits(w.amountMinor)}</strong></td>
                       <td className="adm-td-muted">{w.destinationAccount}</td>
+                      <td className="adm-td-muted">{w.agent?.displayName ?? w.agentId?.slice(0, 8) ?? '—'}</td>
+                      <td className="adm-td-muted">{w.serviceChargeMinor ? formatCredits(w.serviceChargeMinor) : '—'}</td>
+                      <td className="adm-td-muted" style={{ fontSize: 11 }}>{w.telebirrReference ?? '—'}</td>
+                      <td style={{ fontSize: 11 }}>
+                        {w.receiptFileUrl ? <a href={`/uploads/${w.receiptFileUrl}`} target="_blank" rel="noreferrer">View</a> : '—'}
+                      </td>
                       <td><span className={`badge ${W_STATUS[w.status] ?? 'badge-gold'}`}>{w.status}</span></td>
                       <td className="adm-td-muted">{w.processedAt ? formatDateTime(w.processedAt) : '—'}</td>
+                      <td className="adm-td-muted" style={{ fontSize: 11 }}>
+                        {w.verifiedBy ? `${w.verifiedBy.slice(0, 8)}${w.verifiedAt ? ` · ${formatDateTime(w.verifiedAt)}` : ''}` : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2359,7 +2457,7 @@ function BingoAdmin() {
     houseEdgePct: 20,
     globalBingoBotWinInterval: 0,
     botMaxRealPlayers: 10,
-    botWinMode: 'statistical' as 'off' | 'statistical' | 'guaranteed' | 'hybrid',
+    botWinMode: 'statistical' as 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual',
     prefilledRankingMode: 'race' as 'race' | 'leaderboard',
     prefilledFirstPlacePct: 80,
     prefilledSecondPlaceEnabled: false,
@@ -2376,6 +2474,7 @@ function BingoAdmin() {
     prefilledThirdPatternId: null as string | null,
     prefilledFourthPatternId: null as string | null,
     prefilledFifthPatternId: null as string | null,
+    botAliasPool: null as string | null,
   });
 
   const load = useCallback(async () => {
@@ -2409,7 +2508,7 @@ function BingoAdmin() {
         houseEdgePct: c.houseEdgePct ?? 20,
         globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
         botMaxRealPlayers: c.botMaxRealPlayers ?? 10,
-        botWinMode: (c.botWinMode ?? 'statistical') as 'off' | 'statistical' | 'guaranteed' | 'hybrid',
+        botWinMode: (c.botWinMode ?? 'statistical') as 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual',
         prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as 'race' | 'leaderboard',
         prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
         prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
@@ -2426,6 +2525,7 @@ function BingoAdmin() {
         prefilledThirdPatternId: c.prefilledThirdPatternId ?? null,
         prefilledFourthPatternId: c.prefilledFourthPatternId ?? null,
         prefilledFifthPatternId: c.prefilledFifthPatternId ?? null,
+        botAliasPool: c.botAliasPool ?? null,
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
@@ -2961,7 +3061,7 @@ function BingoAdmin() {
           : rooms.length === 0 ? <div className="adm-empty">No rooms yet. Enable Auto-Bingo in Settings and a room will be created automatically.</div>
           : (
             <table className="adm-table">
-              <thead><tr><th>Room</th><th>Mode</th><th>Tickets</th><th>Status</th><th>Starts</th><th>Drawn</th><th></th></tr></thead>
+              <thead><tr><th>Room</th><th>Mode</th><th>Tickets</th><th>Status</th><th>Created</th><th>Starts</th><th>Drawn</th><th></th></tr></thead>
               <tbody>
                 {rooms.map((room) => {
                   const isActive = room.status === 'open' || room.status === 'running';
@@ -2981,6 +3081,7 @@ function BingoAdmin() {
                       </td>
                       <td className="adm-td-muted">{room.soldTickets}/{room.maxTickets}</td>
                       <td><span className={`badge ${R_STATUS[room.status] ?? 'badge-gold'}`}>{room.status}</span></td>
+                      <td className="adm-td-muted" style={{ whiteSpace: 'nowrap' }}>{formatDateTime(room.createdAt)}</td>
                       <td className="adm-td-muted">{formatRelativeTime(room.scheduledStartAt)}</td>
                       <td className="adm-td-muted">{room.drawnNumbers?.length ?? 0}/{maxNum}</td>
                       <td>
@@ -4466,6 +4567,7 @@ export function Admin() {
           {tab === 'broadcast'     && <BroadcastAdmin />}
           {tab === 'withdrawals'   && <WithdrawalsAdmin />}
           {tab === 'deposits'      && <DepositsAdmin />}
+          {tab === 'settlements'   && <SettlementsAdmin />}
           {tab === 'support'       && <SupportConsole />}
           {tab === 'games'         && <GamesAdmin />}
           {tab === 'game-transactions' && <GameTransactionsAdmin />}

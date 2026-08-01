@@ -172,8 +172,16 @@ export class BingoConfig {
    *                    (deterministic house retention; overrides a fair result).
    *  - `hybrid`      — statistical flooding PLUS the real-user→bot win redirect.
    */
-  @Column({ type: 'varchar', length: 16, default: 'statistical' })
+  @Column({ type: 'varchar', length: 20, default: 'statistical' })
   botWinMode: string;
+
+  /**
+   * JSON-encoded array of alias names the reserved cartel rotates through.
+   * e.g. `["Abrsh","Derash","Yonas","Tigist","Hailu"]`.
+   * Null = use the bot's own displayName for every game.
+   */
+  @Column({ type: 'text', nullable: true })
+  botAliasPool: string | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

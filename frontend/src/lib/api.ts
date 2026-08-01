@@ -390,6 +390,7 @@ export type AgentPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  withdrawalFeesEarnedMinor: number;
   depositCount: number;
   depositVolumeMinor: number;
   depositCommissionEarnedMinor: number;
@@ -403,9 +404,46 @@ export type AgentSelfPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  withdrawalFeesEarnedMinor: number;
   depositCount: number;
   depositVolumeMinor: number;
   depositCommissionEarnedMinor: number;
+};
+
+export type AgentDashboardSummary = {
+  totalReferredPlayers: number;
+  activePlayers: number;
+  gameCommission: { referralCommissionMinor: number; ownedRoomCommissionMinor: number; totalMinor: number };
+  withdrawalFeesEarnedMinor: number;
+  totalEarningsMinor: number;
+  pendingWithdrawalRequests: number;
+  completedWithdrawalRequests: number;
+  earnings: { todayMinor: number; weeklyMinor: number; monthlyMinor: number; lifetimeMinor: number };
+};
+
+export type AgentSettlementStatus = 'pending' | 'approved' | 'paid' | 'rejected';
+export type AgentSettlementPaymentMethod = 'bank_transfer' | 'cash' | 'mobile_money' | 'other';
+
+export type AgentSettlement = {
+  id: string;
+  agentId: string;
+  agent?: User;
+  periodStart: string;
+  periodEnd: string;
+  gameCommissionMinor: number;
+  withdrawalFeesMinor: number;
+  totalEarnedMinor: number;
+  amountPaidMinor: number;
+  outstandingBalanceMinor: number;
+  status: AgentSettlementStatus;
+  paymentMethod?: AgentSettlementPaymentMethod | null;
+  ftNumber?: string | null;
+  receiptFileUrl?: string | null;
+  paidAt?: string | null;
+  paidByAdminId?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export const adminApi = {
@@ -800,10 +838,38 @@ export const adminWithdrawalsApi = {
     api.post<Withdrawal>(`/admin/withdrawals/${id}/verify`, { decision, notes }).then((r) => r.data),
 };
 
+// ── Admin: Agent Settlements ────────────────────────────────────────
+export const adminSettlementsApi = {
+  listAll: (page = 1, limit = 50) =>
+    api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>('/admin/settlements', { params: { page, limit } }).then((r) => r.data),
+  listForAgent: (agentId: string, page = 1, limit = 50) =>
+    api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>(`/admin/agents/${agentId}/settlements`, { params: { page, limit } }).then((r) => r.data),
+  create: (agentId: string, periodStart: string, periodEnd: string, notes?: string) =>
+    api.post<AgentSettlement>(`/admin/agents/${agentId}/settlements`, { periodStart, periodEnd, notes }).then((r) => r.data),
+  update: (id: string, dto: Partial<{
+    status: AgentSettlementStatus;
+    paymentMethod: AgentSettlementPaymentMethod | null;
+    ftNumber: string | null;
+    receiptFileUrl: string | null;
+    paidAt: string | null;
+    amountPaidMinor: number;
+    notes: string | null;
+  }>) => api.patch<AgentSettlement>(`/admin/settlements/${id}`, dto).then((r) => r.data),
+  /** Upload a photo/PDF of the payment receipt — returns a relative path to pass as receiptFileUrl. */
+  uploadReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/admin/settlements/receipts/upload', form).then((r) => r.data);
+  },
+};
+
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
   getConfig: () => api.get<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> }>('/agent/config').then((r) => r.data),
   getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
+  getDashboard: () => api.get<AgentDashboardSummary>('/agent/dashboard').then((r) => r.data),
+  getSettlements: (page = 1, limit = 50) =>
+    api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>('/agent/settlements', { params: { page, limit } }).then((r) => r.data),
   getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
@@ -811,8 +877,8 @@ export const agentApi = {
   claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
   rejectWithdrawal: (id: string, remarks: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/reject`, { remarks }).then((r) => r.data),
-  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string, receiptFileUrl: string) =>
-    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof, receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string, receiptFileUrl: string, transferCompletedAt: string) =>
+    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof, receiptFileUrl, transferCompletedAt }, { timeout: 45000 }).then((r) => r.data),
   /** Upload a photo/PDF of the payout receipt before completing — returns a
    * relative path (e.g. "withdrawal-receipts/<uuid>.jpg") to pass as receiptFileUrl. */
   uploadWithdrawalReceipt: (file: File) => {

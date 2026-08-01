@@ -272,13 +272,26 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    public handleWebhookRequest(req: any, res: any) {
+    public async handleWebhookRequest(req: any, res: any) {
         if (!this.bot) {
             res.status(500).send('Bot not initialized');
             return;
         }
         const handler = webhookCallback(this.bot, 'express');
-        return handler(req, res);
+        try {
+            await handler(req, res);
+        } catch (err) {
+            // grammY's bot.catch() only applies to long polling — it has no effect on
+            // webhook updates (handleUpdate() rethrows instead of routing through it).
+            // Without this, any handler exception bubbles up as a 500, which makes
+            // Telegram redeliver the same update forever and pile up pending_update_count.
+            // Always ack Telegram so the queue keeps moving; the real error is logged here.
+            this.logger.error(
+                `Unhandled error processing webhook update: ${err instanceof Error ? err.message : err}`,
+                err instanceof Error ? err.stack : undefined,
+            );
+            if (!res.headersSent) res.status(200).send('OK');
+        }
     }
 
     private getPlayKeyboard(text: string, miniAppUrl: string): InlineKeyboard {

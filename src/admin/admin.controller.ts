@@ -1,4 +1,25 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards, UseInterceptors } from '@nestjs/common';
+import { mkdirSync } from 'fs';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UnsupportedMediaTypeException,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -25,6 +46,16 @@ import { LocationsService } from '../locations/locations.service';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
+import { AgentsService } from '../agents/agents.service';
+import { CreateSettlementDto } from './dto/create-settlement.dto';
+import { UpdateSettlementDto } from './dto/update-settlement.dto';
+import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
+
+/** Minimal shape of a multer file (avoids depending on @types/multer). */
+type UploadedReceiptFile = { filename: string; mimetype: string; size: number };
+
+const SETTLEMENT_RECEIPT_SUBDIR = 'settlement-receipts';
+const SETTLEMENT_RECEIPT_DIR = join(UPLOADS_ROOT, SETTLEMENT_RECEIPT_SUBDIR);
 
 @SkipThrottle()
 @Controller('admin')
@@ -38,6 +69,7 @@ export class AdminController {
     private readonly walletService: WalletService,
     private readonly locationsService: LocationsService,
     private readonly gameEventsGateway: GameEventsGateway,
+    private readonly agentsService: AgentsService,
   ) {}
 
   @Get('stats/overview')
@@ -233,6 +265,82 @@ export class AdminController {
   @Get('agents/performance')
   getAgentPerformance() {
     return this.adminService.getAgentPerformance();
+  }
+
+  // ── Agent Settlements ────────────────────────────────────────────
+  // Real-world payouts to an agent — separate from what they've earned.
+
+  /** Upload a photo/PDF of the payment receipt — required before a settlement
+   * can be marked 'paid'. Admin-uploaded per the business rule. */
+  @Post('settlements/receipts/upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          mkdirSync(SETTLEMENT_RECEIPT_DIR, { recursive: true });
+          cb(null, SETTLEMENT_RECEIPT_DIR);
+        },
+        filename: (_req, file, cb) => {
+          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      fileFilter: (_req, file, cb) => {
+        if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
+          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP, GIF images or PDF are allowed'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  uploadSettlementReceipt(@UploadedFile() file?: UploadedReceiptFile) {
+    if (!file) throw new BadRequestException('No receipt file uploaded');
+    return { fileUrl: `${SETTLEMENT_RECEIPT_SUBDIR}/${file.filename}` };
+  }
+
+  @Get('settlements')
+  listAllSettlements(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.agentsService.listSettlements(undefined, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+  }
+
+  @Get('agents/:id/settlements')
+  listAgentSettlements(
+    @Param('id') id: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.agentsService.listSettlements(id, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
+  }
+
+  @Post('agents/:id/settlements')
+  createSettlement(@Param('id') id: string, @Body() dto: CreateSettlementDto) {
+    return this.agentsService.createSettlement(id, new Date(dto.periodStart), new Date(dto.periodEnd), dto.notes);
+  }
+
+  @Patch('settlements/:id')
+  updateSettlement(
+    @Param('id') id: string,
+    @Body() dto: UpdateSettlementDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.agentsService.updateSettlement(
+      id,
+      {
+        status: dto.status,
+        paymentMethod: dto.paymentMethod,
+        ftNumber: dto.ftNumber,
+        receiptFileUrl: dto.receiptFileUrl,
+        paidAt: dto.paidAt !== undefined ? (dto.paidAt === null ? null : new Date(dto.paidAt)) : undefined,
+        amountPaidMinor: dto.amountPaidMinor,
+        notes: dto.notes,
+      },
+      admin.id,
+    );
   }
 
   // ── Locations ─────────────────────────────────────────────────────

@@ -793,6 +793,18 @@ export class WalletService {
     return withdrawal;
   }
 
+  /** Withdrawals assigned to this agent not yet fully completed — dashboard "Pending" count. */
+  async countPendingAgentWithdrawals(agentId: string): Promise<number> {
+    return this.withdrawalRepository.count({
+      where: { agentId, status: In(['claimed', 'processing', 'awaiting_verification']) },
+    });
+  }
+
+  /** Withdrawals this agent has fully completed — dashboard "Completed" count. */
+  async countCompletedAgentWithdrawals(agentId: string): Promise<number> {
+    return this.withdrawalRepository.count({ where: { agentId, status: 'completed' } });
+  }
+
   async getAgentWithdrawalHistory(agentId: string): Promise<Withdrawal[]> {
     return this.withdrawalRepository.find({
       where: { agentId },
@@ -858,6 +870,7 @@ export class WalletService {
     paymentProvider?: 'telebirr' | 'mpesa';
     payoutVerification?: Record<string, unknown>;
     receiptFileUrl: string;
+    transferCompletedAt: Date;
     feeMinor: number;
   }): Promise<Withdrawal> {
     return this.dataSource.transaction(async (manager) => {
@@ -903,6 +916,7 @@ export class WalletService {
       withdrawal.paymentProvider = input.paymentProvider ?? null;
       withdrawal.payoutVerification = input.payoutVerification ?? null;
       withdrawal.receiptFileUrl = input.receiptFileUrl;
+      withdrawal.transferCompletedAt = input.transferCompletedAt;
       withdrawal.processedAt = new Date();
       withdrawal.processedBy = input.agentId;
       return withdrawalRepo.save(withdrawal);
@@ -1369,7 +1383,7 @@ export class WalletService {
     );
   }
 
-  private async recordAgentAction(
+  async recordAgentAction(
     input: {
       agentId: string;
       userId?: string;

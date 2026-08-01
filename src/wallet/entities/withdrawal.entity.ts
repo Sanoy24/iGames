@@ -82,6 +82,11 @@ export class Withdrawal {
   @Column({ type: 'varchar', length: 500, nullable: true })
   receiptFileUrl?: string | null;
 
+  /** When the agent says they actually transferred the money — agent-entered,
+   * distinct from processedAt (when they submitted this proof). */
+  @Column({ type: 'timestamp', nullable: true })
+  transferCompletedAt?: Date | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   adminNotes?: string;
 

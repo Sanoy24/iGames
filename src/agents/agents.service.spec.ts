@@ -81,6 +81,8 @@ function makeService(input: {
     usersService,
     withdrawalProofVerifier as any,
     configService as any,
+    {} as any, // dataSource
+    {} as any, // agentSettlementRepository
   );
 
   return { service, usersService, walletService, systemConfigRepository, withdrawalFeeRangeRepository, withdrawalProofVerifier, configService };
@@ -263,7 +265,9 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
       claimedWithdrawal: { amountMinor: 25000, destinationAccount: '0911111111' },
     });
 
-    await service.completeWithdrawal('wd-1', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r1.jpg');
+    await service.completeWithdrawal(
+      'wd-1', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r1.jpg', new Date('2026-08-01T10:00:00Z'),
+    );
 
     // 25,000 falls in the first tier (fee 1,000) → the agent must have paid the
     // player 24,000, and recordAgentWithdrawalProof gets the resolved flat fee.
@@ -292,7 +296,9 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
       claimedWithdrawal: { amountMinor: 500000, destinationAccount: '0911111111' },
     });
 
-    await service.completeWithdrawal('wd-2', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r2.jpg');
+    await service.completeWithdrawal(
+      'wd-2', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r2.jpg', new Date('2026-08-01T10:00:00Z'),
+    );
 
     expect(walletService.recordAgentWithdrawalProof).toHaveBeenCalledWith(
       expect.objectContaining({ feeMinor: 10000 }),
@@ -307,8 +313,176 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
     });
 
     await expect(
-      service.completeWithdrawal('wd-3', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r3.jpg'),
+      service.completeWithdrawal(
+        'wd-3', 'agent-1', 'telebirr', 'proof-123', 'withdrawal-receipts/r3.jpg', new Date('2026-08-01T10:00:00Z'),
+      ),
     ).rejects.toThrow(/fee configuration/i);
     expect(walletService.recordAgentWithdrawalProof).not.toHaveBeenCalled();
+  });
+});
+
+// ─── computeAgentEarnings ──────────────────────────────────────────────────
+
+describe('AgentsService.computeAgentEarnings', () => {
+  it('sums referral + owned-room commission into gameCommissionMinor, keeps withdrawal fees separate', async () => {
+    const systemConfigRepository = {
+      query: jest.fn().mockResolvedValue([
+        { referralCommission: 3000, ownedRoomCommission: 2000, withdrawalFees: 500 },
+      ]),
+    };
+    const service = new AgentsService(
+      {} as any, systemConfigRepository as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    );
+
+    const result = await service.computeAgentEarnings('agent-1');
+
+    expect(result).toEqual({
+      referralCommissionMinor: 3000,
+      ownedRoomCommissionMinor: 2000,
+      gameCommissionMinor: 5000,
+      withdrawalFeesMinor: 500,
+      totalEarningsMinor: 5500,
+    });
+  });
+
+  it('passes period bounds through as extra query params when given', async () => {
+    const query = jest.fn().mockResolvedValue([{ referralCommission: 0, ownedRoomCommission: 0, withdrawalFees: 0 }]);
+    const service = new AgentsService(
+      {} as any, { query } as any, {} as any,
+      {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    );
+    const start = new Date('2026-07-01T00:00:00Z');
+    const end = new Date('2026-08-01T00:00:00Z');
+
+    await service.computeAgentEarnings('agent-1', { start, end });
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/createdAt >= \?/);
+    expect(sql).toMatch(/createdAt < \?/);
+    expect(params).toEqual(['agent-1', start, end]);
+  });
+});
+
+// ─── Settlements ────────────────────────────────────────────────────────────
+
+function makeSettlementService(input: {
+  priorPaidMinor?: number;
+  earningsForPeriod?: { referralCommission: number; ownedRoomCommission: number; withdrawalFees: number };
+  earningsLifetime?: { referralCommission: number; ownedRoomCommission: number; withdrawalFees: number };
+  existingSettlement?: Record<string, unknown> | null;
+}) {
+  const zero = { referralCommission: 0, ownedRoomCommission: 0, withdrawalFees: 0 };
+  let call = 0;
+  const systemConfigRepository = {
+    // computeAgentEarnings is called twice by createSettlement: once for the
+    // period, once for lifetime-to-periodEnd.
+    query: jest.fn().mockImplementation(() => {
+      call += 1;
+      return Promise.resolve([call === 1 ? (input.earningsForPeriod ?? zero) : (input.earningsLifetime ?? zero)]);
+    }),
+  };
+
+  const settlementRepo = {
+    create: jest.fn().mockImplementation((x: unknown) => x),
+    save: jest.fn().mockImplementation((x: Record<string, unknown>) => Promise.resolve({ id: 'settlement-1', ...x })),
+    findOneBy: jest.fn().mockResolvedValue(input.existingSettlement ?? null),
+  };
+
+  const mockManager = { getRepository: jest.fn().mockReturnValue(settlementRepo) };
+  const dataSource = {
+    transaction: jest.fn().mockImplementation(async (cb: (m: unknown) => Promise<unknown>) => cb(mockManager)),
+  };
+
+  const agentSettlementRepository = {
+    createQueryBuilder: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({ sum: String(input.priorPaidMinor ?? 0) }),
+    }),
+    findOneBy: jest.fn().mockResolvedValue(input.existingSettlement ?? null),
+    findAndCount: jest.fn().mockResolvedValue([[], 0]),
+  };
+
+  const walletService = { recordAgentAction: jest.fn().mockResolvedValue(undefined) };
+
+  const service = new AgentsService(
+    {} as any,
+    systemConfigRepository as any,
+    {} as any,
+    walletService as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    dataSource as any,
+    agentSettlementRepository as any,
+  );
+
+  return { service, settlementRepo, agentSettlementRepository, walletService };
+}
+
+describe('AgentsService.createSettlement', () => {
+  it('defaults amountPaidMinor to the full period earnings and computes outstandingBalanceMinor', async () => {
+    const { service, settlementRepo } = makeSettlementService({
+      priorPaidMinor: 1000,
+      earningsForPeriod: { referralCommission: 2000, ownedRoomCommission: 500, withdrawalFees: 300 }, // total 2800
+      earningsLifetime: { referralCommission: 6000, ownedRoomCommission: 1500, withdrawalFees: 1000 }, // total 8500
+    });
+
+    const saved = await service.createSettlement(
+      'agent-1',
+      new Date('2026-07-01T00:00:00Z'),
+      new Date('2026-08-01T00:00:00Z'),
+      undefined,
+    );
+
+    expect(settlementRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gameCommissionMinor: 2500,
+        withdrawalFeesMinor: 300,
+        totalEarnedMinor: 2800,
+        amountPaidMinor: 2800,
+        status: 'pending',
+      }),
+    );
+    // outstanding = lifetime(8500) - (priorPaid(1000) + thisPayment(2800)) = 4700
+    expect((saved as any).outstandingBalanceMinor).toBe(4700);
+  });
+});
+
+describe('AgentsService.updateSettlement', () => {
+  it('rejects marking a settlement paid without an FT number and receipt', async () => {
+    const { service } = makeSettlementService({
+      existingSettlement: { id: 's-1', agentId: 'agent-1', status: 'pending', ftNumber: null, receiptFileUrl: null },
+    });
+
+    await expect(service.updateSettlement('s-1', { status: 'paid' }, 'admin-1')).rejects.toThrow(
+      /FT number and receipt/i,
+    );
+  });
+
+  it('allows marking paid once FT number and receipt are supplied, stamping paidByAdminId', async () => {
+    const { service, settlementRepo } = makeSettlementService({
+      existingSettlement: { id: 's-1', agentId: 'agent-1', status: 'pending', ftNumber: null, receiptFileUrl: null },
+    });
+
+    const saved = await service.updateSettlement(
+      's-1',
+      { status: 'paid', ftNumber: 'FT123', receiptFileUrl: 'settlement-receipts/r1.jpg' },
+      'admin-1',
+    );
+
+    expect((saved as any).status).toBe('paid');
+    expect((saved as any).paidByAdminId).toBe('admin-1');
+    expect((saved as any).paidAt).toBeInstanceOf(Date);
+    expect(settlementRepo.save).toHaveBeenCalled();
+  });
+
+  it('does not require FT/receipt when the status stays non-paid', async () => {
+    const { service } = makeSettlementService({
+      existingSettlement: { id: 's-1', agentId: 'agent-1', status: 'pending', ftNumber: null, receiptFileUrl: null },
+    });
+
+    await expect(service.updateSettlement('s-1', { status: 'approved' }, 'admin-1')).resolves.toBeTruthy();
   });
 });

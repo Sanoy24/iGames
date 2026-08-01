@@ -61,7 +61,7 @@ export class UpdateBingoConfigDto {
   botMaxRealPlayers?: number;
 
   /** How bots steer a below-threshold room. */
-  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid'])
+  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid', 'cartel-dual'])
   botWinMode?: string;
 
   @IsOptional() @IsIn(['race', 'leaderboard'])
@@ -113,4 +113,8 @@ export class UpdateBingoConfigDto {
 
   @IsOptional() @IsString()
   prefilledFifthPatternId?: string | null;
+
+  /** JSON array of alias names for the reserved cartel (e.g. '["Abrsh","Yonas"]'). Null = use bot displayName. */
+  @IsOptional() @IsString()
+  botAliasPool?: string | null;
 }

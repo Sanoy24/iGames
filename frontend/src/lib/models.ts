@@ -184,6 +184,7 @@ export type BingoRoom = {
   gridSize: number;
   patternPrizes: BingoPatternPrize[];
   scheduledStartAt: string;
+  createdAt: string;
   drawnNumbers: number[];
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
@@ -238,7 +239,7 @@ export type BingoConfig = {
   /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
   botMaxRealPlayers?: number;
   /** How bots steer a below-threshold room. */
-  botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid';
+  botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual';
   prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;
@@ -255,6 +256,8 @@ export type BingoConfig = {
   prefilledThirdPatternId?: string | null;
   prefilledFourthPatternId?: string | null;
   prefilledFifthPatternId?: string | null;
+  /** JSON array of alias names for the reserved cartel. Null = use bot displayName. */
+  botAliasPool?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -324,6 +327,8 @@ export type Withdrawal = {
   telebirrReference?: string;
   /** Agent-uploaded photo/PDF of the payout receipt, relative to /uploads/. */
   receiptFileUrl?: string | null;
+  /** When the agent says they actually transferred the money — agent-entered. */
+  transferCompletedAt?: string | null;
   adminNotes?: string;
   /** Who/when the agent submitted completion proof (or, on the admin-bypass path, who/when admin settled it directly). */
   processedBy?: string;

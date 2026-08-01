@@ -534,13 +534,19 @@ export class AdminService implements OnApplicationBootstrap {
     verificationStatus: 'verified' | 'flagged',
     adminUserId: string,
   ): Promise<TelebirrDeposit | MpesaDeposit> {
-    const repo = provider === 'telebirr'
-      ? this.dataSource.getRepository(TelebirrDeposit)
-      : this.dataSource.getRepository(MpesaDeposit);
+    if (provider === 'telebirr') {
+      const repo = this.dataSource.getRepository(TelebirrDeposit);
+      const deposit = await repo.findOneBy({ id });
+      if (!deposit) throw new NotFoundException('Deposit not found');
+      deposit.verificationStatus = verificationStatus;
+      deposit.verifiedBy = adminUserId;
+      deposit.verifiedAt = new Date();
+      return repo.save(deposit);
+    }
 
+    const repo = this.dataSource.getRepository(MpesaDeposit);
     const deposit = await repo.findOneBy({ id });
     if (!deposit) throw new NotFoundException('Deposit not found');
-
     deposit.verificationStatus = verificationStatus;
     deposit.verifiedBy = adminUserId;
     deposit.verifiedAt = new Date();
@@ -858,12 +864,17 @@ export class AdminService implements OnApplicationBootstrap {
       payoutMinor: number;
       ggrMinor: number;
       commissionEarnedMinor: number;
+      withdrawalFeesEarnedMinor: number;
       depositCount: number;
       depositVolumeMinor: number;
       depositCommissionEarnedMinor: number;
     }>
   > {
     // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
+    // "Game commission" combines both commission sources: bingo_room_commission
+    // (owned-room GGR cut) and bingo_referral_commission (referred-player GGR cut).
+    // Withdrawal fees are tracked separately — payout_custody is deliberately
+    // excluded everywhere below, it reimburses cash already paid out, not earnings.
     const rows: Array<{
       id: string;
       displayName: string;
@@ -873,6 +884,7 @@ export class AdminService implements OnApplicationBootstrap {
       staked: string | number;
       payout: string | number;
       commission: string | number;
+      withdrawalFees: string | number;
       deposits: string | number;
       depositVolume: string | number;
       depositCommission: string | number;
@@ -884,6 +896,7 @@ export class AdminService implements OnApplicationBootstrap {
               COALESCE(t.staked, 0) staked,
               COALESCE(t.payout, 0) payout,
               COALESCE(cm.commission, 0) commission,
+              COALESCE(wf.withdrawalFees, 0) withdrawalFees,
               COALESCE(d.deposits, 0) deposits,
               COALESCE(d.depositVolume, 0) depositVolume,
               COALESCE(dcm.commission, 0) depositCommission
@@ -906,9 +919,16 @@ export class AdminService implements OnApplicationBootstrap {
          LEFT JOIN (
            SELECT userId, SUM(amountMinor) commission
              FROM ledger_entries
-            WHERE entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'
+            WHERE entryType = 'agent_receipt' AND sourceType IN ('bingo_room_commission', 'bingo_referral_commission')
             GROUP BY userId
          ) cm ON cm.userId = u.id
+         LEFT JOIN (
+           SELECT userId, SUM(amountMinor) withdrawalFees
+             FROM ledger_entries
+            WHERE entryType = 'agent_receipt' AND sourceType = 'withdrawal'
+              AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.kind')) = 'withdrawal_fee'
+            GROUP BY userId
+         ) wf ON wf.userId = u.id
          LEFT JOIN (
            SELECT agentId, COUNT(*) deposits, SUM(amountMinor) depositVolume
              FROM agent_action_logs
@@ -938,6 +958,7 @@ export class AdminService implements OnApplicationBootstrap {
         payoutMinor,
         ggrMinor: stakedMinor - payoutMinor,
         commissionEarnedMinor: Number(r.commission ?? 0),
+        withdrawalFeesEarnedMinor: Number(r.withdrawalFees ?? 0),
         depositCount: Number(r.deposits ?? 0),
         depositVolumeMinor: Number(r.depositVolume ?? 0),
         depositCommissionEarnedMinor: Number(r.depositCommission ?? 0),

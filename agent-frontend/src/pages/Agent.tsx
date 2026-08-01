@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, MapPin, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
-import { agentApi, walletApi, type AgentSelfPerformance } from '../lib/api';
+import { agentApi, walletApi, type AgentSelfPerformance, type AgentDashboardSummary } from '../lib/api';
 import { SupportConsole } from '../components/SupportConsole';
 import { AreaPlayerList, PlayerDrillDown, ReferralCard } from '../components/AgentAreaViews';
+import { AgentSettlementsView } from '../components/AgentSettlementsView';
 import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -45,6 +46,7 @@ export function Agent() {
   const [config, setConfig] = useState<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
   const [perf, setPerf] = useState<AgentSelfPerformance | null>(null);
+  const [dashboard, setDashboard] = useState<AgentDashboardSummary | null>(null);
   const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [_withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,11 +55,12 @@ export function Agent() {
   // Per-withdrawal payout rail the agent used; defaults to Telebirr.
   const [proofProvider, setProofProvider] = useState<Record<string, 'telebirr' | 'mpesa'>>({});
   const [receiptFiles, setReceiptFiles] = useState<Record<string, File>>({});
+  const [transferCompletedAtInputs, setTransferCompletedAtInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
   const [showPool, setShowPool] = useState(false);
-  const [view, setView] = useState<'withdrawals' | 'area' | 'support'>('withdrawals');
+  const [view, setView] = useState<'withdrawals' | 'area' | 'settlements' | 'support'>('withdrawals');
   const [selectedAreaPlayer, setSelectedAreaPlayer] = useState<string | null>(null);
 
   const [transferPhone, setTransferPhone] = useState('');
@@ -77,6 +80,7 @@ export function Agent() {
       setConfig(cfg);
       setAgentWallet(wallet);
       agentApi.getPerformance().then(setPerf).catch(() => undefined);
+      agentApi.getDashboard().then(setDashboard).catch(() => undefined);
       const tx = await agentApi.getTransactions();
       setLedger(tx.ledger);
       setWithdrawalHistory(tx.withdrawals);
@@ -154,6 +158,12 @@ export function Agent() {
     }
   };
 
+  const nowLocalInputValue = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const handleComplete = async (w: Withdrawal) => {
     const provider = proofProvider[w.id] ?? 'telebirr';
     const proof = (refInputs[w.id] ?? '').trim();
@@ -169,10 +179,11 @@ export function Agent() {
       addToast('info', 'Attach a photo or PDF of the payout receipt.');
       return;
     }
+    const transferCompletedAtLocal = transferCompletedAtInputs[w.id] || nowLocalInputValue();
     setBusyFor(w.id, true);
     try {
       const { fileUrl } = await agentApi.uploadWithdrawalReceipt(receiptFile);
-      await agentApi.completeWithdrawal(w.id, provider, proof, fileUrl);
+      await agentApi.completeWithdrawal(w.id, provider, proof, fileUrl, new Date(transferCompletedAtLocal).toISOString());
       await load();
       addToast('success', 'Payout proof submitted — awaiting admin verification.');
     } catch (err) {
@@ -204,12 +215,17 @@ export function Agent() {
         <button className={`btn btn-sm ${view === 'area' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('area')}>
           <MapPin size={14} /> {t('agent.areaTab', { defaultValue: 'My Area' })}
         </button>
+        <button className={`btn btn-sm ${view === 'settlements' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('settlements')}>
+          <Clock size={14} /> {t('agent.settlementsTab', { defaultValue: 'Settlements' })}
+        </button>
         <button className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('support')}>
           <LifeBuoy size={14} /> {t('agent.supportTab')}
         </button>
       </div>
 
       {view === 'support' && <SupportConsole />}
+
+      {view === 'settlements' && <AgentSettlementsView />}
 
       {view === 'area' && (
         selectedAreaPlayer
@@ -243,6 +259,70 @@ export function Agent() {
           </div>
         ))}
       </div>
+
+      {/* Agent Dashboard — earnings by source and time window, player/withdrawal counts */}
+      {dashboard && (
+        <div style={{
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: 14, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
+            {t('agent.dashboard', { defaultValue: 'Dashboard' })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+            {[
+              { label: t('agent.referredPlayers', { defaultValue: 'Referred' }), value: String(dashboard.totalReferredPlayers) },
+              { label: t('agent.activePlayers', { defaultValue: 'Active (30d)' }), value: String(dashboard.activePlayers) },
+              { label: t('agent.totalEarnings', { defaultValue: 'Total Earnings' }), value: formatCredits(dashboard.totalEarningsMinor), accent: true },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.gameCommission', { defaultValue: 'Game Commission' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.gameCommission.totalMinor)}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
+                {t('agent.referral', { defaultValue: 'Referral' })} {formatCredits(dashboard.gameCommission.referralCommissionMinor)} · {t('agent.ownedRoom', { defaultValue: 'Room' })} {formatCredits(dashboard.gameCommission.ownedRoomCommissionMinor)}
+              </div>
+            </div>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.withdrawalFees', { defaultValue: 'Withdrawal Fees' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.withdrawalFeesEarnedMinor)}</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
+            {[
+              { label: t('agent.today', { defaultValue: 'Today' }), value: formatCredits(dashboard.earnings.todayMinor) },
+              { label: t('agent.thisWeek', { defaultValue: 'This Week' }), value: formatCredits(dashboard.earnings.weeklyMinor) },
+              { label: t('agent.thisMonth', { defaultValue: 'This Month' }), value: formatCredits(dashboard.earnings.monthlyMinor) },
+              { label: t('agent.lifetime', { defaultValue: 'Lifetime' }), value: formatCredits(dashboard.earnings.lifetimeMinor) },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontWeight: 700, fontSize: 12 }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{t('agent.pendingRequests', { defaultValue: 'Pending Requests' })}</div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{dashboard.pendingWithdrawalRequests}</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{t('agent.completedRequests', { defaultValue: 'Completed Requests' })}</div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{dashboard.completedWithdrawalRequests}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* My Bingo performance (Approach B) — shows once there's activity */}
       {perf && (perf.tickets > 0 || perf.customersBrought > 0 || perf.commissionEarnedMinor > 0) && (
@@ -411,8 +491,20 @@ export function Agent() {
                       flexDirection: 'column',
                       gap: 6,
                     }}>
+                      {w.user && (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Player</span>
+                            <span>{w.user.displayName}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Player Phone</span>
+                            <span>{w.user.phoneNumber ?? '—'}</span>
+                          </div>
+                        </>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>To (Telebirr)</span>
+                        <span style={{ color: 'var(--text-muted)' }}>Recipient Phone</span>
                         <strong style={{ fontSize: 14 }}>{w.destinationAccount}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -431,6 +523,14 @@ export function Agent() {
                       </div>
                     </div>
 
+                    {w.status !== 'claimed' ? (
+                      <div style={{
+                        background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)',
+                        borderRadius: 10, padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)',
+                      }}>
+                        Payout proof submitted — waiting on an admin to verify the FT number and receipt.
+                      </div>
+                    ) : (<>
                     {/* Payout proof — provider toggle + proof, verified server-side */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -466,13 +566,45 @@ export function Agent() {
                         disabled={isBusy}
                         style={{ width: '100%', resize: 'vertical' }}
                       />
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                          Payout receipt (photo/PDF) <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                          disabled={isBusy}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            setReceiptFiles((prev) => {
+                              const next = { ...prev };
+                              if (file) next[w.id] = file; else delete next[w.id];
+                              return next;
+                            });
+                          }}
+                          style={{ width: '100%', fontSize: 12 }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                          Transfer completed at <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        <input
+                          type="datetime-local"
+                          className="input"
+                          disabled={isBusy}
+                          value={transferCompletedAtInputs[w.id] ?? nowLocalInputValue()}
+                          onChange={(e) => setTransferCompletedAtInputs((prev) => ({ ...prev, [w.id]: e.target.value }))}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
                       <button
                         className="btn btn-primary btn-full"
-                        disabled={isBusy || !(refInputs[w.id] ?? '').trim()}
+                        disabled={isBusy || !(refInputs[w.id] ?? '').trim() || !receiptFiles[w.id]}
                         onClick={() => void handleComplete(w)}
                       >
                         <CheckCircle size={14} />
-                        {isBusy ? 'Verifying…' : 'Verify & Complete'}
+                        {isBusy ? 'Submitting…' : 'Submit Payout Proof'}
                       </button>
                     </div>
 
@@ -531,6 +663,7 @@ export function Agent() {
                         </motion.div>
                       )}
                     </AnimatePresence>
+                    </>)}
                   </div>
                 </motion.article>
               );

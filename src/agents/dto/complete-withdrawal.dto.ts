@@ -1,4 +1,4 @@
-import { IsIn, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsDateString, IsIn, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CompleteWithdrawalDto {
   /** Which rail the agent used to pay the player. */
@@ -20,4 +20,9 @@ export class CompleteWithdrawalDto {
   @MinLength(1)
   @MaxLength(500)
   receiptFileUrl: string;
+
+  /** When the agent actually transferred the money — agent-entered (defaults to
+   * "now" in the UI, editable), distinct from the server-stamped submission time. */
+  @IsDateString()
+  transferCompletedAt: string;
 }

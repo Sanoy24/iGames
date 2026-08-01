@@ -10,6 +10,7 @@ import {
   HttpStatus,
   Param,
   Post,
+  Query,
   UnsupportedMediaTypeException,
   UploadedFile,
   UseGuards,
@@ -70,6 +71,23 @@ export class AgentsController {
   @Get('performance')
   getMyPerformance(@CurrentUser() agent: AuthenticatedUser) {
     return this.agentsService.getPerformance(agent.id);
+  }
+
+  /** Agent Dashboard summary — referred/active players, earnings by source and
+   * time window, withdrawal request counts. */
+  @Get('dashboard')
+  getMyDashboard(@CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.getDashboardSummary(agent.id);
+  }
+
+  /** The agent's own settlement (real-world payout) history — read-only. */
+  @Get('settlements')
+  getMySettlements(
+    @CurrentUser() agent: AuthenticatedUser,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    return this.agentsService.listSettlements(agent.id, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
   }
 
   /**
@@ -174,7 +192,14 @@ export class AgentsController {
     @Body() dto: CompleteWithdrawalDto,
     @CurrentUser() agent: AuthenticatedUser,
   ) {
-    return this.agentsService.completeWithdrawal(id, agent.id, dto.provider, dto.proof, dto.receiptFileUrl);
+    return this.agentsService.completeWithdrawal(
+      id,
+      agent.id,
+      dto.provider,
+      dto.proof,
+      dto.receiptFileUrl,
+      new Date(dto.transferCompletedAt),
+    );
   }
 
   /** Upload a photo/PDF of the payout receipt — required proof alongside the FT

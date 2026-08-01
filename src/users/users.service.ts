@@ -796,6 +796,21 @@ export class UsersService {
   }
 
   /**
+   * Referred players who placed at least one Bingo or Keno ticket since
+   * `sinceDate` — the agent dashboard's "Active Players" metric.
+   */
+  async countActiveReferredPlayers(agentId: string, sinceDate: Date): Promise<number> {
+    const [row] = await this.userRepository.query(
+      `SELECT COUNT(DISTINCT u.id) c FROM users u
+        WHERE u.referredByAgentId = ?
+          AND (EXISTS (SELECT 1 FROM bingo_tickets bt WHERE bt.userId = u.id AND bt.createdAt >= ?)
+            OR EXISTS (SELECT 1 FROM keno_tickets kt WHERE kt.userId = u.id AND kt.createdAt >= ?))`,
+      [agentId, sinceDate, sinceDate],
+    );
+    return Number(row?.c ?? 0);
+  }
+
+  /**
    * Attribute a player to the agent owning `code`. Returns the agent's display
    * name on success, or null when the code is unknown, the agent is not an
    * active agent, the player is the agent themselves, or the player is ALREADY

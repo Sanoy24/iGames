@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
@@ -9,9 +9,14 @@ import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { WithdrawalFeeRange } from '../wallet/entities/withdrawal-fee-range.entity';
 import { resolveWithdrawalFeeMinor } from '../wallet/withdrawal-fee-range.util';
-import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
+import { isAgentEffectivelyOnDuty, getEarningsWindowStarts } from '../common/agent-duty.util';
 import { buildReferralPayload } from '../common/referral-code.util';
 import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
+import {
+  AgentSettlement,
+  AgentSettlementPaymentMethod,
+  AgentSettlementStatus,
+} from './entities/agent-settlement.entity';
 
 @Injectable()
 export class AgentsService {
@@ -26,7 +31,67 @@ export class AgentsService {
     private readonly usersService: UsersService,
     private readonly withdrawalProofVerifier: WithdrawalProofVerifierService,
     private readonly configService: ConfigService,
+    private readonly dataSource: DataSource,
+    @InjectRepository(AgentSettlement)
+    private readonly agentSettlementRepository: Repository<AgentSettlement>,
   ) {}
+
+  /**
+   * Earnings the agent has actually EARNED (as opposed to what's been settled/paid
+   * out to them — see AgentSettlement). Combines both commission sources credited
+   * via `agent_receipt` ledger entries:
+   *   - `bingo_referral_commission` — % of GGR from players the agent referred.
+   *   - `bingo_room_commission` — % of GGR from a Bingo room the agent owns.
+   * Both are "game commission." Withdrawal fees are tracked separately. The
+   * `payout_custody` withdrawal credit (reimbursing cash the agent already paid
+   * out) is deliberately excluded — it isn't earnings. `deposit_commission` is
+   * also excluded — it's a defunct source no longer written anywhere.
+   * `period.start`/`period.end` restrict to a window (e.g. today, this month, or
+   * a settlement's covered range); omit both for lifetime-to-date.
+   */
+  async computeAgentEarnings(
+    agentId: string,
+    period?: { start?: Date; end?: Date },
+  ): Promise<{
+    referralCommissionMinor: number;
+    ownedRoomCommissionMinor: number;
+    gameCommissionMinor: number;
+    withdrawalFeesMinor: number;
+    totalEarningsMinor: number;
+  }> {
+    const params: unknown[] = [agentId];
+    let dateClause = '';
+    if (period?.start) {
+      dateClause += ' AND createdAt >= ?';
+      params.push(period.start);
+    }
+    if (period?.end) {
+      dateClause += ' AND createdAt < ?';
+      params.push(period.end);
+    }
+
+    const [row] = await this.systemConfigRepository.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN sourceType = 'bingo_referral_commission' THEN amountMinor ELSE 0 END), 0) referralCommission,
+         COALESCE(SUM(CASE WHEN sourceType = 'bingo_room_commission' THEN amountMinor ELSE 0 END), 0) ownedRoomCommission,
+         COALESCE(SUM(CASE WHEN sourceType = 'withdrawal' AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.kind')) = 'withdrawal_fee' THEN amountMinor ELSE 0 END), 0) withdrawalFees
+       FROM ledger_entries
+       WHERE userId = ? AND entryType = 'agent_receipt' AND direction = 'credit'${dateClause}`,
+      params,
+    );
+
+    const referralCommissionMinor = Number(row?.referralCommission ?? 0);
+    const ownedRoomCommissionMinor = Number(row?.ownedRoomCommission ?? 0);
+    const withdrawalFeesMinor = Number(row?.withdrawalFees ?? 0);
+    const gameCommissionMinor = referralCommissionMinor + ownedRoomCommissionMinor;
+    return {
+      referralCommissionMinor,
+      ownedRoomCommissionMinor,
+      gameCommissionMinor,
+      withdrawalFeesMinor,
+      totalEarningsMinor: gameCommissionMinor + withdrawalFeesMinor,
+    };
+  }
 
   // ── Config (agent-accessible) ────────────────────────────────────
 
@@ -95,6 +160,7 @@ export class AgentsService {
     provider: PayoutProvider,
     proof: string,
     receiptFileUrl: string,
+    transferCompletedAt: Date,
   ) {
     const agent = await this.usersService.findById(agentId);
     this.verifyAgentWorkingHoursAndPermission(agent, 'withdraw');
@@ -132,6 +198,7 @@ export class AgentsService {
       paymentProvider: verified.provider,
       payoutVerification: verified.verification,
       receiptFileUrl,
+      transferCompletedAt,
       feeMinor,
     });
   }
@@ -345,6 +412,7 @@ export class AgentsService {
     payoutMinor: number;
     ggrMinor: number;
     commissionEarnedMinor: number;
+    withdrawalFeesEarnedMinor: number;
     depositCount: number;
     depositVolumeMinor: number;
     depositCommissionEarnedMinor: number;
@@ -358,11 +426,7 @@ export class AgentsService {
           AND JSON_EXTRACT(pu.productMetadata, '$.botPolicy') IS NULL`,
       [agentId],
     );
-    const [comm] = await q(
-      `SELECT COALESCE(SUM(amountMinor),0) commission FROM ledger_entries
-        WHERE userId = ? AND entryType = 'agent_receipt' AND sourceType = 'bingo_room_commission'`,
-      [agentId],
-    );
+    const earnings = await this.computeAgentEarnings(agentId);
     const [cust] = await q(`SELECT COUNT(*) customers FROM users WHERE referredByAgentId = ?`, [agentId]);
 
     // Phase 4 — deposit activity the agent processed (volume/count from the
@@ -387,11 +451,194 @@ export class AgentsService {
       stakedMinor,
       payoutMinor,
       ggrMinor: stakedMinor - payoutMinor,
-      commissionEarnedMinor: Number(comm?.commission ?? 0),
+      commissionEarnedMinor: earnings.gameCommissionMinor,
+      withdrawalFeesEarnedMinor: earnings.withdrawalFeesMinor,
       depositCount: Number(dep?.deposits ?? 0),
       depositVolumeMinor: Number(dep?.volume ?? 0),
       depositCommissionEarnedMinor: Number(depComm?.commission ?? 0),
     };
+  }
+
+  /** Agent Dashboard summary — referred/active players, earnings by source and
+   * time window, and withdrawal request counts. */
+  async getDashboardSummary(agentId: string): Promise<{
+    totalReferredPlayers: number;
+    activePlayers: number;
+    gameCommission: { referralCommissionMinor: number; ownedRoomCommissionMinor: number; totalMinor: number };
+    withdrawalFeesEarnedMinor: number;
+    totalEarningsMinor: number;
+    pendingWithdrawalRequests: number;
+    completedWithdrawalRequests: number;
+    earnings: { todayMinor: number; weeklyMinor: number; monthlyMinor: number; lifetimeMinor: number };
+  }> {
+    const { todayStart, weekStart, monthStart } = getEarningsWindowStarts();
+    const activeSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalReferredPlayers,
+      activePlayers,
+      lifetime,
+      today,
+      weekly,
+      monthly,
+      pendingWithdrawalRequests,
+      completedWithdrawalRequests,
+    ] = await Promise.all([
+      this.usersService.countReferredPlayers(agentId),
+      this.usersService.countActiveReferredPlayers(agentId, activeSince),
+      this.computeAgentEarnings(agentId),
+      this.computeAgentEarnings(agentId, { start: todayStart }),
+      this.computeAgentEarnings(agentId, { start: weekStart }),
+      this.computeAgentEarnings(agentId, { start: monthStart }),
+      this.walletService.countPendingAgentWithdrawals(agentId),
+      this.walletService.countCompletedAgentWithdrawals(agentId),
+    ]);
+
+    return {
+      totalReferredPlayers,
+      activePlayers,
+      gameCommission: {
+        referralCommissionMinor: lifetime.referralCommissionMinor,
+        ownedRoomCommissionMinor: lifetime.ownedRoomCommissionMinor,
+        totalMinor: lifetime.gameCommissionMinor,
+      },
+      withdrawalFeesEarnedMinor: lifetime.withdrawalFeesMinor,
+      totalEarningsMinor: lifetime.totalEarningsMinor,
+      pendingWithdrawalRequests,
+      completedWithdrawalRequests,
+      earnings: {
+        todayMinor: today.totalEarningsMinor,
+        weeklyMinor: weekly.totalEarningsMinor,
+        monthlyMinor: monthly.totalEarningsMinor,
+        lifetimeMinor: lifetime.totalEarningsMinor,
+      },
+    };
+  }
+
+  // ── Settlements ──────────────────────────────────────────────────
+  // Real-world payouts to an agent, tracked separately from what they've
+  // earned (computeAgentEarnings). "Simple" workflow per design: one create
+  // endpoint that snapshots the period's earnings, one update endpoint that
+  // sets status/payment fields freely — the only enforced rule is that an
+  // FT number + receipt must be present before a settlement can be 'paid'.
+
+  async createSettlement(
+    agentId: string,
+    periodStart: Date,
+    periodEnd: Date,
+    notes: string | undefined,
+  ): Promise<AgentSettlement> {
+    const period = await this.computeAgentEarnings(agentId, { start: periodStart, end: periodEnd });
+    const lifetimeToPeriodEnd = await this.computeAgentEarnings(agentId, { end: periodEnd });
+
+    const priorPaidRow = await this.agentSettlementRepository
+      .createQueryBuilder('s')
+      .select('COALESCE(SUM(s.amountPaidMinor), 0)', 'sum')
+      .where('s.agentId = :agentId AND s.status = :status', { agentId, status: 'paid' })
+      .getRawOne<{ sum: string }>();
+    const priorPaidMinor = Number(priorPaidRow?.sum ?? 0);
+
+    // Defaults to the full period earnings; admin can PATCH amountPaidMinor down
+    // (partial payment) before marking it paid.
+    const amountPaidMinor = period.totalEarningsMinor;
+    const outstandingBalanceMinor = lifetimeToPeriodEnd.totalEarningsMinor - (priorPaidMinor + amountPaidMinor);
+
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(AgentSettlement);
+      const settlement = repo.create({
+        agentId,
+        periodStart,
+        periodEnd,
+        gameCommissionMinor: period.gameCommissionMinor,
+        withdrawalFeesMinor: period.withdrawalFeesMinor,
+        totalEarnedMinor: period.totalEarningsMinor,
+        amountPaidMinor,
+        outstandingBalanceMinor,
+        status: 'pending',
+        notes: notes ?? null,
+      });
+      const saved = await repo.save(settlement);
+
+      await this.walletService.recordAgentAction(
+        {
+          agentId,
+          actionType: 'settlement_recorded',
+          amountMinor: saved.amountPaidMinor,
+          metadata: { settlementId: saved.id, periodStart, periodEnd, status: saved.status },
+        },
+        manager,
+      );
+
+      return saved;
+    });
+  }
+
+  async updateSettlement(
+    id: string,
+    update: {
+      status?: AgentSettlementStatus;
+      paymentMethod?: AgentSettlementPaymentMethod | null;
+      ftNumber?: string | null;
+      receiptFileUrl?: string | null;
+      paidAt?: Date | null;
+      amountPaidMinor?: number;
+      notes?: string | null;
+    },
+    adminUserId: string,
+  ): Promise<AgentSettlement> {
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(AgentSettlement);
+      const settlement = await repo.findOneBy({ id });
+      if (!settlement) throw new NotFoundException('Settlement not found');
+
+      const nextStatus = update.status ?? settlement.status;
+      const nextFtNumber = update.ftNumber !== undefined ? update.ftNumber : settlement.ftNumber;
+      const nextReceiptFileUrl = update.receiptFileUrl !== undefined ? update.receiptFileUrl : settlement.receiptFileUrl;
+      if (nextStatus === 'paid' && (!nextFtNumber || !nextReceiptFileUrl)) {
+        throw new BadRequestException('An FT number and receipt are required to mark a settlement as paid');
+      }
+
+      if (update.status !== undefined) settlement.status = update.status;
+      if (update.paymentMethod !== undefined) settlement.paymentMethod = update.paymentMethod;
+      if (update.ftNumber !== undefined) settlement.ftNumber = update.ftNumber;
+      if (update.receiptFileUrl !== undefined) settlement.receiptFileUrl = update.receiptFileUrl;
+      if (update.paidAt !== undefined) settlement.paidAt = update.paidAt;
+      if (update.amountPaidMinor !== undefined) settlement.amountPaidMinor = update.amountPaidMinor;
+      if (update.notes !== undefined) settlement.notes = update.notes;
+
+      if (nextStatus === 'paid') {
+        settlement.paidByAdminId = adminUserId;
+        if (!settlement.paidAt) settlement.paidAt = new Date();
+      }
+
+      const saved = await repo.save(settlement);
+
+      await this.walletService.recordAgentAction(
+        {
+          agentId: settlement.agentId,
+          actionType: 'settlement_updated',
+          amountMinor: settlement.amountPaidMinor,
+          metadata: { settlementId: settlement.id, status: settlement.status },
+        },
+        manager,
+      );
+
+      return saved;
+    });
+  }
+
+  async listSettlements(
+    agentId: string | undefined,
+    page: number,
+    limit: number,
+  ): Promise<{ data: AgentSettlement[]; total: number; page: number; limit: number }> {
+    const [data, total] = await this.agentSettlementRepository.findAndCount({
+      where: agentId ? { agentId } : {},
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return { data, total, page, limit };
   }
 
   // ── Area reporting (players directly assigned to this agent) ───────

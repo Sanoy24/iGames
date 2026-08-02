@@ -40,10 +40,7 @@ const RESULT_DISPLAY_MS = 10_000;
 const POLL_INTERVAL_MS = 5_000;
 
 // Paced reveal cadence. One ball is revealed every REVEAL_BASE_MS so each gets a
-// full, unhurried moment on the caller, the board and the cards. We only shorten
-// to REVEAL_MIN_MS when the client has fallen far behind (e.g. it was a
-// background tab and a poll delivered a big batch), and never below the ball
-// animation's own duration — so reveals always stay smooth, never a rushed burst.
+// full, unhurried moment on the caller, the board and the cards.
 // REVEAL_BASE_MS is only the fallback used before the first `bingo.number.drawn`
 // event of a session arrives — once a draw event lands, its `intervalMs` (the
 // server's actual configured cadence) takes over as the steady-state delay. This
@@ -51,8 +48,17 @@ const POLL_INTERVAL_MS = 5_000;
 // so the client routinely caught up and stalled waiting on the socket — visible
 // as uneven/laggy calling ("it seems the bot is calculating").
 const REVEAL_BASE_MS = 1_500;
-const REVEAL_MIN_MS = 650;
+
+// If the client falls more than this many balls behind (backgrounded tab,
+// dropped socket, a big poll catch-up — see the visibility/focus resync
+// effect below), we do NOT animate through the backlog at a sped-up pace —
+// that reads as suspicious ("is this rigged?") rather than as a resync. We
+// jump straight to CATCHUP_TAIL balls short of live and resume the normal
+// calm cadence from there, showing a brief "Catching up…" badge so the jump
+// is legible instead of either a suspicious speed-run or a silent teleport.
 const REVEAL_CATCHUP_BACKLOG = 10;
+const CATCHUP_TAIL = 3;
+const CATCHUP_BADGE_MS = 2_500;
 
 // Reveal cascade: a called number shows in "now calling" FIRST, then marks on the
 // board a beat later, then on the tickets a beat after that. Never the reverse.
@@ -608,12 +614,14 @@ function CurrentBallDisplay({
     status,
     count,
     max,
+    catchingUp,
 }: {
     drawnNumbers: number[];
     isPatternMode: boolean;
     status: string;
     count: number;
     max: number;
+    catchingUp?: boolean;
 }) {
     const { t } = useTranslation();
     // `drawnNumbers` is the parent's already-paced "revealed" list, so the last
@@ -659,8 +667,10 @@ function CurrentBallDisplay({
 
     return (
         <div className='flex flex-col items-center gap-1 py-1'>
-            <span className='text-[8px] font-black uppercase tracking-widest text-slate-500'>
-                {t('bingo.nowCalling')}
+            <span
+                className={`text-[8px] font-black uppercase tracking-widest ${catchingUp ? 'text-amber-400' : 'text-slate-500'}`}
+            >
+                {catchingUp ? t('bingo.catchingUp') : t('bingo.nowCalling')}
             </span>
             {/* `mode="wait"` guarantees the previous ball fully exits before the next
           enters — one unhurried ball at a time, never two mid-flight overlapping
@@ -2128,6 +2138,25 @@ export function Bingo({ onBack }: BingoProps) {
         return () => clearInterval(id);
     }, [loadCurrent, showLobby]);
 
+    // Resync the instant the tab/app comes back to the foreground, rather than
+    // waiting up to POLL_INTERVAL_MS (or for the next live draw event) to notice
+    // a backgrounded tab fell behind. This is what lets the reveal-pacing effect
+    // above catch a large backlog immediately and snap forward instead of the
+    // player watching a stale board for a few seconds first.
+    useEffect(() => {
+        const resync = () => {
+            if (holdingResultRef.current) return;
+            void loadCurrent();
+        };
+        const onVisible = () => { if (document.visibilityState === 'visible') resync(); };
+        window.addEventListener('focus', resync);
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.removeEventListener('focus', resync);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, [loadCurrent]);
+
     // ── Socket: presence ─────────────────────────────────────────────────────────
     useEffect(() => {
         const socket = getSocket();
@@ -2476,6 +2505,10 @@ export function Bingo({ onBack }: BingoProps) {
     // Server's actual draw cadence, learned from the most recent draw event.
     // Falls back to REVEAL_BASE_MS until the first event of the session arrives.
     const serverIntervalMsRef = useRef<number>(REVEAL_BASE_MS);
+    // True briefly right after a large-backlog snap, so the UI can show "Catching
+    // up…" instead of letting the jump look like an unexplained teleport.
+    const [isCatchingUp, setIsCatchingUp] = useState(false);
+    const catchupBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const processNextReveal = useCallback(() => {
         revealTimerRef.current = null;
@@ -2509,20 +2542,30 @@ export function Bingo({ onBack }: BingoProps) {
         // from the fast socket arrivals.
         if (revealTimerRef.current) return;
 
-        // One steady, calm cadence for every ball, matched to the server's actual
-        // draw interval so the client never outpaces it and stalls. Only shorten
-        // (still gently) when the client is far behind.
         const backlog = total - revealedCount;
-        const delay =
-            backlog > REVEAL_CATCHUP_BACKLOG ? REVEAL_MIN_MS : serverIntervalMsRef.current;
+        if (backlog > REVEAL_CATCHUP_BACKLOG) {
+            // Fell far behind — jump straight to near-live instead of animating
+            // through the gap at a sped-up pace (see CATCHUP_TAIL/BADGE comment
+            // above). The effect re-runs on the new revealedCount and falls
+            // through to the normal branch below for the remaining tail.
+            const target = Math.max(0, total - CATCHUP_TAIL);
+            setRevealedCount(target);
+            setIsCatchingUp(true);
+            if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
+            catchupBadgeTimerRef.current = setTimeout(() => setIsCatchingUp(false), CATCHUP_BADGE_MS);
+            return;
+        }
 
-        revealTimerRef.current = setTimeout(processNextReveal, delay);
+        // One steady, calm cadence for every ball, matched to the server's actual
+        // draw interval.
+        revealTimerRef.current = setTimeout(processNextReveal, serverIntervalMsRef.current);
     }, [revealedCount, drawnNumbers.length, room?.status, processNextReveal]);
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
             if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+            if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
         };
     }, []);
     const revealedNumbers = useMemo(
@@ -3097,6 +3140,7 @@ export function Bingo({ onBack }: BingoProps) {
                                         status={room.status}
                                         count={revealedNumbers.length}
                                         max={ballCount}
+                                        catchingUp={isCatchingUp}
                                     />
                                     {phase === 'buy' &&
                                         (timeRemainingSecs !== null ? (

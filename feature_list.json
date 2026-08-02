@@ -224,10 +224,10 @@
       "area": "frontend/admin",
       "title": "Admin panel: per-tab bespoke layouts (Players, Keno, Bingo, Crash, Withdrawals, Bots)",
       "behavior": "Each non-overview tab has purpose-built layout: Players table with search/filter, Keno with draw timeline, Bingo with room list, Crash with round history, Withdrawals with claim flow, Bots with management cards.",
-      "status": "not_started",
+      "status": "in_progress",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
-      "evidence": "",
-      "notes": "Current tabs work but use generic adm-panel layout. Bespoke per-tab layouts are the next UX upgrade."
+      "evidence": "frontend/src/pages/Admin.tsx (Bingo room list now paged newest-first with a cleaner table footer), src/bingo/bingo.service.ts (shared paginated /bingo/rooms contract).",
+      "notes": "Current tabs work but use generic adm-panel layout. The Bingo tab has started moving toward a dedicated room-list layout with pagination; the rest of the bespoke tab work is still pending."
     },
     {
       "id": "FE-10",

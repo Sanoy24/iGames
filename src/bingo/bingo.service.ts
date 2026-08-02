@@ -133,6 +133,14 @@ export type BingoRoomResponse = {
   resultDisplaySeconds?: number;
 };
 
+export type BingoRoomListResponse = {
+  data: BingoRoomResponse[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 export type BingoTicketResponse = {
   id: string;
   userId: string;
@@ -1093,15 +1101,29 @@ export class BingoService implements OnModuleInit {
     return this.toRoomResponse(room, 0, []);
   }
 
-  async listRooms(): Promise<BingoRoomResponse[]> {
+  async listRooms(input: { page?: number; limit?: number } = {}): Promise<BingoRoomListResponse> {
     // createdAt, not scheduledStartAt — the latter is NULL until the first
     // ticket sells, which shoved idle/cancelled-before-start rooms (including
     // the current OPEN room) to the bottom regardless of how recent they are.
+    const limit = Math.min(Math.max(input.limit ?? 10, 1), 50);
+    const requestedPage = Math.max(input.page ?? 1, 1);
+    const total = await this.bingoRoomRepository.count();
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(requestedPage, totalPages);
     const rooms = await this.bingoRoomRepository.find({
       order: { createdAt: 'DESC' },
-      take: 100,
+      take: limit,
+      skip: (page - 1) * limit,
     });
-    if (rooms.length === 0) return [];
+    if (rooms.length === 0) {
+      return {
+        data: [],
+        total,
+        page,
+        limit,
+        totalPages,
+      };
+    }
 
     const roomIds = rooms.map((room) => room.id);
     const counts = await this.bingoTicketRepository
@@ -1113,7 +1135,13 @@ export class BingoService implements OnModuleInit {
       .getRawMany();
 
     const countsByRoomId = new Map(counts.map((count) => [count.roomId, Number(count.count)]));
-    return rooms.map((room) => this.toRoomResponse(room, countsByRoomId.get(room.id) ?? 0));
+    return {
+      data: rooms.map((room) => this.toRoomResponse(room, countsByRoomId.get(room.id) ?? 0)),
+      total,
+      page,
+      limit,
+      totalPages,
+    };
   }
 
   async listTicketsForUser(input: { userId: string; limit: number }): Promise<BingoTicketResponse[]> {

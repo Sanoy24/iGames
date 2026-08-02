@@ -410,6 +410,7 @@
     "numbersCalled": "{{count}}/{{max}} numbers called",
     "waiting": "Waiting",
     "nowCalling": "Now calling",
+    "catchingUp": "Catching up…",
     "ofCount": "#{{count}} of {{max}}",
     "pattern": "Pattern",
     "free": "FREE",

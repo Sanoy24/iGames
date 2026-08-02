@@ -1985,6 +1985,19 @@ function ConfigHistoryAdmin() {
 // ══════════════════════════════════════════════════════════════════
 // Withdrawals
 // ══════════════════════════════════════════════════════════════════
+/** Mirrors WalletService's resolveWithdrawalFeeMinor matching logic — a
+ * PREVIEW only, shown before submit. The actual fee is always resolved
+ * server-side from the active WithdrawalFeeRange table, never trusted from
+ * here, so this can go stale (config changed) without any correctness risk. */
+function previewWithdrawalFeeMinor(amountMinor: number, ranges: WithdrawalFeeRange[]): number | null {
+  const match = ranges.find(
+    (r) => r.active && amountMinor >= r.minAmountMinor && amountMinor <= (r.maxAmountMinor ?? Infinity),
+  );
+  return match ? match.feeMinor : null;
+}
+
+type CompleteWithAgentForm = { agentId: string; telebirrReference: string; receiptFile: File | null };
+
 function WithdrawalsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
@@ -1992,6 +2005,15 @@ function WithdrawalsAdmin() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Admin-direct "complete with agent" — collapses the normal agent-submits →
+  // admin-verifies flow into one step so Approve is never the only option that
+  // skips agent/fee/reference capture.
+  const [agents, setAgents] = useState<User[]>([]);
+  const [feeRanges, setFeeRanges] = useState<WithdrawalFeeRange[]>([]);
+  const [completingId, setCompletingId] = useState<string | null>(null);
+  const [completeForms, setCompleteForms] = useState<Record<string, CompleteWithAgentForm>>({});
+  const [completing, setCompleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -2001,6 +2023,40 @@ function WithdrawalsAdmin() {
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    adminAgentsApi.listAgents(1, 200).then(setAgents).catch(() => setAgents([]));
+    adminApi.listWithdrawalFeeRanges().then((r) => setFeeRanges(r.ranges)).catch(() => setFeeRanges([]));
+  }, []);
+
+  const completeForm = (id: string): CompleteWithAgentForm =>
+    completeForms[id] ?? { agentId: '', telebirrReference: '', receiptFile: null };
+
+  const updateCompleteForm = (id: string, patch: Partial<CompleteWithAgentForm>) => {
+    setCompleteForms((prev) => ({ ...prev, [id]: { ...completeForm(id), ...patch } }));
+  };
+
+  const submitCompleteWithAgent = async (w: Withdrawal) => {
+    const form = completeForm(w.id);
+    if (!form.agentId) { addToast('error', 'Choose which agent processed this payout.'); return; }
+    if (form.telebirrReference.trim().length < 4) { addToast('error', 'Enter the FT/transaction reference.'); return; }
+    if (!form.receiptFile) { addToast('error', 'Attach a photo or PDF of the payout receipt.'); return; }
+
+    setCompleting(w.id);
+    try {
+      const { fileUrl } = await adminWithdrawalsApi.uploadReceipt(form.receiptFile);
+      await adminWithdrawalsApi.completeWithAgent(w.id, {
+        agentId: form.agentId,
+        telebirrReference: form.telebirrReference.trim(),
+        receiptFileUrl: fileUrl,
+      });
+      addToast('success', 'Withdrawal completed — agent credited.');
+      setCompletingId(null);
+      setCompleteForms((prev) => { const next = { ...prev }; delete next[w.id]; return next; });
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setCompleting(null); }
+  };
 
   const process = async (id: string, action: 'approve' | 'reject') => {
     if (action === 'reject') {
@@ -2099,6 +2155,62 @@ function WithdrawalsAdmin() {
                             {busy === `reject-${w.id}` ? '…' : 'Reject'}
                           </button>
                         </div>
+                        <p className="adm-field-hint" style={{ margin: '4px 0 0' }}>
+                          Plain Approve above records nothing else — no agent, fee, or reference. If an agent
+                          already paid this out, use Complete with Agent instead so the payout is properly credited.
+                        </p>
+
+                        {completingId !== w.id ? (
+                          <button className="adm-btn adm-btn-secondary adm-btn-sm" style={{ marginTop: 8 }}
+                            onClick={() => setCompletingId(w.id)}>
+                            Complete with Agent…
+                          </button>
+                        ) : (
+                          <div style={{ marginTop: 10, padding: 12, borderRadius: 8, border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <div className="adm-field-grid">
+                              <label className="adm-field">
+                                <span>Processing Agent</span>
+                                <select className="input" value={completeForm(w.id).agentId}
+                                  onChange={(e) => updateCompleteForm(w.id, { agentId: e.target.value })}>
+                                  <option value="">Select agent…</option>
+                                  {agents.map((a) => (
+                                    <option key={a.id} value={a.id}>{a.displayName}{a.phoneNumber ? ` · ${a.phoneNumber}` : ''}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="adm-field">
+                                <span>FT / Transaction Reference</span>
+                                <input className="input" placeholder="e.g. DH11G2Q7VJ" value={completeForm(w.id).telebirrReference}
+                                  onChange={(e) => updateCompleteForm(w.id, { telebirrReference: e.target.value })} />
+                              </label>
+                            </div>
+                            <label className="adm-field">
+                              <span>Payout Receipt (photo/PDF)</span>
+                              <input className="input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                                onChange={(e) => updateCompleteForm(w.id, { receiptFile: e.target.files?.[0] ?? null })} />
+                            </label>
+                            {(() => {
+                              const feePreview = previewWithdrawalFeeMinor(w.amountMinor, feeRanges);
+                              return (
+                                <p className="adm-field-hint" style={{ margin: 0 }}>
+                                  {feePreview === null
+                                    ? 'No active fee range covers this amount — the fee will be resolved on submit and may fail if config has a gap.'
+                                    : `Fee (agent keeps 100%): ${formatCreditsFull(feePreview)} ETB — net to player: ${formatCreditsFull(w.amountMinor - feePreview)} ETB`}
+                                </p>
+                              );
+                            })()}
+                            <div className="adm-w-actions">
+                              <button className="adm-btn adm-btn-success" disabled={completing === w.id}
+                                onClick={() => submitCompleteWithAgent(w)}>
+                                {completing === w.id ? '…' : 'Complete Withdrawal'}
+                              </button>
+                              <button className="adm-btn adm-btn-secondary" disabled={completing === w.id}
+                                onClick={() => setCompletingId(null)}>
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2499,9 +2611,13 @@ function BingoAdmin() {
   const addToast = useStore((s) => s.addToast);
   const liveCounts = useStore((s) => s.liveCounts);
   const [rooms, setRooms] = useState<BingoRoom[]>([]);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(10);
+  const [totalRooms, setTotalRooms] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [cfg, setCfg] = useState<BingoConfig | null>(null);
   const [patterns, setPatterns] = useState<BingoPattern[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [roomsLoading, setRoomsLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -2570,15 +2686,12 @@ function BingoAdmin() {
     botAliasPool: null as string | null,
   });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const loadMeta = useCallback(async () => {
     try {
-      const [r, c, p] = await Promise.all([
-        adminBingoApi.listAllRooms(),
+      const [c, p] = await Promise.all([
         adminBingoApi.getConfig(),
         adminBingoApi.listPatterns(),
       ]);
-      setRooms(r);
       setCfg(c);
       setPatterns(p);
       setCfgForm({
@@ -2625,10 +2738,37 @@ function BingoAdmin() {
       });
     }
     catch (e) { addToast('error', getErrorMessage(e)); }
-    finally { setLoading(false); }
   }, [addToast]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadRooms = useCallback(async (nextPage = 1) => {
+    setRoomsLoading(true);
+    try {
+      const res = await adminBingoApi.listAllRooms(nextPage, limit);
+      setRooms(res.data);
+      setTotalRooms(res.total);
+      setTotalPages(res.totalPages || 1);
+      if (res.page !== nextPage) setPage(res.page);
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    } finally {
+      setRoomsLoading(false);
+    }
+  }, [addToast, limit]);
+
+  useEffect(() => {
+    void loadMeta();
+    void loadRooms(1);
+  }, [loadMeta, loadRooms]);
+
+  const goToRoomPage = async (nextPage: number) => {
+    if (nextPage === page) return;
+    setPage(nextPage);
+    await loadRooms(nextPage);
+  };
+
+  const refreshBingo = useCallback(async () => {
+    await Promise.all([loadMeta(), loadRooms(page)]);
+  }, [loadMeta, loadRooms, page]);
 
   const saveConfig = async () => {
     setBusy('cfg');
@@ -2663,7 +2803,8 @@ function BingoAdmin() {
       });
       addToast('success', `Room "${form.name}" created.`);
       setShowCreate(false);
-      await load();
+      setPage(1);
+      await loadRooms(1);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -2716,7 +2857,7 @@ function BingoAdmin() {
   return (
     <div className="stack-lg">
       <SectionHead title="Bingo" sub="Auto-draw rooms with configurable prizes and patterns.">
-        <button className="adm-icon-btn" onClick={load}><RefreshCw size={14} /></button>
+        <button className="adm-icon-btn" onClick={() => void refreshBingo()}><RefreshCw size={14} /></button>
         <button className="adm-btn adm-btn-secondary" onClick={() => setShowPatterns((v) => !v)}>
           <CircleDot size={13} />{showPatterns ? 'Hide Patterns' : 'Patterns'}
         </button>
@@ -3182,9 +3323,15 @@ function BingoAdmin() {
       )}
 
       <div className="adm-panel">
-        {loading && rooms.length === 0 ? <div className="adm-empty">Loading rooms…</div>
+        <div className="adm-panel-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <span>Bingo Rooms</span>
+          <span className="adm-td-muted">Newest rooms first · {totalRooms} total</span>
+        </div>
+        {roomsLoading && rooms.length === 0 ? <div className="adm-empty">Loading rooms…</div>
           : rooms.length === 0 ? <div className="adm-empty">No rooms yet. Enable Auto-Bingo in Settings and a room will be created automatically.</div>
           : (
+            <>
+            <div className="adm-table-wrap">
             <table className="adm-table">
               <thead><tr><th>Room</th><th>Mode</th><th>Tickets</th><th>Status</th><th>Created</th><th>Starts</th><th>Drawn</th><th></th></tr></thead>
               <tbody>
@@ -3218,7 +3365,7 @@ function BingoAdmin() {
                           {isActive && (
                             <button className="adm-btn adm-btn-danger adm-btn-xs"
                               disabled={!!busy}
-                              onClick={async () => { setBusy(`c-${room.id}`); try { await adminBingoApi.cancelRoom(room.id); await load(); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
+                              onClick={async () => { setBusy(`c-${room.id}`); try { await adminBingoApi.cancelRoom(room.id); await loadRooms(page); } catch (e) { addToast('error', getErrorMessage(e)); } finally { setBusy(null); } }}>
                               <X size={11} />Cancel
                             </button>
                           )}
@@ -3229,6 +3376,29 @@ function BingoAdmin() {
                 })}
               </tbody>
             </table>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Page <strong>{page}</strong> of <strong>{totalPages}</strong> ({totalRooms} entries)
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="adm-btn adm-btn-secondary adm-btn-xs"
+                  disabled={page <= 1 || roomsLoading}
+                  onClick={() => void goToRoomPage(Math.max(1, page - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  className="adm-btn adm-btn-secondary adm-btn-xs"
+                  disabled={page >= totalPages || roomsLoading}
+                  onClick={() => void goToRoomPage(Math.min(totalPages, page + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+            </>
           )}
       </div>
 

@@ -34,6 +34,7 @@ import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { VerifyDepositDto } from './dto/verify-deposit.dto';
 import { VerifyWithdrawalDto } from './dto/verify-withdrawal.dto';
+import { AdminCompleteWithdrawalDto } from './dto/admin-complete-withdrawal.dto';
 import { CreateWithdrawalFeeRangeDto } from './dto/create-withdrawal-fee-range.dto';
 import { UpdateWithdrawalFeeRangeDto } from './dto/update-withdrawal-fee-range.dto';
 import { ConfigChangeType } from './entities/config-change-log.entity';
@@ -56,6 +57,12 @@ type UploadedReceiptFile = { filename: string; mimetype: string; size: number };
 
 const SETTLEMENT_RECEIPT_SUBDIR = 'settlement-receipts';
 const SETTLEMENT_RECEIPT_DIR = join(UPLOADS_ROOT, SETTLEMENT_RECEIPT_SUBDIR);
+
+// Same subdir the agent's own withdrawal-proof upload uses — an admin
+// completing a withdrawal on an agent's behalf stores the receipt in the same
+// place a self-service agent submission would.
+const WITHDRAWAL_RECEIPT_SUBDIR = 'withdrawal-receipts';
+const WITHDRAWAL_RECEIPT_DIR = join(UPLOADS_ROOT, WITHDRAWAL_RECEIPT_SUBDIR);
 
 @SkipThrottle()
 @Controller('admin')
@@ -432,6 +439,65 @@ export class AdminController {
     @CurrentUser() admin: AuthenticatedUser,
   ) {
     return this.walletService.verifyAgentWithdrawal(id, dto.decision, admin.id, dto.notes);
+  }
+
+  /**
+   * Admin-direct completion — records the agent/fee/reference/receipt and
+   * completes the withdrawal in one step, for a payout an agent already made
+   * outside the self-service claim flow. Only valid from 'pending'/'processing'
+   * (the same set the bare "process" approve accepts). The fee is always
+   * resolved server-side from the active WithdrawalFeeRange table, never taken
+   * from the request body. See WalletService.adminCompleteWithdrawal.
+   */
+  @Post('withdrawals/:id/complete-with-agent')
+  async completeWithdrawalWithAgent(
+    @Param('id') id: string,
+    @Body() dto: AdminCompleteWithdrawalDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    // The fee goes to the Master Wallet here (not the agent) — an admin is
+    // recording/authorizing this payout rather than the agent self-submitting
+    // it, so the house keeps the cut. See WalletService.adminCompleteWithdrawal.
+    const houseWalletUserId = await this.adminService.getOrCreateMasterWalletUserId();
+    return this.walletService.adminCompleteWithdrawal({
+      withdrawalId: id,
+      agentId: dto.agentId,
+      telebirrReference: dto.telebirrReference,
+      receiptFileUrl: dto.receiptFileUrl,
+      adminUserId: admin.id,
+      houseWalletUserId,
+      transferCompletedAt: dto.transferCompletedAt ? new Date(dto.transferCompletedAt) : undefined,
+    });
+  }
+
+  /** Upload a photo/PDF of the payout receipt when an admin is completing a
+   * withdrawal directly (see completeWithdrawalWithAgent above). */
+  @Post('withdrawals/receipts/upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          mkdirSync(WITHDRAWAL_RECEIPT_DIR, { recursive: true });
+          cb(null, WITHDRAWAL_RECEIPT_DIR);
+        },
+        filename: (_req, file, cb) => {
+          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+          cb(null, `${randomUUID()}${ext}`);
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+      fileFilter: (_req, file, cb) => {
+        if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
+          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP, GIF images or PDF are allowed'), false);
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  uploadWithdrawalReceipt(@UploadedFile() file?: UploadedReceiptFile) {
+    if (!file) throw new BadRequestException('No receipt file uploaded');
+    return { fileUrl: `${WITHDRAWAL_RECEIPT_SUBDIR}/${file.filename}` };
   }
 
   // ── Admin Wallet Operations (shared house wallet — see AdminService) ──

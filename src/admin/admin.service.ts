@@ -267,7 +267,7 @@ export class AdminService implements OnApplicationBootstrap {
   // so total system supply is always conserved.
 
   /** Returns the Master Wallet's owning user id, creating it if it somehow doesn't exist yet. */
-  private async getOrCreateMasterWalletUserId(): Promise<string> {
+  async getOrCreateMasterWalletUserId(): Promise<string> {
     const config = await this.getSystemConfig();
     if (config.masterWalletUserId) return config.masterWalletUserId;
 

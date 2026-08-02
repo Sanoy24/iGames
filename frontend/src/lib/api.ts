@@ -261,8 +261,17 @@ export type BingoLobbyRoom = {
   scheduledStartAt: string | null;
 };
 
+export type BingoRoomListResponse = {
+  data: BingoRoom[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 export const bingoApi = {
-  listRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
+  listRooms: (page = 1, limit = 10) =>
+    api.get<BingoRoomListResponse>(`/bingo/rooms?page=${page}&limit=${limit}`).then((r) => r.data),
   getCurrentRoom: () => api.get<BingoRoomState | null>('/bingo/current').then((r) => r.data),
   getLobby: () => api.get<{ enabled: boolean; rooms: BingoLobbyRoom[] }>('/bingo/lobby').then((r) => r.data),
   getRoomState: (roomId: string) => api.get<BingoRoomState>(`/bingo/rooms/${roomId}/state`).then((r) => r.data),
@@ -620,7 +629,8 @@ export const adminBingoApi = {
     api.get<BingoRoundDetails>(`/admin/bingo/rooms/${roomId}/details`).then((r) => r.data),
   updateConfig: (dto: Partial<BingoConfig>) =>
     api.post<BingoConfig>('/admin/bingo/config', dto).then((r) => r.data),
-  listAllRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
+  listAllRooms: (page = 1, limit = 10) =>
+    api.get<BingoRoomListResponse>(`/bingo/rooms?page=${page}&limit=${limit}`).then((r) => r.data),
   createRoom: (dto: {
     name: string;
     ticketPriceMinor: number;
@@ -1008,6 +1018,16 @@ export const adminWithdrawalsApi = {
    * approve is what actually releases the fund-hold and credits the agent. */
   verifyWithdrawal: (id: string, decision: 'approve' | 'reject', notes?: string) =>
     api.post<Withdrawal>(`/admin/withdrawals/${id}/verify`, { decision, notes }).then((r) => r.data),
+  /** Admin-direct completion — records agent/fee/reference/receipt and completes
+   * in one step (fee is always resolved server-side, never sent from here). */
+  completeWithAgent: (id: string, dto: { agentId: string; telebirrReference: string; receiptFileUrl: string; transferCompletedAt?: string }) =>
+    api.post<Withdrawal>(`/admin/withdrawals/${id}/complete-with-agent`, dto).then((r) => r.data),
+  /** Upload a photo/PDF of the payout receipt for the above. */
+  uploadReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/admin/withdrawals/receipts/upload', form).then((r) => r.data);
+  },
 };
 
 // ── Admin: Agent Settlements ────────────────────────────────────────

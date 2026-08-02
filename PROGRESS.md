@@ -6,7 +6,7 @@
 
 ## Current Verified State
 
-**Date**: 2026-08-01
+**Date**: 2026-08-02
 **Branch**: `migration/mysql` (this session's work is **uncommitted** in the working tree)  
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
@@ -51,12 +51,28 @@
 | Issue | Status | Notes |
 | --- | --- | --- |
 | MySQL ROW_FORMAT=DYNAMIC on existing prod tables | Pending | Entities fixed for fresh schemas; run 25 ALTER TABLE on pre-existing DB |
-| Admin per-tab bespoke layouts | Not started | FE-09 in feature_list.json |
+| Admin per-tab bespoke layouts | In progress | FE-09 in feature_list.json |
 | Profile page stats/history | Not started | FE-10 in feature_list.json |
 
 ---
 
 ## Session Record
+### Session: 2026-08-02 (Bingo room list pagination + newest-first admin polish)
+
+**Goal**: Make the Bingo admin room list read like a proper paged table, with newest rooms first and clean next/previous navigation.
+
+**Completed**:
+
+- **Shared paged Bingo room contract** - `GET /bingo/rooms` now accepts `page` and `limit`, returns `{ data, total, page, limit, totalPages }`, and still sorts rooms by `createdAt DESC` so the newest rooms always appear first.
+- **Admin Bingo list UI** - the Admin -> Bingo panel now consumes the paged contract, shows a compact room header, adds a page summary, and renders Previous/Next controls instead of dumping the whole list at once.
+- **Stable refresh behavior** - the Bingo section refresh button now reloads both the config and the current rooms page, and room cancel/create flows refresh the current page without breaking the pagination state.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **231/231** pass; `cd frontend && npm run build` clean.
+
+**Next best actions**:
+
+1. Continue FE-09 with the next bespoke admin tab, or further refine the Bingo row styling if you want it even closer to the screenshot.
+
 ### Session: 2026-08-01 (centralized per-game bot management)
 
 **Goal**: Centralize bot controls so each game can opt bots in/out independently from one Admin Bots hub.

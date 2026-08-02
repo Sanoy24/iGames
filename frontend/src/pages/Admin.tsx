@@ -2195,7 +2195,7 @@ function WithdrawalsAdmin() {
                                 <p className="adm-field-hint" style={{ margin: 0 }}>
                                   {feePreview === null
                                     ? 'No active fee range covers this amount — the fee will be resolved on submit and may fail if config has a gap.'
-                                    : `Fee (agent keeps 100%): ${formatCreditsFull(feePreview)} ETB — net to player: ${formatCreditsFull(w.amountMinor - feePreview)} ETB`}
+                                    : `Fee (goes to Master Wallet): ${formatCreditsFull(feePreview)} ETB — net to player (paid via agent): ${formatCreditsFull(w.amountMinor - feePreview)} ETB`}
                                 </p>
                               );
                             })()}

@@ -3547,6 +3547,18 @@ function BotsAdmin() {
     kenoParticipationRatePct: 100,
     bingoParticipationRatePct: 100,
     crashParticipationRatePct: 60,
+    kenoActionDelayMinMs: 150,
+    kenoActionDelayMaxMs: 900,
+    kenoHesitationChancePct: 35,
+    kenoVariancePct: 20,
+    bingoActionDelayMinMs: 250,
+    bingoActionDelayMaxMs: 1200,
+    bingoHesitationChancePct: 45,
+    bingoVariancePct: 25,
+    crashActionDelayMinMs: 80,
+    crashActionDelayMaxMs: 600,
+    crashHesitationChancePct: 20,
+    crashVariancePct: 18,
     kenoMinBalanceMinor: 0,
     bingoMinBalanceMinor: 0,
     crashMinBalanceMinor: 0,
@@ -3569,6 +3581,18 @@ function BotsAdmin() {
     kenoParticipationRatePct: number;
     bingoParticipationRatePct: number;
     crashParticipationRatePct: number;
+    kenoActionDelayMinMs: number;
+    kenoActionDelayMaxMs: number;
+    kenoHesitationChancePct: number;
+    kenoVariancePct: number;
+    bingoActionDelayMinMs: number;
+    bingoActionDelayMaxMs: number;
+    bingoHesitationChancePct: number;
+    bingoVariancePct: number;
+    crashActionDelayMinMs: number;
+    crashActionDelayMaxMs: number;
+    crashHesitationChancePct: number;
+    crashVariancePct: number;
     kenoMinBalanceMinor: number;
     bingoMinBalanceMinor: number;
     crashMinBalanceMinor: number;
@@ -3590,6 +3614,18 @@ function BotsAdmin() {
     kenoParticipationRatePct: 100,
     bingoParticipationRatePct: 100,
     crashParticipationRatePct: 60,
+    kenoActionDelayMinMs: 150,
+    kenoActionDelayMaxMs: 900,
+    kenoHesitationChancePct: 35,
+    kenoVariancePct: 20,
+    bingoActionDelayMinMs: 250,
+    bingoActionDelayMaxMs: 1200,
+    bingoHesitationChancePct: 45,
+    bingoVariancePct: 25,
+    crashActionDelayMinMs: 80,
+    crashActionDelayMaxMs: 600,
+    crashHesitationChancePct: 20,
+    crashVariancePct: 18,
     kenoMinBalanceMinor: 0,
     bingoMinBalanceMinor: 0,
     crashMinBalanceMinor: 0,
@@ -3657,6 +3693,10 @@ function BotsAdmin() {
     active: bot.botPolicy.active,
     strategy: 'normal',
     participationRatePct: 100,
+    actionDelayMinMs: 150,
+    actionDelayMaxMs: 900,
+    hesitationChancePct: 35,
+    variancePct: 20,
     minBalanceMinor: 0,
     maxStakeMinorPerDay: 0,
     maxLossMinorPerDay: 0,
@@ -3669,6 +3709,10 @@ function BotsAdmin() {
     active: bot.botPolicy.active,
     strategy: 'mirror-human',
     participationRatePct: 100,
+    actionDelayMinMs: 250,
+    actionDelayMaxMs: 1200,
+    hesitationChancePct: 45,
+    variancePct: 25,
     minBalanceMinor: 0,
     maxStakeMinorPerDay: 0,
     maxLossMinorPerDay: 0,
@@ -3679,6 +3723,10 @@ function BotsAdmin() {
     active: bot.botPolicy.active,
     strategy: 'normal',
     participationRatePct: 60,
+    actionDelayMinMs: 80,
+    actionDelayMaxMs: 600,
+    hesitationChancePct: 20,
+    variancePct: 18,
     minBalanceMinor: 0,
     maxStakeMinorPerDay: 0,
     maxLossMinorPerDay: 0,
@@ -3954,6 +4002,54 @@ function BotsAdmin() {
               <input className="input" type="number" min={0} max={100} value={form.crashParticipationRatePct} onChange={(e) => setForm((prev) => ({ ...prev, crashParticipationRatePct: Number(e.target.value) }))} />
             </label>
             <label className="adm-field">
+              <span>Keno Delay Min ms</span>
+              <input className="input" type="number" min={0} value={form.kenoActionDelayMinMs} onChange={(e) => setForm((prev) => ({ ...prev, kenoActionDelayMinMs: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Delay Max ms</span>
+              <input className="input" type="number" min={0} value={form.kenoActionDelayMaxMs} onChange={(e) => setForm((prev) => ({ ...prev, kenoActionDelayMaxMs: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Hesitation %</span>
+              <input className="input" type="number" min={0} max={100} value={form.kenoHesitationChancePct} onChange={(e) => setForm((prev) => ({ ...prev, kenoHesitationChancePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Keno Variance %</span>
+              <input className="input" type="number" min={0} max={100} value={form.kenoVariancePct} onChange={(e) => setForm((prev) => ({ ...prev, kenoVariancePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Delay Min ms</span>
+              <input className="input" type="number" min={0} value={form.bingoActionDelayMinMs} onChange={(e) => setForm((prev) => ({ ...prev, bingoActionDelayMinMs: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Delay Max ms</span>
+              <input className="input" type="number" min={0} value={form.bingoActionDelayMaxMs} onChange={(e) => setForm((prev) => ({ ...prev, bingoActionDelayMaxMs: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Hesitation %</span>
+              <input className="input" type="number" min={0} max={100} value={form.bingoHesitationChancePct} onChange={(e) => setForm((prev) => ({ ...prev, bingoHesitationChancePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Bingo Variance %</span>
+              <input className="input" type="number" min={0} max={100} value={form.bingoVariancePct} onChange={(e) => setForm((prev) => ({ ...prev, bingoVariancePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Delay Min ms</span>
+              <input className="input" type="number" min={0} value={form.crashActionDelayMinMs} onChange={(e) => setForm((prev) => ({ ...prev, crashActionDelayMinMs: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Delay Max ms</span>
+              <input className="input" type="number" min={0} value={form.crashActionDelayMaxMs} onChange={(e) => setForm((prev) => ({ ...prev, crashActionDelayMaxMs: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Hesitation %</span>
+              <input className="input" type="number" min={0} max={100} value={form.crashHesitationChancePct} onChange={(e) => setForm((prev) => ({ ...prev, crashHesitationChancePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Crash Variance %</span>
+              <input className="input" type="number" min={0} max={100} value={form.crashVariancePct} onChange={(e) => setForm((prev) => ({ ...prev, crashVariancePct: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
               <span>Keno Min Balance</span>
               <input className="input" type="number" min={0} value={form.kenoMinBalanceMinor} onChange={(e) => setForm((prev) => ({ ...prev, kenoMinBalanceMinor: Number(e.target.value) }))} />
             </label>
@@ -4082,6 +4178,18 @@ function BotsAdmin() {
                               kenoParticipationRatePct: kenoPolicy.participationRatePct ?? 100,
                               bingoParticipationRatePct: bingoPolicy?.participationRatePct ?? 100,
                               crashParticipationRatePct: crashPolicy?.participationRatePct ?? 60,
+                              kenoActionDelayMinMs: kenoPolicy.actionDelayMinMs ?? 150,
+                              kenoActionDelayMaxMs: kenoPolicy.actionDelayMaxMs ?? 900,
+                              kenoHesitationChancePct: kenoPolicy.hesitationChancePct ?? 35,
+                              kenoVariancePct: kenoPolicy.variancePct ?? 20,
+                              bingoActionDelayMinMs: bingoPolicy?.actionDelayMinMs ?? 250,
+                              bingoActionDelayMaxMs: bingoPolicy?.actionDelayMaxMs ?? 1200,
+                              bingoHesitationChancePct: bingoPolicy?.hesitationChancePct ?? 45,
+                              bingoVariancePct: bingoPolicy?.variancePct ?? 25,
+                              crashActionDelayMinMs: crashPolicy?.actionDelayMinMs ?? 80,
+                              crashActionDelayMaxMs: crashPolicy?.actionDelayMaxMs ?? 600,
+                              crashHesitationChancePct: crashPolicy?.hesitationChancePct ?? 20,
+                              crashVariancePct: crashPolicy?.variancePct ?? 18,
                               kenoMinBalanceMinor: kenoPolicy.minBalanceMinor ?? 0,
                               bingoMinBalanceMinor: bingoPolicy?.minBalanceMinor ?? 0,
                               crashMinBalanceMinor: crashPolicy?.minBalanceMinor ?? 0,
@@ -4159,16 +4267,64 @@ function BotsAdmin() {
                               {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
                             </select>
                           </label>
-                          <label className="adm-field">
-                            <span>Crash Strategy</span>
-                            <select className="input" value={editForm.crashStrategy} onChange={(e) => setEditForm((prev) => ({ ...prev, crashStrategy: e.target.value as BotStrategyProfile }))}>
-                              {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
-                            </select>
-                          </label>
-                          <label className="adm-field">
-                            <span>Keno Participation %</span>
-                            <input className="input" type="number" min={0} max={100} value={editForm.kenoParticipationRatePct} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoParticipationRatePct: Number(e.target.value) }))} />
-                          </label>
+                            <label className="adm-field">
+                              <span>Crash Strategy</span>
+                              <select className="input" value={editForm.crashStrategy} onChange={(e) => setEditForm((prev) => ({ ...prev, crashStrategy: e.target.value as BotStrategyProfile }))}>
+                                {BOT_STRATEGY_OPTIONS.map((strategy) => <option key={strategy} value={strategy}>{BOT_STRATEGY_LABELS[strategy]}</option>)}
+                              </select>
+                            </label>
+                            <label className="adm-field">
+                              <span>Keno Delay Min ms</span>
+                              <input className="input" type="number" min={0} value={editForm.kenoActionDelayMinMs} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoActionDelayMinMs: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Keno Delay Max ms</span>
+                              <input className="input" type="number" min={0} value={editForm.kenoActionDelayMaxMs} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoActionDelayMaxMs: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Keno Hesitation %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.kenoHesitationChancePct} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoHesitationChancePct: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Keno Variance %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.kenoVariancePct} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoVariancePct: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Bingo Delay Min ms</span>
+                              <input className="input" type="number" min={0} value={editForm.bingoActionDelayMinMs} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoActionDelayMinMs: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Bingo Delay Max ms</span>
+                              <input className="input" type="number" min={0} value={editForm.bingoActionDelayMaxMs} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoActionDelayMaxMs: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Bingo Hesitation %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.bingoHesitationChancePct} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoHesitationChancePct: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Bingo Variance %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.bingoVariancePct} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoVariancePct: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Crash Delay Min ms</span>
+                              <input className="input" type="number" min={0} value={editForm.crashActionDelayMinMs} onChange={(e) => setEditForm((prev) => ({ ...prev, crashActionDelayMinMs: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Crash Delay Max ms</span>
+                              <input className="input" type="number" min={0} value={editForm.crashActionDelayMaxMs} onChange={(e) => setEditForm((prev) => ({ ...prev, crashActionDelayMaxMs: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Crash Hesitation %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.crashHesitationChancePct} onChange={(e) => setEditForm((prev) => ({ ...prev, crashHesitationChancePct: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Crash Variance %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.crashVariancePct} onChange={(e) => setEditForm((prev) => ({ ...prev, crashVariancePct: Number(e.target.value) }))} />
+                            </label>
+                            <label className="adm-field">
+                              <span>Keno Participation %</span>
+                              <input className="input" type="number" min={0} max={100} value={editForm.kenoParticipationRatePct} onChange={(e) => setEditForm((prev) => ({ ...prev, kenoParticipationRatePct: Number(e.target.value) }))} />
+                            </label>
                           <label className="adm-field">
                             <span>Bingo Participation %</span>
                             <input className="input" type="number" min={0} max={100} value={editForm.bingoParticipationRatePct} onChange={(e) => setEditForm((prev) => ({ ...prev, bingoParticipationRatePct: Number(e.target.value) }))} />

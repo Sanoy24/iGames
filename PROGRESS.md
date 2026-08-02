@@ -67,6 +67,7 @@
 - **Runtime routing by game** - Keno bot tickets, Bingo cartela reconciliation/win interval, Crash bot bets, Bingo active-bot queries, and live bot presence counts now respect the relevant per-game flag while keeping `botPolicy.active` as the global master switch.
 - **Centralized admin surface** - Admin -> Bots now shows per-game counts, create/edit per-game checkboxes, and quick Keno/Bingo/Crash row toggles. Bingo bot-name CRUD remains under `BotsService`; the duplicate name-admin methods were removed from `BingoService`, which now only consumes the shared pool for room identities.
 - **Bot audit trail** - bot create/top-up/delete and runtime game actions now write to `bot_action_logs`, and the Admin Bots hub can page through recent bot actions per bot/game.
+- **Bot humanization + visual parity** - per-game timing/hesitation/variance knobs now shape bot pacing in Keno, Bingo, and Crash, and the Bingo live win popup now routes through a shared card component so bot and human wins share the same visible surface.
 - **Bot accounting/reporting safety** - admin Bingo history now classifies any `botPolicy` account as a bot even if globally paused, so paused bots do not get counted as real-player activity.
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **231/231** pass; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` **10/10** pass; `cd frontend && npx tsc --noEmit && npm run build` clean.

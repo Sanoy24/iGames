@@ -44,13 +44,61 @@ export class UpdateBotPolicyDto {
   @IsOptional() @IsInt() @Min(0) @Max(100)
   kenoParticipationRatePct?: number;
 
+  @ApiPropertyOptional({ example: 150, description: 'Keno bot reaction delay minimum in ms' })
+  @IsOptional() @IsInt() @Min(0)
+  kenoActionDelayMinMs?: number;
+
+  @ApiPropertyOptional({ example: 900, description: 'Keno bot reaction delay maximum in ms' })
+  @IsOptional() @IsInt() @Min(0)
+  kenoActionDelayMaxMs?: number;
+
+  @ApiPropertyOptional({ example: 35, minimum: 0, maximum: 100 })
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  kenoHesitationChancePct?: number;
+
+  @ApiPropertyOptional({ example: 20, minimum: 0, maximum: 100 })
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  kenoVariancePct?: number;
+
   @ApiPropertyOptional({ example: 100, minimum: 0, maximum: 100 })
   @IsOptional() @IsInt() @Min(0) @Max(100)
   bingoParticipationRatePct?: number;
 
+  @ApiPropertyOptional({ example: 250, description: 'Bingo bot reaction delay minimum in ms' })
+  @IsOptional() @IsInt() @Min(0)
+  bingoActionDelayMinMs?: number;
+
+  @ApiPropertyOptional({ example: 1200, description: 'Bingo bot reaction delay maximum in ms' })
+  @IsOptional() @IsInt() @Min(0)
+  bingoActionDelayMaxMs?: number;
+
+  @ApiPropertyOptional({ example: 45, minimum: 0, maximum: 100 })
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  bingoHesitationChancePct?: number;
+
+  @ApiPropertyOptional({ example: 25, minimum: 0, maximum: 100 })
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  bingoVariancePct?: number;
+
   @ApiPropertyOptional({ example: 60, minimum: 0, maximum: 100 })
   @IsOptional() @IsInt() @Min(0) @Max(100)
   crashParticipationRatePct?: number;
+
+  @ApiPropertyOptional({ example: 80, description: 'Crash bot reaction delay minimum in ms' })
+  @IsOptional() @IsInt() @Min(0)
+  crashActionDelayMinMs?: number;
+
+  @ApiPropertyOptional({ example: 600, description: 'Crash bot reaction delay maximum in ms' })
+  @IsOptional() @IsInt() @Min(0)
+  crashActionDelayMaxMs?: number;
+
+  @ApiPropertyOptional({ example: 20, minimum: 0, maximum: 100 })
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  crashHesitationChancePct?: number;
+
+  @ApiPropertyOptional({ example: 18, minimum: 0, maximum: 100 })
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  crashVariancePct?: number;
 
   @ApiPropertyOptional({ example: 0, description: '0 disables the minimum-balance guard' })
   @IsOptional() @IsInt() @Min(0)

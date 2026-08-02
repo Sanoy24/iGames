@@ -192,6 +192,12 @@
 **Why**: A single global toggle is too blunt once the same funded bot accounts participate in Keno, Bingo, and Crash. Per-game flags let admins pause suspicious or unbalanced behavior in one game without removing liquidity from the others.
 **Constraints**: Missing nested game flags default to enabled for backward compatibility with existing bots. Runtime entry points must request active bots for the specific game (`keno`, `bingo`, or `crash`) rather than using a generic active-bot list. Bingo bot-name CRUD belongs to `BotsService`; `BingoService` only consumes the shared name pool when assigning room-scoped identities.
 
+### D-30: Bot pacing is intentionally humanized, and Bingo win surfaces share one card component
+**Decided**: 2026-08-01
+**Decision**: Bot policy now includes per-game action-delay, hesitation-chance, and variance settings. The scheduler/runtime uses those knobs to add staggered delays and small action-size drift so Keno, Bingo, and Crash bots do not fire in a rigid pattern. Bingo win popups use a shared card component so player-facing bot wins and human wins share the same visible layout.
+**Why**: The request was to make bots feel less mechanical and to eliminate any visible bot-only win styling. A shared component prevents the human and bot victory surfaces from drifting apart over time.
+**Constraints**: Timing defaults must stay conservative so bots look natural without stalling the games. Any future bot win surface should reuse the shared Bingo card rather than reintroducing a second layout.
+
 ---
 
 ## Wallet / Agents (continued)

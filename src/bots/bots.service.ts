@@ -31,6 +31,10 @@ export type BotGamePolicyBase = {
   active: boolean;
   strategy: BotStrategyProfile;
   participationRatePct: number;
+  actionDelayMinMs: number;
+  actionDelayMaxMs: number;
+  hesitationChancePct: number;
+  variancePct: number;
   minBalanceMinor: number;
   maxStakeMinorPerDay: number;
   maxLossMinorPerDay: number;
@@ -138,6 +142,10 @@ export class BotsService {
           drawParticipationCount: 0,
           strategy: dto.kenoStrategy ?? 'normal',
           participationRatePct: dto.kenoParticipationRatePct ?? 100,
+          actionDelayMinMs: dto.kenoActionDelayMinMs ?? 150,
+          actionDelayMaxMs: dto.kenoActionDelayMaxMs ?? 900,
+          hesitationChancePct: dto.kenoHesitationChancePct ?? 35,
+          variancePct: dto.kenoVariancePct ?? 20,
           minBalanceMinor: dto.kenoMinBalanceMinor ?? 0,
           maxStakeMinorPerDay: dto.kenoMaxStakeMinorPerDay ?? 0,
           maxLossMinorPerDay: 0,
@@ -147,6 +155,10 @@ export class BotsService {
           active: dto.bingoActive ?? true,
           strategy: dto.bingoStrategy ?? 'mirror-human',
           participationRatePct: dto.bingoParticipationRatePct ?? 100,
+          actionDelayMinMs: dto.bingoActionDelayMinMs ?? 250,
+          actionDelayMaxMs: dto.bingoActionDelayMaxMs ?? 1200,
+          hesitationChancePct: dto.bingoHesitationChancePct ?? 45,
+          variancePct: dto.bingoVariancePct ?? 25,
           minBalanceMinor: dto.bingoMinBalanceMinor ?? 0,
           maxStakeMinorPerDay: dto.bingoMaxStakeMinorPerDay ?? 0,
           maxLossMinorPerDay: 0,
@@ -157,6 +169,10 @@ export class BotsService {
           active: dto.crashActive ?? true,
           strategy: dto.crashStrategy ?? 'normal',
           participationRatePct: dto.crashParticipationRatePct ?? 60,
+          actionDelayMinMs: dto.crashActionDelayMinMs ?? 80,
+          actionDelayMaxMs: dto.crashActionDelayMaxMs ?? 600,
+          hesitationChancePct: dto.crashHesitationChancePct ?? 20,
+          variancePct: dto.crashVariancePct ?? 18,
           minBalanceMinor: dto.crashMinBalanceMinor ?? 0,
           maxStakeMinorPerDay: dto.crashMaxStakeMinorPerDay ?? 0,
           maxLossMinorPerDay: 0,
@@ -387,6 +403,10 @@ export class BotsService {
       ...(dto.kenoActive !== undefined && { active: dto.kenoActive }),
       ...(dto.kenoStrategy !== undefined && { strategy: dto.kenoStrategy }),
       ...(dto.kenoParticipationRatePct !== undefined && { participationRatePct: dto.kenoParticipationRatePct }),
+      ...(dto.kenoActionDelayMinMs !== undefined && { actionDelayMinMs: dto.kenoActionDelayMinMs }),
+      ...(dto.kenoActionDelayMaxMs !== undefined && { actionDelayMaxMs: dto.kenoActionDelayMaxMs }),
+      ...(dto.kenoHesitationChancePct !== undefined && { hesitationChancePct: dto.kenoHesitationChancePct }),
+      ...(dto.kenoVariancePct !== undefined && { variancePct: dto.kenoVariancePct }),
       ...(dto.kenoMinBalanceMinor !== undefined && { minBalanceMinor: dto.kenoMinBalanceMinor }),
       ...(dto.kenoMaxStakeMinorPerDay !== undefined && { maxStakeMinorPerDay: dto.kenoMaxStakeMinorPerDay }),
       ...(dto.ticketsPerRound !== undefined && { ticketsPerRound: dto.ticketsPerRound }),
@@ -406,6 +426,10 @@ export class BotsService {
           ...(dto.bingoActive !== undefined && { active: dto.bingoActive }),
           ...(dto.bingoStrategy !== undefined && { strategy: dto.bingoStrategy }),
           ...(dto.bingoParticipationRatePct !== undefined && { participationRatePct: dto.bingoParticipationRatePct }),
+          ...(dto.bingoActionDelayMinMs !== undefined && { actionDelayMinMs: dto.bingoActionDelayMinMs }),
+          ...(dto.bingoActionDelayMaxMs !== undefined && { actionDelayMaxMs: dto.bingoActionDelayMaxMs }),
+          ...(dto.bingoHesitationChancePct !== undefined && { hesitationChancePct: dto.bingoHesitationChancePct }),
+          ...(dto.bingoVariancePct !== undefined && { variancePct: dto.bingoVariancePct }),
           ...(dto.bingoMinBalanceMinor !== undefined && { minBalanceMinor: dto.bingoMinBalanceMinor }),
           ...(dto.bingoMaxStakeMinorPerDay !== undefined && { maxStakeMinorPerDay: dto.bingoMaxStakeMinorPerDay }),
           ...(dto.bingoMaxCartelasPerRoom !== undefined && { maxCartelasPerRoom: dto.bingoMaxCartelasPerRoom }),
@@ -415,6 +439,10 @@ export class BotsService {
           ...(dto.crashActive !== undefined && { active: dto.crashActive }),
           ...(dto.crashStrategy !== undefined && { strategy: dto.crashStrategy }),
           ...(dto.crashParticipationRatePct !== undefined && { participationRatePct: dto.crashParticipationRatePct }),
+          ...(dto.crashActionDelayMinMs !== undefined && { actionDelayMinMs: dto.crashActionDelayMinMs }),
+          ...(dto.crashActionDelayMaxMs !== undefined && { actionDelayMaxMs: dto.crashActionDelayMaxMs }),
+          ...(dto.crashHesitationChancePct !== undefined && { hesitationChancePct: dto.crashHesitationChancePct }),
+          ...(dto.crashVariancePct !== undefined && { variancePct: dto.crashVariancePct }),
           ...(dto.crashMinBalanceMinor !== undefined && { minBalanceMinor: dto.crashMinBalanceMinor }),
           ...(dto.crashMaxStakeMinorPerDay !== undefined && { maxStakeMinorPerDay: dto.crashMaxStakeMinorPerDay }),
           ...(dto.crashMinCashoutX100 !== undefined && { minCashoutX100: dto.crashMinCashoutX100 }),
@@ -500,6 +528,8 @@ export class BotsService {
   async topUpBotsForOpenRoom(roomId: string): Promise<boolean> {
     const bots = await this.getActiveBots('bingo');
     if (bots.length === 0) return false;
+    const referencePolicy = this.normalizeBotPolicy(bots[randomInt(0, bots.length)].productMetadata!.botPolicy as BotPolicyInput);
+    await this.pause(this.resolveActionDelay(referencePolicy.games!.bingo!, 'bingo', 'reconcile'));
     const realPlayers = await this.bingoService.countRealPlayersInRoom(roomId);
     if (realPlayers <= 0) {
       let cancelled = false;
@@ -545,6 +575,8 @@ export class BotsService {
     const bonusAmountMinor = 50_000;
 
     try {
+      const luckyPolicy = this.normalizeBotPolicy(luckyBot.productMetadata!.botPolicy as BotPolicyInput);
+      await this.pause(this.resolveActionDelay(luckyPolicy.games!.bingo!, 'bingo', 'bonus'));
       await this.dataSource.transaction(async (manager) => {
         await this.walletService.creditInSession(
           {
@@ -585,11 +617,12 @@ export class BotsService {
       if (!this.rollParticipation(crashPolicy.participationRatePct)) continue;
       if (!(await this.canBotEnterGame(bot, 'crash', crashPolicy, cfg.botBetMinor))) continue;
 
+      await this.pause(this.resolveActionDelay(crashPolicy, 'crash', 'bet'));
       const idempotencyKey = `crash-bot-bet:${roundId}:${bot.id}`;
       // Bot auto-cashout: random between 1.20× and 2.50× (120–250)
       const minCashout = Math.min(crashPolicy.minCashoutX100, crashPolicy.maxCashoutX100);
       const maxCashout = Math.max(crashPolicy.minCashoutX100, crashPolicy.maxCashoutX100);
-      const autoCashoutX100 = minCashout + randomInt(0, maxCashout - minCashout + 1);
+      const autoCashoutX100 = this.humanizeCrashCashout(minCashout, maxCashout, crashPolicy);
 
       try {
         const bet = await this.crashService.placeBet(
@@ -634,8 +667,14 @@ export class BotsService {
     const spotCount = allowedSpots.includes(kenoPolicy.spotCount)
       ? kenoPolicy.spotCount
       : allowedSpots[0];
+    const ticketsToBuy = this.humanizeActionCount(kenoPolicy.ticketsPerRound, kenoPolicy.variancePct, 1, 6);
 
-    for (let i = 0; i < kenoPolicy.ticketsPerRound; i++) {
+    await this.pause(this.resolveActionDelay(kenoPolicy, 'keno', 'purchase'));
+
+    for (let i = 0; i < ticketsToBuy; i++) {
+      if (i > 0) {
+        await this.pause(this.resolveActionDelay(kenoPolicy, 'keno', 'purchase', i));
+      }
       const selectedNumbers = this.pickRandomNumbers(numberMin, numberMax, spotCount);
       const idempotencyKey = `bot-ticket:${drawId}:${bot.id}:${i}`;
       try {
@@ -668,6 +707,46 @@ export class BotsService {
   private rollParticipation(ratePct: number): boolean {
     const safeRate = Math.min(Math.max(ratePct, 0), 100);
     return safeRate >= 100 || randomInt(0, 100) < safeRate;
+  }
+
+  private humanizeActionCount(base: number, variancePct: number, min: number, max: number): number {
+    const safeBase = Math.max(1, Math.floor(base));
+    const spread = Math.max(0, Math.round((safeBase * Math.max(variancePct, 0)) / 100));
+    const delta = spread > 0 ? randomInt(0, spread * 2 + 1) - spread : 0;
+    return this.clampInt(safeBase + delta, min, max);
+  }
+
+  private resolveActionDelay(
+    policy: BotGamePolicyBase,
+    game: BotGameKey,
+    kind: 'purchase' | 'bet' | 'reconcile' | 'bonus',
+    sequenceIndex = 0,
+  ): number {
+    const minDelay = this.clampInt(policy.actionDelayMinMs, 0, 10_000);
+    const maxDelay = this.clampInt(Math.max(policy.actionDelayMaxMs, minDelay), minDelay, 15_000);
+    const baseDelay = minDelay === maxDelay ? minDelay : randomInt(minDelay, maxDelay + 1);
+    const varianceWindow = Math.max(0, Math.round(baseDelay * (Math.max(policy.variancePct, 0) / 100)));
+    const variance = varianceWindow > 0 ? randomInt(0, varianceWindow * 2 + 1) - varianceWindow : 0;
+    const sequenceSpread = game === 'bingo' ? 140 : game === 'crash' ? 90 : 160;
+    const hesitationChance = this.clampInt(policy.hesitationChancePct, 0, 100);
+    const shouldHesitate = hesitationChance > 0 && randomInt(0, 100) < hesitationChance;
+    const hesitation = shouldHesitate
+      ? randomInt(Math.max(40, Math.floor(minDelay / 2)), Math.max(maxDelay, minDelay + 1) + 700)
+      : 0;
+    const kindBias = kind === 'bonus' ? 1.15 : kind === 'reconcile' ? 0.8 : kind === 'bet' ? 1.0 : 0.95;
+    return this.clampInt(Math.round((baseDelay + variance + hesitation + sequenceIndex * sequenceSpread) * kindBias), 0, 8_000);
+  }
+
+  private humanizeCrashCashout(minCashoutX100: number, maxCashoutX100: number, policy: BotGamePolicyBase): number {
+    const center = Math.round((minCashoutX100 + maxCashoutX100) / 2);
+    const range = Math.max(1, maxCashoutX100 - minCashoutX100);
+    const spread = Math.max(1, Math.round(range * Math.max(policy.variancePct, 5) / 100));
+    const drift = randomInt(0, spread * 2 + 1) - spread;
+    return this.clampInt(center + drift, minCashoutX100, maxCashoutX100);
+  }
+
+  private pause(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async canBotEnterGame(
@@ -782,19 +861,34 @@ export class BotsService {
     const active = policy.active ?? true;
     const base = (
       gamePolicy: Partial<BotGamePolicyBase> | undefined,
-      defaults: { strategy: BotStrategyProfile; participationRatePct: number },
+      defaults: {
+        strategy: BotStrategyProfile;
+        participationRatePct: number;
+        actionDelayMinMs: number;
+        actionDelayMaxMs: number;
+        hesitationChancePct: number;
+        variancePct: number;
+      },
     ): BotGamePolicyBase => ({
       active: gamePolicy?.active ?? active,
       strategy: gamePolicy?.strategy ?? defaults.strategy,
       participationRatePct: this.clampInt(gamePolicy?.participationRatePct ?? defaults.participationRatePct, 0, 100),
+      actionDelayMinMs: this.clampInt(gamePolicy?.actionDelayMinMs ?? defaults.actionDelayMinMs, 0, 10_000),
+      actionDelayMaxMs: this.clampInt(
+        Math.max(gamePolicy?.actionDelayMaxMs ?? defaults.actionDelayMaxMs, gamePolicy?.actionDelayMinMs ?? defaults.actionDelayMinMs),
+        0,
+        15_000,
+      ),
+      hesitationChancePct: this.clampInt(gamePolicy?.hesitationChancePct ?? defaults.hesitationChancePct, 0, 100),
+      variancePct: this.clampInt(gamePolicy?.variancePct ?? defaults.variancePct, 0, 100),
       minBalanceMinor: Math.max(0, gamePolicy?.minBalanceMinor ?? 0),
       maxStakeMinorPerDay: Math.max(0, gamePolicy?.maxStakeMinorPerDay ?? 0),
       maxLossMinorPerDay: Math.max(0, gamePolicy?.maxLossMinorPerDay ?? 0),
       maxWinMinorPerDay: Math.max(0, gamePolicy?.maxWinMinorPerDay ?? 0),
     });
-    const kenoBase = base(policy.games?.keno, { strategy: 'normal', participationRatePct: 100 });
-    const bingoBase = base(policy.games?.bingo, { strategy: 'mirror-human', participationRatePct: 100 });
-    const crashBase = base(policy.games?.crash, { strategy: 'normal', participationRatePct: 60 });
+    const kenoBase = base(policy.games?.keno, { strategy: 'normal', participationRatePct: 100, actionDelayMinMs: 150, actionDelayMaxMs: 900, hesitationChancePct: 35, variancePct: 20 });
+    const bingoBase = base(policy.games?.bingo, { strategy: 'mirror-human', participationRatePct: 100, actionDelayMinMs: 250, actionDelayMaxMs: 1200, hesitationChancePct: 45, variancePct: 25 });
+    const crashBase = base(policy.games?.crash, { strategy: 'normal', participationRatePct: 60, actionDelayMinMs: 80, actionDelayMaxMs: 600, hesitationChancePct: 20, variancePct: 18 });
     const minCashoutX100 = Math.max(101, policy.games?.crash?.minCashoutX100 ?? 120);
     const maxCashoutX100 = Math.max(minCashoutX100, policy.games?.crash?.maxCashoutX100 ?? 250);
     return {

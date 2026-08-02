@@ -1093,6 +1093,130 @@ export type LivePlaceWin = {
     entry: Record<string, unknown>;
 };
 
+function BingoLiveWinCard({
+    place,
+    entry,
+    drawnNumbers,
+}: {
+    place: PrefilledPlaceKey;
+    entry: Record<string, unknown>;
+    drawnNumbers: number[];
+}) {
+    const { t } = useTranslation();
+    const grid = entry.winnerGrid as Array<Array<number | null>>;
+    const marked =
+        (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
+    const name =
+        (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
+    const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
+    const prize = (entry.prizeMinor as number | undefined) ?? 0;
+    const cartela = entry.winnerCartelaNumber as number | undefined;
+    const disqualified = !!entry.disqualified;
+    const lastCalled =
+        drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+
+    return (
+        <motion.div
+            initial={{ scale: 0.82, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 21 }}
+            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5'
+            style={{
+                background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
+                border: '2px solid rgba(167,139,250,0.7)',
+                boxShadow: '0 0 34px rgba(167,139,250,0.45)',
+            }}
+        >
+            <div
+                className='rounded-xl py-2.5 px-4 text-center'
+                style={{ background: 'rgba(20,60,60,0.55)' }}
+            >
+                <div
+                    className='text-2xl font-black tracking-[0.12em] mb-1'
+                    style={{
+                        color: '#fff',
+                        textShadow: '0 0 22px rgba(52,211,153,0.7)',
+                    }}
+                >
+                    {t('bingo.bingoExclaim')}
+                </div>
+                <div className='text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1'>
+                    {PLACE_MEDAL[place]}{' '}
+                    {t('bingo.placeOrdinal', { place: PLACE_LABEL[place] })}
+                </div>
+                <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
+                    <span
+                        className='rounded-lg px-3 py-1 font-black text-white'
+                        style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
+                    >
+                        {name}
+                        {last4 ? ` ( *${last4} )` : ''}
+                    </span>
+                    <span>
+                        {disqualified
+                            ? t('bingo.disqualifiedHouseWins')
+                            : t('bingo.winsThisPlace')}
+                    </span>
+                </p>
+                {disqualified && (
+                    <div className='mt-1.5 inline-block rounded-md bg-red-500/20 border border-red-400/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-300'>
+                        {t('bingo.disqualified')}
+                    </div>
+                )}
+            </div>
+
+            {grid ? (
+                <div
+                    className='rounded-xl p-1.5'
+                    style={{
+                        background: 'rgba(20,60,60,0.4)',
+                        border: '2px solid rgba(167,139,250,0.6)',
+                    }}
+                >
+                    <div
+                        className='rounded-lg p-1.5'
+                        style={{
+                            border: '2px solid rgba(245,158,11,0.85)',
+                        }}
+                    >
+                        <WinnerBingoCard
+                            grid={grid}
+                            drawnNumbers={drawnNumbers}
+                            markedNumbers={marked}
+                            lastCalled={lastCalled}
+                        />
+                        <div className='flex items-center justify-between px-1 pt-1.5'>
+                            {disqualified ? (
+                                <span className='text-[13px] font-black flex items-center gap-1'>
+                                    <span className='line-through text-slate-400'>
+                                        {formatCreditsFull(prize)}
+                                    </span>
+                                    <span className='text-red-300 text-[10px] uppercase tracking-wide'>
+                                        {t('bingo.toHouse')}
+                                    </span>
+                                </span>
+                            ) : (
+                                <span
+                                    className='text-[13px] font-black'
+                                    style={{ color: '#34d399' }}
+                                >
+                                    {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
+                                </span>
+                            )}
+                            {cartela != null && (
+                                <span className='text-[13px] font-black text-slate-100'>
+                                    {t('bingo.cardHash', { n: cartela })}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+        </motion.div>
+    );
+}
+
 // ─── Live per-place win window ────────────────────────────────────────────────
 // Pops the MOMENT a place is won during the draw (not at the end): the winner's
 // 5×5 card + name + last-4 phone + place + prize. Auto-dismisses so the draw
@@ -1112,9 +1236,23 @@ function LivePlaceWinPopup({
         return () => clearTimeout(id);
     }, [win, onDone]);
 
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className='fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-none'
+        >
+            <BingoLiveWinCard
+                place={win.place}
+                entry={win.entry}
+                drawnNumbers={drawnNumbers}
+            />
+        </motion.div>
+    );
+
     const { place, entry } = win;
-    const grid =
-        (entry.winnerGrid as Array<Array<number | null>> | undefined) ?? null;
+    const grid = entry.winnerGrid as Array<Array<number | null>>;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
     const name = (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');

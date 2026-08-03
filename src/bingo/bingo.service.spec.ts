@@ -136,6 +136,15 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     create: jest.fn().mockImplementation((dto) => dto),
   };
 
+  const mockCustomRoomSlotRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findBy: jest.fn().mockResolvedValue([]),
+    findOneBy: jest.fn().mockResolvedValue(null),
+    save: jest.fn().mockImplementation((s) => Promise.resolve(s)),
+    create: jest.fn().mockImplementation((dto) => dto),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+  };
+
   const walletService = { debitInSession: jest.fn(), creditInSession: jest.fn() };
   const dataSource = { transaction: jest.fn() as any };
 
@@ -146,6 +155,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     mockTicketRepo as any,
     mockCardRepo as any,
     mockConfigRepo as any,
+    mockCustomRoomSlotRepo as any,
     mockPatternRepo as any,
     new (require('./bingo-rules.service').BingoRulesService)(),
     { drawUniqueNumbers: jest.fn() } as any,
@@ -367,6 +377,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn().mockResolvedValue([]) }) } as any,
       { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40, resultDisplaySeconds: 10, enabled: true, defaultTicketPriceMinor: 100, defaultMaxTickets: 100, defaultOneLineMinor: 5000, defaultTwoLinesMinor: 10000, defaultFullHouseMinor: 20000, autoRepeatIntervalMinutes: 5, minTicketsToStart: 1 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
+      { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
@@ -400,6 +411,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn().mockResolvedValue([]) }) } as any,
       { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
+      { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
@@ -706,6 +718,39 @@ describe('BingoService cartela lifecycle guards', () => {
     await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(false);
 
     expect(purchaseSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses only explicitly Bingo-enabled bot users for new Bingo cartelas', async () => {
+    const { service } = makeService({ rooms: [] });
+    const manager = { query: jest.fn().mockResolvedValue([]) };
+
+    await (service as any).getActiveBotUserIds(manager);
+
+    expect(manager.query.mock.calls[0][0]).toContain(
+      "JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') = true",
+    );
+    expect(manager.query.mock.calls[0][0]).not.toContain(
+      "JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') IS NULL",
+    );
+  });
+
+  it('does not redirect multiple prize places to the same bot identity', () => {
+    const { service } = makeService({ rooms: [] });
+    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
+      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+
+    const winner = (service as any).pickBotRedirectWinner(
+      [
+        { id: 'ticket-1', userId: 'bot-1', grid: [[1]] },
+        { id: 'ticket-2', userId: 'bot-2', grid: [[2]] },
+      ],
+      new Set(['bot-1', 'bot-2']),
+      { id: 'pattern-1' },
+      [1],
+      new Set(['bot-1']),
+    );
+
+    expect(winner?.userId).toBe('bot-2');
   });
 });
 

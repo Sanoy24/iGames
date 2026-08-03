@@ -252,6 +252,10 @@ export class BingoConfig {
   @Column({ type: 'int', nullable: true })
   houseCardBallNumber?: number | null;
 
+  /** PERSISTENT ticket price for the House room slot. Null = use defaultTicketPriceMinor each recreation. */
+  @Column({ type: 'int', nullable: true })
+  houseTicketPriceMinor?: number | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

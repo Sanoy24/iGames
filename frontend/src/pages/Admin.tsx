@@ -35,7 +35,7 @@ import {
   type CoverageGap,
   type ConfigChangeLog,
 } from '../lib/api';
-import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, BingoRoomSlot, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
+import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, BingoRoomSlot, BingoCustomRoomSlot, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { BINGO_CARD_PALETTES, getBingoCardPalette, type BingoCardPaletteId } from '../lib/bingoCardPalette';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -2708,6 +2708,112 @@ function BingoAdmin() {
     finally { setBusy(null); }
   };
 
+  const [slotPriceDraft, setSlotPriceDraft] = useState<Record<string, string>>({});
+  const saveSlotPrice = async (ownerId: string) => {
+    const raw = slotPriceDraft[ownerId] ?? '';
+    const value = raw.trim() === '' ? null : Number(raw);
+    if (value !== null && (!Number.isInteger(value) || value < 1)) {
+      addToast('error', 'Ticket price must be a positive whole number.');
+      return;
+    }
+    setBusy(`slot-price-${ownerId}`);
+    try {
+      const updated = await adminBingoApi.updateRoomSlot(ownerId, { ticketPriceMinor: value });
+      setSlots(updated);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  // Custom Room Slots (persistent, independently-named admin rooms — each
+  // keeps recreating itself with the same name/price/prizes/style after every
+  // round; see BingoService.ensureCustomRoomSlots).
+  const [showCustomSlots, setShowCustomSlots] = useState(false);
+  const [customSlots, setCustomSlots] = useState<BingoCustomRoomSlot[]>([]);
+  const [customSlotsLoading, setCustomSlotsLoading] = useState(false);
+  const [editingCustomSlotNameId, setEditingCustomSlotNameId] = useState<string | null>(null);
+  const [editingCustomSlotNameValue, setEditingCustomSlotNameValue] = useState('');
+  const [customSlotPaletteEditorId, setCustomSlotPaletteEditorId] = useState<string | null>(null);
+  const [customSlotBallDraft, setCustomSlotBallDraft] = useState<Record<string, string>>({});
+  const [customSlotPriceDraft, setCustomSlotPriceDraft] = useState<Record<string, string>>({});
+
+  const loadCustomSlots = useCallback(async () => {
+    setCustomSlotsLoading(true);
+    try {
+      setCustomSlots(await adminBingoApi.listCustomRoomSlots());
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setCustomSlotsLoading(false); }
+  }, [addToast]);
+
+  const saveCustomSlotName = async (id: string) => {
+    const trimmed = editingCustomSlotNameValue.trim();
+    if (!trimmed) { addToast('error', 'Room name cannot be empty.'); return; }
+    setBusy(`custom-slot-name-${id}`);
+    try {
+      const updated = await adminBingoApi.updateCustomRoomSlot(id, { name: trimmed });
+      setCustomSlots(updated);
+      setEditingCustomSlotNameId(null);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const saveCustomSlotPalette = async (id: string, paletteId: string | null) => {
+    setBusy(`custom-slot-palette-${id}`);
+    try {
+      const updated = await adminBingoApi.updateCustomRoomSlot(id, { cardPaletteId: paletteId });
+      setCustomSlots(updated);
+      setCustomSlotPaletteEditorId(null);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const saveCustomSlotBallNumber = async (id: string) => {
+    const raw = customSlotBallDraft[id] ?? '';
+    const value = raw.trim() === '' ? null : Number(raw);
+    if (value !== null && (!Number.isInteger(value) || value < 1)) {
+      addToast('error', 'Ball number must be a positive whole number.');
+      return;
+    }
+    setBusy(`custom-slot-ball-${id}`);
+    try {
+      const updated = await adminBingoApi.updateCustomRoomSlot(id, { cardBallNumber: value });
+      setCustomSlots(updated);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const saveCustomSlotPrice = async (id: string) => {
+    const raw = customSlotPriceDraft[id] ?? '';
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1) {
+      addToast('error', 'Ticket price must be a positive whole number.');
+      return;
+    }
+    setBusy(`custom-slot-price-${id}`);
+    try {
+      const updated = await adminBingoApi.updateCustomRoomSlot(id, { ticketPriceMinor: value });
+      setCustomSlots(updated);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const toggleCustomSlotActive = async (id: string, isActive: boolean) => {
+    setBusy(`custom-slot-active-${id}`);
+    try {
+      const updated = await adminBingoApi.updateCustomRoomSlot(id, { isActive });
+      setCustomSlots(updated);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const deleteCustomSlot = async (id: string) => {
+    setBusy(`custom-slot-delete-${id}`);
+    try {
+      const updated = await adminBingoApi.deleteCustomRoomSlot(id);
+      setCustomSlots(updated);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
   // Round details modal (traceability)
   const [details, setDetails] = useState<BingoRoundDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -2732,6 +2838,10 @@ function BingoAdmin() {
   // '' = let the server pick at random (see BINGO_CARD_PALETTE_IDS).
   const [cardPaletteId, setCardPaletteId] = useState<BingoCardPaletteId | ''>('');
   const [cardBallNumber, setCardBallNumber] = useState('');
+  // Persistent = saved as a Custom Room Slot that keeps recreating itself with
+  // the same name/price/prizes/style after every round, instead of a one-off
+  // room that's gone once this round ends.
+  const [isPersistent, setIsPersistent] = useState(false);
 
   const [cfgForm, setCfgForm] = useState<Partial<BingoConfig>>({
     enabled: true,
@@ -2869,7 +2979,8 @@ function BingoAdmin() {
     void loadMeta();
     void loadRooms(1);
     void loadSlots();
-  }, [loadMeta, loadRooms, loadSlots]);
+    void loadCustomSlots();
+  }, [loadMeta, loadRooms, loadSlots, loadCustomSlots]);
 
   const goToRoomPage = async (nextPage: number) => {
     if (nextPage === page) return;
@@ -2878,8 +2989,8 @@ function BingoAdmin() {
   };
 
   const refreshBingo = useCallback(async () => {
-    await Promise.all([loadMeta(), loadRooms(page), loadSlots()]);
-  }, [loadMeta, loadRooms, loadSlots, page]);
+    await Promise.all([loadMeta(), loadRooms(page), loadSlots(), loadCustomSlots()]);
+  }, [loadMeta, loadRooms, loadSlots, loadCustomSlots, page]);
 
   const saveConfig = async () => {
     setBusy('cfg');
@@ -2902,24 +3013,34 @@ function BingoAdmin() {
   const createRoom = async () => {
     setBusy('create');
     try {
-      await adminBingoApi.createRoom({
+      const shared = {
         name: form.name,
         ticketPriceMinor: form.ticketPriceMinor,
         maxTickets: form.maxTickets,
-        scheduledStartAt: new Date(Date.now() + form.minutesFromNow * 60_000).toISOString(),
         prizes: { oneLineMinor: form.oneLine, twoLinesMinor: form.twoLines, fullHouseMinor: form.fullHouse },
         winMode,
         numberRange: winMode === 'pattern' ? numberRange : undefined,
         patternPrizes: winMode === 'pattern' ? patternPrizes : undefined,
         cardPaletteId: cardPaletteId || undefined,
         cardBallNumber: cardBallNumber ? Number(cardBallNumber) : undefined,
-      });
-      addToast('success', `Room "${form.name}" created.`);
+      };
+      if (isPersistent) {
+        await adminBingoApi.createCustomRoomSlot(shared);
+        addToast('success', `Persistent room "${form.name}" created — it will keep recreating itself.`);
+        await loadCustomSlots();
+      } else {
+        await adminBingoApi.createRoom({
+          ...shared,
+          scheduledStartAt: new Date(Date.now() + form.minutesFromNow * 60_000).toISOString(),
+        });
+        addToast('success', `Room "${form.name}" created.`);
+        setPage(1);
+        await loadRooms(1);
+      }
       setShowCreate(false);
       setCardPaletteId('');
       setCardBallNumber('');
-      setPage(1);
-      await loadRooms(1);
+      setIsPersistent(false);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -2979,6 +3100,9 @@ function BingoAdmin() {
         <button className="adm-btn adm-btn-secondary" onClick={() => setShowSlots((v) => !v)}>
           <Tag size={13} />{showSlots ? 'Hide Room Slots' : 'Room Slots'}
         </button>
+        <button className="adm-btn adm-btn-secondary" onClick={() => setShowCustomSlots((v) => !v)}>
+          <Tag size={13} />{showCustomSlots ? 'Hide Custom Rooms' : 'Custom Rooms'}
+        </button>
         <button className="adm-btn adm-btn-secondary" onClick={() => setShowSettings((v) => !v)}>
           <Settings size={13} />{showSettings ? 'Close' : 'Settings'}
         </button>
@@ -3024,7 +3148,7 @@ function BingoAdmin() {
             <div className="adm-empty">No room slots found.</div>
           ) : (
             <table className="adm-table">
-              <thead><tr><th>Owner</th><th>Live room now</th><th>Persistent name</th><th>Color</th><th>Ball #</th></tr></thead>
+              <thead><tr><th>Owner</th><th>Live room now</th><th>Persistent name</th><th>Color</th><th>Ball #</th><th>Price (ETB)</th></tr></thead>
               <tbody>
                 {slots.map((slot) => {
                   const palette = getBingoCardPalette(slot.cardPaletteId);
@@ -3092,6 +3216,130 @@ function BingoAdmin() {
                           />
                           <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `slot-ball-${slot.ownerId}`} onClick={() => void saveSlotBallNumber(slot.ownerId)}>Save</button>
                         </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input className="input" type="number" min={1} placeholder="Default" style={{ width: 80, fontSize: 12, padding: '4px 8px' }}
+                            value={slotPriceDraft[slot.ownerId] ?? (slot.ticketPriceMinor ?? '')}
+                            onChange={(e) => setSlotPriceDraft((d) => ({ ...d, [slot.ownerId]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveSlotPrice(slot.ownerId); }}
+                          />
+                          <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `slot-price-${slot.ownerId}`} onClick={() => void saveSlotPrice(slot.ownerId)}>Save</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Custom Room Slots panel — persistent, independently-named admin
+          rooms. Each keeps recreating itself with the same name/price/prizes/
+          style after every round (see BingoService.ensureCustomRoomSlots). */}
+      {showCustomSlots && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">
+            Custom Rooms <span className="adm-field-hint">— persistent admin-defined rooms. Each recreates itself with the same settings after every round until paused or deleted.</span>
+          </div>
+          {customSlotsLoading ? (
+            <div className="adm-empty">Loading…</div>
+          ) : customSlots.length === 0 ? (
+            <div className="adm-empty">No custom rooms yet. Check "Persistent" when creating a room to add one.</div>
+          ) : (
+            <table className="adm-table">
+              <thead><tr><th>Live room now</th><th>Name</th><th>Color</th><th>Ball #</th><th>Price (ETB)</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                {customSlots.map((slot) => {
+                  const palette = getBingoCardPalette(slot.cardPaletteId);
+                  return (
+                    <tr key={slot.id} className="adm-tr">
+                      <td className="adm-td-muted">
+                        {slot.currentRoomName ? `${slot.currentRoomName} (${slot.currentRoomStatus})` : '—'}
+                      </td>
+                      <td>
+                        {editingCustomSlotNameId === slot.id ? (
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input
+                              className="input"
+                              autoFocus
+                              value={editingCustomSlotNameValue}
+                              onChange={(e) => setEditingCustomSlotNameValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') void saveCustomSlotName(slot.id); if (e.key === 'Escape') setEditingCustomSlotNameId(null); }}
+                              style={{ fontSize: 12, padding: '4px 8px', width: 160 }}
+                            />
+                            <button className="adm-btn adm-btn-primary adm-btn-xs" disabled={busy === `custom-slot-name-${slot.id}`} onClick={() => void saveCustomSlotName(slot.id)}>Save</button>
+                            <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => setEditingCustomSlotNameId(null)}>Cancel</button>
+                          </div>
+                        ) : (
+                          <span
+                            style={{ cursor: 'pointer' }}
+                            title="Click to rename"
+                            onClick={() => { setEditingCustomSlotNameId(slot.id); setEditingCustomSlotNameValue(slot.name); }}
+                          >
+                            <strong>{slot.name}</strong>
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ position: 'relative' }}>
+                        <button
+                          type="button"
+                          title="Set persistent lobby card color"
+                          onClick={() => setCustomSlotPaletteEditorId(customSlotPaletteEditorId === slot.id ? null : slot.id)}
+                          style={{ width: 20, height: 20, borderRadius: 6, background: palette.gradient, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }}
+                        />
+                        {customSlotPaletteEditorId === slot.id && (
+                          <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 4, padding: 8, borderRadius: 8, background: 'var(--surface, #1a1d2e)', border: '1px solid var(--border)', display: 'flex', gap: 6 }}>
+                            {Object.values(BINGO_CARD_PALETTES).map((p) => (
+                              <button key={p.id} type="button" title={p.label}
+                                onClick={() => void saveCustomSlotPalette(slot.id, p.id)}
+                                style={{ width: 22, height: 22, borderRadius: 6, background: p.gradient, cursor: 'pointer', border: slot.cardPaletteId === p.id ? '2px solid #fff' : '1px solid rgba(255,255,255,0.25)' }}
+                              />
+                            ))}
+                            <button type="button" title="Random every time"
+                              onClick={() => void saveCustomSlotPalette(slot.id, null)}
+                              className="adm-btn adm-btn-secondary adm-btn-xs"
+                            >
+                              🎲
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input className="input" type="number" min={1} placeholder="Random" style={{ width: 70, fontSize: 12, padding: '4px 8px' }}
+                            value={customSlotBallDraft[slot.id] ?? (slot.cardBallNumber ?? '')}
+                            onChange={(e) => setCustomSlotBallDraft((d) => ({ ...d, [slot.id]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveCustomSlotBallNumber(slot.id); }}
+                          />
+                          <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `custom-slot-ball-${slot.id}`} onClick={() => void saveCustomSlotBallNumber(slot.id)}>Save</button>
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input className="input" type="number" min={1} style={{ width: 80, fontSize: 12, padding: '4px 8px' }}
+                            value={customSlotPriceDraft[slot.id] ?? slot.ticketPriceMinor}
+                            onChange={(e) => setCustomSlotPriceDraft((d) => ({ ...d, [slot.id]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveCustomSlotPrice(slot.id); }}
+                          />
+                          <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `custom-slot-price-${slot.id}`} onClick={() => void saveCustomSlotPrice(slot.id)}>Save</button>
+                        </div>
+                      </td>
+                      <td>
+                        <button
+                          className={`adm-btn adm-btn-xs ${slot.isActive ? 'adm-btn-secondary' : 'adm-btn-primary'}`}
+                          disabled={busy === `custom-slot-active-${slot.id}`}
+                          onClick={() => void toggleCustomSlotActive(slot.id, !slot.isActive)}
+                        >
+                          {slot.isActive ? 'Active' : 'Paused'}
+                        </button>
+                      </td>
+                      <td>
+                        <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `custom-slot-delete-${slot.id}`} onClick={() => void deleteCustomSlot(slot.id)}>
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   );
@@ -3563,7 +3811,19 @@ function BingoAdmin() {
             <label className="adm-field"><span>Room Name</span><input className="input" {...f('name')} /></label>
             <label className="adm-field"><span>Ticket Price (ETB)</span><input className="input" type="number" min={1} {...f('ticketPriceMinor')} /></label>
             <label className="adm-field"><span>Max Tickets</span><input className="input" type="number" min={1} {...f('maxTickets')} /></label>
-            <label className="adm-field"><span>Starts In (minutes)</span><input className="input" type="number" min={1} {...f('minutesFromNow')} /></label>
+            {isPersistent ? (
+              <label className="adm-field">
+                <span>Starts In (minutes)</span>
+                <input className="input" type="number" min={1} disabled value={form.minutesFromNow} />
+                <span className="adm-field-hint">Persistent rooms are idle — they start once the first ticket sells.</span>
+              </label>
+            ) : (
+              <label className="adm-field"><span>Starts In (minutes)</span><input className="input" type="number" min={1} {...f('minutesFromNow')} /></label>
+            )}
+            <label className="adm-field" style={{ gridColumn: '1 / -1', flexDirection: 'row', alignItems: 'center', gap: 8, display: 'flex' }}>
+              <input type="checkbox" checked={isPersistent} onChange={(e) => setIsPersistent(e.target.checked)} style={{ width: 16, height: 16 }} />
+              <span>Persistent — keep recreating this room with the same name/price/prizes/style after every round (adds it to Custom Rooms)</span>
+            </label>
             <label className="adm-field" style={{ gridColumn: '1 / -1' }}>
               <span>Win Mode</span>
               <select className="input" value={winMode} onChange={(e) => setWinMode(e.target.value as 'line' | 'pattern')}>

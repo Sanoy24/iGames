@@ -685,6 +685,13 @@ export class BotsService {
       .andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy.active') = true")
       .getMany();
     if (!game) return bots;
+    if (game === 'bingo') {
+      return bots.filter(
+        (bot) =>
+          (bot.productMetadata!.botPolicy as BotPolicyInput).games?.bingo?.active === true &&
+          this.isGameEnabled(this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput), game),
+      );
+    }
     return bots.filter((bot) => this.isGameEnabled(this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput), game));
   }
 

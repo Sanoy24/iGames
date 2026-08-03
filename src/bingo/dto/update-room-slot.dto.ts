@@ -22,4 +22,11 @@ export class UpdateRoomSlotDto {
   @IsInt()
   @Min(1)
   cardBallNumber?: number | null;
+
+  /** Persistent ticket price for this slot. Null = fall back to the global default each recreation. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsInt()
+  @Min(1)
+  ticketPriceMinor?: number | null;
 }

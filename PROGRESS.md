@@ -11,7 +11,7 @@
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **234/234 pass**; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` — **11/11 pass**
+**Tests**: `npm run test:unit` — **237/237 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **44/44 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -57,6 +57,20 @@
 ---
 
 ## Session Record
+### Session note: 2026-08-03 (Bingo bot pool + unique bot winners)
+
+**Goal**: Stop the same Bingo bot identity from repeatedly winning visible prize positions and make Bingo use only the explicitly enabled Bingo bot pool.
+
+**Completed**:
+
+- **Strict Bingo bot pool** - Bingo runtime selection now requires `botPolicy.games.bingo.active === true`, so globally active/master bots without an explicit Bingo flag no longer buy Bingo cartelas or receive Bingo bot bonuses.
+- **Room identity source preserved** - bot win steering no longer overrides the room-scoped bot identity with the separate `botAliasPool`; winners display through the same `botIdentityMap` name/suffix assigned when bots joined the room.
+- **Duplicate bot winner guard** - derash race and leaderboard settlement skip bot users that already won a prize position in the same room, preventing final standings like `Abrsh` in both 1st and 2nd place unless the code is intentionally changed later.
+- **Randomized redirect choice** - bot win redirects shuffle eligible bot tickets before selection instead of always taking the first matching bot ticket in repository order.
+- **Regression coverage** - added tests for strict Bingo-active pool selection and avoiding repeat bot redirect winners.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **44/44** pass; `cmd /c "npm run test:unit"` **237/237** pass.
+
 ### Session: 2026-08-03 (Bingo bot cartela policy, thresholds, and bonus-win controls)
 
 **Goal**: Centralize Bingo bot behavior behind admin-controlled policy knobs so cartela buying is randomized, per-bot caps are enforced, below/above real-player thresholds are configurable, and bot bonus-win cadence is explicit.

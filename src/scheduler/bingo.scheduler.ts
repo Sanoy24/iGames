@@ -244,6 +244,17 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
             error instanceof Error ? error.stack : error
           );
         }
+
+        // Persistent admin-defined custom rooms (see BingoCustomRoomSlot) — run
+        // independent of shared-vs-per-agent mode, so reconcile them either way.
+        try {
+          await this.bingoService.ensureCustomRoomSlots(cfg);
+        } catch (error) {
+          this.logger.error(
+            'Error ensuring custom Bingo room slots',
+            error instanceof Error ? error.stack : error
+          );
+        }
       }
     } catch (error) {
       this.logger.error('Bingo scheduler error', error instanceof Error ? error.stack : error);

@@ -5,6 +5,7 @@ import type {
   BingoPattern,
   BingoRoom,
   BingoRoomSlot,
+  BingoCustomRoomSlot,
   BingoRoomState,
   BingoTicket,
   CrashBet,
@@ -655,8 +656,41 @@ export const adminBingoApi = {
   /** House + every agent room slot with its PERSISTENT label/palette/ball —
    * survives every auto-recreation, unlike updateRoomDisplay above. */
   listRoomSlots: () => api.get<BingoRoomSlot[]>('/admin/bingo/room-slots').then((r) => r.data),
-  updateRoomSlot: (ownerId: string, dto: { label?: string | null; cardPaletteId?: string | null; cardBallNumber?: number | null }) =>
-    api.patch<BingoRoomSlot[]>(`/admin/bingo/room-slots/${encodeURIComponent(ownerId)}`, dto).then((r) => r.data),
+  updateRoomSlot: (
+    ownerId: string,
+    dto: { label?: string | null; cardPaletteId?: string | null; cardBallNumber?: number | null; ticketPriceMinor?: number | null },
+  ) => api.patch<BingoRoomSlot[]>(`/admin/bingo/room-slots/${encodeURIComponent(ownerId)}`, dto).then((r) => r.data),
+  /** Persistent, independently-named custom rooms — each keeps recreating
+   * itself with the same name/price/prizes/style after every round. */
+  listCustomRoomSlots: () => api.get<BingoCustomRoomSlot[]>('/admin/bingo/room-slots/custom').then((r) => r.data),
+  createCustomRoomSlot: (dto: {
+    name: string;
+    ticketPriceMinor: number;
+    maxTickets: number;
+    prizes: Record<string, number>;
+    winMode?: string;
+    numberRange?: number;
+    patternPrizes?: Array<{ patternId: string; name: string; prizeMinor: number }>;
+    cardPaletteId?: string;
+    cardBallNumber?: number;
+  }) => api.post<BingoCustomRoomSlot>('/admin/bingo/room-slots/custom', dto).then((r) => r.data),
+  updateCustomRoomSlot: (
+    id: string,
+    dto: Partial<{
+      name: string;
+      ticketPriceMinor: number;
+      maxTickets: number;
+      prizes: Record<string, number>;
+      winMode: string;
+      numberRange: number;
+      patternPrizes: Array<{ patternId: string; name: string; prizeMinor: number }>;
+      cardPaletteId: string | null;
+      cardBallNumber: number | null;
+      isActive: boolean;
+    }>,
+  ) => api.patch<BingoCustomRoomSlot[]>(`/admin/bingo/room-slots/custom/${encodeURIComponent(id)}`, dto).then((r) => r.data),
+  deleteCustomRoomSlot: (id: string) =>
+    api.delete<BingoCustomRoomSlot[]>(`/admin/bingo/room-slots/custom/${encodeURIComponent(id)}`).then((r) => r.data),
   drawNext: (roomId: string) =>
     api.post<BingoRoom>(`/admin/bingo/rooms/${roomId}/draw-next`).then((r) => r.data),
   cancelRoom: (roomId: string) =>

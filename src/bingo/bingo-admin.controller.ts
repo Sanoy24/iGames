@@ -9,6 +9,8 @@ import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
 import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
 import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo-pattern.dto';
 import { UpdateRoomSlotDto } from './dto/update-room-slot.dto';
+import { CreateCustomRoomSlotDto } from './dto/create-custom-room-slot.dto';
+import { UpdateCustomRoomSlotDto } from './dto/update-custom-room-slot.dto';
 
 @ApiTags('admin-bingo')
 @ApiBearerAuth()
@@ -72,6 +74,38 @@ export class BingoAdminController {
     const updatedLiveRoom = await this.bingoService.updateRoomSlot(ownerId, dto);
     if (updatedLiveRoom) this.gameEventsGateway.emitBingoRoomUpdated(updatedLiveRoom);
     return this.bingoService.listRoomSlots();
+  }
+
+  // ── Custom Room Slots (persistent, independently-named admin rooms) ─
+
+  /** Every persistent custom room slot, with a snapshot of its current live room. */
+  @Get('room-slots/custom')
+  @ApiOkResponse({ description: 'Every persistent custom room slot, with its currently live room (if any).' })
+  listCustomRoomSlots() {
+    return this.bingoService.listCustomRoomSlots();
+  }
+
+  @Post('room-slots/custom')
+  @ApiOkResponse({ description: 'Creates a persistent custom room slot and spawns its first live room.' })
+  async createCustomRoomSlot(@Body() dto: CreateCustomRoomSlotDto) {
+    const { slot, room } = await this.bingoService.createCustomRoomSlot(dto);
+    if (room) this.gameEventsGateway.emitBingoRoomUpdated(room);
+    return slot;
+  }
+
+  @Patch('room-slots/custom/:id')
+  @ApiOkResponse({ description: "Updates a custom room slot's persistent settings and applies non-retroactive fields to its live room immediately." })
+  async updateCustomRoomSlot(@Param('id') id: string, @Body() dto: UpdateCustomRoomSlotDto) {
+    const { room } = await this.bingoService.updateCustomRoomSlot(id, dto);
+    if (room) this.gameEventsGateway.emitBingoRoomUpdated(room);
+    return this.bingoService.listCustomRoomSlots();
+  }
+
+  @Delete('room-slots/custom/:id')
+  @ApiOkResponse({ description: 'Deletes a custom room slot. Its live room (if any) finishes normally and is not recreated.' })
+  async deleteCustomRoomSlot(@Param('id') id: string) {
+    await this.bingoService.deleteCustomRoomSlot(id);
+    return this.bingoService.listCustomRoomSlots();
   }
 
   @Post('rooms/:id/draw-next')

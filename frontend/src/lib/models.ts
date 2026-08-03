@@ -213,6 +213,30 @@ export type BingoRoomSlot = {
   label: string | null;
   cardPaletteId: string | null;
   cardBallNumber: number | null;
+  ticketPriceMinor: number | null;
+  currentRoomId: string | null;
+  currentRoomName: string | null;
+  currentRoomStatus: string | null;
+};
+
+/**
+ * A persistent, independently-named admin room (see BingoService.
+ * ensureCustomRoomSlots) — unlike a one-off room from adminBingoApi.createRoom,
+ * this keeps recreating itself with the same settings after every round.
+ */
+export type BingoCustomRoomSlot = {
+  id: string;
+  name: string;
+  ticketPriceMinor: number;
+  maxTickets: number;
+  winMode: 'line' | 'pattern' | 'prefilled';
+  numberRange: number | null;
+  gridSize: number | null;
+  prizes: Record<string, number>;
+  patternPrizes: BingoPatternPrize[];
+  cardPaletteId: string | null;
+  cardBallNumber: number | null;
+  isActive: boolean;
   currentRoomId: string | null;
   currentRoomName: string | null;
   currentRoomStatus: string | null;

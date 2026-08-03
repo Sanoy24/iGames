@@ -135,6 +135,10 @@ export class User {
   @Column({ type: 'int', nullable: true })
   bingoRoomCardBallNumber?: number | null;
 
+  /** PERSISTENT ticket price for this agent's room slot. Null = use BingoConfig.defaultTicketPriceMinor each recreation. See bingoRoomLabel above. */
+  @Column({ type: 'int', nullable: true })
+  bingoRoomTicketPriceMinor?: number | null;
+
   /**
    * Where the player says they came from, picked during registration. This is the
    * durable attribution unit — an agent-level credit stays deposit-driven via

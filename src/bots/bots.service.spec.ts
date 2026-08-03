@@ -201,6 +201,40 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
     });
   });
 
+  describe('Bingo bot pool filtering', () => {
+    it('requires bots to be explicitly enabled for Bingo before Bingo can use them', async () => {
+      const { service } = makeService({
+        existingBot: {
+          id: 'bot-1',
+          displayName: 'Master Bot',
+          productMetadata: { botPolicy: { active: true } } as any,
+        },
+      });
+
+      await expect((service as any).getActiveBots('bingo')).resolves.toEqual([]);
+    });
+
+    it('includes bots from the Bingo pool when their Bingo game flag is active', async () => {
+      const { service } = makeService({
+        existingBot: {
+          id: 'bot-1',
+          displayName: 'Bingo Bot',
+          productMetadata: {
+            botPolicy: {
+              active: true,
+              games: { bingo: { active: true } },
+            },
+          } as any,
+        },
+      });
+
+      const bots = await (service as any).getActiveBots('bingo');
+
+      expect(bots).toHaveLength(1);
+      expect(bots[0].displayName).toBe('Bingo Bot');
+    });
+  });
+
   describe('topupBot', () => {
     it('funds the top-up from the Master Wallet', async () => {
       // findBot's own lookup (a mocked queryBuilder) ignores the requested id and

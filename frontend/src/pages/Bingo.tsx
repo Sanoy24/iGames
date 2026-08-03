@@ -2875,12 +2875,88 @@ export function Bingo({ onBack }: BingoProps) {
         }
     };
 
-    // Instant buy-or-refund on a single tap. Tapping an available cartela buys it
-    // immediately; tapping one you already own (while sales are open) refunds it.
-    // The final freeze window blocks both directions, and a per-cartela pending
-    // guard prevents a double-tap from firing twice.
+    // Shared toast classification for a purchase/refund failure — pulled out so
+    // both the immediate refund path and the batched buy path (see
+    // flushPendingBuys below) show the same specific messages.
+    const toastCartelaError = useCallback(
+        (err: unknown) => {
+            const msg = getErrorMessage(err);
+            if (msg.toLowerCase().includes('taken'))
+                addToast('error', t('bingo.toastCartelaTaken'));
+            else if (
+                msg.toLowerCase().includes('balance') ||
+                msg.toLowerCase().includes('insufficient') ||
+                msg.toLowerCase().includes('enough')
+            )
+                addToast('error', t('bingo.toastInsufficientBalance'));
+            else if (msg.toLowerCase().includes('closed'))
+                addToast('error', t('bingo.toastSalesClosed'));
+            else if (msg.toLowerCase().includes('limit'))
+                addToast('error', t('bingo.cartelaLimit', { count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10) }));
+            else addToast('error', msg);
+        },
+        [addToast, t],
+    );
+
+    // Rapid taps queue their cartela number here instead of firing one HTTP
+    // request each — each request takes a pessimistic write lock on the room,
+    // so many concurrent single-cartela buys were serializing on that lock and
+    // occasionally surfacing as a generic "service error" under load. A short
+    // trailing debounce coalesces everything tapped in the same burst into one
+    // purchaseCartelas([...]) call.
+    const pendingBuyQueueRef = useRef<number[]>([]);
+    const pendingBuyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingBuyRoomIdRef = useRef<string | null>(null);
+    const pendingBuyIdempotencyKeyRef = useRef<string | null>(null);
+
+    const flushPendingBuys = useCallback(async () => {
+        pendingBuyTimerRef.current = null;
+        const numbers = pendingBuyQueueRef.current;
+        pendingBuyQueueRef.current = [];
+        const roomId = pendingBuyRoomIdRef.current;
+        const idempotencyKey = pendingBuyIdempotencyKeyRef.current;
+        pendingBuyRoomIdRef.current = null;
+        pendingBuyIdempotencyKeyRef.current = null;
+        if (numbers.length === 0 || !roomId || !idempotencyKey) return;
+
+        try {
+            const bought = await bingoApi.purchaseCartelas(roomId, numbers, idempotencyKey);
+            localRoomIdRef.current = roomId;
+            setLocalTickets((prev) => [...prev, ...bought]);
+            soundEngine.cashout();
+            if (numbers.length === 1) {
+                addToast('success', t('bingo.toastCartelaPurchased', { n: numbers[0] }));
+            } else {
+                addToast(
+                    'success',
+                    t('bingo.toastCartelasPurchased', {
+                        count: numbers.length,
+                        defaultValue: `${numbers.length} cartelas purchased`,
+                    }),
+                );
+            }
+            const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
+            setWallet(nextWallet);
+        } catch (err) {
+            toastCartelaError(err);
+            void loadCurrent();
+        } finally {
+            setPendingCartelas((prev) => {
+                const next = new Set(prev);
+                for (const n of numbers) next.delete(n);
+                return next;
+            });
+        }
+    }, [addToast, loadCurrent, setWallet, t, toastCartelaError]);
+
+    // Instant buy-or-refund on a single tap. Tapping an available cartela queues
+    // it for purchase (batched with any other cartelas tapped in the same short
+    // window — see flushPendingBuys); tapping one you already own (while sales
+    // are open) refunds it immediately. The final freeze window blocks both
+    // directions, and a per-cartela pending guard prevents a double-tap from
+    // firing twice.
     const handleCartelaTap = useCallback(
-        async (n: number) => {
+        (n: number) => {
             if (!room || room.status !== 'open') return;
             if (!currentUser) {
                 addToast('error', t('bingo.toastLoginToBuy'));
@@ -2894,61 +2970,54 @@ export function Bingo({ onBack }: BingoProps) {
             if (!owned && takenSet.has(n)) return; // taken by someone else — locked
 
             setPendingCartelas((prev) => new Set(prev).add(n));
-            try {
-                if (owned) {
-                    const refund = await bingoApi.releaseCartela(room.id, n);
-                    setLocalTickets((prev) =>
-                        prev.filter((t) => t.cartelaNumber !== n),
-                    );
-                    addToast('info', t('bingo.toastCartelaRefunded', { n }));
-                    if (refund.roomCancelled) {
-                        cancelledRoomRef.current = room.id;
-                        const cancelledRoom = await bingoApi.getRoomState(room.id);
-                        setRoom(cancelledRoom);
-                        roomIdRef.current = cancelledRoom.id;
-                        localRoomIdRef.current = cancelledRoom.id;
-                        setWallet(await walletApi.getWallet());
-                        return;
+
+            if (owned) {
+                void (async () => {
+                    try {
+                        const refund = await bingoApi.releaseCartela(room.id, n);
+                        setLocalTickets((prev) =>
+                            prev.filter((t) => t.cartelaNumber !== n),
+                        );
+                        addToast('info', t('bingo.toastCartelaRefunded', { n }));
+                        if (refund.roomCancelled) {
+                            cancelledRoomRef.current = room.id;
+                            const cancelledRoom = await bingoApi.getRoomState(room.id);
+                            setRoom(cancelledRoom);
+                            roomIdRef.current = cancelledRoom.id;
+                            localRoomIdRef.current = cancelledRoom.id;
+                            setWallet(await walletApi.getWallet());
+                            return;
+                        }
+                        const [nextWallet] = await Promise.all([
+                            walletApi.getWallet(),
+                            loadCurrent(),
+                        ]);
+                        setWallet(nextWallet);
+                    } catch (err) {
+                        toastCartelaError(err);
+                        void loadCurrent();
+                    } finally {
+                        setPendingCartelas((prev) => {
+                            const next = new Set(prev);
+                            next.delete(n);
+                            return next;
+                        });
                     }
-                } else {
-                    const bought = await bingoApi.purchaseCartelas(
-                        room.id,
-                        [n],
-                        createIdempotencyKey('bingo-cartela'),
-                    );
-                    localRoomIdRef.current = room.id;
-                    setLocalTickets((prev) => [...prev, ...bought]);
-                    soundEngine.cashout();
-                    addToast('success', t('bingo.toastCartelaPurchased', { n }));
-                }
-                const [nextWallet] = await Promise.all([
-                    walletApi.getWallet(),
-                    loadCurrent(),
-                ]);
-                setWallet(nextWallet);
-            } catch (err) {
-                const msg = getErrorMessage(err);
-                if (msg.toLowerCase().includes('taken'))
-                    addToast('error', t('bingo.toastCartelaTaken'));
-                else if (
-                    msg.toLowerCase().includes('balance') ||
-                    msg.toLowerCase().includes('insufficient') ||
-                    msg.toLowerCase().includes('enough')
-                )
-                    addToast('error', t('bingo.toastInsufficientBalance'));
-                else if (msg.toLowerCase().includes('closed'))
-                    addToast('error', t('bingo.toastSalesClosed'));
-                else if (msg.toLowerCase().includes('limit'))
-                    addToast('error', t('bingo.cartelaLimit', { count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10) }));
-                else addToast('error', msg);
-                void loadCurrent();
-            } finally {
-                setPendingCartelas((prev) => {
-                    const next = new Set(prev);
-                    next.delete(n);
-                    return next;
-                });
+                })();
+                return;
             }
+
+            // Buy path: enqueue and (re)start the short debounce window so several
+            // rapid taps land as a single batched purchase request.
+            pendingBuyQueueRef.current.push(n);
+            pendingBuyRoomIdRef.current = room.id;
+            if (!pendingBuyIdempotencyKeyRef.current) {
+                pendingBuyIdempotencyKeyRef.current = createIdempotencyKey('bingo-cartela');
+            }
+            if (pendingBuyTimerRef.current) clearTimeout(pendingBuyTimerRef.current);
+            pendingBuyTimerRef.current = setTimeout(() => {
+                void flushPendingBuys();
+            }, 250);
         },
         [
             room,
@@ -2961,6 +3030,8 @@ export function Bingo({ onBack }: BingoProps) {
             loadCurrent,
             setWallet,
             t,
+            toastCartelaError,
+            flushPendingBuys,
         ],
     );
 

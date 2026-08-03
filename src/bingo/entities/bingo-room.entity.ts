@@ -166,6 +166,17 @@ export class BingoRoom {
   @Column({ type: 'int', nullable: true })
   cardBallNumber?: number | null;
 
+  /**
+   * Links a room to the persistent BingoCustomRoomSlot it was recreated from
+   * (see BingoService.ensureCustomRoomSlots / createRoomFromCustomSlot). NULL
+   * for every room NOT spawned from a custom slot (one-off admin rooms, House,
+   * agent rooms). Lets the reconciler find "does this slot already have a live
+   * room" without relying on name matching.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  customSlotId?: string | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

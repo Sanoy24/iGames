@@ -613,7 +613,7 @@
       "status": "passing",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
       "evidence": "frontend/src/pages/Bingo.tsx (cartelaChangesLocked, CartelaGrid returnLocked prop, handleCartelaTap guard, buy button guard, refund chip disabled state, countdown hint).",
-      "notes": "Frontend follows the server-side freeze duration from the room snapshot so the button state matches the rejection rule instead of surfacing a late error after the tap."
+      "notes": "Frontend follows the server-side freeze duration from the room snapshot so the button state matches the rejection rule instead of surfacing a late error after the tap. If the last real player refunds all cartelas and the room cancels, the page now stays on the cartela view instead of jumping to the next room's now-calling screen."
     },
     {
       "id": "BE-26",

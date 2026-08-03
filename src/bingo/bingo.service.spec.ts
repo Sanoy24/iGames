@@ -512,7 +512,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
     const result = await service.releaseCartela({ userId, roomId: room.id, cartelaNumber: 7 });
 
-    expect(result).toEqual({ cartelaNumber: 7, refundedMinor: 100 });
+    expect(result).toEqual({ cartelaNumber: 7, refundedMinor: 100, roomCancelled: true });
     expect(room.status).toBe('cancelled');
     expect(room.soldTickets).toBe(0);
     expect(room.settlementSummary).toMatchObject({ reason: 'bingo_room_no_real_players' });

@@ -1594,7 +1594,7 @@ export class BingoService implements OnModuleInit {
     roomId: string;
     cartelaNumber: number;
     skipBotReconcile?: boolean;
-  }): Promise<{ cartelaNumber: number; refundedMinor: number }> {
+  }): Promise<{ cartelaNumber: number; refundedMinor: number; roomCancelled?: boolean }> {
     const userId = this.validateUuid(input.userId, 'userId');
     const roomId = this.validateUuid(input.roomId, 'roomId');
     let roomCancelledBecauseNoRealPlayers = false;
@@ -1673,7 +1673,10 @@ export class BingoService implements OnModuleInit {
       );
     }
 
-    return result;
+    return {
+      ...result,
+      roomCancelled: roomCancelledBecauseNoRealPlayers,
+    };
   }
 
   // ── Draw ─────────────────────────────────────────────────────────────────────

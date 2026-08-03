@@ -88,6 +88,17 @@
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **234/234** pass.
 
+### Session note: 2026-08-03 (cancelled Bingo room stays on cartela page)
+
+**Goal**: Prevent the Bingo UI from jumping to a now-calling/next-room view when the last real player refunds all cartelas and the room cancels.
+
+**Completed**:
+
+- **Cancelled-room UI lock** - the Bingo page now keeps a cancelled prefilled room on the cartela view instead of auto-switching to the next current room, even if a poll response arrives after the cancellation.
+- **Refund response signal** - the cartela refund endpoint now tells the client when the refund cancelled the room, so the page can stay on the same room and render the cancelled state without a room swap.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npm run test:unit` **234/234** pass.
+
 ### Session: 2026-08-02 (Bingo room list pagination + newest-first admin polish)
 
 **Goal**: Make the Bingo admin room list read like a proper paged table, with newest rooms first and clean next/previous navigation.

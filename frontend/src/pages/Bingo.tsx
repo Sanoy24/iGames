@@ -2092,10 +2092,16 @@ export function Bingo({ onBack }: BingoProps) {
             const next = pinnedRoomId
                 ? await bingoApi.getRoomState(pinnedRoomId)
                 : await bingoApi.getCurrentRoom();
+            if (room?.status === 'cancelled' && next?.id !== room.id) {
+                setLoading(false);
+                return;
+            }
             setRoom((prev) => {
                 // During result hold, don't switch to a different (newer) room —
                 // only allow updating the same room (e.g. to pick up settlement data).
                 if (holdingResultRef.current && next?.id !== prev?.id)
+                    return prev;
+                if (prev?.status === 'cancelled' && next?.id !== prev?.id)
                     return prev;
                 return next;
             });
@@ -2111,7 +2117,7 @@ export function Bingo({ onBack }: BingoProps) {
         } finally {
             setLoading(false);
         }
-    }, [addToast, pinnedRoomId]);
+    }, [addToast, pinnedRoomId, room?.id, room?.status]);
 
     // Lobby (per-agent mode): keep the room list fresh so players/pots update.
     useEffect(() => {
@@ -2312,7 +2318,12 @@ export function Bingo({ onBack }: BingoProps) {
     // ── Result hold ──────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!room) return;
-        const done = room.status === 'completed' || room.status === 'cancelled';
+        if (room.status === 'cancelled') {
+            holdingResultRef.current = false;
+            setHoldingResult(false);
+            return;
+        }
+        const done = room.status === 'completed';
         if (!done) {
             holdingResultRef.current = false;
             setHoldingResult(false);
@@ -2439,6 +2450,8 @@ export function Bingo({ onBack }: BingoProps) {
         ? 'loading'
         : holdingResult
           ? 'result'
+          : room.status === 'cancelled' && room.winMode === 'prefilled'
+            ? 'buy'
           : room.status === 'open'
             ? 'buy'
             : room.status === 'running'
@@ -2746,11 +2759,19 @@ export function Bingo({ onBack }: BingoProps) {
             setPendingCartelas((prev) => new Set(prev).add(n));
             try {
                 if (owned) {
-                    await bingoApi.releaseCartela(room.id, n);
+                    const refund = await bingoApi.releaseCartela(room.id, n);
                     setLocalTickets((prev) =>
                         prev.filter((t) => t.cartelaNumber !== n),
                     );
                     addToast('info', t('bingo.toastCartelaRefunded', { n }));
+                    if (refund.roomCancelled) {
+                        const cancelledRoom = await bingoApi.getRoomState(room.id);
+                        setRoom(cancelledRoom);
+                        roomIdRef.current = cancelledRoom.id;
+                        localRoomIdRef.current = cancelledRoom.id;
+                        setWallet(await walletApi.getWallet());
+                        return;
+                    }
                 } else {
                     const bought = await bingoApi.purchaseCartelas(
                         room.id,

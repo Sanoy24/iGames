@@ -295,7 +295,7 @@ export const bingoApi = {
   releaseCartela: (roomId: string, cartelaNumber: number) =>
     api
       .delete(`/bingo/rooms/${roomId}/cartelas/${cartelaNumber}`)
-      .then((r) => r.data as { cartelaNumber: number; refundedMinor: number }),
+      .then((r) => r.data as { cartelaNumber: number; refundedMinor: number; roomCancelled?: boolean }),
   setAuto: (roomId: string, auto: boolean) =>
     api
       .post(`/bingo/rooms/${roomId}/auto`, { auto })

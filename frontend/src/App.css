@@ -923,6 +923,20 @@
 
 /* Desktop: nav becomes a fixed left rail */
 @media (min-width: 900px) {
+  /* .adm-root sits inside .main-content, which is ALREADY the page's own
+     scroll container — but .main-content's visible height is `100vh` minus
+     WalletBar (a sibling rendered above it, see App.tsx), a height that isn't
+     a fixed/known number in CSS. A `calc(100vh - <header px>)` max-height on
+     the sidebar (the previous approach) therefore always overestimated by
+     WalletBar's height, silently clipping the bottom of the tab list with no
+     way to scroll to it. Bounding .adm-root to fill .main-content's box
+     exactly and letting the sidebar/content stretch to match it sidesteps the
+     unknown-WalletBar-height problem entirely — no magic numbers needed.
+     Each pane then scrolls independently within that fixed box. */
+  .adm-root {
+    height: 100%;
+    overflow: hidden;
+  }
   .adm-tab-bar {
     flex-direction: column;
     overflow-x: visible;
@@ -932,13 +946,13 @@
     border-right: 1px solid var(--border);
     padding: 12px 10px;
     gap: 3px;
-    position: sticky;
-    top: 53px;
-    align-self: flex-start;
-    max-height: calc(100vh - 53px);
   }
   .adm-tab { width: 100%; }
-  .adm-content { padding: 22px 26px; }
+  .adm-content {
+    padding: 22px 26px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .adm-section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }

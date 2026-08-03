@@ -1380,11 +1380,18 @@ export class BingoService implements OnModuleInit {
    * agent's user id). Takes effect the NEXT time ensureAgentRooms recreates
    * that slot's room — the currently live room is untouched (use
    * updateRoomDisplay to restyle it right now).
+   *
+   * ALSO applies the same name/palette/ball to the slot's CURRENTLY live
+   * room (if one exists), so the admin sees the change immediately instead
+   * of only on the next auto-recreation — a saved slot setting with no
+   * visible effect until some future, unpredictable moment reads as broken.
+   * Returns that live room's new state (for a realtime lobby push), or null
+   * if the slot has no live room right now / nothing display-visible changed.
    */
   async updateRoomSlot(
     ownerId: string,
     dto: { label?: string | null; cardPaletteId?: string | null; cardBallNumber?: number | null },
-  ): Promise<void> {
+  ): Promise<BingoRoomResponse | null> {
     if (dto.cardPaletteId !== undefined && dto.cardPaletteId !== null && !isValidCardPaletteId(dto.cardPaletteId)) {
       throw new BadRequestException('Unknown card palette id');
     }
@@ -1392,6 +1399,7 @@ export class BingoService implements OnModuleInit {
       throw new BadRequestException('Ball number must be positive');
     }
     const label = dto.label !== undefined ? dto.label?.trim() || null : undefined;
+    let ownerAgentId: string | null;
 
     if (ownerId === 'house') {
       const cfg = await this.getBingoConfig();
@@ -1399,27 +1407,45 @@ export class BingoService implements OnModuleInit {
       if (dto.cardPaletteId !== undefined) cfg.houseCardPaletteId = dto.cardPaletteId;
       if (dto.cardBallNumber !== undefined) cfg.houseCardBallNumber = dto.cardBallNumber;
       await this.bingoConfigRepository.save(cfg);
-      return;
+      ownerAgentId = null;
+    } else {
+      const validAgentId = this.validateUuid(ownerId, 'ownerId');
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (label !== undefined) {
+        sets.push('bingoRoomLabel = ?');
+        params.push(label);
+      }
+      if (dto.cardPaletteId !== undefined) {
+        sets.push('bingoRoomCardPaletteId = ?');
+        params.push(dto.cardPaletteId);
+      }
+      if (dto.cardBallNumber !== undefined) {
+        sets.push('bingoRoomCardBallNumber = ?');
+        params.push(dto.cardBallNumber);
+      }
+      if (sets.length > 0) {
+        params.push(validAgentId);
+        await this.bingoRoomRepository.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
+      }
+      ownerAgentId = validAgentId;
     }
 
-    const validAgentId = this.validateUuid(ownerId, 'ownerId');
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    if (label !== undefined) {
-      sets.push('bingoRoomLabel = ?');
-      params.push(label);
-    }
-    if (dto.cardPaletteId !== undefined) {
-      sets.push('bingoRoomCardPaletteId = ?');
-      params.push(dto.cardPaletteId);
-    }
-    if (dto.cardBallNumber !== undefined) {
-      sets.push('bingoRoomCardBallNumber = ?');
-      params.push(dto.cardBallNumber);
-    }
-    if (sets.length === 0) return;
-    params.push(validAgentId);
-    await this.bingoRoomRepository.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
+    // name: null means "clear the persistent label", which has no retroactive
+    // default to apply to an already-named live room — only a newly SET label
+    // pushes to the live room; palette/ball null ("re-roll") is fine to push,
+    // updateRoomDisplay already treats null as "pick a fresh random one now".
+    const liveUpdate: { name?: string; cardPaletteId?: string | null; cardBallNumber?: number | null } = {};
+    if (label) liveUpdate.name = label;
+    if (dto.cardPaletteId !== undefined) liveUpdate.cardPaletteId = dto.cardPaletteId;
+    if (dto.cardBallNumber !== undefined) liveUpdate.cardBallNumber = dto.cardBallNumber;
+    if (Object.keys(liveUpdate).length === 0) return null;
+
+    const currentRoom = await this.bingoRoomRepository.findOne({
+      where: { ownerAgentId: ownerAgentId ?? IsNull(), status: In(['open', 'running']), isAdminCreated: false },
+    });
+    if (!currentRoom) return null;
+    return this.updateRoomDisplay(currentRoom.id, liveUpdate);
   }
 
   async listRooms(input: { page?: number; limit?: number } = {}): Promise<BingoRoomListResponse> {

@@ -67,9 +67,10 @@ export class BingoAdminController {
   }
 
   @Patch('room-slots/:ownerId')
-  @ApiOkResponse({ description: "Updates a room slot's persistent label/palette/ball ('house' or an agent id)." })
+  @ApiOkResponse({ description: "Updates a room slot's persistent label/palette/ball ('house' or an agent id) and applies it to that slot's live room immediately." })
   async updateRoomSlot(@Param('ownerId') ownerId: string, @Body() dto: UpdateRoomSlotDto) {
-    await this.bingoService.updateRoomSlot(ownerId, dto);
+    const updatedLiveRoom = await this.bingoService.updateRoomSlot(ownerId, dto);
+    if (updatedLiveRoom) this.gameEventsGateway.emitBingoRoomUpdated(updatedLiveRoom);
     return this.bingoService.listRoomSlots();
   }
 

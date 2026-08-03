@@ -697,6 +697,11 @@ export class BingoService implements OnModuleInit {
     ownerAgentId: string | null,
     activeGuard: number | null,
     ownerName?: string,
+    /** Agent's own custom room label (User.bingoRoomLabel), read fresh on
+     * every auto-recreation — takes over the whole name, not just the "owner"
+     * part, so an admin gets full control same as a manually created room's
+     * name (no forced " · Bingo" suffix). */
+    customLabel?: string | null,
   ): Promise<BingoRoomResponse | null> {
     const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
     const gridSize = cfg.defaultGridSize ?? 75;
@@ -706,7 +711,7 @@ export class BingoService implements OnModuleInit {
       minute: '2-digit',
       hour12: true,
     });
-    const name = ownerName ? `${ownerName} · Bingo` : `Bingo ${timestamp}`;
+    const name = customLabel?.trim() || (ownerName ? `${ownerName} · Bingo` : `Bingo ${timestamp}`);
     const numberRange = this.ballPoolFor(winMode, cfg);
 
     const room = this.bingoRoomRepository.create({
@@ -776,12 +781,12 @@ export class BingoService implements OnModuleInit {
     const config = cfg ?? (await this.getBingoConfig());
     if (!config.enabled) return;
 
-    const agents: Array<{ id: string; displayName: string }> = await this.bingoRoomRepository.query(
-      `SELECT id, displayName FROM users WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"')`,
+    const agents: Array<{ id: string; displayName: string; bingoRoomLabel: string | null }> = await this.bingoRoomRepository.query(
+      `SELECT id, displayName, bingoRoomLabel FROM users WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"')`,
     );
-    const owners: Array<{ ownerAgentId: string | null; name?: string }> = [
+    const owners: Array<{ ownerAgentId: string | null; name?: string; customLabel?: string | null }> = [
       { ownerAgentId: null }, // house room
-      ...agents.map((a) => ({ ownerAgentId: a.id, name: a.displayName })),
+      ...agents.map((a) => ({ ownerAgentId: a.id, name: a.displayName, customLabel: a.bingoRoomLabel })),
     ];
 
     for (const owner of owners) {
@@ -793,7 +798,7 @@ export class BingoService implements OnModuleInit {
         order: { scheduledStartAt: 'ASC' },
       });
       if (active.length === 0) {
-        await this.createIdleRoom(config, owner.ownerAgentId, null, owner.name).catch((err) =>
+        await this.createIdleRoom(config, owner.ownerAgentId, null, owner.name, owner.customLabel).catch((err) =>
           this.logger.error('ensureAgentRooms create failed', err instanceof Error ? err.stack : err),
         );
       } else if (active.length > 1) {
@@ -1108,17 +1113,13 @@ export class BingoService implements OnModuleInit {
       }
     }
 
-    // Otherwise the next open room, then finally the most recent completed one.
+    // Otherwise return the next open room. Completed rooms are only current
+    // inside the result-display window above; after that they are history.
     if (!room) {
-      room =
-        (await this.bingoRoomRepository.findOne({
-          where: { status: 'open' },
-          order: { scheduledStartAt: 'ASC' },
-        })) ??
-        (await this.bingoRoomRepository.findOne({
-          where: { status: 'completed' },
-          order: { updatedAt: 'DESC' },
-        }));
+      room = await this.bingoRoomRepository.findOne({
+        where: { status: 'open' },
+        order: { scheduledStartAt: 'ASC' },
+      });
     }
 
     if (!room) return null;
@@ -3184,6 +3185,12 @@ export class BingoService implements OnModuleInit {
       ticket.walletCredits = [...(ticket.walletCredits ?? []), refundCredit];
       await manager.save(ticket);
     }
+
+    await manager.update(
+      BingoCard,
+      { roomId: room.id },
+      { assignedTicketId: null, assignedUserId: null },
+    );
 
     room.status = 'cancelled';
     room.activeGuard = null;

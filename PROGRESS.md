@@ -111,6 +111,30 @@
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npm run test:unit` **234/234** pass.
 
+### Session note: 2026-08-03 (bot cartela release on cancelled Bingo rooms)
+
+**Goal**: Fix the stuck cartela grid after the last real player refunds every cartela in a bot-assisted room.
+
+**Completed**:
+
+- **Room-wide card release** - cancellation now clears all assigned Bingo card rows in the same transaction that refunds/cancels tickets, so bot cartelas do not remain visually taken after `soldTickets` returns to 0.
+- **Pinned-room recovery** - if a player entered through the Rooms flow, a cancelled pinned room is unpinned automatically so the client can resume the normal current-room flow without a manual Mini App refresh.
+- **Regression coverage** - the last-real-player refund test now asserts the room-wide Bingo card release happens when the room cancels.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npx jest src/bingo/bingo.service.spec.ts --forceExit --no-coverage --runInBand` **27/27** pass; `npm run test:unit -- --runInBand` **234/234** pass.
+
+### Session note: 2026-08-03 (completed Bingo room no longer sticks after bot win)
+
+**Goal**: Stop the Mini App from staying on the completed now-calling board after a bot win dialog closes.
+
+**Completed**:
+
+- **Time-boxed completed rooms** - `GET /bingo/current` now returns a completed room only during the configured result-display window. After that, completed rooms are history, so the client will not keep repainting an old completed board.
+- **Dismissed-result guard** - once the frontend has dismissed a completed room, it ignores that same completed room if the API briefly returns it again during timing overlap.
+- **Regression coverage** - added a `getCurrentRoom` test proving old completed rooms return `null` instead of sticking as current.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npx jest src/bingo/bingo.service.spec.ts --forceExit --no-coverage --runInBand` **28/28** pass; `npm run test:unit -- --runInBand` **235/235** pass.
+
 ### Session: 2026-08-02 (Bingo room list pagination + newest-first admin polish)
 
 **Goal**: Make the Bingo admin room list read like a proper paged table, with newest rooms first and clean next/previous navigation.

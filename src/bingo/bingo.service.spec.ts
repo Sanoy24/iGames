@@ -1,4 +1,5 @@
 import { BingoService } from './bingo.service';
+import { BingoCard } from './entities/bingo-card.entity';
 import { BingoRoom } from './entities/bingo-room.entity';
 
 // ─── Fixture builders ──────────────────────────────────────────────────────────
@@ -176,13 +177,22 @@ describe('BingoService.getCurrentRoom — unit (mocked repos)', () => {
     expect(result?.id).toBe(open.id);
   });
 
-  it('returns the most recently completed room when nothing is live', async () => {
+  it('returns a recently completed room during the result window', async () => {
     const old = makeRoom({ status: 'completed', updatedAt: new Date('2026-01-01') });
     const recent = makeRoom({ status: 'completed', updatedAt: new Date('2026-06-01') });
-    const { service } = makeService({ rooms: [old, recent] });
+    const { service, mockRoomRepo } = makeService({ rooms: [old, recent] });
+    mockRoomRepo.query.mockResolvedValueOnce([{ id: recent.id }]);
 
     const result = await service.getCurrentRoom();
     expect(result?.id).toBe(recent.id);
+  });
+
+  it('does not return an old completed room after the result window has expired', async () => {
+    const completed = makeRoom({ status: 'completed', updatedAt: new Date('2026-06-01') });
+    const { service } = makeService({ rooms: [completed] });
+
+    const result = await service.getCurrentRoom();
+    expect(result).toBeNull();
   });
 
   it('returns null when no rooms exist at all', async () => {
@@ -519,6 +529,11 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(botTicket.status).toBe('cancelled');
     expect(botTicket.settlementStatus).toBe('settled');
     expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
+    expect(manager.update).toHaveBeenCalledWith(
+      BingoCard,
+      { roomId: room.id },
+      { assignedTicketId: null, assignedUserId: null },
+    );
     expect(manager.find).toHaveBeenCalled();
   });
 

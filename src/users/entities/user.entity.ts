@@ -114,6 +114,18 @@ export class User {
   referralCommissionPct?: number | null;
 
   /**
+   * AGENT-specific custom label for their auto-managed Bingo room (per-agent
+   * room mode — see BingoService.ensureAgentRooms). Null = no override, the
+   * room falls back to the default "<displayName> · Bingo" name. Unlike a
+   * room rename (BingoService.updateRoomDisplay, cosmetic and per-instance),
+   * this is read fresh every time ensureAgentRooms creates that agent's NEXT
+   * room, so a custom label survives the room auto-recreating after it
+   * completes — a per-instance rename does not.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  bingoRoomLabel?: string | null;
+
+  /**
    * Where the player says they came from, picked during registration. This is the
    * durable attribution unit — an agent-level credit stays deposit-driven via
    * `referredByAgentId`, because a location can have many agents. Null means the

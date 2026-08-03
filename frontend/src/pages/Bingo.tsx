@@ -2114,15 +2114,33 @@ export function Bingo({ onBack }: BingoProps) {
         try {
             // In per-agent mode, once the customer picks a room from the lobby we
             // stay in that specific room; otherwise use the single current room.
-            const next = pinnedRoomId
+            let next = pinnedRoomId
                 ? await bingoApi.getRoomState(pinnedRoomId)
                 : await bingoApi.getCurrentRoom();
+            if (pinnedRoomId && next?.status === 'cancelled') {
+                setPinnedRoomId(null);
+                const fallback = await bingoApi.getCurrentRoom();
+                if (fallback && fallback.id !== next.id) {
+                    next = fallback;
+                }
+            }
+            if (
+                next?.status === 'completed' &&
+                completedRoomRef.current === next.id &&
+                !holdingResultRef.current
+            ) {
+                setRoom((prev) => (prev?.id === next.id ? null : prev));
+                roomIdRef.current = null;
+                setLoading(false);
+                return;
+            }
+            const nextIsLive = !!next && (next.status === 'open' || next.status === 'running');
             if (
                 room?.status === 'cancelled' &&
                 cancelledRoomRef.current === room.id &&
                 next?.id !== room.id
             ) {
-                if (next && next.status !== 'cancelled') {
+                if (nextIsLive) {
                     cancelledRoomRef.current = null;
                     if (cancelHoldTimerRef.current) {
                         clearTimeout(cancelHoldTimerRef.current);
@@ -2143,7 +2161,7 @@ export function Bingo({ onBack }: BingoProps) {
                     cancelledRoomRef.current === prev.id &&
                     next?.id !== prev?.id
                 ) {
-                    if (next && next.status !== 'cancelled') {
+                    if (nextIsLive) {
                         cancelledRoomRef.current = null;
                         if (cancelHoldTimerRef.current) {
                             clearTimeout(cancelHoldTimerRef.current);
@@ -2843,6 +2861,7 @@ export function Bingo({ onBack }: BingoProps) {
                     addToast('info', t('bingo.toastCartelaRefunded', { n }));
                     if (refund.roomCancelled) {
                         cancelledRoomRef.current = room.id;
+                        setPinnedRoomId(null);
                         const cancelledRoom = await bingoApi.getRoomState(room.id);
                         setRoom(cancelledRoom);
                         roomIdRef.current = cancelledRoom.id;

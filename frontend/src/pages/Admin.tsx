@@ -1185,6 +1185,7 @@ function AgentsAdmin() {
     withdraw: true,
     status: 'active',
     referralCommissionPct: '' as string,
+    bingoRoomLabel: '' as string,
   });
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -1267,6 +1268,7 @@ function AgentsAdmin() {
       withdraw: agent.agentPermissions ? agent.agentPermissions.withdraw : true,
       status: agent.status || 'active',
       referralCommissionPct: agent.referralCommissionPct != null ? String(agent.referralCommissionPct) : '',
+      bingoRoomLabel: agent.bingoRoomLabel ?? '',
     });
   };
 
@@ -1296,6 +1298,7 @@ function AgentsAdmin() {
         },
         status: editForm.status,
         referralCommissionPct: editForm.referralCommissionPct.trim() === '' ? null : Number(editForm.referralCommissionPct),
+        bingoRoomLabel: editForm.bingoRoomLabel.trim() === '' ? null : editForm.bingoRoomLabel.trim(),
       };
       if (editForm.password.trim() !== '') {
         payload.password = editForm.password;
@@ -1448,6 +1451,19 @@ function AgentsAdmin() {
                 {editForm.referralCommissionPct !== '' && (
                   <button type="button" className="adm-btn" onClick={() => setEditForm((f) => ({ ...f, referralCommissionPct: '' }))}>
                     Clear override
+                  </button>
+                )}
+              </div>
+            </label>
+            <label className="adm-field">
+              <span>Bingo Room Name <em className="adm-field-hint">— blank = default "&lt;agent name&gt; · Bingo". Sticks across every auto-recreated room for this agent, unlike a one-off room rename.</em></span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input className="input" placeholder="e.g. Mini Room 🎉" style={{ flex: 1 }}
+                  value={editForm.bingoRoomLabel}
+                  onChange={(e) => setEditForm((f) => ({ ...f, bingoRoomLabel: e.target.value }))} />
+                {editForm.bingoRoomLabel !== '' && (
+                  <button type="button" className="adm-btn" onClick={() => setEditForm((f) => ({ ...f, bingoRoomLabel: '' }))}>
+                    Clear
                   </button>
                 )}
               </div>
@@ -1700,6 +1716,7 @@ function ConfigAdmin() {
         {perf.length === 0 ? (
           <div className="adm-empty">No agent activity yet.</div>
         ) : (
+          <div className="adm-table-wrap">
           <table className="adm-table">
             <thead>
               <tr className="adm-tr">
@@ -1726,6 +1743,7 @@ function ConfigAdmin() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

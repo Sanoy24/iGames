@@ -39,6 +39,9 @@ export type User = {
   referralCode?: string | null;
   /** This agent's referral-commission % override. Null = use the global default. */
   referralCommissionPct?: number | null;
+  /** Custom label for this agent's auto-managed Bingo room — survives the room
+   * auto-recreating (unlike a one-off room rename). Null = default "<name> · Bingo". */
+  bingoRoomLabel?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };

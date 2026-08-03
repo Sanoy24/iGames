@@ -545,6 +545,7 @@ export class UsersService {
       agentPermissions?: { deposit: boolean; withdraw: boolean };
       status?: 'active' | 'suspended' | 'closed';
       referralCommissionPct?: number | null;
+      bingoRoomLabel?: string | null;
     }
   ): Promise<User> {
     const user = await this.userRepository.findOneBy({ id: agentId });
@@ -577,6 +578,7 @@ export class UsersService {
     if (update.workDaysOfWeek !== undefined) user.workDaysOfWeek = update.workDaysOfWeek;
     if (update.agentPermissions !== undefined) user.agentPermissions = update.agentPermissions;
     if (update.referralCommissionPct !== undefined) user.referralCommissionPct = update.referralCommissionPct;
+    if (update.bingoRoomLabel !== undefined) user.bingoRoomLabel = update.bingoRoomLabel?.trim() || null;
 
     await this.userRepository.save(user);
     return user;

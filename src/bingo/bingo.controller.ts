@@ -46,7 +46,7 @@ export class BingoController {
   @Get('current')
   @ApiBearerAuth()
   @UseGuards(OptionalJwtAuthGuard)
-  @ApiOkResponse({ description: 'The single active room (running → open → last completed) with the callers tickets' })
+  @ApiOkResponse({ description: 'The single current room (running → recent completed result window → open) with the caller tickets' })
   getCurrentRoom(@Req() request: Request) {
     const maybeUser = (request as Partial<AuthenticatedRequest>).user;
     return this.bingoService.getCurrentRoom(maybeUser?.id);

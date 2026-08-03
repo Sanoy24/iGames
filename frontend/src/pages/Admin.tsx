@@ -36,6 +36,7 @@ import {
   type ConfigChangeLog,
 } from '../lib/api';
 import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
+import { BINGO_CARD_PALETTES, getBingoCardPalette, type BingoCardPaletteId } from '../lib/bingoCardPalette';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
 import { SupportConsole } from '../components/SupportConsole';
@@ -2623,6 +2624,34 @@ function BingoAdmin() {
   const [showSettings, setShowSettings] = useState(false);
   const [showPatterns, setShowPatterns] = useState(false);
 
+  // Inline rename / restyle for an existing room (any room — agent-owned,
+  // house, or admin-created; see BingoService.updateRoomDisplay).
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState('');
+  const [paletteEditorId, setPaletteEditorId] = useState<string | null>(null);
+
+  const saveRoomName = async (roomId: string) => {
+    const trimmed = editingNameValue.trim();
+    if (!trimmed) { addToast('error', 'Room name cannot be empty.'); return; }
+    setBusy(`rename-${roomId}`);
+    try {
+      await adminBingoApi.updateRoomDisplay(roomId, { name: trimmed });
+      setEditingNameId(null);
+      await loadRooms(page);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const setRoomPalette = async (roomId: string, paletteId: string | null) => {
+    setBusy(`palette-${roomId}`);
+    try {
+      await adminBingoApi.updateRoomDisplay(roomId, { cardPaletteId: paletteId });
+      setPaletteEditorId(null);
+      await loadRooms(page);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
   // Round details modal (traceability)
   const [details, setDetails] = useState<BingoRoundDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -2644,6 +2673,9 @@ function BingoAdmin() {
   const [numberRange, setNumberRange] = useState(75);
   const [patternPrizes, setPatternPrizes] = useState<PatternPrizeEntry[]>([]);
   const [form, setForm] = useState({ name: 'Room Alpha', ticketPriceMinor: 500, maxTickets: 100, minutesFromNow: 5, oneLine: 20000, twoLines: 50000, fullHouse: 100000 });
+  // '' = let the server pick at random (see BINGO_CARD_PALETTE_IDS).
+  const [cardPaletteId, setCardPaletteId] = useState<BingoCardPaletteId | ''>('');
+  const [cardBallNumber, setCardBallNumber] = useState('');
 
   const [cfgForm, setCfgForm] = useState<Partial<BingoConfig>>({
     enabled: true,
@@ -2822,9 +2854,13 @@ function BingoAdmin() {
         winMode,
         numberRange: winMode === 'pattern' ? numberRange : undefined,
         patternPrizes: winMode === 'pattern' ? patternPrizes : undefined,
+        cardPaletteId: cardPaletteId || undefined,
+        cardBallNumber: cardBallNumber ? Number(cardBallNumber) : undefined,
       });
       addToast('success', `Room "${form.name}" created.`);
       setShowCreate(false);
+      setCardPaletteId('');
+      setCardBallNumber('');
       setPage(1);
       await loadRooms(1);
     } catch (e) { addToast('error', getErrorMessage(e)); }
@@ -3431,6 +3467,30 @@ function BingoAdmin() {
                 </span>
               </div>
             )}
+
+            <div className="adm-field" style={{ gridColumn: '1 / -1' }}>
+              <span style={{ display: 'block', marginBottom: 8 }}>Lobby Card Color (leave unpicked for random)</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {Object.values(BINGO_CARD_PALETTES).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    title={p.label}
+                    onClick={() => setCardPaletteId(cardPaletteId === p.id ? '' : p.id)}
+                    style={{
+                      width: 32, height: 32, borderRadius: 8, background: p.gradient, cursor: 'pointer',
+                      border: cardPaletteId === p.id ? '2px solid #fff' : '2px solid transparent',
+                      boxShadow: cardPaletteId === p.id ? '0 0 0 2px #6366f1' : 'none',
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+            <label className="adm-field">
+              <span>Decorative Ball Number (optional — random if blank)</span>
+              <input className="input" type="number" min={1} placeholder="Random" value={cardBallNumber}
+                onChange={(e) => setCardBallNumber(e.target.value)} />
+            </label>
           </div>
           <div className="adm-panel-footer">
             <button className="adm-btn adm-btn-primary" disabled={busy === 'create'} onClick={createRoom}>
@@ -3461,9 +3521,57 @@ function BingoAdmin() {
                     : room.winMode === 'prefilled' ? `Derash 1-${room.numberRange ?? 75}`
                     : 'Line 1-90';
                   const modeBadge = room.winMode === 'pattern' ? 'badge-violet' : 'badge-gold';
+                  const palette = getBingoCardPalette(room.cardPaletteId);
                   return (
                     <tr key={room.id} className="adm-tr">
-                      <td><strong>{room.name}</strong></td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                          <button
+                            type="button"
+                            title="Change lobby card color"
+                            onClick={() => setPaletteEditorId(paletteEditorId === room.id ? null : room.id)}
+                            style={{ width: 16, height: 16, borderRadius: 5, background: palette.gradient, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer', flexShrink: 0 }}
+                          />
+                          {editingNameId === room.id ? (
+                            <>
+                              <input
+                                className="input"
+                                autoFocus
+                                value={editingNameValue}
+                                onChange={(e) => setEditingNameValue(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') void saveRoomName(room.id); if (e.key === 'Escape') setEditingNameId(null); }}
+                                style={{ fontSize: 12, padding: '4px 8px', width: 140 }}
+                              />
+                              <button className="adm-btn adm-btn-primary adm-btn-xs" disabled={busy === `rename-${room.id}`} onClick={() => void saveRoomName(room.id)}>Save</button>
+                              <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => setEditingNameId(null)}>Cancel</button>
+                            </>
+                          ) : (
+                            <strong
+                              style={{ cursor: 'pointer' }}
+                              title="Click to rename"
+                              onClick={() => { setEditingNameId(room.id); setEditingNameValue(room.name); }}
+                            >
+                              {room.name}
+                            </strong>
+                          )}
+                          {paletteEditorId === room.id && (
+                            <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 4, padding: 8, borderRadius: 8, background: 'var(--surface, #1a1d2e)', border: '1px solid var(--border)', display: 'flex', gap: 6 }}>
+                              {Object.values(BINGO_CARD_PALETTES).map((p) => (
+                                <button key={p.id} type="button" title={p.label}
+                                  onClick={() => void setRoomPalette(room.id, p.id)}
+                                  style={{ width: 22, height: 22, borderRadius: 6, background: p.gradient, cursor: 'pointer', border: room.cardPaletteId === p.id ? '2px solid #fff' : '1px solid rgba(255,255,255,0.25)' }}
+                                />
+                              ))}
+                              <button type="button" title="Random"
+                                onClick={() => void setRoomPalette(room.id, null)}
+                                className="adm-btn adm-btn-secondary adm-btn-xs"
+                              >
+                                🎲
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
                       <td className="adm-td-muted">
                         <span className={`badge ${modeBadge}`} style={{ fontSize: 10 }}>
                           {modeLabel}
@@ -3809,6 +3917,7 @@ function BotsHub() {
 function BotsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [bots, setBots]           = useState<BotUser[]>([]);
+  const [houseWallet, setHouseWallet] = useState<WalletType | null>(null);
   const [loading, setLoading]     = useState(true);
   const [busy, setBusy]           = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -3858,6 +3967,7 @@ function BotsAdmin() {
     crashMaxCashoutX100: 250,
   });
   const [editForm, setEditForm] = useState<{
+    displayName: string;
     ticketsPerRound: number;
     spotCount: number;
     kenoActive: boolean;
@@ -3891,6 +4001,7 @@ function BotsAdmin() {
     crashMinCashoutX100: number;
     crashMaxCashoutX100: number;
   }>({
+    displayName: '',
     ticketsPerRound: 1,
     spotCount: 3,
     kenoActive: true,
@@ -3932,7 +4043,18 @@ function BotsAdmin() {
     finally { setLoading(false); }
   }, [addToast]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadHouseWallet = useCallback(async () => {
+    try {
+      setHouseWallet(await adminApi.getHouseWallet());
+    } catch (e) {
+      addToast('error', getErrorMessage(e));
+    }
+  }, [addToast]);
+
+  useEffect(() => {
+    void load();
+    void loadHouseWallet();
+  }, [load, loadHouseWallet]);
 
   const loadDetailActions = useCallback(async () => {
     if (!detailBotId) {
@@ -3962,10 +4084,21 @@ function BotsAdmin() {
   const createBot = async () => {
     setBusy('create');
     try {
+      if (
+        houseWallet &&
+        form.initialBalanceMinor > houseWallet.availableMinor
+      ) {
+        addToast(
+          'error',
+          `Starting balance exceeds the Master Wallet balance. Available: ${formatCreditsFull(houseWallet.availableMinor)} ETB.`,
+        );
+        return;
+      }
       await adminBotsApi.createBot(form);
       addToast('success', `Bot "${form.displayName}" created.`);
       setShowCreate(false);
       await load();
+      await loadHouseWallet();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -4061,6 +4194,7 @@ function BotsAdmin() {
       setTopupId(null);
       setTopupAmount('');
       await load();
+      await loadHouseWallet();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -4235,6 +4369,9 @@ function BotsAdmin() {
             <label className="adm-field">
               <span>Starting Balance (ETB)</span>
               <input className="input" type="number" min={0} {...f('initialBalanceMinor')} />
+              <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
+                Master Wallet available: {formatCreditsFull(houseWallet?.availableMinor ?? 0)} ETB
+              </small>
             </label>
             <label className="adm-field">
               <span>Keno Tickets / Draw</span>
@@ -4455,6 +4592,7 @@ function BotsAdmin() {
                             setEditingId(isEditing ? null : bot.id);
                             setTopupId(null);
                             setEditForm({
+                              displayName: bot.displayName,
                               ticketsPerRound: kenoPolicy.ticketsPerRound,
                               spotCount: kenoPolicy.spotCount,
                               kenoActive: gamePolicyEnabled(bot, 'keno'),
@@ -4518,6 +4656,14 @@ function BotsAdmin() {
                     {/* Inline edit */}
                     {isEditing && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <label className="adm-field" style={{ flex: 1, minWidth: 160 }}>
+                          <span>Display Name</span>
+                          <input
+                            className="input"
+                            value={editForm.displayName}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, displayName: e.target.value }))}
+                          />
+                        </label>
                         <label className="adm-field" style={{ flex: 1, minWidth: 130 }}>
                           <span>Keno Tickets / Draw</span>
                           <input className="input" type="number" min={1} max={12}

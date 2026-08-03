@@ -138,6 +138,34 @@ export class BingoRoom {
   @Index()
   ownerAgentId?: string | null;
 
+  /**
+   * True only for rooms an admin created directly via POST /admin/bingo/rooms
+   * (see BingoService.createRoom). In per-agent mode, ensureAgentRooms()
+   * reconciles down to exactly one active room per owner (one per agent + one
+   * house room) — without this flag, a manually created extra room shares the
+   * house's NULL owner slot and gets treated as a stale duplicate and
+   * cancelled within the next scheduler tick. Admin-created rooms are excluded
+   * from that reconciliation and from the per-owner "one running game" gate in
+   * findAgentRoomsToStart, so they run fully independently and don't
+   * auto-recreate once they complete (that's ensureAgentRooms's job, not theirs).
+   */
+  @Column({ type: 'tinyint', default: 0 })
+  isAdminCreated: boolean;
+
+  /**
+   * Cosmetic-only lobby card styling (see the BingoLobby grid in Bingo.tsx) —
+   * a preset gradient id (BINGO_CARD_PALETTES in bingo-card-palette.util.ts)
+   * and a decorative ball number. Assigned ONCE at creation (by the admin, or
+   * randomly if left unset) and then stable for the room's whole lifetime, so
+   * every player sees the same card regardless of device — never re-rolled
+   * per view. Purely visual: no gameplay meaning.
+   */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  cardPaletteId?: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  cardBallNumber?: number | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

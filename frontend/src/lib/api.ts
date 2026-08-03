@@ -259,6 +259,8 @@ export type BingoLobbyRoom = {
   players: number;
   potMinor: number;
   scheduledStartAt: string | null;
+  cardPaletteId: string | null;
+  cardBallNumber: number | null;
 };
 
 export type BingoRoomListResponse = {
@@ -640,7 +642,15 @@ export const adminBingoApi = {
     winMode?: string;
     numberRange?: number;
     patternPrizes?: Array<{ patternId: string; name: string; prizeMinor: number }>;
+    /** Lobby card gradient — omit for a random one. */
+    cardPaletteId?: string;
+    /** Decorative ball number — omit for a random one. */
+    cardBallNumber?: number;
   }) => api.post<BingoRoom>('/admin/bingo/rooms', dto).then((r) => r.data),
+  /** Cosmetic-only: rename and/or restyle a room's lobby card. Any room, any
+   * status. Pass cardPaletteId/cardBallNumber as null to re-roll them at random. */
+  updateRoomDisplay: (roomId: string, dto: { name?: string; cardPaletteId?: string | null; cardBallNumber?: number | null }) =>
+    api.patch<BingoRoom>(`/admin/bingo/rooms/${roomId}/display`, dto).then((r) => r.data),
   drawNext: (roomId: string) =>
     api.post<BingoRoom>(`/admin/bingo/rooms/${roomId}/draw-next`).then((r) => r.data),
   cancelRoom: (roomId: string) =>
@@ -775,6 +785,7 @@ export const adminBotsApi = {
   }) =>
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
   updateBot: (id: string, dto: Partial<{
+    displayName: string;
     active: boolean;
     ticketsPerRound: number;
     spotCount: number;

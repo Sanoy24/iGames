@@ -99,6 +99,18 @@
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npm run test:unit` **234/234** pass.
 
+### Session note: 2026-08-03 (Bingo cancel handoff + bot admin rename/balance guard)
+
+**Goal**: Make the Bingo cancel state recover cleanly into the next room without a reload, and let admins rename bots while preventing create-time failures when the requested starting balance is higher than the Master Wallet.
+
+**Completed**:
+
+- **Bingo cancel handoff** - cancelled rooms now use a short-lived hold that clears automatically, so a fresh room can take over as soon as it exists instead of leaving the player stranded on the old cancelled state.
+- **Bot rename support** - Admin -> Bots now lets the display name be edited inline for an existing bot.
+- **Create-time balance guard** - new bot creation now checks the Master Wallet balance first and shows a clear error if the requested starting balance is too high, instead of surfacing a vague system error.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npm run test:unit` **234/234** pass.
+
 ### Session: 2026-08-02 (Bingo room list pagination + newest-first admin polish)
 
 **Goal**: Make the Bingo admin room list read like a proper paged table, with newest rooms first and clean next/previous navigation.

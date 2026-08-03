@@ -1,9 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 
 const STRATEGIES = ['conservative', 'normal', 'aggressive', 'mirror-human'] as const;
 
 export class UpdateBotPolicyDto {
+  @ApiPropertyOptional({ example: 'Bot Alpha', description: 'Display name shown in admin lists and live bot cards' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  displayName?: string;
+
   @ApiPropertyOptional({ example: 2 })
   @IsOptional() @IsInt() @Min(1) @Max(12)
   ticketsPerRound?: number;

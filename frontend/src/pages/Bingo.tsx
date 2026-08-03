@@ -12,6 +12,7 @@ import {
     RefreshCw,
 } from 'lucide-react';
 import { bingoApi, walletApi, type BingoLobbyRoom } from '../lib/api';
+import { getBingoCardPalette } from '../lib/bingoCardPalette';
 import type { BingoRoomState, BingoTicket } from '../lib/models';
 import {
     createIdempotencyKey,
@@ -1855,6 +1856,62 @@ function RoomResultOverlay({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 // ─── Per-agent room lobby ─────────────────────────────────────────────────────
+function BingoLobbyCard({
+    room,
+    onPick,
+}: {
+    room: BingoLobbyRoom;
+    onPick: (roomId: string) => void;
+}) {
+    const { t } = useTranslation();
+    const palette = getBingoCardPalette(room.cardPaletteId);
+    const ballNumber = room.cardBallNumber ?? 1;
+    return (
+        <button
+            type='button'
+            onClick={() => onPick(room.id)}
+            className='relative w-full rounded-2xl p-3.5 text-left overflow-hidden active:scale-[0.98] transition-transform shadow-lg'
+            style={{ background: palette.gradient, minHeight: 132 }}
+        >
+            {/* Decorative bingo ball — half-cut off in the corner, purely visual */}
+            <div
+                className='absolute -right-3 -bottom-3 w-16 h-16 rounded-full flex items-center justify-center border-4 border-white/25 shadow-lg'
+                style={{ background: palette.ballGradient }}
+            >
+                <span className='text-lg font-black text-black/70 drop-shadow-sm'>{ballNumber}</span>
+            </div>
+
+            <span
+                className={`absolute top-2.5 right-2.5 text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
+                    room.status === 'running' ? 'bg-black/30 text-red-100' : 'bg-black/20 text-white/90'
+                }`}
+            >
+                {room.status === 'running'
+                    ? t('bingo.live', { defaultValue: 'LIVE' })
+                    : t('bingo.open', { defaultValue: 'OPEN' })}
+            </span>
+
+            <div className='relative z-[1] flex flex-col gap-1'>
+                <span className='text-sm font-black text-white truncate max-w-[85%] drop-shadow-sm'>
+                    {room.name}
+                </span>
+                <span className='text-xl font-black text-white drop-shadow-sm'>
+                    {formatCredits(room.ticketPriceMinor)} <span className='text-[11px] font-bold opacity-80'>ETB</span>
+                </span>
+                <span className='text-[9px] font-bold text-white/75 mt-0.5'>
+                    {t('bingo.playersCount', { count: room.players, defaultValue: `${room.players} players` })}
+                    {' · '}
+                    {t('bingo.statDerash', { defaultValue: 'Pot' })} {formatCredits(room.potMinor)}
+                </span>
+            </div>
+
+            <span className='relative z-[1] inline-block mt-3 text-[11px] font-black text-white bg-black/25 rounded-lg px-3 py-1.5'>
+                {t('bingo.playNow', { defaultValue: 'Play now' })}
+            </span>
+        </button>
+    );
+}
+
 function BingoLobby({
     rooms,
     onPick,
@@ -1881,50 +1938,15 @@ function BingoLobby({
             </div>
             <p className='text-[11px] text-slate-500'>
                 {t('bingo.chooseRoomHint', {
-                    defaultValue: "Each agent hosts their own room — pick one to play.",
+                    defaultValue: "Pick a room and stake to play.",
                 })}
             </p>
-            <div className='space-y-2'>
+            <div className='grid grid-cols-2 gap-3'>
                 {rooms.map((r) => (
-                    <button
-                        key={r.id}
-                        type='button'
-                        onClick={() => onPick(r.id)}
-                        className='w-full card p-3 flex items-center justify-between text-left active:scale-[0.99] transition-transform'
-                    >
-                        <div className='min-w-0'>
-                            <div className='flex items-center gap-2'>
-                                <span className='text-sm font-black truncate'>{r.ownerName}</span>
-                                <span
-                                    className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
-                                        r.status === 'running'
-                                            ? 'bg-red-500/10 text-red-400'
-                                            : 'bg-emerald-500/10 text-emerald-400'
-                                    }`}
-                                >
-                                    {r.status === 'running'
-                                        ? t('bingo.live', { defaultValue: 'LIVE' })
-                                        : t('bingo.open', { defaultValue: 'OPEN' })}
-                                </span>
-                            </div>
-                            <div className='text-[10px] text-slate-500 mt-0.5'>
-                                {t('bingo.playersCount', { count: r.players, defaultValue: `${r.players} players` })}
-                                {' · '}
-                                {t('bingo.stakeEtb', { amount: formatCredits(r.ticketPriceMinor) })}
-                            </div>
-                        </div>
-                        <div className='text-right flex-shrink-0'>
-                            <div className='text-[8px] uppercase tracking-wider text-slate-600'>
-                                {t('bingo.statDerash', { defaultValue: 'Pot' })}
-                            </div>
-                            <div className='text-sm font-black text-amber-400'>
-                                {formatCredits(r.potMinor)}
-                            </div>
-                        </div>
-                    </button>
+                    <BingoLobbyCard key={r.id} room={r} onPick={onPick} />
                 ))}
                 {rooms.length === 0 && (
-                    <div className='card p-6 text-center text-slate-500 text-sm'>
+                    <div className='col-span-2 card p-6 text-center text-slate-500 text-sm'>
                         {t('bingo.noRooms', { defaultValue: 'No rooms available right now.' })}
                     </div>
                 )}
@@ -1995,6 +2017,9 @@ export function Bingo({ onBack }: BingoProps) {
     const roomIdRef = useRef<string | null>(null);
     const holdingResultRef = useRef(false);
     const victoryRoomRef = useRef<string | null>(null);
+    const completedRoomRef = useRef<string | null>(null);
+    const cancelledRoomRef = useRef<string | null>(null);
+    const cancelHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
         null,
     );
@@ -2092,17 +2117,42 @@ export function Bingo({ onBack }: BingoProps) {
             const next = pinnedRoomId
                 ? await bingoApi.getRoomState(pinnedRoomId)
                 : await bingoApi.getCurrentRoom();
-            if (room?.status === 'cancelled' && next?.id !== room.id) {
-                setLoading(false);
-                return;
+            if (
+                room?.status === 'cancelled' &&
+                cancelledRoomRef.current === room.id &&
+                next?.id !== room.id
+            ) {
+                if (next && next.status !== 'cancelled') {
+                    cancelledRoomRef.current = null;
+                    if (cancelHoldTimerRef.current) {
+                        clearTimeout(cancelHoldTimerRef.current);
+                        cancelHoldTimerRef.current = null;
+                    }
+                } else {
+                    setLoading(false);
+                    return;
+                }
             }
             setRoom((prev) => {
                 // During result hold, don't switch to a different (newer) room —
                 // only allow updating the same room (e.g. to pick up settlement data).
                 if (holdingResultRef.current && next?.id !== prev?.id)
                     return prev;
-                if (prev?.status === 'cancelled' && next?.id !== prev?.id)
-                    return prev;
+                if (
+                    prev?.status === 'cancelled' &&
+                    cancelledRoomRef.current === prev.id &&
+                    next?.id !== prev?.id
+                ) {
+                    if (next && next.status !== 'cancelled') {
+                        cancelledRoomRef.current = null;
+                        if (cancelHoldTimerRef.current) {
+                            clearTimeout(cancelHoldTimerRef.current);
+                            cancelHoldTimerRef.current = null;
+                        }
+                    } else {
+                        return prev;
+                    }
+                }
                 return next;
             });
             if (!holdingResultRef.current) {
@@ -2259,6 +2309,7 @@ export function Bingo({ onBack }: BingoProps) {
             // Lock onto the result view SYNCHRONOUSLY so no poll/loadCurrent can swap
             // us to the next (already-opened) room before the overlay renders.
             holdingResultRef.current = true;
+            completedRoomRef.current = completedId;
             // Apply the completion payload immediately — it carries the winner name
             // (settlementSummary) so the overlay can render right away.
             setRoom((prev) => {
@@ -2321,7 +2372,29 @@ export function Bingo({ onBack }: BingoProps) {
         if (room.status === 'cancelled') {
             holdingResultRef.current = false;
             setHoldingResult(false);
+            if (completedRoomRef.current === room.id) {
+                completedRoomRef.current = null;
+            }
+            cancelledRoomRef.current = room.id;
+            if (cancelHoldTimerRef.current) {
+                clearTimeout(cancelHoldTimerRef.current);
+            }
+            cancelHoldTimerRef.current = setTimeout(() => {
+                if (cancelledRoomRef.current === room.id) {
+                    cancelledRoomRef.current = null;
+                    cancelHoldTimerRef.current = null;
+                    void loadCurrent();
+                }
+            }, 1800);
             return;
+        }
+        if (cancelHoldTimerRef.current) {
+            clearTimeout(cancelHoldTimerRef.current);
+            cancelHoldTimerRef.current = null;
+        }
+        cancelledRoomRef.current = null;
+        if (room.status !== 'completed') {
+            completedRoomRef.current = null;
         }
         const done = room.status === 'completed';
         if (!done) {
@@ -2329,6 +2402,10 @@ export function Bingo({ onBack }: BingoProps) {
             setHoldingResult(false);
             return;
         }
+        if (completedRoomRef.current === room.id && !holdingResultRef.current) {
+            return;
+        }
+        completedRoomRef.current = room.id;
         // Empty round — nobody bought a ticket (a stray/legacy room that finished with
         // no players). There is no result to celebrate, so DON'T show the "No players —
         // no win this round" overlay; quietly advance to the next (idle) room.
@@ -2765,6 +2842,7 @@ export function Bingo({ onBack }: BingoProps) {
                     );
                     addToast('info', t('bingo.toastCartelaRefunded', { n }));
                     if (refund.roomCancelled) {
+                        cancelledRoomRef.current = room.id;
                         const cancelledRoom = await bingoApi.getRoomState(room.id);
                         setRoom(cancelledRoom);
                         roomIdRef.current = cancelledRoom.id;
@@ -2888,6 +2966,7 @@ export function Bingo({ onBack }: BingoProps) {
                                 holdingResultRef.current = false;
                                 setHoldingResult(false);
                                 roomIdRef.current = null;
+                                completedRoomRef.current = room.id;
                                 void loadCurrent();
                             }}
                         />

@@ -226,8 +226,8 @@
       "behavior": "Each non-overview tab has purpose-built layout: Players table with search/filter, Keno with draw timeline, Bingo with room list, Crash with round history, Withdrawals with claim flow, Bots with management cards.",
       "status": "in_progress",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
-      "evidence": "frontend/src/pages/Admin.tsx (Bingo room list now paged newest-first with a cleaner table footer), src/bingo/bingo.service.ts (shared paginated /bingo/rooms contract).",
-      "notes": "Current tabs work but use generic adm-panel layout. The Bingo tab has started moving toward a dedicated room-list layout with pagination; the rest of the bespoke tab work is still pending."
+      "evidence": "frontend/src/pages/Admin.tsx (Bingo room list now paged newest-first with a cleaner table footer; Bots hub now includes editable bot display names and a Master Wallet preflight for new bot creation), src/bingo/bingo.service.ts (shared paginated /bingo/rooms contract).",
+      "notes": "Current tabs work but use generic adm-panel layout. The Bingo tab has started moving toward a dedicated room-list layout with pagination; the Bots hub now has the bot rename/balance safety pass, but the remaining bespoke admin-tab polish is still pending."
     },
     {
       "id": "FE-10",
@@ -662,8 +662,8 @@
       "behavior": "Admin -> Bots now shows per-game active counts, lets admins set Keno/Bingo/Crash participation and timing/hesitation/variance when creating or editing a bot, and provides quick per-game row toggles without leaving the centralized Bots hub.",
       "status": "passing",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
-      "evidence": "frontend/src/lib/api.ts (BotUser.botPolicy.games plus create/update DTO fields, BotActionLogRecord/listBotActions), frontend/src/pages/Admin.tsx (per-game counts, create/edit checkboxes, timing controls, row-level Keno/Bingo/Crash toggles, bot action drawer). Frontend tsc clean and production build clean.",
-      "notes": "The UI treats game switches as configuration and global active as the effective master pause, matching D-29."
+      "evidence": "frontend/src/lib/api.ts (BotUser.botPolicy.games plus create/update DTO fields, BotActionLogRecord/listBotActions), frontend/src/pages/Admin.tsx (per-game counts, create/edit checkboxes, timing controls, row-level Keno/Bingo/Crash toggles, bot action drawer, editable bot display names, Master Wallet preflight for create). Frontend tsc clean and production build clean.",
+      "notes": "The UI treats game switches as configuration and global active as the effective master pause, matching D-29. Bot creation now fails fast with a clear balance message instead of surfacing a vague server error."
     }
   ]
 }

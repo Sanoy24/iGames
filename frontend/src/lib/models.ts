@@ -196,6 +196,9 @@ export type BingoRoom = {
   takenSpots?: number[];
   cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
+  isAdminCreated?: boolean;
+  cardPaletteId?: string | null;
+  cardBallNumber?: number | null;
 };
 
 export type BingoTicket = {

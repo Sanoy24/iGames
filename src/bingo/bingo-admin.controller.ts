@@ -43,6 +43,19 @@ export class BingoAdminController {
     return room;
   }
 
+  /** Cosmetic-only: name and/or lobby card style. Any room, any status — see
+   * BingoService.updateRoomDisplay for the agent-room "doesn't persist across
+   * auto-recreation" caveat. */
+  @Patch('rooms/:id/display')
+  async updateRoomDisplay(
+    @Param('id') roomId: string,
+    @Body() dto: { name?: string; cardPaletteId?: string | null; cardBallNumber?: number | null },
+  ) {
+    const room = await this.bingoService.updateRoomDisplay(roomId, dto);
+    this.gameEventsGateway.emitBingoRoomUpdated(room);
+    return room;
+  }
+
   @Post('rooms/:id/draw-next')
   async drawNextNumber(@Param('id') roomId: string) {
     const room = await this.bingoService.drawNextNumber(roomId);

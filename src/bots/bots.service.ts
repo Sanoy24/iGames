@@ -397,6 +397,11 @@ export class BotsService {
 
   async updatePolicy(botId: string, dto: UpdateBotPolicyDto): Promise<BotResponse> {
     const bot = await this.findBot(botId);
+    if (dto.displayName !== undefined) {
+      const displayName = this.normalizeBotName(dto.displayName);
+      if (!displayName) throw new BadRequestException('Bot name is required');
+      bot.displayName = displayName;
+    }
     const current = this.normalizeBotPolicy(bot.productMetadata!.botPolicy as BotPolicyInput);
     const nextKeno = {
       ...current.games!.keno!,

@@ -6,12 +6,12 @@
 
 ## Current Verified State
 
-**Date**: 2026-08-02
+**Date**: 2026-08-03
 **Branch**: `migration/mysql` (this session's work is **uncommitted** in the working tree)  
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **231/231 pass**; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` — **10/10 pass**
+**Tests**: `npm run test:unit` — **234/234 pass**; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` — **11/11 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -57,6 +57,37 @@
 ---
 
 ## Session Record
+### Session: 2026-08-03 (Bingo bot cartela policy, thresholds, and bonus-win controls)
+
+**Goal**: Centralize Bingo bot behavior behind admin-controlled policy knobs so cartela buying is randomized, per-bot caps are enforced, below/above real-player thresholds are configurable, and bot bonus-win cadence is explicit.
+
+**Completed**:
+
+- **Cartela policy controls** - added admin-configurable Bingo bot cartela policy flags and mode selection (`mirror` vs `fixed_cap`), plus a per-bot room cap.
+- **Randomized bot buys** - bot cartela reconciliation now shuffles the available cartela pool before assignment, so bot purchases do not walk upward through the room one-by-one.
+- **Threshold-based participation** - Bingo bots now honor separate below-threshold and above-threshold toggles/values, with the legacy below-threshold fallback kept for existing configs.
+- **Bot bonus-win cadence** - completed-room bonus wins now support explicit interval or random mode via Bingo config instead of a single hidden interval knob.
+- **Admin UI** - the Bingo config panel now exposes the new cartela policy, threshold, bonus-win, and house-edge controls in one place with clearer copy.
+- **Regression coverage** - added unit tests for randomized cartela assignment, per-bot cap enforcement, threshold toggles, and bonus-win interval crediting.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit` clean; `cd frontend && npm run build` clean; `npm run test:unit` **234/234** pass; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` **11/11** pass.
+
+**Next best actions**:
+
+1. Commit the batch.
+2. If you want the below/above threshold bot behavior to be even more tuned, the next pass can add per-room overrides or separate UI guidance for busy vs quiet rooms.
+
+### Session note: 2026-08-03 (refund-to-zero Bingo cancellation hardening)
+
+**Goal**: Make sure a Bingo room never proceeds into a bot-only game if the last real player refunds all cartelas during the purchase phase.
+
+**Completed**:
+
+- **Zero-real-player refund guard** - when the final real cartela is refunded, the room now cancels immediately, refunds any pending bot cartelas in the same transaction, and skips the follow-up bot-reconcile pass so there is no chance of a stale bot-only start.
+- **Regression coverage** - tightened the cartela lifecycle test to assert the room ends cancelled, the bot cartela is also cancelled/settled, and the settlement summary records the no-real-player cancellation reason.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **234/234** pass.
+
 ### Session: 2026-08-02 (Bingo room list pagination + newest-first admin polish)
 
 **Goal**: Make the Bingo admin room list read like a proper paged table, with newest rooms first and clean next/previous navigation.

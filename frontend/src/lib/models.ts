@@ -240,10 +240,21 @@ export type BingoConfig = {
   minTicketsToStart?: number;
   houseEdgePct?: number;
   globalBingoBotWinInterval?: number;
-  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  botCartelaPolicyEnabled?: boolean;
+  botCartelaPolicyMode?: 'mirror' | 'fixed_cap';
+  botMaxCartelasPerBotPerRoom?: number;
+  botBelowThresholdEnabled?: boolean;
+  botBelowThresholdRealPlayers?: number;
+  botAboveThresholdEnabled?: boolean;
+  botAboveThresholdRealPlayers?: number;
+  /** Legacy below-threshold setting kept for compatibility. */
   botMaxRealPlayers?: number;
   /** How bots steer a below-threshold room. */
   botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual';
+  botBonusWinEnabled?: boolean;
+  botBonusWinMode?: 'interval' | 'random';
+  botBonusWinEveryNRounds?: number;
+  botBonusWinChancePct?: number;
   prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;

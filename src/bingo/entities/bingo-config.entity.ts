@@ -158,10 +158,41 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   globalBingoBotWinInterval: number;
 
+  /** Enable or disable Bingo bot cartela allocation controls. */
+  @Column({ type: 'boolean', default: true })
+  botCartelaPolicyEnabled: boolean;
+
+  /** How bot cartelas are assigned when the policy is enabled. */
+  @Column({ type: 'varchar', length: 20, default: 'mirror' })
+  botCartelaPolicyMode: 'mirror' | 'fixed_cap';
+
+  /** Maximum cartelas a single bot may hold in a room. */
+  @Column({ type: 'int', default: 5 })
+  botMaxCartelasPerBotPerRoom: number;
+
   /**
-   * Bot liquidity threshold. While a room has FEWER than this many REAL (non-bot)
-   * players, bots join to fill/steer the room. At or above it, bots stay out and
-   * real players compete on a fair draw. 0 = bots never auto-join.
+   * Bot participation threshold below this many REAL (non-bot) players.
+   * When enabled and the room drops below this count, bots join the room.
+   */
+  @Column({ type: 'boolean', default: true })
+  botBelowThresholdEnabled: boolean;
+
+  @Column({ type: 'int', default: 10 })
+  botBelowThresholdRealPlayers: number;
+
+  /**
+   * Bot participation threshold above this many REAL (non-bot) players.
+   * When enabled and the room rises above this count, bots join the room.
+   */
+  @Column({ type: 'boolean', default: true })
+  botAboveThresholdEnabled: boolean;
+
+  @Column({ type: 'int', default: 50 })
+  botAboveThresholdRealPlayers: number;
+
+  /**
+   * Legacy Bingo bot threshold retained for backward compatibility. New logic
+   * prefers the explicit below/above threshold controls above.
    */
   @Column({ type: 'int', default: 10 })
   botMaxRealPlayers: number;
@@ -178,6 +209,22 @@ export class BingoConfig {
    */
   @Column({ type: 'varchar', length: 20, default: 'statistical' })
   botWinMode: string;
+
+  /** Enable or disable explicit Bingo bot bonus-win controls. */
+  @Column({ type: 'boolean', default: true })
+  botBonusWinEnabled: boolean;
+
+  /** How explicit bot bonus wins are awarded. */
+  @Column({ type: 'varchar', length: 10, default: 'interval' })
+  botBonusWinMode: 'interval' | 'random';
+
+  /** Every N completed Bingo rooms a bot receives a bonus win. 0 = disabled. */
+  @Column({ type: 'int', default: 0 })
+  botBonusWinEveryNRounds: number;
+
+  /** Random bonus-win chance per completed room when random mode is enabled. */
+  @Column({ type: 'int', default: 0 })
+  botBonusWinChancePct: number;
 
   /**
    * JSON-encoded array of alias names the reserved cartel rotates through.

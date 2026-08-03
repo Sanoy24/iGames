@@ -222,6 +222,36 @@ describe('BotsService — bot funding is Master-Wallet-backed', () => {
     });
   });
 
+  describe('handleBingoBotWinInterval', () => {
+    it('credits a bot on the configured interval', async () => {
+      const { service } = makeService({});
+      const walletCredit = jest.fn().mockResolvedValue({ id: 'credit-1' });
+      (service as any).walletService.creditInSession = walletCredit;
+      (service as any).getActiveBots = jest.fn().mockResolvedValue([
+        { id: 'bot-1', displayName: 'Bot One', productMetadata: { botPolicy: { games: { bingo: {} } } } },
+      ]);
+      (service as any).pause = jest.fn().mockResolvedValue(undefined);
+      (service as any).resolveActionDelay = jest.fn().mockReturnValue(0);
+      (service as any).dataSource.getRepository = jest.fn().mockReturnValue({
+        countBy: jest.fn().mockResolvedValue(4),
+      });
+
+      await service.handleBingoBotWinInterval('room-1', {
+        enabled: true,
+        mode: 'interval',
+        everyNRounds: 2,
+        chancePct: 0,
+      });
+
+      expect(walletCredit).toHaveBeenCalledTimes(1);
+      expect(walletCredit.mock.calls[0][0]).toEqual(expect.objectContaining({
+        userId: 'bot-1',
+        amountMinor: 50_000,
+        sourceType: 'bingo_bot_win_interval',
+      }));
+    });
+  });
+
   describe('listBotActions', () => {
     it('returns paginated bot activity rows', async () => {
       const { service, botActionLogRepository } = makeService({});

@@ -559,14 +559,34 @@ export class BotsService {
 
   /**
    * Called by the scheduler after a bingo room completes.
-   * If the completed-room count is a multiple of `interval`, a random active bot
-   * receives a bonus win credit (posted-room win, no draw rigging needed).
+   * The configured policy can either pay on a fixed room interval or award a
+   * random bonus win on a per-room chance basis.
    */
-  async handleBingoBotWinInterval(roomId: string, interval: number): Promise<void> {
-    if (interval <= 0) return;
+  async handleBingoBotWinInterval(roomId: string, policyOrInterval: number | {
+    enabled?: boolean;
+    mode?: 'interval' | 'random';
+    everyNRounds?: number;
+    chancePct?: number;
+  }): Promise<void> {
+    const policy = typeof policyOrInterval === 'number'
+      ? {
+          enabled: policyOrInterval > 0,
+          mode: 'interval' as const,
+          everyNRounds: Math.max(0, policyOrInterval),
+          chancePct: 0,
+        }
+      : {
+          enabled: policyOrInterval.enabled ?? true,
+          mode: policyOrInterval.mode ?? 'interval',
+          everyNRounds: Math.max(0, policyOrInterval.everyNRounds ?? 0),
+          chancePct: Math.min(100, Math.max(0, policyOrInterval.chancePct ?? 0)),
+        };
+    if (!policy.enabled) return;
 
     const completedCount = await this.dataSource.getRepository(BingoRoom).countBy({ status: 'completed' });
-    if (completedCount === 0 || completedCount % interval !== 0) return;
+    if (completedCount === 0) return;
+    if (policy.mode === 'interval' && (policy.everyNRounds <= 0 || completedCount % policy.everyNRounds !== 0)) return;
+    if (policy.mode === 'random' && (policy.chancePct <= 0 || randomInt(0, 100) >= policy.chancePct)) return;
 
     const bots = await this.getActiveBots('bingo');
     if (bots.length === 0) return;
@@ -586,13 +606,21 @@ export class BotsService {
             sourceType: 'bingo_bot_win_interval',
             sourceId: roomId,
             idempotencyKey: `bingo-bot-win:${roomId}:${luckyBot.id}`,
-            metadata: { roomId, completedCount, interval },
+            metadata: {
+              roomId,
+              completedCount,
+              mode: policy.mode,
+              everyNRounds: policy.everyNRounds,
+              chancePct: policy.chancePct,
+            },
           },
           manager,
         );
       });
       this.logger.log(
-        `Bingo bot win interval (every ${interval} rooms): credited ${bonusAmountMinor} to bot ${luckyBot.id}`,
+        policy.mode === 'random'
+          ? `Bingo bot win bonus (random ${policy.chancePct}%): credited ${bonusAmountMinor} to bot ${luckyBot.id}`
+          : `Bingo bot win bonus (every ${policy.everyNRounds} rooms): credited ${bonusAmountMinor} to bot ${luckyBot.id}`,
       );
     } catch (err) {
       this.logger.error(`Failed to credit bot win for room ${roomId}`, err instanceof Error ? err.stack : err);

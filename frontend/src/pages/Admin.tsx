@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+﻿import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity, Banknote, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
@@ -2665,8 +2665,19 @@ function BingoAdmin() {
     minTicketsToStart: 0,
     houseEdgePct: 20,
     globalBingoBotWinInterval: 0,
+    botCartelaPolicyEnabled: true,
+    botCartelaPolicyMode: 'mirror' as 'mirror' | 'fixed_cap',
+    botMaxCartelasPerBotPerRoom: 5,
+    botBelowThresholdEnabled: true,
+    botBelowThresholdRealPlayers: 10,
+    botAboveThresholdEnabled: true,
+    botAboveThresholdRealPlayers: 50,
     botMaxRealPlayers: 10,
     botWinMode: 'statistical' as 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual',
+    botBonusWinEnabled: true,
+    botBonusWinMode: 'interval' as 'interval' | 'random',
+    botBonusWinEveryNRounds: 0,
+    botBonusWinChancePct: 0,
     prefilledRankingMode: 'race' as 'race' | 'leaderboard',
     prefilledFirstPlacePct: 80,
     prefilledSecondPlaceEnabled: false,
@@ -2714,8 +2725,19 @@ function BingoAdmin() {
         minTicketsToStart: c.minTicketsToStart ?? 0,
         houseEdgePct: c.houseEdgePct ?? 20,
         globalBingoBotWinInterval: c.globalBingoBotWinInterval ?? 0,
+        botCartelaPolicyEnabled: c.botCartelaPolicyEnabled ?? true,
+        botCartelaPolicyMode: (c.botCartelaPolicyMode ?? 'mirror') as 'mirror' | 'fixed_cap',
+        botMaxCartelasPerBotPerRoom: c.botMaxCartelasPerBotPerRoom ?? 5,
+        botBelowThresholdEnabled: c.botBelowThresholdEnabled ?? true,
+        botBelowThresholdRealPlayers: c.botBelowThresholdRealPlayers ?? (c.botMaxRealPlayers ?? 10),
+        botAboveThresholdEnabled: c.botAboveThresholdEnabled ?? true,
+        botAboveThresholdRealPlayers: c.botAboveThresholdRealPlayers ?? 50,
         botMaxRealPlayers: c.botMaxRealPlayers ?? 10,
         botWinMode: (c.botWinMode ?? 'statistical') as 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual',
+        botBonusWinEnabled: c.botBonusWinEnabled ?? true,
+        botBonusWinMode: (c.botBonusWinMode ?? 'interval') as 'interval' | 'random',
+        botBonusWinEveryNRounds: c.botBonusWinEveryNRounds ?? c.globalBingoBotWinInterval ?? 0,
+        botBonusWinChancePct: c.botBonusWinChancePct ?? 0,
         prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as 'race' | 'leaderboard',
         prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
         prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
@@ -2878,8 +2900,17 @@ function BingoAdmin() {
           <span>Draw every {cfg.drawIntervalSeconds}s</span>
           <span>Mode: {cfg.defaultWinMode ?? 'line'}</span>
           {(cfg.minDrawsBeforeWin ?? 0) > 0 && <span>Min draws: {cfg.minDrawsBeforeWin}</span>}
-          {(cfg.globalBingoBotWinInterval ?? 0) > 0 && <span>Bot win every {cfg.globalBingoBotWinInterval} rooms</span>}
-          <span>Edge: {cfg.houseEdgePct ?? 20}%</span>
+          {(cfg.botBonusWinEnabled ?? true) && (
+            ((cfg.botBonusWinMode === 'random' && (cfg.botBonusWinChancePct ?? 0) > 0) ||
+             (cfg.botBonusWinMode !== 'random' && (cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0) > 0))
+          ) && (
+            <span>
+              Bot bonus: {cfg.botBonusWinMode === 'random'
+                ? `${cfg.botBonusWinChancePct ?? 0}% chance`
+                : `every ${cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0} rooms`}
+            </span>
+          )}
+          <span>House edge: {cfg.houseEdgePct ?? 20}% of the pot</span>
         </div>
       )}
 
@@ -3030,16 +3061,48 @@ function BingoAdmin() {
               <span className="adm-field-hint">Room will not auto-start until at least this many tickets are sold.</span>
             </label>
             <label className="adm-field">
-              <span>House Edge % (display reference, 0–100)</span>
+              <span>House Edge % (payout deduction, 0-100)</span>
               <input className="input" type="number" min={0} max={100} value={cfgForm.houseEdgePct ?? 20}
                 onChange={(e) => setCfgForm((f) => ({ ...f, houseEdgePct: Math.min(100, Number(e.target.value)) }))} />
-              <span className="adm-field-hint">Shown in admin stats only — does not affect payout logic.</span>
+              <span className="adm-field-hint">Applied to the room pot before prizes are split. Higher values leave more to the house.</span>
             </label>
-            <label className="adm-field">
-              <span>Bot Guaranteed Win Every N Rooms (0 = disabled)</span>
-              <input className="input" type="number" min={0} value={cfgForm.globalBingoBotWinInterval ?? 0}
-                onChange={(e) => setCfgForm((f) => ({ ...f, globalBingoBotWinInterval: Number(e.target.value) }))} />
-              <span className="adm-field-hint">After every N completed rooms a random active bot receives a bonus credit. Creates visible bot activity on the wins ticker.</span>
+            <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+              <span>Bot Bonus Wins</span>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                <label className="adm-field">
+                  <span>Enabled</span>
+                  <select
+                    className="input"
+                    value={cfgForm.botBonusWinEnabled ? 'true' : 'false'}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, botBonusWinEnabled: e.target.value === 'true' }))}
+                  >
+                    <option value="true">Yes - award bot bonus wins</option>
+                    <option value="false">No - disable bonus wins</option>
+                  </select>
+                </label>
+                <label className="adm-field">
+                  <span>Mode</span>
+                  <select
+                    className="input"
+                    value={cfgForm.botBonusWinMode ?? 'interval'}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, botBonusWinMode: e.target.value as 'interval' | 'random' }))}
+                  >
+                    <option value="interval">Interval - every N completed rooms</option>
+                    <option value="random">Random - chance per completed room</option>
+                  </select>
+                </label>
+                <label className="adm-field">
+                  <span>Every N Completed Rooms</span>
+                  <input className="input" type="number" min={0} value={cfgForm.botBonusWinEveryNRounds ?? 0}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, botBonusWinEveryNRounds: Number(e.target.value) }))} />
+                </label>
+                <label className="adm-field">
+                  <span>Random Bonus Chance %</span>
+                  <input className="input" type="number" min={0} max={100} value={cfgForm.botBonusWinChancePct ?? 0}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, botBonusWinChancePct: Math.min(100, Number(e.target.value)) }))} />
+                </label>
+              </div>
+              <span className="adm-field-hint">Use interval mode for a steady cadence or random mode to make bonus wins less predictable.</span>
             </label>
           </div>
 
@@ -3055,10 +3118,65 @@ function BingoAdmin() {
           )}
           <div className="adm-field-grid">
             <label className="adm-field">
-              <span>Activate Reserved Cartel Below N Real Players (0 = never)</span>
-              <input className="input" type="number" min={0} value={cfgForm.botMaxRealPlayers ?? 10}
-                onChange={(e) => setCfgForm((f) => ({ ...f, botMaxRealPlayers: Number(e.target.value) }))} />
-              <span className="adm-field-hint">While a room has fewer than this many REAL players, the reserved cartel joins to fill/steer it. At or above it, cartel stays out and real players compete on a fair draw.</span>
+              <span>Cartela Policy Enabled</span>
+              <select
+                className="input"
+                value={cfgForm.botCartelaPolicyEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botCartelaPolicyEnabled: e.target.value === 'true' }))}
+              >
+                <option value="true">Yes - bots join the room</option>
+                <option value="false">No - bots stay out</option>
+              </select>
+              <span className="adm-field-hint">Turns the bot cartela allocation rule on or off without changing the thresholds.</span>
+            </label>
+            <label className="adm-field">
+              <span>Cartela Policy Mode</span>
+              <select
+                className="input"
+                value={cfgForm.botCartelaPolicyMode ?? 'mirror'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botCartelaPolicyMode: e.target.value as 'mirror' | 'fixed_cap' }))}
+              >
+                <option value="mirror">Mirror demand - bots follow live human cartelas</option>
+                <option value="fixed_cap">Fixed cap - each bot can hold up to the configured cap</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Max Cartelas Per Bot Per Room</span>
+              <input className="input" type="number" min={1} value={cfgForm.botMaxCartelasPerBotPerRoom ?? 5}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botMaxCartelasPerBotPerRoom: Number(e.target.value) }))} />
+              <span className="adm-field-hint">The upper cap for one bot in one room. The room can still use multiple bots.</span>
+            </label>
+            <label className="adm-field">
+              <span>Enable Below-Threshold Bot Play</span>
+              <select
+                className="input"
+                value={cfgForm.botBelowThresholdEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botBelowThresholdEnabled: e.target.value === 'true' }))}
+              >
+                <option value="true">Yes - bots play when the room is small</option>
+                <option value="false">No - disable the below-threshold rule</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Below Threshold Real Players</span>
+              <input className="input" type="number" min={0} value={cfgForm.botBelowThresholdRealPlayers ?? 10}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botBelowThresholdRealPlayers: Number(e.target.value) }))} />
+            </label>
+            <label className="adm-field">
+              <span>Enable Above-Threshold Bot Play</span>
+              <select
+                className="input"
+                value={cfgForm.botAboveThresholdEnabled ? 'true' : 'false'}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botAboveThresholdEnabled: e.target.value === 'true' }))}
+              >
+                <option value="true">Yes - bots also play once the room is busy</option>
+                <option value="false">No - disable the above-threshold rule</option>
+              </select>
+            </label>
+            <label className="adm-field">
+              <span>Above Threshold Real Players</span>
+              <input className="input" type="number" min={0} value={cfgForm.botAboveThresholdRealPlayers ?? 50}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botAboveThresholdRealPlayers: Number(e.target.value) }))} />
             </label>
             <label className="adm-field" style={{ gridColumn: 'span 2' }}>
               <span>Reserved Cartel Win Mode (below threshold)</span>
@@ -3067,11 +3185,11 @@ function BingoAdmin() {
                 value={cfgForm.botWinMode ?? 'statistical'}
                 onChange={(e) => setCfgForm((f) => ({ ...f, botWinMode: e.target.value as 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual' }))}
               >
-                <option value="off">Off — cartel only fills the room, fully fair draw (no win steering)</option>
-                <option value="statistical">Statistical — cartel buys most cartelas, so a cartel member wins most rounds on a fair draw (least detectable)</option>
-                <option value="guaranteed">Guaranteed — a real user's win is redirected to a cartel member (deterministic; overrides a fair result)</option>
-                <option value="hybrid">Hybrid — flood cartelas AND redirect any real-user win to cartel</option>
-                <option value="cartel-dual">Cartel Dual — cartel wins 1st AND 2nd place under different alias names (most concealed)</option>
+                <option value="off">Off - cartel only fills the room, fully fair draw (no win steering)</option>
+                <option value="statistical">Statistical - cartel buys most cartelas, so a cartel member wins most rounds on a fair draw (least detectable)</option>
+                <option value="guaranteed">Guaranteed - a real user's win is redirected to a cartel member (deterministic; overrides a fair result)</option>
+                <option value="hybrid">Hybrid - flood cartelas AND redirect any real-user win to cartel</option>
+                <option value="cartel-dual">Cartel Dual - cartel wins 1st AND 2nd place under different alias names (most concealed)</option>
               </select>
               <span className="adm-field-hint">
                 Applies only while real players are below the threshold above. <b>Cartel Dual</b> is the most concealed: 1st and 2nd place are each shown with a different name from the alias pool below, making them look like two unrelated real players.

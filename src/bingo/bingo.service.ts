@@ -276,10 +276,87 @@ export class BingoService implements OnModuleInit {
         prefilledThirdPatternId: null,
         prefilledFourthPatternId: null,
         prefilledFifthPatternId: null,
+        botCartelaPolicyEnabled: true,
+        botCartelaPolicyMode: 'mirror',
+        botMaxCartelasPerBotPerRoom: 5,
+        botBelowThresholdEnabled: true,
+        botBelowThresholdRealPlayers: 10,
+        botAboveThresholdEnabled: true,
+        botAboveThresholdRealPlayers: 50,
+        botMaxRealPlayers: 10,
+        botBonusWinEnabled: true,
+        botBonusWinMode: 'interval',
+        botBonusWinEveryNRounds: 0,
+        botBonusWinChancePct: 0,
+        globalBingoBotWinInterval: 0,
       });
       await this.bingoConfigRepository.save(cfg);
     }
     return cfg;
+  }
+
+  private resolveBingoBotParticipation(cfg: BingoConfig): {
+    belowEnabled: boolean;
+    belowThreshold: number;
+    aboveEnabled: boolean;
+    aboveThreshold: number;
+    shouldParticipate: (realPlayers: number) => boolean;
+  } {
+    const legacyThreshold = Math.max(0, cfg.botMaxRealPlayers ?? 10);
+    const belowEnabled = cfg.botBelowThresholdEnabled ?? legacyThreshold > 0;
+    const aboveEnabled = cfg.botAboveThresholdEnabled ?? true;
+    const belowThreshold = Math.max(0, cfg.botBelowThresholdRealPlayers ?? legacyThreshold);
+    const aboveThreshold = Math.max(0, cfg.botAboveThresholdRealPlayers ?? 50);
+    const shouldParticipate = (realPlayers: number) =>
+      (belowEnabled && realPlayers < belowThreshold) ||
+      (aboveEnabled && realPlayers > aboveThreshold);
+    return {
+      belowEnabled,
+      belowThreshold,
+      aboveEnabled,
+      aboveThreshold,
+      shouldParticipate,
+    };
+  }
+
+  private resolveBingoBotCartelaPolicy(cfg: BingoConfig): {
+    enabled: boolean;
+    mode: 'mirror' | 'fixed_cap';
+    maxCartelasPerBotPerRoom: number;
+  } {
+    return {
+      enabled: cfg.botCartelaPolicyEnabled ?? true,
+      mode: cfg.botCartelaPolicyMode ?? 'mirror',
+      maxCartelasPerBotPerRoom: Math.max(1, cfg.botMaxCartelasPerBotPerRoom ?? 5),
+    };
+  }
+
+  private resolveBingoBotBonusWinPolicy(cfg: BingoConfig): {
+    enabled: boolean;
+    mode: 'interval' | 'random';
+    everyNRounds: number;
+    chancePct: number;
+  } {
+    return {
+      enabled: cfg.botBonusWinEnabled ?? true,
+      mode: cfg.botBonusWinMode ?? 'interval',
+      everyNRounds: Math.max(0, cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0),
+      chancePct: Math.min(100, Math.max(0, cfg.botBonusWinChancePct ?? 0)),
+    };
+  }
+
+  private resolveBingoBotCartelaTarget(input: {
+    mode: 'mirror' | 'fixed_cap';
+    maxCartelasPerBotPerRoom: number;
+    realCartelas: number;
+    botCount: number;
+  }): number {
+    if (input.botCount <= 0) return 0;
+    const capTotal = input.maxCartelasPerBotPerRoom * input.botCount;
+    if (input.mode === 'fixed_cap') {
+      return capTotal;
+    }
+    return Math.min(input.realCartelas, capTotal);
   }
 
   private isBotUser(user?: Pick<User, 'productMetadata'> | null): boolean {
@@ -1520,6 +1597,7 @@ export class BingoService implements OnModuleInit {
   }): Promise<{ cartelaNumber: number; refundedMinor: number }> {
     const userId = this.validateUuid(input.userId, 'userId');
     const roomId = this.validateUuid(input.roomId, 'roomId');
+    let roomCancelledBecauseNoRealPlayers = false;
 
     const result = await this.dataSource.transaction(async (manager) => {
       const room = await manager.findOne(BingoRoom, {
@@ -1580,12 +1658,13 @@ export class BingoService implements OnModuleInit {
       const realPlayersRemaining = await this.countRealPlayersInRoom(room.id, manager);
       if (realPlayersRemaining === 0) {
         await this.cancelRoomWithRefundsInSession(room, manager, 'bingo_room_no_real_players');
+        roomCancelledBecauseNoRealPlayers = true;
       }
 
       return { cartelaNumber: input.cartelaNumber, refundedMinor: ticket.stakeMinor };
     });
 
-    if (!input.skipBotReconcile) {
+    if (!input.skipBotReconcile && !roomCancelledBecauseNoRealPlayers) {
       await this.reconcileBotCartelasInRoom(roomId).catch((err) =>
         this.logger.warn(
           `Failed to reconcile Bingo bots after refund in room ${roomId}`,
@@ -1836,8 +1915,8 @@ export class BingoService implements OnModuleInit {
     // statistical relies purely on bots holding most cartelas (a fair draw).
     const botIds = await this.getActiveBotUserIds(manager);
     const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
-    const belowThreshold =
-      (cfg.botMaxRealPlayers ?? 0) > 0 && realPlayers < (cfg.botMaxRealPlayers ?? 0);
+    const participation = this.resolveBingoBotParticipation(cfg);
+    const belowThreshold = participation.belowEnabled && realPlayers < participation.belowThreshold;
     const redirectRealWinsToBot =
       belowThreshold &&
       (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid' || cfg.botWinMode === 'cartel-dual');
@@ -3083,69 +3162,95 @@ export class BingoService implements OnModuleInit {
     const realPlayers = await this.countRealPlayersInRoom(validRoomId);
     if (realPlayers <= 0) {
       await this.cancelRoom(validRoomId).catch(() => undefined);
-      return true;
+      return false;
     }
     if (this.isCartelaChangeLocked(room)) {
       return false;
     }
 
-    const currentBotCartelas = await this.countBotCartelasInRoom(validRoomId);
-    const totalCartelas = await this.countSoldTickets(validRoomId);
-    const shouldParticipate = (cfg.botMaxRealPlayers ?? 0) > 0 && realPlayers < (cfg.botMaxRealPlayers ?? 0);
-
     if (room.winMode !== 'prefilled') {
       return false;
     }
 
+    const participation = this.resolveBingoBotParticipation(cfg);
+    const cartelaPolicy = this.resolveBingoBotCartelaPolicy(cfg);
+    const currentBotCartelas = await this.countBotCartelasInRoom(validRoomId);
+    const totalCartelas = await this.countSoldTickets(validRoomId);
     const realCartelas = Math.max(0, totalCartelas - currentBotCartelas);
-    const desiredBotCartelas = shouldParticipate ? realCartelas : 0;
+    const activeBotIds = await this.getActiveBotUserIds(this.bingoRoomRepository.manager);
+    const shouldParticipate = participation.shouldParticipate(realPlayers);
+    const desiredBotCartelas = shouldParticipate && cartelaPolicy.enabled
+      ? this.resolveBingoBotCartelaTarget({
+          mode: cartelaPolicy.mode,
+          maxCartelasPerBotPerRoom: cartelaPolicy.maxCartelasPerBotPerRoom,
+          realCartelas,
+          botCount: activeBotIds.size,
+        })
+      : 0;
+
     if (desiredBotCartelas === currentBotCartelas) return false;
 
-    const allBotIds = await this.getBotUserIds(this.bingoRoomRepository.manager);
-    const activeBotIds = await this.getActiveBotUserIds(this.bingoRoomRepository.manager);
-    const botIdsForPurchase = [...activeBotIds].filter((id) => allBotIds.has(id));
-    if (botIdsForPurchase.length === 0 && desiredBotCartelas > currentBotCartelas) {
+    if (activeBotIds.size === 0 && desiredBotCartelas > currentBotCartelas) {
       return false;
     }
+    const botIdsForPurchase = [...activeBotIds];
     if (desiredBotCartelas > currentBotCartelas && botIdsForPurchase.length > 0) {
       await this.ensureRoomBotIdentities(validRoomId, botIdsForPurchase);
     }
 
     let changed = false;
     if (desiredBotCartelas > currentBotCartelas) {
-      const freeCartelas = await this.listAvailableCartelaNumbers(validRoomId);
+      const freeCartelas = this.shuffle(await this.listAvailableCartelaNumbers(validRoomId));
       let remaining = Math.min(desiredBotCartelas - currentBotCartelas, freeCartelas.length);
       const shuffledBotIds = this.shuffle(botIdsForPurchase);
+      const botHeldCounts = new Map<string, number>();
+      await Promise.all(shuffledBotIds.map(async (botId) => {
+        botHeldCounts.set(botId, await this.countUserCartelasInRoom(botId, validRoomId));
+      }));
 
-      for (let index = 0; remaining > 0 && index < shuffledBotIds.length; index += 1) {
-        const botId = shuffledBotIds[index];
-        const botsLeft = shuffledBotIds.length - index;
-        const take = Math.max(1, Math.min(remaining, Math.ceil(remaining / botsLeft)));
-        const cartelaNumbers = freeCartelas.splice(0, take);
-        if (cartelaNumbers.length === 0) break;
+      while (remaining > 0 && freeCartelas.length > 0 && shuffledBotIds.length > 0) {
+        const allAtCap = shuffledBotIds.every(
+          (botId) => (botHeldCounts.get(botId) ?? 0) >= cartelaPolicy.maxCartelasPerBotPerRoom,
+        );
+        if (allAtCap) break;
 
-        const ownedSoFar = await this.countUserCartelasInRoom(botId, validRoomId);
-        const idempotencyKey = `bot-bingo:${validRoomId}:${botId}:${ownedSoFar}`;
-        try {
-          await this.purchaseTickets({
-            userId: botId,
-            roomId: validRoomId,
-            cartelaNumbers,
-            idempotencyKey,
-            skipBotReconcile: true,
-          });
-          remaining -= cartelaNumbers.length;
-          changed = true;
-        } catch {
-          // Bot may be out of balance or the room may have filled since we read it.
+        for (const botId of shuffledBotIds) {
+          if (remaining <= 0 || freeCartelas.length === 0) break;
+          const held = botHeldCounts.get(botId) ?? 0;
+          if (held >= cartelaPolicy.maxCartelasPerBotPerRoom) {
+            continue;
+          }
+
+          const cartelaNumber = freeCartelas.shift();
+          if (cartelaNumber == null) break;
+
+          const idempotencyKey = `bot-bingo:${validRoomId}:${botId}:${held}`;
+          try {
+            await this.purchaseTickets({
+              userId: botId,
+              roomId: validRoomId,
+              cartelaNumbers: [cartelaNumber],
+              idempotencyKey,
+              skipBotReconcile: true,
+            });
+            botHeldCounts.set(botId, held + 1);
+            remaining -= 1;
+            changed = true;
+          } catch {
+            // Bot may be out of balance or the room may have filled since we read it.
+          }
         }
       }
     } else {
       const botTicketRows = await this.bingoTicketRepository.find({
         where: { roomId: validRoomId, status: Not('cancelled') },
+        relations: ['user'],
         order: { createdAt: 'ASC' },
       });
-      const botTickets = botTicketRows.filter((ticket) => allBotIds.has(ticket.userId));
+      const botTickets = botTicketRows.filter((ticket) => {
+        const metadata = ticket.user?.productMetadata;
+        return !!metadata?.botPolicy;
+      });
       const toRelease = botTickets.slice(0, currentBotCartelas - desiredBotCartelas);
 
       for (const ticket of toRelease) {

@@ -407,6 +407,23 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
 });
 
 describe('BingoService cartela lifecycle guards', () => {
+  const botCfg = (overrides: any = {}) => ({
+    botCartelaPolicyEnabled: true,
+    botCartelaPolicyMode: 'mirror',
+    botMaxCartelasPerBotPerRoom: 5,
+    botBelowThresholdEnabled: true,
+    botBelowThresholdRealPlayers: 10,
+    botAboveThresholdEnabled: true,
+    botAboveThresholdRealPlayers: 50,
+    botMaxRealPlayers: 10,
+    botBonusWinEnabled: true,
+    botBonusWinMode: 'interval',
+    botBonusWinEveryNRounds: 0,
+    botBonusWinChancePct: 0,
+    globalBingoBotWinInterval: 0,
+    ...overrides,
+  });
+
   it('rejects cartela returns during the freeze window before the draw', async () => {
     const { service, dataSource } = makeService({ rooms: [] });
     const room = makeRoom({
@@ -497,6 +514,10 @@ describe('BingoService cartela lifecycle guards', () => {
 
     expect(result).toEqual({ cartelaNumber: 7, refundedMinor: 100 });
     expect(room.status).toBe('cancelled');
+    expect(room.soldTickets).toBe(0);
+    expect(room.settlementSummary).toMatchObject({ reason: 'bingo_room_no_real_players' });
+    expect(botTicket.status).toBe('cancelled');
+    expect(botTicket.settlementStatus).toBe('settled');
     expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
     expect(manager.find).toHaveBeenCalled();
   });
@@ -585,6 +606,91 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(changed).toBe(false);
     expect(purchaseSpy).not.toHaveBeenCalled();
     expect(releaseSpy).not.toHaveBeenCalled();
+  });
+
+  it('randomizes bot cartela assignment across the available pool', async () => {
+    const { service, mockRoomRepo } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      soldTickets: 2,
+      scheduledStartAt: new Date(Date.now() + 20_000),
+    });
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg() as any);
+    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
+    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(2 as any);
+    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
+    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
+    jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(0);
+    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([1, 2, 3]);
+    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]].reverse());
+    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
+
+    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
+
+    expect((purchaseSpy.mock.calls as any[]).map((call) => call[0].cartelaNumbers[0])).toEqual([3, 2]);
+  });
+
+  it('enforces the per-bot cartela cap while still letting bots join above threshold independently', async () => {
+    const { service, mockRoomRepo } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      soldTickets: 3,
+      scheduledStartAt: new Date(Date.now() + 20_000),
+    });
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
+      botCartelaPolicyMode: 'fixed_cap',
+      botMaxCartelasPerBotPerRoom: 1,
+      botBelowThresholdEnabled: false,
+      botAboveThresholdEnabled: true,
+      botAboveThresholdRealPlayers: 50,
+    }) as any);
+    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(60);
+    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(3 as any);
+    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
+    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
+    jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(0);
+    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([1, 2, 3]);
+    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]]);
+    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
+
+    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
+
+    expect(purchaseSpy).toHaveBeenCalledTimes(1);
+    expect(purchaseSpy.mock.calls[0][0].cartelaNumbers).toHaveLength(1);
+  });
+
+  it('keeps bots out when the below-threshold rule is disabled, even if the room is small', async () => {
+    const { service, mockRoomRepo } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      soldTickets: 1,
+      scheduledStartAt: new Date(Date.now() + 20_000),
+    });
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
+      botBelowThresholdEnabled: false,
+      botAboveThresholdEnabled: true,
+      botAboveThresholdRealPlayers: 50,
+    }) as any);
+    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(5);
+    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(1 as any);
+    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
+    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
+
+    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(false);
+
+    expect(purchaseSpy).not.toHaveBeenCalled();
   });
 });
 

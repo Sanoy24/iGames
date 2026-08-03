@@ -145,7 +145,12 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
               this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
             );
             try {
-              await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
+              await this.botsService.handleBingoBotWinInterval(updated.id, {
+                enabled: cfg.botBonusWinEnabled ?? true,
+                mode: cfg.botBonusWinMode ?? 'interval',
+                everyNRounds: cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0,
+                chancePct: cfg.botBonusWinChancePct ?? 0,
+              });
             } catch (err) {
               this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
             }

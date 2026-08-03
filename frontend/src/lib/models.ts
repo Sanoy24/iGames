@@ -39,9 +39,6 @@ export type User = {
   referralCode?: string | null;
   /** This agent's referral-commission % override. Null = use the global default. */
   referralCommissionPct?: number | null;
-  /** Custom label for this agent's auto-managed Bingo room — survives the room
-   * auto-recreating (unlike a one-off room rename). Null = default "<name> · Bingo". */
-  bingoRoomLabel?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -200,8 +197,25 @@ export type BingoRoom = {
   cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
   isAdminCreated?: boolean;
+  ownerAgentId?: string | null;
   cardPaletteId?: string | null;
   cardBallNumber?: number | null;
+};
+
+/**
+ * A House-or-agent Bingo room "slot" (see BingoService.ensureAgentRooms) with
+ * its PERSISTENT label/palette/ball — survives every auto-recreation of that
+ * slot's room, unlike a one-off room rename (BingoRoom.name via updateRoomDisplay).
+ */
+export type BingoRoomSlot = {
+  ownerId: string;
+  ownerName: string;
+  label: string | null;
+  cardPaletteId: string | null;
+  cardBallNumber: number | null;
+  currentRoomId: string | null;
+  currentRoomName: string | null;
+  currentRoomStatus: string | null;
 };
 
 export type BingoTicket = {

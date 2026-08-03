@@ -123,6 +123,18 @@
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npx jest src/bingo/bingo.service.spec.ts --forceExit --no-coverage --runInBand` **27/27** pass; `npm run test:unit -- --runInBand` **234/234** pass.
 
+### Session note: 2026-08-03 (refund-to-zero keeps selected Bingo cartela room)
+
+**Goal**: After a player refunds every cartela and the room cancels, keep the Mini App on the selected cartela page and advance to that same room slot's new round instead of returning to the Rooms list.
+
+**Completed**:
+
+- **Same-slot cancel handoff** - `loadCurrent()` now finds the next open/running room with the same `ownerAgentId` before switching away from a cancelled pinned room, so per-agent room selection stays anchored.
+- **No forced lobby reset on full refund** - the cartela refund handler no longer clears `pinnedRoomId` when the server reports `roomCancelled`; the page holds the selected slot and lets polling move it to the fresh room.
+- **Shared result/cancel replacement path** - completed-room dismissal and cancelled-room recovery now use the same same-slot replacement lookup, reducing the chance of one flow drifting into the lobby while the other works.
+
+**Verified**: `cd frontend && npx tsc --noEmit && npm run build` clean.
+
 ### Session note: 2026-08-03 (completed Bingo room no longer sticks after bot win)
 
 **Goal**: Stop the Mini App from staying on the completed now-calling board after a bot win dialog closes.
@@ -131,6 +143,7 @@
 
 - **Time-boxed completed rooms** - `GET /bingo/current` now returns a completed room only during the configured result-display window. After that, completed rooms are history, so the client will not keep repainting an old completed board.
 - **Dismissed-result guard** - once the frontend has dismissed a completed room, it ignores that same completed room if the API briefly returns it again during timing overlap.
+- **Selected-room handoff** - room state responses now expose `ownerAgentId`, and the Mini App uses it to move from a completed selected room to the newly-open room for the same house/agent slot instead of showing "No Bingo game running".
 - **Regression coverage** - added a `getCurrentRoom` test proving old completed rooms return `null` instead of sticking as current.
 
 **Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npx jest src/bingo/bingo.service.spec.ts --forceExit --no-coverage --runInBand` **28/28** pass; `npm run test:unit -- --runInBand` **235/235** pass.

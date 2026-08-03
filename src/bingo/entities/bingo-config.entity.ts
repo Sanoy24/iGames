@@ -234,6 +234,24 @@ export class BingoConfig {
   @Column({ type: 'text', nullable: true })
   botAliasPool: string | null;
 
+  /**
+   * PERSISTENT label for the House room slot (the auto-managed room with
+   * ownerAgentId NULL — see BingoService.ensureAgentRooms). Null = default
+   * "Bingo <time>" name. This is the House-slot counterpart of
+   * User.bingoRoomLabel; it lives here because the house slot has no user row
+   * to attach a label to. Managed from the admin Bingo tab's "Room Slots" panel.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  houseRoomLabel?: string | null;
+
+  /** PERSISTENT lobby card palette for the House room slot. Null = random each recreation. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  houseCardPaletteId?: string | null;
+
+  /** PERSISTENT decorative ball number for the House room slot. Null = random each recreation. */
+  @Column({ type: 'int', nullable: true })
+  houseCardBallNumber?: number | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

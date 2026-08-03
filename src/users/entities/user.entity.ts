@@ -114,16 +114,26 @@ export class User {
   referralCommissionPct?: number | null;
 
   /**
-   * AGENT-specific custom label for their auto-managed Bingo room (per-agent
+   * AGENT-specific PERSISTENT label for their auto-managed Bingo room (per-agent
    * room mode — see BingoService.ensureAgentRooms). Null = no override, the
    * room falls back to the default "<displayName> · Bingo" name. Unlike a
    * room rename (BingoService.updateRoomDisplay, cosmetic and per-instance),
    * this is read fresh every time ensureAgentRooms creates that agent's NEXT
    * room, so a custom label survives the room auto-recreating after it
-   * completes — a per-instance rename does not.
+   * completes — a per-instance rename does not. Managed centrally from the
+   * admin Bingo tab's "Room Slots" panel (BingoService.listRoomSlots /
+   * updateRoomSlot), not from the Agents tab.
    */
   @Column({ type: 'varchar', length: 255, nullable: true })
   bingoRoomLabel?: string | null;
+
+  /** PERSISTENT lobby card palette for this agent's room slot. Null = random each recreation. See bingoRoomLabel above. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  bingoRoomCardPaletteId?: string | null;
+
+  /** PERSISTENT decorative ball number for this agent's room slot. Null = random each recreation. See bingoRoomLabel above. */
+  @Column({ type: 'int', nullable: true })
+  bingoRoomCardBallNumber?: number | null;
 
   /**
    * Where the player says they came from, picked during registration. This is the

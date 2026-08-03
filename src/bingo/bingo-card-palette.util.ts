@@ -28,3 +28,19 @@ export function randomCardPaletteId(): BingoCardPaletteId {
 export function randomCardBallNumber(maxNumber: number): number {
   return 1 + Math.floor(Math.random() * Math.max(1, maxNumber));
 }
+
+/**
+ * Same as randomCardBallNumber, but best-effort avoids numbers already shown
+ * on another currently-open/running room's lobby card (so two simultaneous
+ * rooms don't display the same decorative ball). Falls back to fully random
+ * once every number in range is already taken.
+ */
+export function randomCardBallNumberAvoiding(maxNumber: number, used: Iterable<number>): number {
+  const usedSet = new Set(used);
+  const pool: number[] = [];
+  for (let n = 1; n <= maxNumber; n++) {
+    if (!usedSet.has(n)) pool.push(n);
+  }
+  if (pool.length === 0) return randomCardBallNumber(maxNumber);
+  return pool[Math.floor(Math.random() * pool.length)];
+}

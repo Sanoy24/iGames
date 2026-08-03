@@ -8,6 +8,7 @@ import { BingoService } from './bingo.service';
 import { CreateBingoRoomDto } from './dto/create-bingo-room.dto';
 import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
 import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo-pattern.dto';
+import { UpdateRoomSlotDto } from './dto/update-room-slot.dto';
 
 @ApiTags('admin-bingo')
 @ApiBearerAuth()
@@ -54,6 +55,22 @@ export class BingoAdminController {
     const room = await this.bingoService.updateRoomDisplay(roomId, dto);
     this.gameEventsGateway.emitBingoRoomUpdated(room);
     return room;
+  }
+
+  // ── Room Slots (persistent per-slot label/palette/ball) ────────────
+
+  /** House + every agent's auto-managed room slot, with its persistent style. */
+  @Get('room-slots')
+  @ApiOkResponse({ description: 'House + every agent room slot with its persistent label/palette/ball, applied on next auto-recreation.' })
+  listRoomSlots() {
+    return this.bingoService.listRoomSlots();
+  }
+
+  @Patch('room-slots/:ownerId')
+  @ApiOkResponse({ description: "Updates a room slot's persistent label/palette/ball ('house' or an agent id)." })
+  async updateRoomSlot(@Param('ownerId') ownerId: string, @Body() dto: UpdateRoomSlotDto) {
+    await this.bingoService.updateRoomSlot(ownerId, dto);
+    return this.bingoService.listRoomSlots();
   }
 
   @Post('rooms/:id/draw-next')

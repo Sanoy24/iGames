@@ -66,11 +66,4 @@ export class UpdateAgentDto {
   @Min(0)
   @Max(100)
   referralCommissionPct?: number | null;
-
-  /** Custom label for this agent's auto-managed Bingo room. Pass null (or an
-   * empty string) to clear it and fall back to the default "<name> · Bingo". */
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @IsString()
-  bingoRoomLabel?: string | null;
 }

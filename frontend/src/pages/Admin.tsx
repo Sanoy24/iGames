@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Activity, Banknote, Bot, ChevronDown, ChevronUp, Circle, CircleDot, Coins, Dices,
   Image as ImageIcon, LifeBuoy, MapPin, Megaphone, Play, Plus, RefreshCw, Send, Settings,
-  Shield, Trash2, Users, Wallet, X, History
+  Shield, Tag, Trash2, Users, Wallet, X, History
 } from 'lucide-react';
 import {
   adminAgentsApi,
@@ -35,7 +35,7 @@ import {
   type CoverageGap,
   type ConfigChangeLog,
 } from '../lib/api';
-import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
+import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, BingoRoomSlot, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { BINGO_CARD_PALETTES, getBingoCardPalette, type BingoCardPaletteId } from '../lib/bingoCardPalette';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -1185,7 +1185,6 @@ function AgentsAdmin() {
     withdraw: true,
     status: 'active',
     referralCommissionPct: '' as string,
-    bingoRoomLabel: '' as string,
   });
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -1268,7 +1267,6 @@ function AgentsAdmin() {
       withdraw: agent.agentPermissions ? agent.agentPermissions.withdraw : true,
       status: agent.status || 'active',
       referralCommissionPct: agent.referralCommissionPct != null ? String(agent.referralCommissionPct) : '',
-      bingoRoomLabel: agent.bingoRoomLabel ?? '',
     });
   };
 
@@ -1298,7 +1296,6 @@ function AgentsAdmin() {
         },
         status: editForm.status,
         referralCommissionPct: editForm.referralCommissionPct.trim() === '' ? null : Number(editForm.referralCommissionPct),
-        bingoRoomLabel: editForm.bingoRoomLabel.trim() === '' ? null : editForm.bingoRoomLabel.trim(),
       };
       if (editForm.password.trim() !== '') {
         payload.password = editForm.password;
@@ -1451,19 +1448,6 @@ function AgentsAdmin() {
                 {editForm.referralCommissionPct !== '' && (
                   <button type="button" className="adm-btn" onClick={() => setEditForm((f) => ({ ...f, referralCommissionPct: '' }))}>
                     Clear override
-                  </button>
-                )}
-              </div>
-            </label>
-            <label className="adm-field">
-              <span>Bingo Room Name <em className="adm-field-hint">— blank = default "&lt;agent name&gt; · Bingo". Sticks across every auto-recreated room for this agent, unlike a one-off room rename.</em></span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input className="input" placeholder="e.g. Mini Room 🎉" style={{ flex: 1 }}
-                  value={editForm.bingoRoomLabel}
-                  onChange={(e) => setEditForm((f) => ({ ...f, bingoRoomLabel: e.target.value }))} />
-                {editForm.bingoRoomLabel !== '' && (
-                  <button type="button" className="adm-btn" onClick={() => setEditForm((f) => ({ ...f, bingoRoomLabel: '' }))}>
-                    Clear
                   </button>
                 )}
               </div>
@@ -2641,6 +2625,7 @@ function BingoAdmin() {
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPatterns, setShowPatterns] = useState(false);
+  const [showSlots, setShowSlots] = useState(false);
 
   // Inline rename / restyle for an existing room (any room — agent-owned,
   // house, or admin-created; see BingoService.updateRoomDisplay).
@@ -2666,6 +2651,59 @@ function BingoAdmin() {
       await adminBingoApi.updateRoomDisplay(roomId, { cardPaletteId: paletteId });
       setPaletteEditorId(null);
       await loadRooms(page);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  // Room Slots (House + every agent's auto-managed room, PERSISTENT label/
+  // palette/ball — applies on the slot's next auto-recreation, unlike the
+  // per-instance rename/restyle above).
+  const [slots, setSlots] = useState<BingoRoomSlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [editingSlotLabelId, setEditingSlotLabelId] = useState<string | null>(null);
+  const [editingSlotLabelValue, setEditingSlotLabelValue] = useState('');
+  const [slotPaletteEditorId, setSlotPaletteEditorId] = useState<string | null>(null);
+  const [slotBallDraft, setSlotBallDraft] = useState<Record<string, string>>({});
+
+  const loadSlots = useCallback(async () => {
+    setSlotsLoading(true);
+    try {
+      setSlots(await adminBingoApi.listRoomSlots());
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setSlotsLoading(false); }
+  }, [addToast]);
+
+  const saveSlotLabel = async (ownerId: string) => {
+    setBusy(`slot-label-${ownerId}`);
+    try {
+      const updated = await adminBingoApi.updateRoomSlot(ownerId, { label: editingSlotLabelValue.trim() || null });
+      setSlots(updated);
+      setEditingSlotLabelId(null);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const saveSlotPalette = async (ownerId: string, paletteId: string | null) => {
+    setBusy(`slot-palette-${ownerId}`);
+    try {
+      const updated = await adminBingoApi.updateRoomSlot(ownerId, { cardPaletteId: paletteId });
+      setSlots(updated);
+      setSlotPaletteEditorId(null);
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setBusy(null); }
+  };
+
+  const saveSlotBallNumber = async (ownerId: string) => {
+    const raw = slotBallDraft[ownerId] ?? '';
+    const value = raw.trim() === '' ? null : Number(raw);
+    if (value !== null && (!Number.isInteger(value) || value < 1)) {
+      addToast('error', 'Ball number must be a positive whole number.');
+      return;
+    }
+    setBusy(`slot-ball-${ownerId}`);
+    try {
+      const updated = await adminBingoApi.updateRoomSlot(ownerId, { cardBallNumber: value });
+      setSlots(updated);
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setBusy(null); }
   };
@@ -2830,7 +2868,8 @@ function BingoAdmin() {
   useEffect(() => {
     void loadMeta();
     void loadRooms(1);
-  }, [loadMeta, loadRooms]);
+    void loadSlots();
+  }, [loadMeta, loadRooms, loadSlots]);
 
   const goToRoomPage = async (nextPage: number) => {
     if (nextPage === page) return;
@@ -2839,8 +2878,8 @@ function BingoAdmin() {
   };
 
   const refreshBingo = useCallback(async () => {
-    await Promise.all([loadMeta(), loadRooms(page)]);
-  }, [loadMeta, loadRooms, page]);
+    await Promise.all([loadMeta(), loadRooms(page), loadSlots()]);
+  }, [loadMeta, loadRooms, loadSlots, page]);
 
   const saveConfig = async () => {
     setBusy('cfg');
@@ -2937,6 +2976,9 @@ function BingoAdmin() {
         <button className="adm-btn adm-btn-secondary" onClick={() => setShowPatterns((v) => !v)}>
           <CircleDot size={13} />{showPatterns ? 'Hide Patterns' : 'Patterns'}
         </button>
+        <button className="adm-btn adm-btn-secondary" onClick={() => setShowSlots((v) => !v)}>
+          <Tag size={13} />{showSlots ? 'Hide Room Slots' : 'Room Slots'}
+        </button>
         <button className="adm-btn adm-btn-secondary" onClick={() => setShowSettings((v) => !v)}>
           <Settings size={13} />{showSettings ? 'Close' : 'Settings'}
         </button>
@@ -2965,6 +3007,98 @@ function BingoAdmin() {
             </span>
           )}
           <span>House edge: {cfg.houseEdgePct ?? 20}% of the pot</span>
+        </div>
+      )}
+
+      {/* Room Slots panel — PERSISTENT label/palette/ball for House + every
+          agent's auto-managed room. Survives every auto-recreation, unlike
+          the per-instance rename/restyle in the room list below. */}
+      {showSlots && (
+        <div className="adm-panel">
+          <div className="adm-panel-head">
+            Room Slots <span className="adm-field-hint">— persistent name &amp; style for the House and each agent's auto-managed room. Sticks across every future auto-recreation.</span>
+          </div>
+          {slotsLoading ? (
+            <div className="adm-empty">Loading…</div>
+          ) : slots.length === 0 ? (
+            <div className="adm-empty">No room slots found.</div>
+          ) : (
+            <table className="adm-table">
+              <thead><tr><th>Owner</th><th>Live room now</th><th>Persistent name</th><th>Color</th><th>Ball #</th></tr></thead>
+              <tbody>
+                {slots.map((slot) => {
+                  const palette = getBingoCardPalette(slot.cardPaletteId);
+                  return (
+                    <tr key={slot.ownerId} className="adm-tr">
+                      <td><strong>{slot.ownerName}</strong></td>
+                      <td className="adm-td-muted">
+                        {slot.currentRoomName ? `${slot.currentRoomName} (${slot.currentRoomStatus})` : '—'}
+                      </td>
+                      <td>
+                        {editingSlotLabelId === slot.ownerId ? (
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input
+                              className="input"
+                              autoFocus
+                              placeholder={slot.ownerId === 'house' ? 'Random time-based name' : `${slot.ownerName} · Bingo`}
+                              value={editingSlotLabelValue}
+                              onChange={(e) => setEditingSlotLabelValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') void saveSlotLabel(slot.ownerId); if (e.key === 'Escape') setEditingSlotLabelId(null); }}
+                              style={{ fontSize: 12, padding: '4px 8px', width: 160 }}
+                            />
+                            <button className="adm-btn adm-btn-primary adm-btn-xs" disabled={busy === `slot-label-${slot.ownerId}`} onClick={() => void saveSlotLabel(slot.ownerId)}>Save</button>
+                            <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => setEditingSlotLabelId(null)}>Cancel</button>
+                          </div>
+                        ) : (
+                          <span
+                            style={{ cursor: 'pointer' }}
+                            title="Click to set a persistent name"
+                            onClick={() => { setEditingSlotLabelId(slot.ownerId); setEditingSlotLabelValue(slot.label ?? ''); }}
+                          >
+                            {slot.label || <em className="adm-td-muted">default</em>}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ position: 'relative' }}>
+                        <button
+                          type="button"
+                          title="Set persistent lobby card color"
+                          onClick={() => setSlotPaletteEditorId(slotPaletteEditorId === slot.ownerId ? null : slot.ownerId)}
+                          style={{ width: 20, height: 20, borderRadius: 6, background: palette.gradient, border: '1px solid rgba(255,255,255,0.25)', cursor: 'pointer' }}
+                        />
+                        {slotPaletteEditorId === slot.ownerId && (
+                          <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 10, marginTop: 4, padding: 8, borderRadius: 8, background: 'var(--surface, #1a1d2e)', border: '1px solid var(--border)', display: 'flex', gap: 6 }}>
+                            {Object.values(BINGO_CARD_PALETTES).map((p) => (
+                              <button key={p.id} type="button" title={p.label}
+                                onClick={() => void saveSlotPalette(slot.ownerId, p.id)}
+                                style={{ width: 22, height: 22, borderRadius: 6, background: p.gradient, cursor: 'pointer', border: slot.cardPaletteId === p.id ? '2px solid #fff' : '1px solid rgba(255,255,255,0.25)' }}
+                              />
+                            ))}
+                            <button type="button" title="Random every time"
+                              onClick={() => void saveSlotPalette(slot.ownerId, null)}
+                              className="adm-btn adm-btn-secondary adm-btn-xs"
+                            >
+                              🎲
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input className="input" type="number" min={1} placeholder="Random" style={{ width: 70, fontSize: 12, padding: '4px 8px' }}
+                            value={slotBallDraft[slot.ownerId] ?? (slot.cardBallNumber ?? '')}
+                            onChange={(e) => setSlotBallDraft((d) => ({ ...d, [slot.ownerId]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveSlotBallNumber(slot.ownerId); }}
+                          />
+                          <button className="adm-btn adm-btn-secondary adm-btn-xs" disabled={busy === `slot-ball-${slot.ownerId}`} onClick={() => void saveSlotBallNumber(slot.ownerId)}>Save</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 

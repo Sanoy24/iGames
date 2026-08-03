@@ -18,7 +18,7 @@ import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo
 import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoBotIdentity, BingoRoom, BingoPrizeTier, BingoWinMode } from './entities/bingo-room.entity';
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
-import { isValidCardPaletteId, randomCardBallNumber, randomCardPaletteId } from './bingo-card-palette.util';
+import { isValidCardPaletteId, randomCardBallNumber, randomCardBallNumberAvoiding, randomCardPaletteId } from './bingo-card-palette.util';
 import { BingoCard } from './entities/bingo-card.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -133,6 +133,7 @@ export type BingoRoomResponse = {
   cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
   isAdminCreated?: boolean;
+  ownerAgentId?: string | null;
   cardPaletteId?: string | null;
   cardBallNumber?: number | null;
 };
@@ -679,7 +680,7 @@ export class BingoService implements OnModuleInit {
       `UPDATE bingo_rooms SET activeGuard = NULL WHERE activeGuard IS NOT NULL AND status IN ('completed','cancelled')`,
     );
 
-    const created = await this.createIdleRoom(cfg, null, 1);
+    const created = await this.createIdleRoom(cfg, null, 1, undefined, cfg.houseRoomLabel, cfg.houseCardPaletteId, cfg.houseCardBallNumber);
     if (created) {
       this.logger.log(`Auto-created idle Bingo room "${created.name}" — countdown starts on first ticket sale`);
     }
@@ -702,6 +703,12 @@ export class BingoService implements OnModuleInit {
      * part, so an admin gets full control same as a manually created room's
      * name (no forced " · Bingo" suffix). */
     customLabel?: string | null,
+    /** Persistent card style for this slot (User.bingoRoomCardPaletteId/
+     * BallNumber, or BingoConfig.houseCardPaletteId/BallNumber for the house
+     * slot) — read fresh on every auto-recreation same as customLabel. Null =
+     * pick randomly, same as before this field existed. */
+    customPaletteId?: string | null,
+    customBallNumber?: number | null,
   ): Promise<BingoRoomResponse | null> {
     const winMode = (cfg.defaultWinMode as BingoWinMode) ?? 'prefilled';
     const gridSize = cfg.defaultGridSize ?? 75;
@@ -713,6 +720,22 @@ export class BingoService implements OnModuleInit {
     });
     const name = customLabel?.trim() || (ownerName ? `${ownerName} · Bingo` : `Bingo ${timestamp}`);
     const numberRange = this.ballPoolFor(winMode, cfg);
+
+    let cardPaletteId = customPaletteId && isValidCardPaletteId(customPaletteId) ? customPaletteId : null;
+    let cardBallNumber =
+      customBallNumber && customBallNumber >= 1 && customBallNumber <= numberRange ? customBallNumber : null;
+    if (!cardPaletteId) cardPaletteId = randomCardPaletteId();
+    if (!cardBallNumber) {
+      // Best-effort: don't hand out a ball number another currently-live room
+      // is already showing, so the lobby doesn't display visible duplicates.
+      const usedRows: Array<{ cardBallNumber: number | null }> = await this.bingoRoomRepository.query(
+        `SELECT cardBallNumber FROM bingo_rooms WHERE status IN ('open','running') AND cardBallNumber IS NOT NULL`,
+      );
+      cardBallNumber = randomCardBallNumberAvoiding(
+        numberRange,
+        usedRows.map((r) => r.cardBallNumber!).filter((n) => n >= 1 && n <= numberRange),
+      );
+    }
 
     const room = this.bingoRoomRepository.create({
       name,
@@ -740,8 +763,8 @@ export class BingoService implements OnModuleInit {
       activeGuard,
       ownerAgentId,
       isAdminCreated: false,
-      cardPaletteId: randomCardPaletteId(),
-      cardBallNumber: randomCardBallNumber(numberRange),
+      cardPaletteId,
+      cardBallNumber,
     });
 
     try {
@@ -781,12 +804,31 @@ export class BingoService implements OnModuleInit {
     const config = cfg ?? (await this.getBingoConfig());
     if (!config.enabled) return;
 
-    const agents: Array<{ id: string; displayName: string; bingoRoomLabel: string | null }> = await this.bingoRoomRepository.query(
-      `SELECT id, displayName, bingoRoomLabel FROM users WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"')`,
+    const agents: Array<{
+      id: string;
+      displayName: string;
+      bingoRoomLabel: string | null;
+      bingoRoomCardPaletteId: string | null;
+      bingoRoomCardBallNumber: number | null;
+    }> = await this.bingoRoomRepository.query(
+      `SELECT id, displayName, bingoRoomLabel, bingoRoomCardPaletteId, bingoRoomCardBallNumber FROM users WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"')`,
     );
-    const owners: Array<{ ownerAgentId: string | null; name?: string; customLabel?: string | null }> = [
-      { ownerAgentId: null }, // house room
-      ...agents.map((a) => ({ ownerAgentId: a.id, name: a.displayName, customLabel: a.bingoRoomLabel })),
+    const owners: Array<{
+      ownerAgentId: string | null;
+      name?: string;
+      customLabel?: string | null;
+      customPaletteId?: string | null;
+      customBallNumber?: number | null;
+    }> = [
+      // house room slot — persistent style lives on BingoConfig, not a user row
+      { ownerAgentId: null, customLabel: config.houseRoomLabel, customPaletteId: config.houseCardPaletteId, customBallNumber: config.houseCardBallNumber },
+      ...agents.map((a) => ({
+        ownerAgentId: a.id,
+        name: a.displayName,
+        customLabel: a.bingoRoomLabel,
+        customPaletteId: a.bingoRoomCardPaletteId,
+        customBallNumber: a.bingoRoomCardBallNumber,
+      })),
     ];
 
     for (const owner of owners) {
@@ -798,7 +840,7 @@ export class BingoService implements OnModuleInit {
         order: { scheduledStartAt: 'ASC' },
       });
       if (active.length === 0) {
-        await this.createIdleRoom(config, owner.ownerAgentId, null, owner.name, owner.customLabel).catch((err) =>
+        await this.createIdleRoom(config, owner.ownerAgentId, null, owner.name, owner.customLabel, owner.customPaletteId, owner.customBallNumber).catch((err) =>
           this.logger.error('ensureAgentRooms create failed', err instanceof Error ? err.stack : err),
         );
       } else if (active.length > 1) {
@@ -1215,11 +1257,12 @@ export class BingoService implements OnModuleInit {
   /**
    * Cosmetic-only edit — name and/or lobby card style. Applies to ANY room
    * (agent-owned, house, or admin-created) at any status, since none of these
-   * fields affect gameplay/settlement. For an agent-owned room this only
-   * changes the CURRENT instance — ensureAgentRooms regenerates the default
-   * "<Agent Name> · Bingo" name and a fresh random card style the next time
-   * that agent's room auto-recreates; nothing here is a persistent per-agent
-   * preference (that would be a separate feature).
+   * fields affect gameplay/settlement. For an agent-owned or house room this
+   * only changes the CURRENT instance — ensureAgentRooms regenerates the
+   * default name and a fresh random card style the next time that slot's room
+   * auto-recreates, UNLESS a persistent slot setting is set (see
+   * listRoomSlots/updateRoomSlot below, which IS the persistent version of
+   * this same name/palette/ball styling).
    */
   async updateRoomDisplay(
     roomId: string,
@@ -1252,6 +1295,131 @@ export class BingoService implements OnModuleInit {
     await this.bingoRoomRepository.save(room);
     const soldTickets = await this.countSoldTickets(validRoomId);
     return this.toRoomResponse(room, soldTickets);
+  }
+
+  /**
+   * Centralized list for the admin Bingo tab's "Room Slots" panel: the House
+   * slot plus every active agent's auto-managed room slot (the same slots
+   * ensureAgentRooms keeps exactly one active room for), each with its
+   * PERSISTENT label/palette/ball and a snapshot of its current live room (if
+   * any). Unlike updateRoomDisplay (per-instance, cosmetic-only), editing a
+   * slot here survives every future auto-recreation of that slot's room.
+   */
+  async listRoomSlots(): Promise<
+    Array<{
+      ownerId: string;
+      ownerName: string;
+      label: string | null;
+      cardPaletteId: string | null;
+      cardBallNumber: number | null;
+      currentRoomId: string | null;
+      currentRoomName: string | null;
+      currentRoomStatus: string | null;
+    }>
+  > {
+    const cfg = await this.getBingoConfig();
+    const agents: Array<{
+      id: string;
+      displayName: string;
+      bingoRoomLabel: string | null;
+      bingoRoomCardPaletteId: string | null;
+      bingoRoomCardBallNumber: number | null;
+    }> = await this.bingoRoomRepository.query(
+      `SELECT id, displayName, bingoRoomLabel, bingoRoomCardPaletteId, bingoRoomCardBallNumber FROM users
+       WHERE status = 'active' AND JSON_CONTAINS(roles, '"agent"') ORDER BY displayName ASC`,
+    );
+
+    const slots: Array<{
+      ownerId: string;
+      ownerAgentId: string | null;
+      ownerName: string;
+      label: string | null;
+      cardPaletteId: string | null;
+      cardBallNumber: number | null;
+    }> = [
+      {
+        ownerId: 'house',
+        ownerAgentId: null,
+        ownerName: 'House',
+        label: cfg.houseRoomLabel ?? null,
+        cardPaletteId: cfg.houseCardPaletteId ?? null,
+        cardBallNumber: cfg.houseCardBallNumber ?? null,
+      },
+      ...agents.map((a) => ({
+        ownerId: a.id,
+        ownerAgentId: a.id,
+        ownerName: a.displayName,
+        label: a.bingoRoomLabel,
+        cardPaletteId: a.bingoRoomCardPaletteId,
+        cardBallNumber: a.bingoRoomCardBallNumber,
+      })),
+    ];
+
+    const currentRooms = await this.bingoRoomRepository.find({
+      where: { status: In(['open', 'running']), isAdminCreated: false },
+    });
+    const currentByOwner = new Map(currentRooms.map((r) => [r.ownerAgentId ?? 'house', r]));
+
+    return slots.map((s) => {
+      const room = currentByOwner.get(s.ownerAgentId ?? 'house');
+      return {
+        ownerId: s.ownerId,
+        ownerName: s.ownerName,
+        label: s.label,
+        cardPaletteId: s.cardPaletteId,
+        cardBallNumber: s.cardBallNumber,
+        currentRoomId: room?.id ?? null,
+        currentRoomName: room?.name ?? null,
+        currentRoomStatus: room?.status ?? null,
+      };
+    });
+  }
+
+  /**
+   * Update one room slot's PERSISTENT label/palette/ball ('house', or an
+   * agent's user id). Takes effect the NEXT time ensureAgentRooms recreates
+   * that slot's room — the currently live room is untouched (use
+   * updateRoomDisplay to restyle it right now).
+   */
+  async updateRoomSlot(
+    ownerId: string,
+    dto: { label?: string | null; cardPaletteId?: string | null; cardBallNumber?: number | null },
+  ): Promise<void> {
+    if (dto.cardPaletteId !== undefined && dto.cardPaletteId !== null && !isValidCardPaletteId(dto.cardPaletteId)) {
+      throw new BadRequestException('Unknown card palette id');
+    }
+    if (dto.cardBallNumber !== undefined && dto.cardBallNumber !== null && dto.cardBallNumber < 1) {
+      throw new BadRequestException('Ball number must be positive');
+    }
+    const label = dto.label !== undefined ? dto.label?.trim() || null : undefined;
+
+    if (ownerId === 'house') {
+      const cfg = await this.getBingoConfig();
+      if (label !== undefined) cfg.houseRoomLabel = label;
+      if (dto.cardPaletteId !== undefined) cfg.houseCardPaletteId = dto.cardPaletteId;
+      if (dto.cardBallNumber !== undefined) cfg.houseCardBallNumber = dto.cardBallNumber;
+      await this.bingoConfigRepository.save(cfg);
+      return;
+    }
+
+    const validAgentId = this.validateUuid(ownerId, 'ownerId');
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (label !== undefined) {
+      sets.push('bingoRoomLabel = ?');
+      params.push(label);
+    }
+    if (dto.cardPaletteId !== undefined) {
+      sets.push('bingoRoomCardPaletteId = ?');
+      params.push(dto.cardPaletteId);
+    }
+    if (dto.cardBallNumber !== undefined) {
+      sets.push('bingoRoomCardBallNumber = ?');
+      params.push(dto.cardBallNumber);
+    }
+    if (sets.length === 0) return;
+    params.push(validAgentId);
+    await this.bingoRoomRepository.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
   }
 
   async listRooms(input: { page?: number; limit?: number } = {}): Promise<BingoRoomListResponse> {
@@ -3458,6 +3626,7 @@ export class BingoService implements OnModuleInit {
       takenSpots: room.winMode === 'prefilled' ? (takenSpots ?? []) : undefined,
       cartelaChangeLockSeconds: room.cartelaChangeLockSeconds ?? 3,
       isAdminCreated: room.isAdminCreated,
+      ownerAgentId: room.ownerAgentId ?? null,
       cardPaletteId: room.cardPaletteId,
       cardBallNumber: room.cardBallNumber,
     };

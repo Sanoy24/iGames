@@ -2117,11 +2117,48 @@ export function Bingo({ onBack }: BingoProps) {
             let next = pinnedRoomId
                 ? await bingoApi.getRoomState(pinnedRoomId)
                 : await bingoApi.getCurrentRoom();
+
+            const loadReplacementForSameSlot = async (
+                current: BingoRoomState,
+            ): Promise<BingoRoomState | null> => {
+                const ownerAgentId = current.ownerAgentId ?? null;
+                const freshLobby = await bingoApi.getLobby().catch(() => null);
+                if (freshLobby) setLobby(freshLobby);
+                const replacement = freshLobby?.rooms.find(
+                    (candidate) =>
+                        candidate.ownerAgentId === ownerAgentId &&
+                        (candidate.status === 'open' ||
+                            candidate.status === 'running') &&
+                        candidate.id !== current.id,
+                );
+                if (replacement) {
+                    setPinnedRoomId(replacement.id);
+                    return bingoApi.getRoomState(replacement.id);
+                }
+
+                const fallback = await bingoApi.getCurrentRoom().catch(() => null);
+                if (
+                    fallback &&
+                    fallback.id !== current.id &&
+                    fallback.status !== 'completed' &&
+                    fallback.status !== 'cancelled' &&
+                    (ownerAgentId == null ||
+                        fallback.ownerAgentId === ownerAgentId)
+                ) {
+                    if (pinnedRoomId) setPinnedRoomId(fallback.id);
+                    return fallback;
+                }
+
+                return null;
+            };
+
             if (pinnedRoomId && next?.status === 'cancelled') {
-                setPinnedRoomId(null);
-                const fallback = await bingoApi.getCurrentRoom();
-                if (fallback && fallback.id !== next.id) {
-                    next = fallback;
+                const replacement = await loadReplacementForSameSlot(next);
+                if (replacement) {
+                    next = replacement;
+                } else {
+                    setLoading(false);
+                    return;
                 }
             }
             if (
@@ -2129,10 +2166,15 @@ export function Bingo({ onBack }: BingoProps) {
                 completedRoomRef.current === next.id &&
                 !holdingResultRef.current
             ) {
-                setRoom((prev) => (prev?.id === next.id ? null : prev));
-                roomIdRef.current = null;
-                setLoading(false);
-                return;
+                const replacement = await loadReplacementForSameSlot(next);
+                if (replacement) {
+                    next = replacement;
+                } else {
+                    setRoom((prev) => (prev?.id === next?.id ? null : prev));
+                    roomIdRef.current = null;
+                    setLoading(false);
+                    return;
+                }
             }
             const nextIsLive = !!next && (next.status === 'open' || next.status === 'running');
             if (
@@ -2861,7 +2903,6 @@ export function Bingo({ onBack }: BingoProps) {
                     addToast('info', t('bingo.toastCartelaRefunded', { n }));
                     if (refund.roomCancelled) {
                         cancelledRoomRef.current = room.id;
-                        setPinnedRoomId(null);
                         const cancelledRoom = await bingoApi.getRoomState(room.id);
                         setRoom(cancelledRoom);
                         roomIdRef.current = cancelledRoom.id;

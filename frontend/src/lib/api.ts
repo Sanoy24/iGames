@@ -4,6 +4,7 @@ import type {
   BingoConfig,
   BingoPattern,
   BingoRoom,
+  BingoRoomSlot,
   BingoRoomState,
   BingoTicket,
   CrashBet,
@@ -651,6 +652,11 @@ export const adminBingoApi = {
    * status. Pass cardPaletteId/cardBallNumber as null to re-roll them at random. */
   updateRoomDisplay: (roomId: string, dto: { name?: string; cardPaletteId?: string | null; cardBallNumber?: number | null }) =>
     api.patch<BingoRoom>(`/admin/bingo/rooms/${roomId}/display`, dto).then((r) => r.data),
+  /** House + every agent room slot with its PERSISTENT label/palette/ball —
+   * survives every auto-recreation, unlike updateRoomDisplay above. */
+  listRoomSlots: () => api.get<BingoRoomSlot[]>('/admin/bingo/room-slots').then((r) => r.data),
+  updateRoomSlot: (ownerId: string, dto: { label?: string | null; cardPaletteId?: string | null; cardBallNumber?: number | null }) =>
+    api.patch<BingoRoomSlot[]>(`/admin/bingo/room-slots/${encodeURIComponent(ownerId)}`, dto).then((r) => r.data),
   drawNext: (roomId: string) =>
     api.post<BingoRoom>(`/admin/bingo/rooms/${roomId}/draw-next`).then((r) => r.data),
   cancelRoom: (roomId: string) =>

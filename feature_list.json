@@ -82,7 +82,7 @@
       "behavior": "Returns running room first, then a completed room only during its configured result-display window, then the next open room (with user tickets). Old completed rooms are history and are not returned as current. No room lobby required.",
       "status": "passing",
       "verification": "npx tsc --noEmit",
-      "evidence": "src/bingo/bingo.service.ts getCurrentRoom(userId?) and src/bingo/bingo.service.spec.ts (recent completed only during result window; old completed rooms return null)."
+      "evidence": "src/bingo/bingo.service.ts getCurrentRoom(userId?) + ownerAgentId room responses, frontend/src/pages/Bingo.tsx selected-room completion handoff, and src/bingo/bingo.service.spec.ts (recent completed only during result window; old completed rooms return null)."
     },
     {
       "id": "BE-07",
@@ -612,8 +612,8 @@
       "behavior": "The Bingo page now disables cartela taps for both owned and available cartelas during the room-configured freeze window (default 3 seconds before start) and shows a small 'Cartela changes locked' hint beside the timer. Buying an available cartela still works until the freeze window starts.",
       "status": "passing",
       "verification": "cd frontend && npx tsc --noEmit && npm run build",
-      "evidence": "frontend/src/pages/Bingo.tsx (cartelaChangesLocked, CartelaGrid returnLocked prop, handleCartelaTap guard, buy button guard, refund chip disabled state, countdown hint).",
-      "notes": "Frontend follows the server-side freeze duration from the room snapshot so the button state matches the rejection rule instead of surfacing a late error after the tap. If the last real player refunds all cartelas and the room cancels, the page now stays on the cartela view instead of jumping to the next room's now-calling screen."
+      "evidence": "frontend/src/pages/Bingo.tsx (cartelaChangesLocked, CartelaGrid returnLocked prop, handleCartelaTap guard, buy button guard, refund chip disabled state, countdown hint, same-slot cancelled-room handoff).",
+      "notes": "Frontend follows the server-side freeze duration from the room snapshot so the button state matches the rejection rule instead of surfacing a late error after the tap. If the last real player refunds all cartelas and the room cancels, the page now stays pinned to the selected cartela room slot and advances to that slot's fresh round instead of jumping to now-calling or back to the Rooms list."
     },
     {
       "id": "BE-26",

@@ -946,7 +946,18 @@
     border-right: 1px solid var(--border);
     padding: 12px 10px;
     gap: 3px;
+    /* The base rule hides this scrollbar (::-webkit-scrollbar / scrollbar-width:
+       none below) — fine for the mobile horizontal swipe-strip, but on desktop
+       that left zero visual cue the vertical list scrolls at all, so a cut-off
+       tab looked identical to a clipping bug. Show a thin, theme-matched
+       scrollbar instead. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
   }
+  .adm-tab-bar::-webkit-scrollbar { display: block; width: 6px; }
+  .adm-tab-bar::-webkit-scrollbar-track { background: transparent; }
+  .adm-tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .adm-tab-bar::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
   .adm-tab { width: 100%; }
   .adm-content {
     padding: 22px 26px;

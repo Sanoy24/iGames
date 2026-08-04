@@ -492,18 +492,7 @@ export class BingoService implements OnModuleInit {
     );
     if (nonConsecutiveEligible.length === 0) return [];
 
-    return this.shuffle(nonConsecutiveEligible);
-  }
-
-  private pickDerashAutoWinner(input: {
-    tickets: BingoTicket[];
-    botIds: Set<string>;
-    awardedBotUserIds: Set<string>;
-    recentBotWinnerUserIds: Set<string>;
-    pattern: BingoPattern;
-    drawnNumbers: number[];
-  }): BingoTicket | null {
-    return this.pickDerashAutoWinnerCandidates(input)[0] ?? null;
+    return this.shuffle(nonConsecutiveEligible)[0] ?? null;
   }
 
   private async hasBotAlreadyWonDerashPlace(
@@ -2770,13 +2759,15 @@ export class BingoService implements OnModuleInit {
           }
         }
 
-        const awarded = await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      const awarded = await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      if (!awarded) {
         if (botIds.has(awardee.userId)) {
           awardedBotUserIds.add(awardee.userId);
         }
-        if (awarded) {
-          break;
-        }
+        continue;
+      }
+      if (botIds.has(awardee.userId)) {
+        awardedBotUserIds.add(awardee.userId);
       }
     }
 
@@ -2957,23 +2948,28 @@ export class BingoService implements OnModuleInit {
         if (botIds.has(candidate.userId) && recentBotWinnerUserIds.has(candidate.userId)) {
           continue;
         }
-        const awarded = await this.awardDerashPlace({
-          room,
-          winner: candidate,
-          place,
-          pattern,
-          totalPotMinor,
-          houseEdgePct,
-          cfg,
-          manager,
-        });
-        if (botIds.has(candidate.userId)) {
-          awardedBotUserIds.add(candidate.userId);
+        winner = candidate;
+        break;
+      }
+      if (!winner) break;
+      const awarded = await this.awardDerashPlace({
+        room,
+        winner,
+        place,
+        pattern,
+        totalPotMinor,
+        houseEdgePct,
+        cfg,
+        manager,
+      });
+      if (!awarded) {
+        if (botIds.has(winner.userId)) {
+          awardedBotUserIds.add(winner.userId);
         }
-        if (awarded) {
-          awardedPlace = true;
-          break;
-        }
+        continue;
+      }
+      if (botIds.has(winner.userId)) {
+        awardedBotUserIds.add(winner.userId);
       }
       if (!awardedPlace) break;
     }

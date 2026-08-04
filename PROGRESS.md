@@ -11,7 +11,7 @@
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **248/248 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **55/55 pass**
+**Tests**: `npm run test:unit` — **250/250 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **57/57 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -67,10 +67,10 @@
 - **Build repair** - fixed `src/admin/admin.service.ts` user-history totals by explicitly computing Telebirr deposit totals and admin top-up totals before combining them.
 - **Race settlement repair** - fixed the Derash candidate-list path so it returns a shuffled list, closes its retry loop correctly, and retries the same prize place with another candidate when a bot duplicate is refused.
 - **Leaderboard settlement repair** - fixed stale `winner` references and made leaderboard mode retry the same rank with the next eligible candidate.
-- **Stronger duplicate guard** - `awardDerashPlace()` now refuses bot duplicates by underlying bot user id and by visible bot identity (`winnerDisplayName` + `winnerPhoneLast4`) from the room summary.
-- **Regression coverage** - added coverage for a different bot account trying to reuse the same visible Bingo bot identity in the same room.
+- **Stronger duplicate guard** - `awardDerashPlace()` now refuses duplicate visible places by already-awarded ticket id, cartela number, underlying bot user id, and visible bot identity (`winnerDisplayName` + `winnerPhoneLast4`) from the room summary.
+- **Regression coverage** - added coverage for the same ticket trying to win twice, a duplicate ticket row reusing the same cartela number, and a different bot account trying to reuse the same visible Bingo bot identity in the same room.
 
-**Verified**: `cmd /c "npm run build"` clean; `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **55/55** pass; `cmd /c "npm run test:unit"` **248/248** pass; `cmd /c "cd frontend && npx tsc --noEmit && npm run build"` clean.
+**Verified**: `cmd /c "npm run build"` clean; `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **57/57** pass; `cmd /c "npm run test:unit"` **250/250** pass; `cmd /c "cd frontend && npx tsc --noEmit && npm run build"` clean.
 
 ### Session note: 2026-08-04 (Bingo duplicate bot award hard stop)
 

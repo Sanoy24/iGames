@@ -116,6 +116,10 @@ export class BingoAdminController {
     if (room.status === 'completed') {
       this.gameEventsGateway.emitBingoRoomCompleted(room);
       void this.bingoService.notifyRoomWinners(room.id).catch(() => undefined);
+      // A manual admin-triggered draw can also be the one that finishes a room —
+      // the scheduler's own completion handling never runs for this path, so
+      // referral commission must be settled here too.
+      void this.bingoService.settleReferralCommission(room.id).catch(() => undefined);
     }
     return room;
   }

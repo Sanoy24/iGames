@@ -133,32 +133,7 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           this.gameEventsGateway.emitBingoNumberDrawn(updated, intervalMs);
 
           if (updated.status === 'completed') {
-            this.logger.log(`Bingo room ${updated.id} completed`);
-            this.gameEventsGateway.emitBingoRoomCompleted(updated);
-            // Pay each referring agent their commission — a % of the service fee
-            // (house edge cut) their own referred players generated in this room,
-            // independent of who owns the room itself.
-            await this.bingoService.settleReferralCommission(updated.id).catch((err) =>
-              this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
-            );
-            try {
-              await this.botsService.handleBingoBotWinInterval(updated.id, {
-                enabled: cfg.botBonusWinEnabled ?? true,
-                mode: cfg.botBonusWinMode ?? 'interval',
-                everyNRounds: cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0,
-                chancePct: cfg.botBonusWinChancePct ?? 0,
-              });
-            } catch (err) {
-              this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
-            }
-            // Fire-and-forget Telegram win notifications
-            this.bingoService.getRoomWinners(updated.id).then((winners) => {
-              for (const w of winners) {
-                this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
-              }
-            }).catch(() => {});
-            // Persist in-app win notifications (survive leaving the game screen)
-            void this.bingoService.notifyRoomWinners(updated.id).catch(() => {});
+            await this.handleRoomCompleted(updated, cfg);
           }
         } catch (error) {
           this.logger.error(
@@ -205,6 +180,13 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           const updated = await this.bingoService.drawNextNumber(room.id);
           this.gameEventsGateway.emitBingoRoomUpdated(updated);
           this.gameEventsGateway.emitBingoNumberDrawn(updated, intervalMs);
+          // A degenerate config (e.g. minDrawsBeforeWin/maxNumber of 1) could in
+          // theory complete a room on its very first draw — handle it here too so
+          // completion side effects (referral commission etc.) are never tied to
+          // which loop happened to trigger the finishing draw.
+          if (updated.status === 'completed') {
+            await this.handleRoomCompleted(updated, cfg);
+          }
         } catch (error) {
           this.logger.error(
             `Error auto-starting room ${room.id}`,
@@ -259,5 +241,43 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       await this.lockService.releaseLock(lock);
       this.isRunning = false;
     }
+  }
+
+  /**
+   * Shared "a room just completed" side effects — referral commission, bot
+   * bonus-win rolls, and win notifications. Called from every scheduler path
+   * that can be the one whose draw finishes a room, so completion handling
+   * never depends on which loop happened to trigger the finishing draw.
+   */
+  private async handleRoomCompleted(
+    updated: Awaited<ReturnType<BingoService['drawNextNumber']>>,
+    cfg: Awaited<ReturnType<BingoService['getBingoConfig']>>,
+  ): Promise<void> {
+    this.logger.log(`Bingo room ${updated.id} completed`);
+    this.gameEventsGateway.emitBingoRoomCompleted(updated);
+    // Pay each referring agent their commission — a % of the service fee
+    // (house edge cut) their own referred players generated in this room,
+    // independent of who owns the room itself.
+    await this.bingoService.settleReferralCommission(updated.id).catch((err) =>
+      this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
+    );
+    try {
+      await this.botsService.handleBingoBotWinInterval(updated.id, {
+        enabled: cfg.botBonusWinEnabled ?? true,
+        mode: cfg.botBonusWinMode ?? 'interval',
+        everyNRounds: cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0,
+        chancePct: cfg.botBonusWinChancePct ?? 0,
+      });
+    } catch (err) {
+      this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
+    }
+    // Fire-and-forget Telegram win notifications
+    this.bingoService.getRoomWinners(updated.id).then((winners) => {
+      for (const w of winners) {
+        this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
+      }
+    }).catch(() => {});
+    // Persist in-app win notifications (survive leaving the game screen)
+    void this.bingoService.notifyRoomWinners(updated.id).catch(() => {});
   }
 }

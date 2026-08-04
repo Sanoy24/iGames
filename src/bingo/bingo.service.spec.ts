@@ -145,6 +145,11 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     delete: jest.fn().mockResolvedValue({ affected: 1 }),
   };
 
+  const mockCommissionSettlementErrorRepo = {
+    save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
+    create: jest.fn().mockImplementation((dto) => dto),
+  };
+
   const walletService = { debitInSession: jest.fn(), creditInSession: jest.fn() };
   const dataSource = { transaction: jest.fn() as any };
 
@@ -156,6 +161,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     mockCardRepo as any,
     mockConfigRepo as any,
     mockCustomRoomSlotRepo as any,
+    mockCommissionSettlementErrorRepo as any,
     mockPatternRepo as any,
     new (require('./bingo-rules.service').BingoRulesService)(),
     { drawUniqueNumbers: jest.fn() } as any,
@@ -378,6 +384,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40, resultDisplaySeconds: 10, enabled: true, defaultTicketPriceMinor: 100, defaultMaxTickets: 100, defaultOneLineMinor: 5000, defaultTwoLinesMinor: 10000, defaultFullHouseMinor: 20000, autoRepeatIntervalMinutes: 5, minTicketsToStart: 1 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
       { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
+      { save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
@@ -412,6 +419,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
       { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
+      { save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
@@ -1184,6 +1192,109 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(((room.settlementSummary ?? {})['2nd'] as any).winnerDisplayName).toBe('Samuel');
     expect(((room.settlementSummary ?? {})['2nd'] as any).winnerPhoneLast4).toBe('6023');
     expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the same cartela ticket from winning two visible Derash places', async () => {
+    const { service, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      settlementSummary: {
+        '1st': {
+          winnerCount: 1,
+          winnerId: 'ticket-18',
+          winnerUserId: 'player-1',
+          winnerDisplayName: 'Hana',
+          winnerPhoneLast4: '9812',
+          winnerCartelaNumber: 18,
+        },
+      },
+      settledTiers: ['1st'],
+      winnersByTier: { '1st': ['ticket-18'] },
+    });
+    const winner = {
+      id: 'ticket-18',
+      userId: 'player-1',
+      cartelaNumber: 18,
+      grid: [[1]],
+      markedNumbers: [1],
+      wonTiers: ['1st'],
+      payoutMinor: 60,
+      status: 'won',
+      settlementStatus: 'settled',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn(),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+
+    const awarded = await (service as any).awardDerashPlace({
+      room,
+      winner,
+      place: '2nd',
+      pattern: { id: 'pattern-1', name: 'Any Line' },
+      totalPotMinor: 120,
+      houseEdgePct: 20,
+      cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
+      manager,
+    });
+
+    expect(awarded).toBe(false);
+    expect(manager.findOne).not.toHaveBeenCalled();
+    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+    expect(walletService.creditInSession).not.toHaveBeenCalled();
+  });
+
+  it('refuses a duplicate cartela number from winning two visible Derash places', async () => {
+    const { service, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      settlementSummary: {
+        '1st': {
+          winnerCount: 1,
+          winnerId: 'ticket-original-18',
+          winnerUserId: 'bot-1',
+          winnerDisplayName: 'Hana',
+          winnerPhoneLast4: '9812',
+          winnerIsBot: true,
+          winnerCartelaNumber: 18,
+        },
+      },
+      settledTiers: ['1st'],
+      winnersByTier: { '1st': ['ticket-original-18'] },
+    });
+    const duplicateCartelaWinner = {
+      id: 'ticket-duplicate-18',
+      userId: 'bot-1',
+      cartelaNumber: 18,
+      grid: [[1]],
+      markedNumbers: [1],
+      wonTiers: [],
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn(),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+
+    const awarded = await (service as any).awardDerashPlace({
+      room,
+      winner: duplicateCartelaWinner,
+      place: '2nd',
+      pattern: { id: 'pattern-1', name: 'Any Line' },
+      totalPotMinor: 120,
+      houseEdgePct: 20,
+      cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
+      manager,
+    });
+
+    expect(awarded).toBe(false);
+    expect(manager.findOne).not.toHaveBeenCalled();
+    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+    expect(walletService.creditInSession).not.toHaveBeenCalled();
   });
 
   it('refuses a different bot account when the visible Bingo bot identity already won', async () => {

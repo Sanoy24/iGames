@@ -20,6 +20,7 @@ import { UpdateBingoConfigDto } from './dto/update-bingo-config.dto';
 import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo-pattern.dto';
 import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoCustomRoomSlot } from './entities/bingo-custom-room-slot.entity';
+import { CommissionSettlementError } from './entities/commission-settlement-error.entity';
 import { BingoBotIdentity, BingoRoom, BingoPrizeTier, BingoPrizeConfig, BingoPatternPrize, BingoWinMode } from './entities/bingo-room.entity';
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { isValidCardPaletteId, randomCardBallNumber, randomCardBallNumberAvoiding, randomCardPaletteId } from './bingo-card-palette.util';
@@ -192,6 +193,8 @@ export class BingoService implements OnModuleInit {
     private readonly bingoConfigRepository: Repository<BingoConfig>,
     @InjectRepository(BingoCustomRoomSlot)
     private readonly bingoCustomRoomSlotRepository: Repository<BingoCustomRoomSlot>,
+    @InjectRepository(CommissionSettlementError)
+    private readonly commissionSettlementErrorRepository: Repository<CommissionSettlementError>,
     @InjectRepository(BingoPattern)
     private readonly bingoPatternRepository: Repository<BingoPattern>,
     private readonly bingoRulesService: BingoRulesService,
@@ -506,6 +509,43 @@ export class BingoService implements OnModuleInit {
     return this.pickDerashAutoWinnerCandidates(input)[0] ?? null;
   }
 
+  private derashWinnerTicketIds(room: BingoRoom): Set<string> {
+    const summaryTicketIds = Object.values(room.settlementSummary ?? {})
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const winnerId = (entry as Record<string, unknown>).winnerId;
+        return typeof winnerId === 'string' ? winnerId : null;
+      })
+      .filter((id): id is string => !!id);
+
+    return new Set([
+      ...Object.values(room.winnersByTier ?? {}).flat(),
+      ...summaryTicketIds,
+    ]);
+  }
+
+  private hasTicketAlreadyWonDerashPlace(room: BingoRoom, ticketId: string): boolean {
+    return this.derashWinnerTicketIds(room).has(ticketId);
+  }
+
+  private derashWinnerCartelaNumbers(room: BingoRoom): Set<number> {
+    return new Set(
+      Object.values(room.settlementSummary ?? {})
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const cartelaNumber = (entry as Record<string, unknown>).winnerCartelaNumber;
+          return typeof cartelaNumber === 'number' && Number.isInteger(cartelaNumber)
+            ? cartelaNumber
+            : null;
+        })
+        .filter((cartelaNumber): cartelaNumber is number => cartelaNumber !== null),
+    );
+  }
+
+  private hasCartelaAlreadyWonDerashPlace(room: BingoRoom, cartelaNumber?: number | null): boolean {
+    return typeof cartelaNumber === 'number' && this.derashWinnerCartelaNumbers(room).has(cartelaNumber);
+  }
+
   private async hasBotAlreadyWonDerashPlace(
     room: BingoRoom,
     userId: string,
@@ -537,13 +577,7 @@ export class BingoService implements OnModuleInit {
     }
 
     const winnerTicketIds = [
-      ...Object.values(room.winnersByTier ?? {}).flat(),
-      ...summaryEntries
-        .map((entry) => {
-          const winnerId = entry.winnerId;
-          return typeof winnerId === 'string' ? winnerId : null;
-        })
-        .filter((id): id is string => !!id),
+      ...this.derashWinnerTicketIds(room),
     ];
     const uniqueWinnerTicketIds = [...new Set(winnerTicketIds)];
     if (uniqueWinnerTicketIds.length === 0) return false;
@@ -1329,7 +1363,22 @@ export class BingoService implements OnModuleInit {
         );
       }
     } catch (err) {
-      this.logger.error('settleReferralCommission failed', err instanceof Error ? err.stack : err);
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      this.logger.error('settleReferralCommission failed', stack);
+      // Also persist a DB-visible trace — this function is called fire-and-forget
+      // from the scheduler and never rethrows, so without this the only record
+      // of a failure is the server log, which isn't queryable from the admin panel.
+      await this.commissionSettlementErrorRepository
+        .save(
+          this.commissionSettlementErrorRepository.create({
+            roomId,
+            source: 'settleReferralCommission',
+            message,
+            stack: stack ?? null,
+          }),
+        )
+        .catch(() => undefined);
     }
   }
 
@@ -3049,6 +3098,15 @@ export class BingoService implements OnModuleInit {
     const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName } = input;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+    if (this.hasTicketAlreadyWonDerashPlace(room, winner.id)) {
+      this.logger.warn(`Skipped duplicate Bingo place ${place} for already-awarded ticket ${winner.id} in room ${room.id}`);
+      return false;
+    }
+    if (this.hasCartelaAlreadyWonDerashPlace(room, winner.cartelaNumber)) {
+      this.logger.warn(`Skipped duplicate Bingo place ${place} for already-awarded cartela #${winner.cartelaNumber} in room ${room.id}`);
+      return false;
+    }
+
     const winnerUser = await manager.findOne(User, {
       where: { id: winner.userId },
       select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
@@ -3392,7 +3450,7 @@ export class BingoService implements OnModuleInit {
     const ticketId = this.validateUuid(input.ticketId, 'ticketId');
     const cfg = await this.getBingoConfig();
 
-    return await this.dataSource.transaction(async (manager) => {
+    const outcome = await this.dataSource.transaction(async (manager) => {
       const room = await manager.findOne(BingoRoom, {
         where: { id: roomId },
         lock: { mode: 'pessimistic_write' },
@@ -3515,6 +3573,19 @@ export class BingoService implements OnModuleInit {
       await manager.save(room);
       return finish('disqualified');
     });
+
+    // Unlike the scheduler's draw tick, a manual claim can end the room right here
+    // — outside any tick — so the scheduler's post-completion settleReferralCommission
+    // call never runs for this path. Mirror it here, after the transaction has
+    // committed (settleReferralCommission opens its own connection/transaction and
+    // must see the committed 'completed' status, not a still-open one).
+    if (outcome.room.status === 'completed') {
+      await this.settleReferralCommission(roomId).catch((err) =>
+        this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
+      );
+    }
+
+    return outcome;
   }
 
   /**

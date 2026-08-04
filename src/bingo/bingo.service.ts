@@ -1482,12 +1482,36 @@ export class BingoService implements OnModuleInit {
     let ownerAgentId: string | null;
 
     if (ownerId === 'house') {
-      const cfg = await this.getBingoConfig();
-      if (label !== undefined) cfg.houseRoomLabel = label;
-      if (dto.cardPaletteId !== undefined) cfg.houseCardPaletteId = dto.cardPaletteId;
-      if (dto.cardBallNumber !== undefined) cfg.houseCardBallNumber = dto.cardBallNumber;
-      if (dto.ticketPriceMinor !== undefined) cfg.houseTicketPriceMinor = dto.ticketPriceMinor;
-      await this.bingoConfigRepository.save(cfg);
+      // Ensure the singleton config row exists, then update it with a targeted
+      // partial UPDATE (not a read-modify-write full-entity .save()) — the same
+      // pattern the agent branch below already uses. A full-entity save here was
+      // a lost-update race: saving name/color/ball/price as separate rapid clicks
+      // each re-reads the whole row and re-saves the whole row, so a save whose
+      // in-memory snapshot predates another field's commit silently reverts that
+      // field when it writes back. A targeted UPDATE only ever touches the
+      // columns actually being changed, so it can't clobber a sibling field.
+      await this.getBingoConfig();
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (label !== undefined) {
+        sets.push('houseRoomLabel = ?');
+        params.push(label);
+      }
+      if (dto.cardPaletteId !== undefined) {
+        sets.push('houseCardPaletteId = ?');
+        params.push(dto.cardPaletteId);
+      }
+      if (dto.cardBallNumber !== undefined) {
+        sets.push('houseCardBallNumber = ?');
+        params.push(dto.cardBallNumber);
+      }
+      if (dto.ticketPriceMinor !== undefined) {
+        sets.push('houseTicketPriceMinor = ?');
+        params.push(dto.ticketPriceMinor);
+      }
+      if (sets.length > 0) {
+        await this.bingoRoomRepository.query(`UPDATE bingo_config SET ${sets.join(', ')} WHERE \`key\` = 'global'`, params);
+      }
       ownerAgentId = null;
     } else {
       const validAgentId = this.validateUuid(ownerId, 'ownerId');

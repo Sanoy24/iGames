@@ -669,14 +669,20 @@ export class AdminService implements OnApplicationBootstrap {
     };
   }
 
-  async adjustUserWallet(userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) {
+  async adjustUserWallet(
+    userId: string,
+    amountMinor: number,
+    direction: 'credit' | 'debit',
+    reason: string,
+    actingAdminId: string,
+  ) {
     return this.dataSource.transaction(async (manager) => {
       const shared = {
         entryType: 'bonus' as const,
         sourceType: 'admin_adjustment',
         sourceId: randomUUID(),
         idempotencyKey: `admin-adj:${randomUUID()}`,
-        metadata: { reason }
+        metadata: { reason, actingAdminId }
       };
 
       // Both directions are backed by the Master Wallet: a credit is funded FROM
@@ -754,7 +760,7 @@ export class AdminService implements OnApplicationBootstrap {
       throw new NotFoundException('User not found');
     }
 
-    const [ledger, withdrawals, deposits, gameStats] = await Promise.all([
+    const [ledger, withdrawals, deposits, gameStats, adminAdjustmentEntries, adminTopupRows] = await Promise.all([
       this.dataSource.getRepository(LedgerEntry).find({
         where: { userId },
         order: { createdAt: 'DESC' },
@@ -773,7 +779,56 @@ export class AdminService implements OnApplicationBootstrap {
         take: safeLimit,
       }),
       this.getUserGameStats(userId),
+      // Admin "Adjust Wallet Balance" entries — fetched separately (not just
+      // sliced out of `ledger` above) since that feed is capped at safeLimit
+      // across ALL activity and could crowd out older adjustments.
+      this.dataSource.getRepository(LedgerEntry).find({
+        where: { userId, entryType: 'bonus' as LedgerEntryType, sourceType: 'admin_adjustment' },
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      // All-time sum (not capped) so the KPI is accurate even when the display
+      // list above is truncated. Credit-only — "topped up" means money added;
+      // debits still show in the list but don't count toward this total.
+      this.dataSource.getRepository(LedgerEntry).query(
+        `SELECT COALESCE(SUM(amountMinor),0) AS total FROM ledger_entries
+          WHERE userId = ? AND entryType = 'bonus' AND sourceType = 'admin_adjustment' AND direction = 'credit'`,
+        [userId],
+      ),
     ]);
+
+    // Resolve which admin performed each adjustment. actingAdminId only exists
+    // on entries created after this feature shipped — older ones have no
+    // recoverable attribution and resolve to null ("Unknown" in the UI).
+    const adminIds = [
+      ...new Set(
+        adminAdjustmentEntries
+          .map((e) => (e.metadata?.actingAdminId as string | undefined) ?? null)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const admins = adminIds.length
+      ? await this.dataSource.getRepository(User).findBy({ id: In(adminIds) })
+      : [];
+    const adminNameById = new Map(admins.map((a) => [a.id, a.displayName]));
+
+    const adminAdjustments = adminAdjustmentEntries.map((e) => {
+      const performedByAdminId = (e.metadata?.actingAdminId as string | undefined) ?? null;
+      return {
+        id: e.id,
+        createdAt: e.createdAt,
+        amountMinor: Number(e.amountMinor),
+        direction: e.direction,
+        reason: (e.metadata?.reason as string | undefined) ?? null,
+        performedByAdminId,
+        performedByAdminName: performedByAdminId ? (adminNameById.get(performedByAdminId) ?? null) : null,
+      };
+    });
+
+    const adminTopupMinor = Number(adminTopupRows[0]?.total ?? 0);
+    const telebirrDepositMinor = deposits
+      .filter((deposit) => deposit.status === 'credited')
+      .reduce((sum, deposit) => sum + Number(deposit.amountMinor), 0);
 
     return {
       user,
@@ -781,15 +836,19 @@ export class AdminService implements OnApplicationBootstrap {
       withdrawals,
       deposits,
       gameStats,
+      adminAdjustments,
       totals: {
         walletAvailableMinor: user.wallets?.[0]?.availableMinor ?? 0,
         walletReservedMinor: user.wallets?.[0]?.reservedMinor ?? 0,
-        depositMinor: deposits
-          .filter((deposit) => deposit.status === 'credited')
-          .reduce((sum, deposit) => sum + Number(deposit.amountMinor), 0),
+        // "Deposits (Credited)" = all money that entered the wallet from
+        // outside the player — agent-credited Telebirr receipts AND admin
+        // top-ups. adminTopupMinor is also returned on its own below so the
+        // dedicated Admin Top-ups card can show that portion by itself.
+        depositMinor: telebirrDepositMinor + adminTopupMinor,
         completedWithdrawalMinor: withdrawals
           .filter((withdrawal) => withdrawal.status === 'completed')
           .reduce((sum, withdrawal) => sum + Number(withdrawal.amountMinor), 0),
+        adminTopupMinor,
       },
     };
   }
@@ -864,6 +923,7 @@ export class AdminService implements OnApplicationBootstrap {
       payoutMinor: number;
       ggrMinor: number;
       commissionEarnedMinor: number;
+      commissionEarnedCount: number;
       withdrawalFeesEarnedMinor: number;
       depositCount: number;
       depositVolumeMinor: number;
@@ -871,8 +931,11 @@ export class AdminService implements OnApplicationBootstrap {
     }>
   > {
     // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
-    // "Game commission" combines both commission sources: bingo_room_commission
-    // (owned-room GGR cut) and bingo_referral_commission (referred-player GGR cut).
+    // "Game commission" is the referral commission (bingo_referral_commission —
+    // % of referred players' service fee). There is no room-owner commission
+    // (removed); any pre-existing bingo_room_commission rows are historical and
+    // still folded into the amount total below so past real earnings aren't
+    // dropped from the lifetime figure, but they don't grow going forward.
     // Withdrawal fees are tracked separately — payout_custody is deliberately
     // excluded everywhere below, it reimburses cash already paid out, not earnings.
     const rows: Array<{
@@ -884,6 +947,7 @@ export class AdminService implements OnApplicationBootstrap {
       staked: string | number;
       payout: string | number;
       commission: string | number;
+      commissionCount: string | number;
       withdrawalFees: string | number;
       deposits: string | number;
       depositVolume: string | number;
@@ -896,6 +960,7 @@ export class AdminService implements OnApplicationBootstrap {
               COALESCE(t.staked, 0) staked,
               COALESCE(t.payout, 0) payout,
               COALESCE(cm.commission, 0) commission,
+              COALESCE(cm.commissionCount, 0) commissionCount,
               COALESCE(wf.withdrawalFees, 0) withdrawalFees,
               COALESCE(d.deposits, 0) deposits,
               COALESCE(d.depositVolume, 0) depositVolume,
@@ -917,7 +982,7 @@ export class AdminService implements OnApplicationBootstrap {
             GROUP BY referredByAgentId
          ) c ON c.referredByAgentId = u.id
          LEFT JOIN (
-           SELECT userId, SUM(amountMinor) commission
+           SELECT userId, SUM(amountMinor) commission, COUNT(*) commissionCount
              FROM ledger_entries
             WHERE entryType = 'agent_receipt' AND sourceType IN ('bingo_room_commission', 'bingo_referral_commission')
             GROUP BY userId
@@ -958,6 +1023,7 @@ export class AdminService implements OnApplicationBootstrap {
         payoutMinor,
         ggrMinor: stakedMinor - payoutMinor,
         commissionEarnedMinor: Number(r.commission ?? 0),
+        commissionEarnedCount: Number(r.commissionCount ?? 0),
         withdrawalFeesEarnedMinor: Number(r.withdrawalFees ?? 0),
         depositCount: Number(r.deposits ?? 0),
         depositVolumeMinor: Number(r.depositVolume ?? 0),

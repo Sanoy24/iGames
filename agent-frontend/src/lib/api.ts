@@ -322,8 +322,6 @@ export type SystemConfig = {
   maxPendingWithdrawalsPerUser: number;
   /** Approach B: per-agent Bingo rooms on/off. */
   agentRoomsEnabled?: boolean;
-  /** % of a room's real-player GGR paid to the owning agent on completion. */
-  agentRoomCommissionPct?: number;
   /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
   referralCommissionPct?: number;
 };
@@ -338,6 +336,7 @@ export type AgentPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  commissionEarnedCount: number;
   withdrawalFeesEarnedMinor: number;
   depositCount: number;
   depositVolumeMinor: number;
@@ -361,7 +360,7 @@ export type AgentSelfPerformance = {
 export type AgentDashboardSummary = {
   totalReferredPlayers: number;
   activePlayers: number;
-  gameCommission: { referralCommissionMinor: number; ownedRoomCommissionMinor: number; totalMinor: number };
+  gameCommission: { totalMinor: number; count: number };
   withdrawalFeesEarnedMinor: number;
   totalEarningsMinor: number;
   pendingWithdrawalRequests: number;

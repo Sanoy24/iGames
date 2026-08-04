@@ -381,8 +381,6 @@ export type SystemConfig = {
   maxPendingWithdrawalsPerUser: number;
   /** Approach B: per-agent Bingo rooms on/off. */
   agentRoomsEnabled?: boolean;
-  /** % of a room's real-player GGR paid to the owning agent on completion. */
-  agentRoomCommissionPct?: number;
   /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
   referralCommissionPct?: number;
 };
@@ -420,6 +418,7 @@ export type AgentPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  commissionEarnedCount: number;
   withdrawalFeesEarnedMinor: number;
   depositCount: number;
   depositVolumeMinor: number;
@@ -443,7 +442,7 @@ export type AgentSelfPerformance = {
 export type AgentDashboardSummary = {
   totalReferredPlayers: number;
   activePlayers: number;
-  gameCommission: { referralCommissionMinor: number; ownedRoomCommissionMinor: number; totalMinor: number };
+  gameCommission: { totalMinor: number; count: number };
   withdrawalFeesEarnedMinor: number;
   totalEarningsMinor: number;
   pendingWithdrawalRequests: number;
@@ -603,6 +602,8 @@ export type BingoRoundTicket = {
   userName: string;
   phoneLast4: string;
   isBot: boolean;
+  identitySource?: 'bingo_bot_name_pool' | 'player_profile';
+  maskedPhone?: string;
   cartelaNumber: number | null;
   status: string;
   settlementStatus: string;
@@ -996,17 +997,29 @@ export type AdminUserGameStats = {
   totalWinMinor: number;
 };
 
+export type AdminUserAdjustment = {
+  id: string;
+  createdAt: string;
+  amountMinor: number;
+  direction: 'credit' | 'debit';
+  reason: string | null;
+  performedByAdminId: string | null;
+  performedByAdminName: string | null;
+};
+
 export type AdminUserActivity = {
   user: User;
   ledger: LedgerEntry[];
   withdrawals: Withdrawal[];
   deposits: AdminUserDeposit[];
   gameStats: AdminUserGameStats;
+  adminAdjustments: AdminUserAdjustment[];
   totals: {
     walletAvailableMinor: number;
     walletReservedMinor: number;
     depositMinor: number;
     completedWithdrawalMinor: number;
+    adminTopupMinor: number;
   };
 };
 

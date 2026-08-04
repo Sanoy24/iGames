@@ -277,7 +277,7 @@ export function Agent() {
             ].map((s) => (
               <div key={s.label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
-                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text-primary)' }}>{s.value}</div>
               </div>
             ))}
           </div>
@@ -288,7 +288,7 @@ export function Agent() {
               </div>
               <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.gameCommission.totalMinor)}</div>
               <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
-                {t('agent.referral', { defaultValue: 'Referral' })} {formatCredits(dashboard.gameCommission.referralCommissionMinor)} · {t('agent.ownedRoom', { defaultValue: 'Room' })} {formatCredits(dashboard.gameCommission.ownedRoomCommissionMinor)}
+                {t('agent.commissionCount', { count: dashboard.gameCommission.count, defaultValue: `${dashboard.gameCommission.count} commissions` })}
               </div>
             </div>
             <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
@@ -324,8 +324,11 @@ export function Agent() {
         </div>
       )}
 
-      {/* My Bingo performance (Approach B) — shows once there's activity */}
-      {perf && (perf.tickets > 0 || perf.customersBrought > 0 || perf.commissionEarnedMinor > 0) && (
+      {/* My Bingo Room activity (Approach B) — traffic in the room I own, shows
+          once there's activity. Commission isn't shown here: there's no
+          room-owner commission — commission is earned on REFERRED players,
+          a different population than this room's own traffic. */}
+      {perf && (perf.tickets > 0 || perf.customersBrought > 0) && (
         <div style={{
           background: 'var(--card-bg)', border: '1px solid var(--border)',
           borderRadius: 12, padding: 14, marginBottom: 16,
@@ -333,16 +336,15 @@ export function Agent() {
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
             {t('agent.myBingo', { defaultValue: 'My Bingo Room' })}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
             {[
               { label: t('agent.customers', { defaultValue: 'Customers' }), value: String(perf.customersBrought) },
               { label: t('agent.players', { defaultValue: 'Players' }), value: String(perf.players) },
               { label: t('agent.staked', { defaultValue: 'Staked' }), value: formatCredits(perf.stakedMinor) },
-              { label: t('agent.commission', { defaultValue: 'Commission' }), value: formatCredits(perf.commissionEarnedMinor), accent: true },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
-                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text-primary)' }}>{s.value}</div>
               </div>
             ))}
           </div>

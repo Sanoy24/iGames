@@ -720,6 +720,7 @@ function PlayerDetailModal({ user, onClose }: { user: User; onClose: () => void 
               <Kpi label="Total Won" value={formatCreditsFull(gs?.totalWinMinor ?? 0)} color="#10b981" icon={<Wallet size={16} />} />
               <Kpi label="Deposits (credited)" value={formatCreditsFull(activity.totals.depositMinor)} color="#3b82f6" icon={<Wallet size={16} />} />
               <Kpi label="Withdrawn (completed)" value={formatCreditsFull(activity.totals.completedWithdrawalMinor)} color="#ef4444" icon={<Wallet size={16} />} />
+              <Kpi label="Admin Top-ups" value={formatCreditsFull(activity.totals.adminTopupMinor)} color="#14b8a6" icon={<Wallet size={16} />} />
               <Kpi label="Balance" value={formatCreditsFull(activity.totals.walletAvailableMinor)} color="#8b5cf6" icon={<Wallet size={16} />} />
             </div>
 
@@ -762,6 +763,29 @@ function PlayerDetailModal({ user, onClose }: { user: User; onClose: () => void 
                         <td><strong>{formatCreditsFull(Number(d.amountMinor))}</strong></td>
                         <td><span className={`badge ${d.status === 'credited' ? 'badge-green' : 'badge-gold'}`}>{d.status}</span></td>
                         <td className="adm-td-muted">{d.agent?.displayName ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Admin Adjustments — manual "Adjust Wallet Balance" credits/debits from the shared Master Wallet */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Admin Adjustments ({activity.adminAdjustments.length})</div>
+              {activity.adminAdjustments.length === 0 ? (
+                <div className="adm-empty">No admin adjustments.</div>
+              ) : (
+                <table className="adm-table">
+                  <thead><tr className="adm-tr"><th>When</th><th>Amount</th><th>Direction</th><th>Admin</th><th>Reason</th></tr></thead>
+                  <tbody>
+                    {activity.adminAdjustments.map((adj) => (
+                      <tr key={adj.id} className="adm-tr">
+                        <td className="adm-td-muted">{formatDateTime(adj.createdAt)}</td>
+                        <td><strong>{formatCreditsFull(adj.amountMinor)}</strong></td>
+                        <td><span className={`badge ${adj.direction === 'credit' ? 'badge-green' : 'badge-red'}`}>{adj.direction}</span></td>
+                        <td className="adm-td-muted">{adj.performedByAdminName ?? <em>Unknown</em>}</td>
+                        <td className="adm-td-muted">{adj.reason ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1188,6 +1212,7 @@ function AgentsAdmin() {
   });
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [statusChangingId, setStatusChangingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1306,6 +1331,32 @@ function AgentsAdmin() {
       await load();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setUpdating(false); }
+  };
+
+  // "Delete" an agent = soft-delete: flip status to 'closed', same field the
+  // Status dropdown in Edit already uses. Preserves wallet/ledger/settlement
+  // history (a hard delete would cascade-destroy all of that) and immediately
+  // revokes their login sessions (see UsersService.updateStatus). Reversible
+  // via the Restore button, which just flips status back to 'active'.
+  const deleteAgent = async (agent: User) => {
+    if (!window.confirm(`Delete agent "${agent.displayName}"? They'll be logged out and can no longer log in, but can be restored anytime.`)) return;
+    setStatusChangingId(agent.id);
+    try {
+      await adminAgentsApi.updateAgent(agent.id, { status: 'closed' });
+      addToast('success', `Agent "${agent.displayName}" deleted.`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setStatusChangingId(null); }
+  };
+
+  const restoreAgent = async (agent: User) => {
+    setStatusChangingId(agent.id);
+    try {
+      await adminAgentsApi.updateAgent(agent.id, { status: 'active' });
+      addToast('success', `Agent "${agent.displayName}" restored.`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setStatusChangingId(null); }
   };
 
   return (
@@ -1554,9 +1605,28 @@ function AgentsAdmin() {
                       </span>
                     </td>
                     <td>
-                      <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => { startEdit(a); setShowForm(false); }}>
-                        Edit
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => { startEdit(a); setShowForm(false); }}>
+                          Edit
+                        </button>
+                        {a.status === 'closed' ? (
+                          <button
+                            className="adm-btn adm-btn-secondary adm-btn-xs"
+                            disabled={statusChangingId === a.id}
+                            onClick={() => void restoreAgent(a)}
+                          >
+                            Restore
+                          </button>
+                        ) : (
+                          <button
+                            className="adm-btn adm-btn-danger adm-btn-xs"
+                            disabled={statusChangingId === a.id}
+                            onClick={() => void deleteAgent(a)}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1580,7 +1650,7 @@ function ConfigAdmin() {
     minDepositMinor: 0,
     withdrawalMinAmountMinor: 0,
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
-    agentRoomsEnabled: false, agentRoomCommissionPct: 0,
+    agentRoomsEnabled: false,
     referralCommissionPct: 0,
   });
   const [perf, setPerf] = useState<AgentPerformance[]>([]);
@@ -1595,7 +1665,6 @@ function ConfigAdmin() {
     withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
     agentRoomsEnabled: c.agentRoomsEnabled ?? false,
-    agentRoomCommissionPct: c.agentRoomCommissionPct ?? 0,
     referralCommissionPct: c.referralCommissionPct ?? 0,
   });
 
@@ -1691,9 +1760,6 @@ function ConfigAdmin() {
               <em className="adm-field-hint"> — OFF = one shared room (current). ON = each agent owns a room; customers pick from a lobby; settlement/stats credit the room owner.</em>
             </span>
           </label>
-          <div className="adm-field-grid" style={{ marginTop: 12 }}>
-            {field('agentRoomCommissionPct', 'Agent Commission % of GGR', 'paid to the room owner on completion (of real-player staked − paid out). 0 = stats only')}
-          </div>
         </div>
 
         <div className="adm-panel-head" style={{ marginTop: 4 }}>Agent Performance (Bingo)</div>
@@ -1704,7 +1770,7 @@ function ConfigAdmin() {
           <table className="adm-table">
             <thead>
               <tr className="adm-tr">
-                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Bingo comm.</th><th>Deposits</th><th>Deposit vol.</th><th>Deposit comm.</th>
+                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Bingo comm.</th><th>Bingo comm. count</th><th>Deposits</th><th>Deposit vol.</th><th>Deposit comm.</th>
               </tr>
             </thead>
             <tbody>
@@ -1720,6 +1786,7 @@ function ConfigAdmin() {
                     {formatCreditsFull(p.ggrMinor)}
                   </td>
                   <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.commissionEarnedMinor)}</td>
+                  <td className="adm-td-muted">{p.commissionEarnedCount}</td>
                   <td className="adm-td-muted">{p.depositCount}</td>
                   <td>{formatCreditsFull(p.depositVolumeMinor)}</td>
                   <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.depositCommissionEarnedMinor)}</td>
@@ -4101,7 +4168,9 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
   const summary = (room?.settlementSummary ?? {}) as Record<string, {
     winnerDisplayName?: string; winnerPhoneLast4?: string; winnerCartelaNumber?: number;
     patternName?: string; prizeMinor?: number; winnerGrid?: Array<Array<number | null>>;
-    winnerMarkedNumbers?: number[];
+    winnerMarkedNumbers?: number[]; winnerIsBot?: boolean; winnerUserId?: string;
+    winnerBotAccountId?: string; winnerIdentitySource?: string; winnerMaskedPhone?: string;
+    botWinnerCooldownRooms?: number;
   }>;
   const winnerPlaces = room ? Object.keys(summary) : [];
   const winners = details?.tickets.filter((t) => t.payoutMinor > 0 || t.wonTiers.length > 0) ?? [];
@@ -4180,12 +4249,33 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
                           </div>
                           <div style={{ fontSize: 13, fontWeight: 700 }}>
                             {w.winnerDisplayName ?? 'Player'}
-                            {w.winnerPhoneLast4 ? <span className="adm-td-muted" style={{ fontWeight: 400 }}> · ••{w.winnerPhoneLast4}</span> : null}
+                            {w.winnerMaskedPhone || w.winnerPhoneLast4
+                              ? <span className="adm-td-muted" style={{ fontWeight: 400 }}> · {w.winnerMaskedPhone ?? `••${w.winnerPhoneLast4}`}</span>
+                              : null}
+                            {w.winnerIsBot && <span className="badge badge-violet" style={{ marginLeft: 6, fontSize: 9 }}>BOT</span>}
                           </div>
                           <div className="adm-td-muted" style={{ fontSize: 11, marginBottom: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             <span>Cartela <strong>#{w.winnerCartelaNumber ?? '—'}</strong></span>
                             <span>·</span>
                             <span>Pattern: <strong>{w.patternName ?? 'Any Line'}</strong></span>
+                            {w.winnerIsBot && (
+                              <>
+                                <span>·</span>
+                                <span>Pool: <strong>{w.winnerIdentitySource === 'bingo_bot_name_pool' ? 'Bingo name pool' : (w.winnerIdentitySource ?? 'Bot')}</strong></span>
+                              </>
+                            )}
+                            {w.winnerBotAccountId && (
+                              <>
+                                <span>·</span>
+                                <span title={w.winnerBotAccountId}>Bot account: <strong>{w.winnerBotAccountId.slice(0, 8)}…</strong></span>
+                              </>
+                            )}
+                            {w.botWinnerCooldownRooms ? (
+                              <>
+                                <span>·</span>
+                                <span>Rotation: <strong>{w.botWinnerCooldownRooms} rooms</strong></span>
+                              </>
+                            ) : null}
                           </div>
                           {w.winnerGrid
                             ? <RoundCardMini grid={w.winnerGrid} marked={w.winnerMarkedNumbers ?? []} />
@@ -4218,7 +4308,12 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
                             <td>
                               {t.userName}
                               {t.isBot && <span className="badge badge-violet" style={{ marginLeft: 6, fontSize: 9 }}>BOT</span>}
-                              {t.phoneLast4 && <span className="adm-td-muted" style={{ fontSize: 10, display: 'block' }}>••{t.phoneLast4}</span>}
+                              {(t.maskedPhone || t.phoneLast4) && (
+                                <span className="adm-td-muted" style={{ fontSize: 10, display: 'block' }}>
+                                  {t.maskedPhone ?? `••${t.phoneLast4}`}
+                                  {t.isBot ? ` · ${t.identitySource === 'bingo_bot_name_pool' ? 'Bingo pool' : 'Bot identity'}` : ''}
+                                </span>
+                              )}
                             </td>
                             <td className="adm-td-muted" style={{ fontSize: 11 }}>{t.autoClaim ? 'Auto' : 'Manual'}</td>
                             <td><span className={`badge ${ROUND_TICKET_BADGE[t.status] ?? 'badge-gold'}`}>{t.status}</span></td>

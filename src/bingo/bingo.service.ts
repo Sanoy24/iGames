@@ -33,6 +33,7 @@ import { BotName } from '../bots/entities/bot-name.entity';
 /** Prefilled/derash finishing places, in award order. */
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
+const BINGO_BOT_WINNER_COOLDOWN_ROOMS = 10;
 
 type RoomBotIdentity = BingoBotIdentity;
 
@@ -429,18 +430,24 @@ export class BingoService implements OnModuleInit {
     const previousRooms = await manager.getRepository(BingoRoom).find({
       where: { status: 'completed' },
       order: { updatedAt: 'DESC' },
-      take: 5,
+      take: BINGO_BOT_WINNER_COOLDOWN_ROOMS + 1,
     });
-    const previousRoom = previousRooms.find((candidate) => candidate.id !== room.id);
-    if (!previousRoom?.settlementSummary) return new Set();
+    const previousSummaries = previousRooms
+      .filter((candidate) => candidate.id !== room.id)
+      .slice(0, BINGO_BOT_WINNER_COOLDOWN_ROOMS)
+      .map((candidate) => candidate.settlementSummary)
+      .filter((summary): summary is Record<string, unknown> => !!summary);
+    if (previousSummaries.length === 0) return new Set();
 
-    const winnerTicketIds = Object.values(previousRoom.settlementSummary)
-      .map((entry) => {
-        if (!entry || typeof entry !== 'object') return null;
-        const winnerId = (entry as Record<string, unknown>).winnerId;
-        return typeof winnerId === 'string' ? winnerId : null;
-      })
-      .filter((id): id is string => !!id);
+    const winnerTicketIds = previousSummaries.flatMap((summary) =>
+      Object.values(summary)
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const winnerId = (entry as Record<string, unknown>).winnerId;
+          return typeof winnerId === 'string' ? winnerId : null;
+        })
+        .filter((id): id is string => !!id),
+    );
     if (winnerTicketIds.length === 0) return new Set();
 
     const tickets = await manager.getRepository(BingoTicket).find({
@@ -449,7 +456,7 @@ export class BingoService implements OnModuleInit {
     });
     return new Set(
       tickets
-        .filter((ticket) => ticket.user && this.isBotUser(ticket.user))
+        .filter((ticket) => ticket.user && this.isBingoEnabledBotUser(ticket.user))
         .map((ticket) => ticket.userId),
     );
   }
@@ -460,6 +467,34 @@ export class BingoService implements OnModuleInit {
       .completedPatternIds.includes(pattern.id);
   }
 
+  private pickDerashAutoWinnerCandidates(input: {
+    tickets: BingoTicket[];
+    botIds: Set<string>;
+    awardedBotUserIds: Set<string>;
+    recentBotWinnerUserIds: Set<string>;
+    pattern: BingoPattern;
+    drawnNumbers: number[];
+  }): BingoTicket[] {
+    const eligible = input.tickets.filter(
+      (ticket) =>
+        ticket.autoClaim !== false &&
+        this.completesPrefilledPattern(ticket, input.pattern, input.drawnNumbers),
+    );
+    if (eligible.length === 0) return [];
+
+    const sameRoomEligible = eligible.filter(
+      (ticket) => !(input.botIds.has(ticket.userId) && input.awardedBotUserIds.has(ticket.userId)),
+    );
+    if (sameRoomEligible.length === 0) return [];
+
+    const nonConsecutiveEligible = sameRoomEligible.filter(
+      (ticket) => !(input.botIds.has(ticket.userId) && input.recentBotWinnerUserIds.has(ticket.userId)),
+    );
+    if (nonConsecutiveEligible.length === 0) return [];
+
+    return this.shuffle(nonConsecutiveEligible);
+  }
+
   private pickDerashAutoWinner(input: {
     tickets: BingoTicket[];
     botIds: Set<string>;
@@ -468,24 +503,32 @@ export class BingoService implements OnModuleInit {
     pattern: BingoPattern;
     drawnNumbers: number[];
   }): BingoTicket | null {
-    const eligible = input.tickets.filter(
-      (ticket) =>
-        ticket.autoClaim !== false &&
-        this.completesPrefilledPattern(ticket, input.pattern, input.drawnNumbers),
-    );
-    if (eligible.length === 0) return null;
+    return this.pickDerashAutoWinnerCandidates(input)[0] ?? null;
+  }
 
-    const sameRoomEligible = eligible.filter(
-      (ticket) => !(input.botIds.has(ticket.userId) && input.awardedBotUserIds.has(ticket.userId)),
-    );
-    if (sameRoomEligible.length === 0) return null;
+  private async hasBotAlreadyWonDerashPlace(
+    room: BingoRoom,
+    userId: string,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const winnerTicketIds = [
+      ...Object.values(room.winnersByTier ?? {}).flat(),
+      ...Object.values(room.settlementSummary ?? {})
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const winnerId = (entry as Record<string, unknown>).winnerId;
+          return typeof winnerId === 'string' ? winnerId : null;
+        })
+        .filter((id): id is string => !!id),
+    ];
+    const uniqueWinnerTicketIds = [...new Set(winnerTicketIds)];
+    if (uniqueWinnerTicketIds.length === 0) return false;
 
-    const nonConsecutiveEligible = sameRoomEligible.filter(
-      (ticket) => !(input.botIds.has(ticket.userId) && input.recentBotWinnerUserIds.has(ticket.userId)),
-    );
-    if (nonConsecutiveEligible.length === 0) return null;
-
-    return this.shuffle(nonConsecutiveEligible)[0] ?? null;
+    const previousWinningTickets = await manager.getRepository(BingoTicket).find({
+      where: { id: In(uniqueWinnerTicketIds) },
+      select: ['id', 'userId'],
+    });
+    return previousWinningTickets.some((ticket) => ticket.userId === userId);
   }
 
   private normalizeBotName(displayName: string): string {
@@ -668,13 +711,23 @@ export class BingoService implements OnModuleInit {
       if (
         entry.winnerDisplayName !== display.displayName ||
         entry.winnerPhoneLast4 !== display.phoneLast4 ||
-        entry.winnerIsBot !== true
+        entry.winnerIsBot !== true ||
+        entry.winnerUserId !== ticket.userId ||
+        entry.winnerBotAccountId !== ticket.userId ||
+        entry.winnerIdentitySource !== 'bingo_bot_name_pool' ||
+        entry.winnerMaskedPhone !== this.formatBotPhoneSuffix(display.phoneLast4) ||
+        entry.botWinnerCooldownRooms !== BINGO_BOT_WINNER_COOLDOWN_ROOMS
       ) {
         nextSummary[place] = {
           ...entry,
+          winnerUserId: ticket.userId,
           winnerDisplayName: display.displayName,
           winnerPhoneLast4: display.phoneLast4,
           winnerIsBot: true,
+          winnerBotAccountId: ticket.userId,
+          winnerIdentitySource: 'bingo_bot_name_pool',
+          winnerMaskedPhone: this.formatBotPhoneSuffix(display.phoneLast4),
+          botWinnerCooldownRooms: BINGO_BOT_WINNER_COOLDOWN_ROOMS,
         };
         changed = true;
       }
@@ -1177,68 +1230,16 @@ export class BingoService implements OnModuleInit {
   }
 
   /**
-   * Credit the room-owning agent their commission when an agent room completes
-   * (Approach B). Commission = agentRoomCommissionPct % of the room's REAL-player
-   * GGR (staked − paid out, bots excluded — bot money isn't real revenue). Idempotent
-   * per room (`bingo-room-commission:<roomId>`), so it's safe to call once at
-   * completion. No-op for house rooms (null owner), when the pct is 0, or GGR ≤ 0.
-   */
-  async settleAgentRoomCommission(roomId: string): Promise<void> {
-    try {
-      const room = await this.bingoRoomRepository.findOneBy({ id: roomId });
-      if (!room || !room.ownerAgentId || room.status !== 'completed') return;
-
-      const cfgRows: Array<{ pct: number | string | null }> = await this.bingoRoomRepository.query(
-        "SELECT agentRoomCommissionPct pct FROM system_configs WHERE `key` = 'global' LIMIT 1",
-      );
-      const pct = Number(cfgRows[0]?.pct ?? 0);
-      if (pct <= 0) return;
-
-      const ggrRows: Array<{ staked: number | string; payout: number | string }> =
-        await this.bingoRoomRepository.query(
-          `SELECT COALESCE(SUM(t.stakeMinor),0) staked, COALESCE(SUM(t.payoutMinor),0) payout
-             FROM bingo_tickets t
-             JOIN users u ON u.id = t.userId
-            WHERE t.roomId = ? AND t.status <> 'cancelled'
-              AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL`,
-          [roomId],
-        );
-      const ggrMinor = Number(ggrRows[0]?.staked ?? 0) - Number(ggrRows[0]?.payout ?? 0);
-      if (ggrMinor <= 0) return;
-
-      const commissionMinor = Math.floor((ggrMinor * pct) / 100);
-      if (commissionMinor <= 0) return;
-
-      await this.dataSource.transaction(async (manager) => {
-        await this.walletService.creditInSession(
-          {
-            userId: room.ownerAgentId!,
-            amountMinor: commissionMinor,
-            entryType: 'agent_receipt',
-            sourceType: 'bingo_room_commission',
-            sourceId: room.id,
-            idempotencyKey: `bingo-room-commission:${room.id}`,
-            metadata: { roomId: room.id, ggrMinor, commissionPct: pct, kind: 'bingo_room_commission' },
-          },
-          manager,
-        );
-      });
-      this.logger.log(
-        `Agent room commission: room ${roomId} → agent ${room.ownerAgentId} credited ${commissionMinor} (${pct}% of real GGR ${ggrMinor})`,
-      );
-    } catch (err) {
-      this.logger.error('settleAgentRoomCommission failed', err instanceof Error ? err.stack : err);
-    }
-  }
-
-  /**
    * Credit each REFERRING agent (User.referredByAgentId) their commission on the
-   * REAL-player GGR their own referred players generated in this room — independent
-   * of room ownership, so it composes with `settleAgentRoomCommission` above rather
-   * than replacing it (a player referred by Agent A playing in Agent B's owned room
-   * pays both). Commission % is per-agent (`User.referralCommissionPct`) if set,
-   * else the global `SystemConfig.referralCommissionPct` default. Idempotent per
-   * (room, agent) — `bingo-referral-commission:<roomId>:<agentId>`.
+   * "service fee" (house edge cut) their own referred players generated in this
+   * room — independent of room ownership; there is no separate room-owner
+   * commission in this codebase. Commission = agentPct% of (that agent's
+   * referred-players' stake × room.houseEdgePct%), NOT a GGR/payout-based figure
+   * — deterministic per stake, unaffected by who won or bot participation
+   * (bots are excluded from the stake sum entirely). Commission % is per-agent
+   * (`User.referralCommissionPct`) if set, else the global
+   * `SystemConfig.referralCommissionPct` default. Idempotent per (room, agent)
+   * — `bingo-referral-commission:<roomId>:<agentId>`.
    */
   async settleReferralCommission(roomId: string): Promise<void> {
     try {
@@ -1250,11 +1251,10 @@ export class BingoService implements OnModuleInit {
       );
       const globalPct = Number(cfgRows[0]?.pct ?? 0);
 
-      const rows: Array<{ agentId: string; staked: number | string; payout: number | string }> =
+      const rows: Array<{ agentId: string; staked: number | string }> =
         await this.bingoRoomRepository.query(
           `SELECT u.referredByAgentId AS agentId,
-                  COALESCE(SUM(t.stakeMinor),0) staked,
-                  COALESCE(SUM(t.payoutMinor),0) payout
+                  COALESCE(SUM(t.stakeMinor),0) staked
              FROM bingo_tickets t
              JOIN users u ON u.id = t.userId
             WHERE t.roomId = ? AND t.status <> 'cancelled'
@@ -1270,14 +1270,14 @@ export class BingoService implements OnModuleInit {
       const overridePctByAgentId = new Map(agents.map((a) => [a.id, a.referralCommissionPct ?? null]));
 
       for (const row of rows) {
-        const ggrMinor = Number(row.staked) - Number(row.payout);
-        if (ggrMinor <= 0) continue;
+        const serviceFeeMinor = Math.floor((Number(row.staked) * room.houseEdgePct) / 100);
+        if (serviceFeeMinor <= 0) continue;
 
         const overridePct = overridePctByAgentId.get(row.agentId) ?? null;
         const pct = overridePct ?? globalPct;
         if (pct <= 0) continue;
 
-        const commissionMinor = Math.floor((ggrMinor * pct) / 100);
+        const commissionMinor = Math.floor((serviceFeeMinor * pct) / 100);
         if (commissionMinor <= 0) continue;
 
         await this.dataSource.transaction(async (manager) => {
@@ -1289,13 +1289,13 @@ export class BingoService implements OnModuleInit {
               sourceType: 'bingo_referral_commission',
               sourceId: room.id,
               idempotencyKey: `bingo-referral-commission:${room.id}:${row.agentId}`,
-              metadata: { roomId: room.id, ggrMinor, commissionPct: pct, kind: 'referral_commission' },
+              metadata: { roomId: room.id, serviceFeeMinor, commissionPct: pct, kind: 'referral_commission' },
             },
             manager,
           );
         });
         this.logger.log(
-          `Referral commission: room ${roomId} → agent ${row.agentId} credited ${commissionMinor} (${pct}% of referred-player GGR ${ggrMinor})`,
+          `Referral commission: room ${roomId} → agent ${row.agentId} credited ${commissionMinor} (${pct}% of referred-player service fee ${serviceFeeMinor})`,
         );
       }
     } catch (err) {
@@ -2084,6 +2084,12 @@ export class BingoService implements OnModuleInit {
           userName: display.displayName,
           phoneLast4: display.phoneLast4,
           isBot: display.isBot,
+          identitySource: display.isBot ? 'bingo_bot_name_pool' : 'player_profile',
+          maskedPhone: display.isBot
+            ? this.formatBotPhoneSuffix(display.phoneLast4)
+            : display.phoneLast4
+              ? `••${display.phoneLast4}`
+              : '',
           cartelaNumber: t.cartelaNumber ?? null,
           status: t.status,
           settlementStatus: t.settlementStatus,
@@ -2736,7 +2742,7 @@ export class BingoService implements OnModuleInit {
       const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
       if (!pattern) continue;
 
-      const winner = this.pickDerashAutoWinner({
+      const winnerCandidates = this.pickDerashAutoWinnerCandidates({
         tickets: winnerEligibleTickets,
         botIds,
         awardedBotUserIds,
@@ -2746,26 +2752,31 @@ export class BingoService implements OnModuleInit {
       });
       // No eligible card completes THIS place's pattern yet — try the next place;
       // a later draw may fill this one.
-      if (!winner) continue;
+      if (winnerCandidates.length === 0) continue;
 
       // House-retention redirect: if the natural winner is a REAL player and the
       // mode calls for it, hand the place to a bot instead (prefer a bot whose
       // card also completes the pattern so the revealed winner looks legitimate).
-      let awardee = winner;
-      if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
-        const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
-        const botAwardee = this.pickBotRedirectWinner(winnerEligibleTickets, botGroups.bingoEnabledBotIds, pattern, room.drawnNumbers, excludedBotUserIds);
-        if (botAwardee) {
-          awardee = botAwardee;
-          this.logger.log(
-            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
-          );
+      for (const winner of winnerCandidates) {
+        let awardee = winner;
+        if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
+          const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
+          const botAwardee = this.pickBotRedirectWinner(winnerEligibleTickets, botGroups.bingoEnabledBotIds, pattern, room.drawnNumbers, excludedBotUserIds);
+          if (botAwardee) {
+            awardee = botAwardee;
+            this.logger.log(
+              `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
+            );
+          }
         }
-      }
 
-      await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
-      if (botIds.has(awardee.userId)) {
-        awardedBotUserIds.add(awardee.userId);
+        const awarded = await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+        if (botIds.has(awardee.userId)) {
+          awardedBotUserIds.add(awardee.userId);
+        }
+        if (awarded) {
+          break;
+        }
       }
     }
 
@@ -2933,7 +2944,7 @@ export class BingoService implements OnModuleInit {
     for (const place of places) {
       const pattern = placePattern.get(place);
       if (!pattern) continue;
-      let winner: BingoTicket | null = null;
+      let awardedPlace = false;
       while (rankCursor < ranked.length) {
         const candidate = inPlay[ranked[rankCursor].key];
         rankCursor += 1;
@@ -2946,23 +2957,25 @@ export class BingoService implements OnModuleInit {
         if (botIds.has(candidate.userId) && recentBotWinnerUserIds.has(candidate.userId)) {
           continue;
         }
-        winner = candidate;
-        break;
+        const awarded = await this.awardDerashPlace({
+          room,
+          winner: candidate,
+          place,
+          pattern,
+          totalPotMinor,
+          houseEdgePct,
+          cfg,
+          manager,
+        });
+        if (botIds.has(candidate.userId)) {
+          awardedBotUserIds.add(candidate.userId);
+        }
+        if (awarded) {
+          awardedPlace = true;
+          break;
+        }
       }
-      if (!winner) break;
-      await this.awardDerashPlace({
-        room,
-        winner,
-        place,
-        pattern,
-        totalPotMinor,
-        houseEdgePct,
-        cfg,
-        manager,
-      });
-      if (botIds.has(winner.userId)) {
-        awardedBotUserIds.add(winner.userId);
-      }
+      if (!awardedPlace) break;
     }
 
     // Top up filled places to share the whole pool and mark non-winners lost.
@@ -3001,7 +3014,7 @@ export class BingoService implements OnModuleInit {
     manager: EntityManager;
     /** Optional alias to display instead of the bot's real displayName. */
     overrideDisplayName?: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName } = input;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
@@ -3014,6 +3027,16 @@ export class BingoService implements OnModuleInit {
       : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
     const displayedName = overrideDisplayName ?? display.displayName;
     const phoneLast4 = display.phoneLast4;
+    if (winnerUser && display.isBot) {
+      if (!this.isBingoEnabledBotUser(winnerUser)) {
+        this.logger.warn(`Skipped Bingo place ${place} for non-Bingo-enabled bot ${winner.userId} in room ${room.id}`);
+        return false;
+      }
+      if (await this.hasBotAlreadyWonDerashPlace(room, winner.userId, manager)) {
+        this.logger.warn(`Skipped duplicate Bingo place ${place} for bot ${winner.userId} in room ${room.id}`);
+        return false;
+      }
+    }
 
     winner.wonTiers = [...(winner.wonTiers ?? []), place];
     winner.payoutMinor += prizeMinor;
@@ -3053,9 +3076,18 @@ export class BingoService implements OnModuleInit {
       [place]: {
         winnerCount: 1,
         winnerId: winner.id,
+        winnerUserId: winner.userId,
         winnerDisplayName: displayedName,
         winnerPhoneLast4: phoneLast4,
         winnerIsBot: display.isBot,
+        winnerBotAccountId: display.isBot ? winner.userId : undefined,
+        winnerIdentitySource: display.isBot ? 'bingo_bot_name_pool' : 'player_profile',
+        winnerMaskedPhone: display.isBot
+          ? this.formatBotPhoneSuffix(phoneLast4)
+          : phoneLast4
+            ? `••${phoneLast4}`
+            : '',
+        botWinnerCooldownRooms: display.isBot ? BINGO_BOT_WINNER_COOLDOWN_ROOMS : undefined,
         winnerCartelaNumber: winner.cartelaNumber,
         // Winner card so every client in the room can render the result.
         winnerGrid: winner.grid,
@@ -3066,6 +3098,7 @@ export class BingoService implements OnModuleInit {
         prizePoolMinor,
       },
     };
+    return true;
   }
 
   /**
@@ -3412,7 +3445,7 @@ export class BingoService implements OnModuleInit {
         const soldTickets = await this.countSoldTickets(roomId, manager);
         const totalPotMinor = soldTickets * room.ticketPriceMinor;
         const houseEdgePct = room.houseEdgePct ?? 20;
-        await this.awardDerashPlace({
+        const awarded = await this.awardDerashPlace({
           room,
           winner: ticket,
           place,
@@ -3422,7 +3455,7 @@ export class BingoService implements OnModuleInit {
           cfg,
           manager,
         });
-        awardedAny = true;
+        awardedAny = awardedAny || awarded;
       }
 
       if (awardedAny) {

@@ -135,12 +135,9 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
           if (updated.status === 'completed') {
             this.logger.log(`Bingo room ${updated.id} completed`);
             this.gameEventsGateway.emitBingoRoomCompleted(updated);
-            // Per-agent mode: pay the room owner their commission (no-op otherwise).
-            await this.bingoService.settleAgentRoomCommission(updated.id).catch((err) =>
-              this.logger.error('Agent room commission failed', err instanceof Error ? err.stack : err),
-            );
-            // Independent of room ownership: pay each referring agent their cut of
-            // their own referred players' GGR in this room.
+            // Pay each referring agent their commission — a % of the service fee
+            // (house edge cut) their own referred players generated in this room,
+            // independent of who owns the room itself.
             await this.bingoService.settleReferralCommission(updated.id).catch((err) =>
               this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
             );

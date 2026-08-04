@@ -324,10 +324,10 @@ describe('AgentsService — completeWithdrawal (flat withdrawal-fee ranges)', ()
 // ─── computeAgentEarnings ──────────────────────────────────────────────────
 
 describe('AgentsService.computeAgentEarnings', () => {
-  it('sums referral + owned-room commission into gameCommissionMinor, keeps withdrawal fees separate', async () => {
+  it('uses referral commission as gameCommissionMinor, keeps withdrawal fees separate', async () => {
     const systemConfigRepository = {
       query: jest.fn().mockResolvedValue([
-        { referralCommission: 3000, ownedRoomCommission: 2000, withdrawalFees: 500 },
+        { referralCommission: 3000, referralCommissionCount: 4, withdrawalFees: 500 },
       ]),
     };
     const service = new AgentsService(
@@ -339,15 +339,15 @@ describe('AgentsService.computeAgentEarnings', () => {
 
     expect(result).toEqual({
       referralCommissionMinor: 3000,
-      ownedRoomCommissionMinor: 2000,
-      gameCommissionMinor: 5000,
+      referralCommissionCount: 4,
+      gameCommissionMinor: 3000,
       withdrawalFeesMinor: 500,
-      totalEarningsMinor: 5500,
+      totalEarningsMinor: 3500,
     });
   });
 
   it('passes period bounds through as extra query params when given', async () => {
-    const query = jest.fn().mockResolvedValue([{ referralCommission: 0, ownedRoomCommission: 0, withdrawalFees: 0 }]);
+    const query = jest.fn().mockResolvedValue([{ referralCommission: 0, referralCommissionCount: 0, withdrawalFees: 0 }]);
     const service = new AgentsService(
       {} as any, { query } as any, {} as any,
       {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
@@ -368,11 +368,11 @@ describe('AgentsService.computeAgentEarnings', () => {
 
 function makeSettlementService(input: {
   priorPaidMinor?: number;
-  earningsForPeriod?: { referralCommission: number; ownedRoomCommission: number; withdrawalFees: number };
-  earningsLifetime?: { referralCommission: number; ownedRoomCommission: number; withdrawalFees: number };
+  earningsForPeriod?: { referralCommission: number; referralCommissionCount?: number; withdrawalFees: number };
+  earningsLifetime?: { referralCommission: number; referralCommissionCount?: number; withdrawalFees: number };
   existingSettlement?: Record<string, unknown> | null;
 }) {
-  const zero = { referralCommission: 0, ownedRoomCommission: 0, withdrawalFees: 0 };
+  const zero = { referralCommission: 0, referralCommissionCount: 0, withdrawalFees: 0 };
   let call = 0;
   const systemConfigRepository = {
     // computeAgentEarnings is called twice by createSettlement: once for the
@@ -425,8 +425,8 @@ describe('AgentsService.createSettlement', () => {
   it('defaults amountPaidMinor to the full period earnings and computes outstandingBalanceMinor', async () => {
     const { service, settlementRepo } = makeSettlementService({
       priorPaidMinor: 1000,
-      earningsForPeriod: { referralCommission: 2000, ownedRoomCommission: 500, withdrawalFees: 300 }, // total 2800
-      earningsLifetime: { referralCommission: 6000, ownedRoomCommission: 1500, withdrawalFees: 1000 }, // total 8500
+      earningsForPeriod: { referralCommission: 2500, withdrawalFees: 300 }, // total 2800
+      earningsLifetime: { referralCommission: 7500, withdrawalFees: 1000 }, // total 8500
     });
 
     const saved = await service.createSettlement(

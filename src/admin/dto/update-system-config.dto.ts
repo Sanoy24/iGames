@@ -38,12 +38,6 @@ export class UpdateSystemConfigDto {
   agentRoomsEnabled?: boolean;
 
   /** % of a room's real-player GGR paid to the owning agent on completion. */
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  agentRoomCommissionPct?: number;
-
   /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
   @IsOptional()
   @IsInt()

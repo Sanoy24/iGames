@@ -50,13 +50,6 @@ export class SystemConfig {
   agentRoomsEnabled: boolean;
 
   /**
-   * % of a room's real-player GGR (staked − paid out, bots excluded) credited to
-   * the room-owning agent when the game completes. 0 = no commission (stats only).
-   */
-  @Column({ type: 'int', default: 0 })
-  agentRoomCommissionPct: number;
-
-  /**
    * Global default % of a referred player's Bingo GGR credited to the referring
    * agent (see User.referredByAgentId), independent of room ownership. An
    * agent's own `User.referralCommissionPct` overrides this when set. 0 = no

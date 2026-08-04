@@ -11,7 +11,7 @@
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **237/237 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **44/44 pass**
+**Tests**: `npm run test:unit` — **238/238 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **45/45 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -70,6 +70,18 @@
 - **Regression coverage** - added tests for strict Bingo-active pool selection and avoiding repeat bot redirect winners.
 
 **Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **44/44** pass; `cmd /c "npm run test:unit"` **237/237** pass.
+
+### Session note: 2026-08-03 (Bingo winner display uses room bot identity)
+
+**Goal**: Fix the final standings still showing the bot account name (`Abrsh`) instead of the active Bingo name-pool identity.
+
+**Completed**:
+
+- **Root cause fixed** - winner settlement user lookups now include `id`, so `resolveDisplayedNameForUser()` can match the bot to `room.botIdentityMap` instead of falling back to `user.displayName`.
+- **Direct room identity lookup** - if a room already has a bot identity for the winner, the display resolver uses it immediately before attempting any name-pool hydration.
+- **Regression coverage** - added a settlement test where the bot account is named `Abrsh`, the room identity is `Hana`, and final standings record `Hana` with the room suffix.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **45/45** pass; `cmd /c "npm run test:unit"` **238/238** pass.
 
 ### Session: 2026-08-03 (Bingo bot cartela policy, thresholds, and bonus-win controls)
 

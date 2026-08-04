@@ -752,6 +752,62 @@ describe('BingoService cartela lifecycle guards', () => {
 
     expect(winner?.userId).toBe('bot-2');
   });
+
+  it('records the room-scoped Bingo bot name in winner standings instead of the bot account name', async () => {
+    const { service, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      botIdentityMap: {
+        'bot-1': { displayName: 'Hana', phoneSuffix: '0851' },
+      },
+      settlementSummary: {},
+      settledTiers: [],
+      winnersByTier: {},
+    });
+    const winner = {
+      id: 'ticket-1',
+      userId: 'bot-1',
+      cartelaNumber: 25,
+      grid: [[1]],
+      markedNumbers: [1],
+      wonTiers: [],
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'bot-1',
+        displayName: 'Abrsh',
+        phoneNumber: '',
+        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+      }),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+    walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+    await (service as any).awardDerashPlace({
+      room,
+      winner,
+      place: '1st',
+      pattern: { id: 'pattern-1', name: 'Any Line' },
+      totalPotMinor: 100,
+      houseEdgePct: 20,
+      cfg: { prefilledFirstPlacePct: 100 },
+      manager,
+    });
+
+    expect(manager.findOne).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        select: expect.arrayContaining(['id', 'displayName', 'phoneNumber', 'productMetadata']),
+      }),
+    );
+    const summary = room.settlementSummary ?? {};
+    expect((summary['1st'] as any).winnerDisplayName).toBe('Hana');
+    expect((summary['1st'] as any).winnerPhoneLast4).toBe('0851');
+  });
 });
 
 describe('BingoService.setAutoClaim — active-card scope', () => {

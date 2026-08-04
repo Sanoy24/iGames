@@ -509,7 +509,10 @@ export class BingoService implements OnModuleInit {
       };
     }
 
-    const identities = await this.hydrateRoomBotIdentities(room, [user.id], manager);
+    const existingIdentity = (room.botIdentityMap ?? {})[user.id];
+    const identities = existingIdentity
+      ? (room.botIdentityMap ?? {}) as Record<string, RoomBotIdentity>
+      : await this.hydrateRoomBotIdentities(room, [user.id], manager);
     const identity = identities[user.id];
     const displayName = identity?.displayName ?? user.displayName ?? 'Bot';
     const phoneLast4 = identity?.phoneSuffix ?? (user.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
@@ -2804,7 +2807,7 @@ export class BingoService implements OnModuleInit {
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
     const winnerUser = await manager.findOne(User, {
       where: { id: winner.userId },
-      select: ['displayName', 'phoneNumber', 'productMetadata'],
+      select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
     });
     const display = winnerUser
       ? await this.resolveDisplayedNameForUser(room, winnerUser, manager)
@@ -2897,7 +2900,7 @@ export class BingoService implements OnModuleInit {
 
     const dqUser = await manager.findOne(User, {
       where: { id: dqTicket.userId },
-      select: ['displayName', 'phoneNumber', 'productMetadata'],
+      select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
     });
     const display = dqUser
       ? await this.resolveDisplayedNameForUser(room, dqUser, manager)
@@ -3393,7 +3396,7 @@ export class BingoService implements OnModuleInit {
       if (winner) {
         const winnerUser = await manager.findOne(User, {
           where: { id: winner.userId },
-          select: ['displayName', 'phoneNumber', 'productMetadata'],
+          select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
         });
         const display = winnerUser
           ? await this.resolveDisplayedNameForUser(room, winnerUser, manager)
@@ -3499,7 +3502,7 @@ export class BingoService implements OnModuleInit {
       const shares = this.bingoRulesService.splitPrizeMinor(prizeMinor, winners.length);
       const winnerUsers = await Promise.all(
         winners.map((t) =>
-          manager.findOne(User, { where: { id: t.userId }, select: ['displayName', 'phoneNumber', 'productMetadata'] }),
+          manager.findOne(User, { where: { id: t.userId }, select: ['id', 'displayName', 'phoneNumber', 'productMetadata'] }),
         ),
       );
       const winnerDisplays = await Promise.all(

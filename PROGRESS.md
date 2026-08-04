@@ -11,7 +11,7 @@
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **243/243 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **50/50 pass**
+**Tests**: `npm run test:unit` — **245/245 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **52/52 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -57,6 +57,19 @@
 ---
 
 ## Session Record
+### Session note: 2026-08-04 (Bingo duplicate bot award hard stop)
+
+**Goal**: Fix live Bingo rounds where the same bot identity could still appear as both 1st and 2nd place even though the Bingo name pool has multiple active names.
+
+**Completed**:
+
+- **Award-time duplicate guard** - `awardDerashPlace()` now refuses to write or pay a Derash place if the winning ticket belongs to a bot user that already has a visible prize in the same room.
+- **Caller result handling** - race settlement, leaderboard settlement, and manual claim handling now respect the boolean award result, so a refused duplicate is not treated as a successful win.
+- **Different-bot allowance preserved** - the guard blocks only the same bot user; a separate Bingo-enabled bot can still take another visible place.
+- **Regression coverage** - added tests for refusing the same bot's second visible place and allowing a different Bingo bot to win the next place.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **52/52** pass; `cmd /c "npm run test:unit"` **245/245** pass.
+
 ### Session note: 2026-08-04 (Bingo live/final bot winner consistency)
 
 **Goal**: Make the live winning-card popup and final standings use the same Bingo name-pool identity, and prevent master/global bot accounts from winning Bingo places.

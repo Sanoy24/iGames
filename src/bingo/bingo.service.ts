@@ -488,6 +488,31 @@ export class BingoService implements OnModuleInit {
     return this.shuffle(nonConsecutiveEligible)[0] ?? null;
   }
 
+  private async hasBotAlreadyWonDerashPlace(
+    room: BingoRoom,
+    userId: string,
+    manager: EntityManager,
+  ): Promise<boolean> {
+    const winnerTicketIds = [
+      ...Object.values(room.winnersByTier ?? {}).flat(),
+      ...Object.values(room.settlementSummary ?? {})
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') return null;
+          const winnerId = (entry as Record<string, unknown>).winnerId;
+          return typeof winnerId === 'string' ? winnerId : null;
+        })
+        .filter((id): id is string => !!id),
+    ];
+    const uniqueWinnerTicketIds = [...new Set(winnerTicketIds)];
+    if (uniqueWinnerTicketIds.length === 0) return false;
+
+    const previousWinningTickets = await manager.getRepository(BingoTicket).find({
+      where: { id: In(uniqueWinnerTicketIds) },
+      select: ['id', 'userId'],
+    });
+    return previousWinningTickets.some((ticket) => ticket.userId === userId);
+  }
+
   private normalizeBotName(displayName: string): string {
     return (displayName ?? '').trim().replace(/\s+/g, ' ');
   }
@@ -2763,7 +2788,13 @@ export class BingoService implements OnModuleInit {
         }
       }
 
-      await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      const awarded = await this.awardDerashPlace({ room, winner: awardee, place, pattern, totalPotMinor, houseEdgePct, cfg, manager });
+      if (!awarded) {
+        if (botIds.has(awardee.userId)) {
+          awardedBotUserIds.add(awardee.userId);
+        }
+        continue;
+      }
       if (botIds.has(awardee.userId)) {
         awardedBotUserIds.add(awardee.userId);
       }
@@ -2950,7 +2981,7 @@ export class BingoService implements OnModuleInit {
         break;
       }
       if (!winner) break;
-      await this.awardDerashPlace({
+      const awarded = await this.awardDerashPlace({
         room,
         winner,
         place,
@@ -2960,6 +2991,12 @@ export class BingoService implements OnModuleInit {
         cfg,
         manager,
       });
+      if (!awarded) {
+        if (botIds.has(winner.userId)) {
+          awardedBotUserIds.add(winner.userId);
+        }
+        continue;
+      }
       if (botIds.has(winner.userId)) {
         awardedBotUserIds.add(winner.userId);
       }
@@ -3001,7 +3038,7 @@ export class BingoService implements OnModuleInit {
     manager: EntityManager;
     /** Optional alias to display instead of the bot's real displayName. */
     overrideDisplayName?: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName } = input;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
@@ -3014,6 +3051,16 @@ export class BingoService implements OnModuleInit {
       : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
     const displayedName = overrideDisplayName ?? display.displayName;
     const phoneLast4 = display.phoneLast4;
+    if (winnerUser && display.isBot) {
+      if (!this.isBingoEnabledBotUser(winnerUser)) {
+        this.logger.warn(`Skipped Bingo place ${place} for non-Bingo-enabled bot ${winner.userId} in room ${room.id}`);
+        return false;
+      }
+      if (await this.hasBotAlreadyWonDerashPlace(room, winner.userId, manager)) {
+        this.logger.warn(`Skipped duplicate Bingo place ${place} for bot ${winner.userId} in room ${room.id}`);
+        return false;
+      }
+    }
 
     winner.wonTiers = [...(winner.wonTiers ?? []), place];
     winner.payoutMinor += prizeMinor;
@@ -3066,6 +3113,7 @@ export class BingoService implements OnModuleInit {
         prizePoolMinor,
       },
     };
+    return true;
   }
 
   /**
@@ -3412,7 +3460,7 @@ export class BingoService implements OnModuleInit {
         const soldTickets = await this.countSoldTickets(roomId, manager);
         const totalPotMinor = soldTickets * room.ticketPriceMinor;
         const houseEdgePct = room.houseEdgePct ?? 20;
-        await this.awardDerashPlace({
+        const awarded = await this.awardDerashPlace({
           room,
           winner: ticket,
           place,
@@ -3422,7 +3470,7 @@ export class BingoService implements OnModuleInit {
           cfg,
           manager,
         });
-        awardedAny = true;
+        awardedAny = awardedAny || awarded;
       }
 
       if (awardedAny) {

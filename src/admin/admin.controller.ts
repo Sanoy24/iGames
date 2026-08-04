@@ -230,8 +230,9 @@ export class AdminController {
   adjustUserWallet(
     @Param('id') userId: string,
     @Body() body: { amountMinor: number; direction: 'credit' | 'debit'; reason: string },
+    @CurrentUser() admin: AuthenticatedUser,
   ) {
-    return this.adminService.adjustUserWallet(userId, body.amountMinor, body.direction, body.reason);
+    return this.adminService.adjustUserWallet(userId, body.amountMinor, body.direction, body.reason, admin.id);
   }
 
   @Get('users/:id/wager-limit')

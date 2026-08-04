@@ -996,17 +996,29 @@ export type AdminUserGameStats = {
   totalWinMinor: number;
 };
 
+export type AdminUserAdjustment = {
+  id: string;
+  createdAt: string;
+  amountMinor: number;
+  direction: 'credit' | 'debit';
+  reason: string | null;
+  performedByAdminId: string | null;
+  performedByAdminName: string | null;
+};
+
 export type AdminUserActivity = {
   user: User;
   ledger: LedgerEntry[];
   withdrawals: Withdrawal[];
   deposits: AdminUserDeposit[];
   gameStats: AdminUserGameStats;
+  adminAdjustments: AdminUserAdjustment[];
   totals: {
     walletAvailableMinor: number;
     walletReservedMinor: number;
     depositMinor: number;
     completedWithdrawalMinor: number;
+    adminTopupMinor: number;
   };
 };
 

@@ -720,6 +720,7 @@ function PlayerDetailModal({ user, onClose }: { user: User; onClose: () => void 
               <Kpi label="Total Won" value={formatCreditsFull(gs?.totalWinMinor ?? 0)} color="#10b981" icon={<Wallet size={16} />} />
               <Kpi label="Deposits (credited)" value={formatCreditsFull(activity.totals.depositMinor)} color="#3b82f6" icon={<Wallet size={16} />} />
               <Kpi label="Withdrawn (completed)" value={formatCreditsFull(activity.totals.completedWithdrawalMinor)} color="#ef4444" icon={<Wallet size={16} />} />
+              <Kpi label="Admin Top-ups" value={formatCreditsFull(activity.totals.adminTopupMinor)} color="#14b8a6" icon={<Wallet size={16} />} />
               <Kpi label="Balance" value={formatCreditsFull(activity.totals.walletAvailableMinor)} color="#8b5cf6" icon={<Wallet size={16} />} />
             </div>
 
@@ -762,6 +763,29 @@ function PlayerDetailModal({ user, onClose }: { user: User; onClose: () => void 
                         <td><strong>{formatCreditsFull(Number(d.amountMinor))}</strong></td>
                         <td><span className={`badge ${d.status === 'credited' ? 'badge-green' : 'badge-gold'}`}>{d.status}</span></td>
                         <td className="adm-td-muted">{d.agent?.displayName ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Admin Adjustments — manual "Adjust Wallet Balance" credits/debits from the shared Master Wallet */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>Admin Adjustments ({activity.adminAdjustments.length})</div>
+              {activity.adminAdjustments.length === 0 ? (
+                <div className="adm-empty">No admin adjustments.</div>
+              ) : (
+                <table className="adm-table">
+                  <thead><tr className="adm-tr"><th>When</th><th>Amount</th><th>Direction</th><th>Admin</th><th>Reason</th></tr></thead>
+                  <tbody>
+                    {activity.adminAdjustments.map((adj) => (
+                      <tr key={adj.id} className="adm-tr">
+                        <td className="adm-td-muted">{formatDateTime(adj.createdAt)}</td>
+                        <td><strong>{formatCreditsFull(adj.amountMinor)}</strong></td>
+                        <td><span className={`badge ${adj.direction === 'credit' ? 'badge-green' : 'badge-red'}`}>{adj.direction}</span></td>
+                        <td className="adm-td-muted">{adj.performedByAdminName ?? <em>Unknown</em>}</td>
+                        <td className="adm-td-muted">{adj.reason ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1188,6 +1212,7 @@ function AgentsAdmin() {
   });
 
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [statusChangingId, setStatusChangingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1306,6 +1331,32 @@ function AgentsAdmin() {
       await load();
     } catch (e) { addToast('error', getErrorMessage(e)); }
     finally { setUpdating(false); }
+  };
+
+  // "Delete" an agent = soft-delete: flip status to 'closed', same field the
+  // Status dropdown in Edit already uses. Preserves wallet/ledger/settlement
+  // history (a hard delete would cascade-destroy all of that) and immediately
+  // revokes their login sessions (see UsersService.updateStatus). Reversible
+  // via the Restore button, which just flips status back to 'active'.
+  const deleteAgent = async (agent: User) => {
+    if (!window.confirm(`Delete agent "${agent.displayName}"? They'll be logged out and can no longer log in, but can be restored anytime.`)) return;
+    setStatusChangingId(agent.id);
+    try {
+      await adminAgentsApi.updateAgent(agent.id, { status: 'closed' });
+      addToast('success', `Agent "${agent.displayName}" deleted.`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setStatusChangingId(null); }
+  };
+
+  const restoreAgent = async (agent: User) => {
+    setStatusChangingId(agent.id);
+    try {
+      await adminAgentsApi.updateAgent(agent.id, { status: 'active' });
+      addToast('success', `Agent "${agent.displayName}" restored.`);
+      await load();
+    } catch (e) { addToast('error', getErrorMessage(e)); }
+    finally { setStatusChangingId(null); }
   };
 
   return (
@@ -1554,9 +1605,28 @@ function AgentsAdmin() {
                       </span>
                     </td>
                     <td>
-                      <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => { startEdit(a); setShowForm(false); }}>
-                        Edit
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="adm-btn adm-btn-secondary adm-btn-xs" onClick={() => { startEdit(a); setShowForm(false); }}>
+                          Edit
+                        </button>
+                        {a.status === 'closed' ? (
+                          <button
+                            className="adm-btn adm-btn-secondary adm-btn-xs"
+                            disabled={statusChangingId === a.id}
+                            onClick={() => void restoreAgent(a)}
+                          >
+                            Restore
+                          </button>
+                        ) : (
+                          <button
+                            className="adm-btn adm-btn-danger adm-btn-xs"
+                            disabled={statusChangingId === a.id}
+                            onClick={() => void deleteAgent(a)}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

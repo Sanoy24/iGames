@@ -669,14 +669,20 @@ export class AdminService implements OnApplicationBootstrap {
     };
   }
 
-  async adjustUserWallet(userId: string, amountMinor: number, direction: 'credit' | 'debit', reason: string) {
+  async adjustUserWallet(
+    userId: string,
+    amountMinor: number,
+    direction: 'credit' | 'debit',
+    reason: string,
+    actingAdminId: string,
+  ) {
     return this.dataSource.transaction(async (manager) => {
       const shared = {
         entryType: 'bonus' as const,
         sourceType: 'admin_adjustment',
         sourceId: randomUUID(),
         idempotencyKey: `admin-adj:${randomUUID()}`,
-        metadata: { reason }
+        metadata: { reason, actingAdminId }
       };
 
       // Both directions are backed by the Master Wallet: a credit is funded FROM
@@ -754,7 +760,7 @@ export class AdminService implements OnApplicationBootstrap {
       throw new NotFoundException('User not found');
     }
 
-    const [ledger, withdrawals, deposits, gameStats] = await Promise.all([
+    const [ledger, withdrawals, deposits, gameStats, adminAdjustmentEntries, adminTopupRows] = await Promise.all([
       this.dataSource.getRepository(LedgerEntry).find({
         where: { userId },
         order: { createdAt: 'DESC' },
@@ -773,7 +779,51 @@ export class AdminService implements OnApplicationBootstrap {
         take: safeLimit,
       }),
       this.getUserGameStats(userId),
+      // Admin "Adjust Wallet Balance" entries — fetched separately (not just
+      // sliced out of `ledger` above) since that feed is capped at safeLimit
+      // across ALL activity and could crowd out older adjustments.
+      this.dataSource.getRepository(LedgerEntry).find({
+        where: { userId, entryType: 'bonus' as LedgerEntryType, sourceType: 'admin_adjustment' },
+        order: { createdAt: 'DESC' },
+        take: safeLimit,
+      }),
+      // All-time sum (not capped) so the KPI is accurate even when the display
+      // list above is truncated. Credit-only — "topped up" means money added;
+      // debits still show in the list but don't count toward this total.
+      this.dataSource.getRepository(LedgerEntry).query(
+        `SELECT COALESCE(SUM(amountMinor),0) AS total FROM ledger_entries
+          WHERE userId = ? AND entryType = 'bonus' AND sourceType = 'admin_adjustment' AND direction = 'credit'`,
+        [userId],
+      ),
     ]);
+
+    // Resolve which admin performed each adjustment. actingAdminId only exists
+    // on entries created after this feature shipped — older ones have no
+    // recoverable attribution and resolve to null ("Unknown" in the UI).
+    const adminIds = [
+      ...new Set(
+        adminAdjustmentEntries
+          .map((e) => (e.metadata?.actingAdminId as string | undefined) ?? null)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const admins = adminIds.length
+      ? await this.dataSource.getRepository(User).findBy({ id: In(adminIds) })
+      : [];
+    const adminNameById = new Map(admins.map((a) => [a.id, a.displayName]));
+
+    const adminAdjustments = adminAdjustmentEntries.map((e) => {
+      const performedByAdminId = (e.metadata?.actingAdminId as string | undefined) ?? null;
+      return {
+        id: e.id,
+        createdAt: e.createdAt,
+        amountMinor: Number(e.amountMinor),
+        direction: e.direction,
+        reason: (e.metadata?.reason as string | undefined) ?? null,
+        performedByAdminId,
+        performedByAdminName: performedByAdminId ? (adminNameById.get(performedByAdminId) ?? null) : null,
+      };
+    });
 
     return {
       user,
@@ -781,6 +831,7 @@ export class AdminService implements OnApplicationBootstrap {
       withdrawals,
       deposits,
       gameStats,
+      adminAdjustments,
       totals: {
         walletAvailableMinor: user.wallets?.[0]?.availableMinor ?? 0,
         walletReservedMinor: user.wallets?.[0]?.reservedMinor ?? 0,
@@ -790,6 +841,7 @@ export class AdminService implements OnApplicationBootstrap {
         completedWithdrawalMinor: withdrawals
           .filter((withdrawal) => withdrawal.status === 'completed')
           .reduce((sum, withdrawal) => sum + Number(withdrawal.amountMinor), 0),
+        adminTopupMinor: Number(adminTopupRows[0]?.total ?? 0),
       },
     };
   }

@@ -906,6 +906,184 @@ describe('BingoService cartela lifecycle guards', () => {
     expect((summary['1st'] as any).winnerPhoneLast4).toBe('0851');
   });
 
+  it('refuses to award the same bot two visible Derash places in one room', async () => {
+    const { service, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      botIdentityMap: {
+        'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
+      },
+      settlementSummary: {
+        '1st': {
+          winnerCount: 1,
+          winnerId: 'ticket-1',
+          winnerDisplayName: 'Hana',
+          winnerPhoneLast4: '1771',
+          winnerIsBot: true,
+        },
+      },
+      settledTiers: ['1st'],
+      winnersByTier: { '1st': ['ticket-1'] },
+    });
+    const winner = {
+      id: 'ticket-2',
+      userId: 'bot-1',
+      cartelaNumber: 91,
+      grid: [[1]],
+      markedNumbers: [1],
+      wonTiers: [],
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'bot-1',
+        displayName: 'House Bot',
+        phoneNumber: '',
+        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+      }),
+      save: jest.fn().mockImplementation(async (value) => value),
+      getRepository: jest.fn().mockImplementation((entity: unknown) => {
+        const entityName = (entity as { name?: string })?.name;
+        if (entityName === 'BingoRoom') {
+          return { save: jest.fn().mockImplementation(async (value) => value) };
+        }
+        if (entityName === 'BotName') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              { displayName: 'Hana', active: true },
+            ]),
+          };
+        }
+        if (entityName === 'BingoTicket') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              { id: 'ticket-1', userId: 'bot-1' },
+            ]),
+          };
+        }
+        return {
+          find: jest.fn().mockResolvedValue([
+            {
+              id: 'bot-1',
+              displayName: 'House Bot',
+              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+            },
+          ]),
+        };
+      }),
+    };
+
+    const awarded = await (service as any).awardDerashPlace({
+      room,
+      winner,
+      place: '2nd',
+      pattern: { id: 'pattern-1', name: 'Any Line' },
+      totalPotMinor: 100,
+      houseEdgePct: 20,
+      cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
+      manager,
+    });
+
+    expect(awarded).toBe(false);
+    expect(room.winnersByTier['2nd']).toBeUndefined();
+    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+    expect(walletService.creditInSession).not.toHaveBeenCalled();
+  });
+
+  it('allows a different Bingo bot to win the next visible Derash place', async () => {
+    const { service, walletService } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      botIdentityMap: {
+        'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
+        'bot-2': { displayName: 'Samuel', phoneSuffix: '6023' },
+      },
+      settlementSummary: {
+        '1st': {
+          winnerCount: 1,
+          winnerId: 'ticket-1',
+          winnerDisplayName: 'Hana',
+          winnerPhoneLast4: '1771',
+          winnerIsBot: true,
+        },
+      },
+      settledTiers: ['1st'],
+      winnersByTier: { '1st': ['ticket-1'] },
+    });
+    const winner = {
+      id: 'ticket-2',
+      userId: 'bot-2',
+      cartelaNumber: 91,
+      grid: [[1]],
+      markedNumbers: [1],
+      wonTiers: [],
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'bot-2',
+        displayName: 'House Bot 2',
+        phoneNumber: '',
+        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+      }),
+      save: jest.fn().mockImplementation(async (value) => value),
+      getRepository: jest.fn().mockImplementation((entity: unknown) => {
+        const entityName = (entity as { name?: string })?.name;
+        if (entityName === 'BingoRoom') {
+          return { save: jest.fn().mockImplementation(async (value) => value) };
+        }
+        if (entityName === 'BotName') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              { displayName: 'Hana', active: true },
+              { displayName: 'Samuel', active: true },
+            ]),
+          };
+        }
+        if (entityName === 'BingoTicket') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              { id: 'ticket-1', userId: 'bot-1' },
+            ]),
+          };
+        }
+        return {
+          find: jest.fn().mockResolvedValue([
+            {
+              id: 'bot-2',
+              displayName: 'House Bot 2',
+              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+            },
+          ]),
+        };
+      }),
+    };
+    walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+    const awarded = await (service as any).awardDerashPlace({
+      room,
+      winner,
+      place: '2nd',
+      pattern: { id: 'pattern-1', name: 'Any Line' },
+      totalPotMinor: 100,
+      houseEdgePct: 20,
+      cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
+      manager,
+    });
+
+    expect(awarded).toBe(true);
+    expect(room.winnersByTier['2nd']).toEqual(['ticket-2']);
+    expect(((room.settlementSummary ?? {})['2nd'] as any).winnerDisplayName).toBe('Samuel');
+    expect(((room.settlementSummary ?? {})['2nd'] as any).winnerPhoneLast4).toBe('6023');
+    expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+  });
+
   it('repairs stale completed-room bot winner names before returning room state', async () => {
     const { service, mockRoomRepo, mockTicketRepo } = makeService({ rooms: [] });
     const room = makeRoom({

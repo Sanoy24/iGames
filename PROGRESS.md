@@ -6,12 +6,12 @@
 
 ## Current Verified State
 
-**Date**: 2026-08-03
+**Date**: 2026-08-04
 **Branch**: `migration/mysql` (this session's work is **uncommitted** in the working tree)  
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **238/238 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **45/45 pass**
+**Tests**: `npm run test:unit` — **241/241 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **48/48 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -57,6 +57,33 @@
 ---
 
 ## Session Record
+### Session note: 2026-08-04 (stale Bingo bot names self-heal)
+
+**Goal**: Stop completed/current Bingo results from showing stale bot account names such as `Abrsh` when that name is not in the active Bingo name pool.
+
+**Completed**:
+
+- **Stale identity rejection** - room bot identity hydration now validates requested Bingo bot identities against the active `bot_names` pool. If an existing room identity uses a name that is no longer active, it is discarded and reassigned from the active pool.
+- **Result-summary repair** - `getRoomState()` and admin room details now refresh bot winner display fields in `settlementSummary` before responding, so already-stamped stale names are corrected for Mini App/socket consumers instead of staying visible until a new room.
+- **Display resolver hardening** - bot display resolution always goes through the validating room identity hydrator, preventing fallback to the bot account display name while active Bingo names exist.
+- **Regression coverage** - added a test proving a completed room with stale `Abrsh` winner summary is returned with an active name-pool identity instead.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **46/46** pass; `cmd /c "npm run test:unit"` **239/239** pass.
+
+### Session note: 2026-08-04 (Bingo bot winner rotation)
+
+**Goal**: Randomize Bingo bot winners while preventing the same bot from winning multiple prize places in one room or winning consecutive rooms.
+
+**Completed**:
+
+- **Random eligible winner selection** - Derash race settlement now chooses from the shuffled eligible winner pool instead of always taking the earliest matching ticket.
+- **Same-room repeat guard** - bot users that already won a visible prize place in the current room remain blocked from later bot prize places.
+- **Consecutive-room guard** - settlement reads the most recent completed Bingo room and skips its bot winner IDs in the next room's bot winner/redirect selection.
+- **Leaderboard parity** - leaderboard settlement also skips same-room and previous-room bot winners when assigning visible prize places.
+- **Regression coverage** - added unit tests proving a previous-room bot winner is skipped in favor of another eligible bot, and that the only eligible previous winner cannot win consecutively.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **48/48** pass; `cmd /c "npm run test:unit"` **241/241** pass.
+
 ### Session note: 2026-08-03 (Bingo bot pool + unique bot winners)
 
 **Goal**: Stop the same Bingo bot identity from repeatedly winning visible prize positions and make Bingo use only the explicitly enabled Bingo bot pool.

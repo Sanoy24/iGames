@@ -753,6 +753,46 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(winner?.userId).toBe('bot-2');
   });
 
+  it('randomizes Derash bot winners while skipping the previous room bot winner', () => {
+    const { service } = makeService({ rooms: [] });
+    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
+      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+    jest.spyOn(service as any, 'shuffle').mockImplementation((values: unknown) => [...(values as unknown[])]);
+
+    const winner = (service as any).pickDerashAutoWinner({
+      tickets: [
+        { id: 'ticket-1', userId: 'bot-1', autoClaim: true, grid: [[1]] },
+        { id: 'ticket-2', userId: 'bot-2', autoClaim: true, grid: [[2]] },
+      ],
+      botIds: new Set(['bot-1', 'bot-2']),
+      awardedBotUserIds: new Set(),
+      recentBotWinnerUserIds: new Set(['bot-1']),
+      pattern: { id: 'pattern-1' },
+      drawnNumbers: [1],
+    });
+
+    expect(winner?.userId).toBe('bot-2');
+  });
+
+  it('does not let the only eligible bot win consecutive Bingo rooms', () => {
+    const { service } = makeService({ rooms: [] });
+    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
+      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+
+    const winner = (service as any).pickDerashAutoWinner({
+      tickets: [
+        { id: 'ticket-1', userId: 'bot-1', autoClaim: true, grid: [[1]] },
+      ],
+      botIds: new Set(['bot-1']),
+      awardedBotUserIds: new Set(),
+      recentBotWinnerUserIds: new Set(['bot-1']),
+      pattern: { id: 'pattern-1' },
+      drawnNumbers: [1],
+    });
+
+    expect(winner).toBeNull();
+  });
+
   it('records the room-scoped Bingo bot name in winner standings instead of the bot account name', async () => {
     const { service, walletService } = makeService({ rooms: [] });
     const room = makeRoom({
@@ -784,6 +824,28 @@ describe('BingoService cartela lifecycle guards', () => {
         productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
       }),
       save: jest.fn().mockImplementation(async (value) => value),
+      getRepository: jest.fn().mockImplementation((entity: unknown) => {
+        const entityName = (entity as { name?: string })?.name;
+        if (entityName === 'BingoRoom') {
+          return { save: jest.fn().mockImplementation(async (value) => value) };
+        }
+        if (entityName === 'BotName') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              { displayName: 'Hana', active: true },
+            ]),
+          };
+        }
+        return {
+          find: jest.fn().mockResolvedValue([
+            {
+              id: 'bot-1',
+              displayName: 'Abrsh',
+              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+            },
+          ]),
+        };
+      }),
     };
     walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
 
@@ -807,6 +869,79 @@ describe('BingoService cartela lifecycle guards', () => {
     const summary = room.settlementSummary ?? {};
     expect((summary['1st'] as any).winnerDisplayName).toBe('Hana');
     expect((summary['1st'] as any).winnerPhoneLast4).toBe('0851');
+  });
+
+  it('repairs stale completed-room bot winner names before returning room state', async () => {
+    const { service, mockRoomRepo, mockTicketRepo } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'completed',
+      botIdentityMap: {
+        'bot-1': { displayName: 'Abrsh', phoneSuffix: '8975' },
+      },
+      settlementSummary: {
+        '1st': {
+          winnerCount: 1,
+          winnerId: 'ticket-1',
+          winnerDisplayName: 'Abrsh',
+          winnerPhoneLast4: '8975',
+          winnerIsBot: true,
+        },
+      },
+    });
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+    mockTicketRepo.find.mockResolvedValue([]);
+
+    const roomRepoSave = jest.fn().mockImplementation(async (value) => value);
+    (mockRoomRepo as any).manager = {
+      getRepository: jest.fn().mockImplementation((entity: unknown) => {
+        const entityName = (entity as { name?: string })?.name;
+        if (entityName === 'BingoRoom') {
+          return { save: roomRepoSave };
+        }
+        if (entityName === 'BingoTicket') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              {
+                id: 'ticket-1',
+                userId: 'bot-1',
+                user: {
+                  id: 'bot-1',
+                  displayName: 'Abrsh',
+                  phoneNumber: '',
+                  productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+                },
+              },
+            ]),
+          };
+        }
+        if (entityName === 'BotName') {
+          return {
+            find: jest.fn().mockResolvedValue([
+              { displayName: 'Hana', active: true },
+            ]),
+          };
+        }
+        return {
+          find: jest.fn().mockResolvedValue([
+            {
+              id: 'bot-1',
+              displayName: 'Abrsh',
+              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+            },
+          ]),
+        };
+      }),
+    };
+
+    const response = await service.getRoomState({ roomId: room.id });
+    const entry = response.settlementSummary['1st'] as Record<string, unknown>;
+
+    expect(entry.winnerDisplayName).toBe('Hana');
+    expect(entry.winnerPhoneLast4).not.toBe('8975');
+    expect(roomRepoSave).toHaveBeenCalled();
   });
 });
 

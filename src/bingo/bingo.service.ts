@@ -393,6 +393,69 @@ export class BingoService implements OnModuleInit {
     );
   }
 
+  private async getPreviousBingoBotWinnerUserIds(room: BingoRoom, manager: EntityManager): Promise<Set<string>> {
+    const previousRooms = await manager.getRepository(BingoRoom).find({
+      where: { status: 'completed' },
+      order: { updatedAt: 'DESC' },
+      take: 5,
+    });
+    const previousRoom = previousRooms.find((candidate) => candidate.id !== room.id);
+    if (!previousRoom?.settlementSummary) return new Set();
+
+    const winnerTicketIds = Object.values(previousRoom.settlementSummary)
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const winnerId = (entry as Record<string, unknown>).winnerId;
+        return typeof winnerId === 'string' ? winnerId : null;
+      })
+      .filter((id): id is string => !!id);
+    if (winnerTicketIds.length === 0) return new Set();
+
+    const tickets = await manager.getRepository(BingoTicket).find({
+      where: { id: In([...new Set(winnerTicketIds)]) },
+      relations: ['user'],
+    });
+    return new Set(
+      tickets
+        .filter((ticket) => ticket.user && this.isBotUser(ticket.user))
+        .map((ticket) => ticket.userId),
+    );
+  }
+
+  private completesPrefilledPattern(ticket: BingoTicket, pattern: BingoPattern, drawnNumbers: number[]): boolean {
+    return this.bingoRulesService
+      .evaluatePatternTicket(ticket.grid, drawnNumbers, [pattern])
+      .completedPatternIds.includes(pattern.id);
+  }
+
+  private pickDerashAutoWinner(input: {
+    tickets: BingoTicket[];
+    botIds: Set<string>;
+    awardedBotUserIds: Set<string>;
+    recentBotWinnerUserIds: Set<string>;
+    pattern: BingoPattern;
+    drawnNumbers: number[];
+  }): BingoTicket | null {
+    const eligible = input.tickets.filter(
+      (ticket) =>
+        ticket.autoClaim !== false &&
+        this.completesPrefilledPattern(ticket, input.pattern, input.drawnNumbers),
+    );
+    if (eligible.length === 0) return null;
+
+    const sameRoomEligible = eligible.filter(
+      (ticket) => !(input.botIds.has(ticket.userId) && input.awardedBotUserIds.has(ticket.userId)),
+    );
+    if (sameRoomEligible.length === 0) return null;
+
+    const nonConsecutiveEligible = sameRoomEligible.filter(
+      (ticket) => !(input.botIds.has(ticket.userId) && input.recentBotWinnerUserIds.has(ticket.userId)),
+    );
+    if (nonConsecutiveEligible.length === 0) return null;
+
+    return this.shuffle(nonConsecutiveEligible)[0] ?? null;
+  }
+
   private normalizeBotName(displayName: string): string {
     return (displayName ?? '').trim().replace(/\s+/g, ' ');
   }
@@ -454,19 +517,36 @@ export class BingoService implements OnModuleInit {
     }
 
     const identityMap = { ...((room.botIdentityMap ?? {}) as Record<string, RoomBotIdentity>) };
-    const usedNames = new Set(Object.values(identityMap).map((identity) => identity.displayName));
     const usedSuffixes = new Set(Object.values(identityMap).map((identity) => identity.phoneSuffix));
-    const activeNames = this.shuffle(
-      (await botRepo.find({
+    const activeNamePool = (await botRepo.find({
         where: { active: true },
         order: { displayName: 'ASC', createdAt: 'ASC' },
-      })).map((row) => this.normalizeBotName(row.displayName)).filter(Boolean),
-    ).filter((name) => !usedNames.has(name));
+      })).map((row) => this.normalizeBotName(row.displayName)).filter(Boolean);
+    const activeNameSet = new Set(activeNamePool);
+    const requestedBotIds = new Set(activeBots.map((bot) => bot.id));
+    const usedNames = new Set<string>();
+
+    for (const [userId, identity] of Object.entries(identityMap)) {
+      const displayName = this.normalizeBotName(identity.displayName);
+      const staleManagedName =
+        requestedBotIds.has(userId) &&
+        activeNameSet.size > 0 &&
+        !activeNameSet.has(displayName);
+      const duplicateName = displayName && usedNames.has(displayName);
+      if (staleManagedName || duplicateName) {
+        delete identityMap[userId];
+        usedSuffixes.delete(identity.phoneSuffix);
+        continue;
+      }
+      if (displayName) usedNames.add(displayName);
+    }
+
+    const activeNames = this.shuffle(activeNamePool).filter((name) => !usedNames.has(name));
 
     let fallbackIndex = 1;
     for (const bot of this.shuffle(activeBots)) {
       if (identityMap[bot.id]) continue;
-      const baseName = activeNames.shift() ?? this.normalizeBotName(bot.displayName);
+      const baseName = activeNames.shift() ?? (activeNamePool.length > 0 ? this.shuffle(activeNamePool)[0] : this.normalizeBotName(bot.displayName));
       const displayName = baseName || `Bot ${fallbackIndex++}`;
       const uniqueDisplayName = usedNames.has(displayName)
         ? `${displayName} ${fallbackIndex++}`
@@ -509,10 +589,7 @@ export class BingoService implements OnModuleInit {
       };
     }
 
-    const existingIdentity = (room.botIdentityMap ?? {})[user.id];
-    const identities = existingIdentity
-      ? (room.botIdentityMap ?? {}) as Record<string, RoomBotIdentity>
-      : await this.hydrateRoomBotIdentities(room, [user.id], manager);
+    const identities = await this.hydrateRoomBotIdentities(room, [user.id], manager);
     const identity = identities[user.id];
     const displayName = identity?.displayName ?? user.displayName ?? 'Bot';
     const phoneLast4 = identity?.phoneSuffix ?? (user.phoneNumber ?? '').replace(/\D/g, '').slice(-4);
@@ -522,6 +599,59 @@ export class BingoService implements OnModuleInit {
       phoneSuffix: identity?.phoneSuffix,
       isBot: true,
     };
+  }
+
+  private async refreshBotWinnerDisplayNames(
+    room: BingoRoom,
+    manager: EntityManager,
+  ): Promise<void> {
+    const summary = room.settlementSummary ?? {};
+    const entries = Object.values(summary).filter(
+      (entry): entry is Record<string, unknown> =>
+        !!entry &&
+        typeof entry === 'object' &&
+        typeof (entry as Record<string, unknown>).winnerId === 'string',
+    );
+    if (entries.length === 0) return;
+
+    const ticketIds = [...new Set(entries.map((entry) => entry.winnerId as string))];
+    const tickets = await manager.getRepository(BingoTicket).find({
+      where: { id: In(ticketIds) },
+      relations: ['user'],
+    });
+    const ticketsById = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+
+    let changed = false;
+    const nextSummary = { ...summary };
+    for (const [place, rawEntry] of Object.entries(summary)) {
+      if (!rawEntry || typeof rawEntry !== 'object') continue;
+      const entry = rawEntry as Record<string, unknown>;
+      const winnerId = entry.winnerId;
+      if (typeof winnerId !== 'string') continue;
+
+      const ticket = ticketsById.get(winnerId);
+      if (!ticket?.user || !this.isBotUser(ticket.user)) continue;
+
+      const display = await this.resolveDisplayedNameForUser(room, ticket.user, manager);
+      if (
+        entry.winnerDisplayName !== display.displayName ||
+        entry.winnerPhoneLast4 !== display.phoneLast4 ||
+        entry.winnerIsBot !== true
+      ) {
+        nextSummary[place] = {
+          ...entry,
+          winnerDisplayName: display.displayName,
+          winnerPhoneLast4: display.phoneLast4,
+          winnerIsBot: true,
+        };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      room.settlementSummary = nextSummary;
+      await manager.getRepository(BingoRoom).save(room);
+    }
   }
 
   /**
@@ -1868,6 +1998,7 @@ export class BingoService implements OnModuleInit {
       takenSpots = await this.getTakenSpots(room.id);
     }
 
+    await this.refreshBotWinnerDisplayNames(room, this.bingoRoomRepository.manager);
     const response: BingoRoomResponse & { tickets?: BingoTicketResponse[] } = this.toRoomResponse(room, soldTickets, takenSpots);
 
     if (input.userId) {
@@ -1897,6 +2028,7 @@ export class BingoService implements OnModuleInit {
 
     const soldTickets = await this.countSoldTickets(room.id);
     const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(room.id) : undefined;
+    await this.refreshBotWinnerDisplayNames(room, this.bingoRoomRepository.manager);
     const roomResponse = this.toRoomResponse(room, soldTickets, takenSpots);
 
     const tickets = await this.bingoTicketRepository.find({
@@ -2548,6 +2680,7 @@ export class BingoService implements OnModuleInit {
     // statistical relies purely on bots holding most cartelas (a fair draw).
     const botIds = await this.getBotUserIdsForTickets(inPlayTickets, manager);
     const awardedBotUserIds = this.awardedBotUserIdsForTickets(inPlayTickets, botIds);
+    const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager);
     const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
     const participation = this.resolveBingoBotParticipation(cfg);
     const belowThreshold = participation.belowEnabled && realPlayers < participation.belowThreshold;
@@ -2567,16 +2700,14 @@ export class BingoService implements OnModuleInit {
       const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
       if (!pattern) continue;
 
-      const winner = inPlayTickets.find(
-        (t) =>
-          // Manual-mode cards (owner turned Auto OFF) are never auto-awarded —
-          // they can only win via an explicit "Bingo" claim (claimBingo).
-          !(botIds.has(t.userId) && awardedBotUserIds.has(t.userId)) &&
-          t.autoClaim !== false &&
-          this.bingoRulesService
-            .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
-            .completedPatternIds.includes(pattern.id),
-      );
+      const winner = this.pickDerashAutoWinner({
+        tickets: inPlayTickets,
+        botIds,
+        awardedBotUserIds,
+        recentBotWinnerUserIds,
+        pattern,
+        drawnNumbers: room.drawnNumbers,
+      });
       // No eligible card completes THIS place's pattern yet — try the next place;
       // a later draw may fill this one.
       if (!winner) continue;
@@ -2586,7 +2717,8 @@ export class BingoService implements OnModuleInit {
       // card also completes the pattern so the revealed winner looks legitimate).
       let awardee = winner;
       if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
-        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers, awardedBotUserIds);
+        const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
+        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers, excludedBotUserIds);
         if (botAwardee) {
           awardee = botAwardee;
           this.logger.log(
@@ -2756,6 +2888,7 @@ export class BingoService implements OnModuleInit {
 
     const botIds = await this.getBotUserIdsForTickets(inPlay, manager);
     const awardedBotUserIds = this.awardedBotUserIdsForTickets(inPlay, botIds);
+    const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager);
 
     // Assign ranks by queue position, skipping bot users that already took a
     // prize so the final standings do not show the same bot identity repeatedly.
@@ -2768,6 +2901,9 @@ export class BingoService implements OnModuleInit {
         const candidate = inPlay[ranked[rankCursor].key];
         rankCursor += 1;
         if (botIds.has(candidate.userId) && awardedBotUserIds.has(candidate.userId)) {
+          continue;
+        }
+        if (botIds.has(candidate.userId) && recentBotWinnerUserIds.has(candidate.userId)) {
           continue;
         }
         winner = candidate;

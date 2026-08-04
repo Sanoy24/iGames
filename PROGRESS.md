@@ -11,7 +11,7 @@
 **DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
 **Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
 **Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
-**Tests**: `npm run test:unit` — **241/241 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **48/48 pass**
+**Tests**: `npm run test:unit` — **243/243 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **50/50 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
@@ -57,6 +57,19 @@
 ---
 
 ## Session Record
+### Session note: 2026-08-04 (Bingo live/final bot winner consistency)
+
+**Goal**: Make the live winning-card popup and final standings use the same Bingo name-pool identity, and prevent master/global bot accounts from winning Bingo places.
+
+**Completed**:
+
+- **Bingo-eligible bot split** - settlement now distinguishes all bot accounts from bots explicitly enabled for Bingo. Master/global bots without `games.bingo.active === true` are excluded from Derash winner selection.
+- **Redirect pool tightened** - bot win redirects can only choose from explicitly Bingo-enabled bot IDs, while same-room and consecutive-room exclusions still apply.
+- **Live payload repair** - `drawNextNumber()` refreshes bot winner display names before returning the room response used by socket emissions, so live win cards and final standings share the same corrected summary.
+- **Regression coverage** - added tests for master-bot ineligibility and draw-response summary refresh before emission.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **50/50** pass; `cmd /c "npm run test:unit"` **243/243** pass.
+
 ### Session note: 2026-08-04 (stale Bingo bot names self-heal)
 
 **Goal**: Stop completed/current Bingo results from showing stale bot account names such as `Abrsh` when that name is not in the active Bingo name pool.

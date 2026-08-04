@@ -374,15 +374,47 @@ export class BingoService implements OnModuleInit {
     return !!user?.productMetadata?.botPolicy;
   }
 
-  private async getBotUserIdsForTickets(tickets: BingoTicket[], manager: EntityManager): Promise<Set<string>> {
+  private isBingoEnabledBotUser(user?: Pick<User, 'productMetadata'> | null): boolean {
+    const policy = user?.productMetadata?.botPolicy as {
+      active?: boolean;
+      games?: { bingo?: { active?: boolean } };
+    } | undefined;
+    return !!policy && policy.active === true && policy.games?.bingo?.active === true;
+  }
+
+  private async getBotUserGroupsForTickets(tickets: BingoTicket[], manager: EntityManager): Promise<{
+    botIds: Set<string>;
+    bingoEnabledBotIds: Set<string>;
+    nonBingoBotIds: Set<string>;
+  }> {
     const userIds = [...new Set(tickets.map((ticket) => ticket.userId).filter(Boolean))];
-    if (userIds.length === 0) return new Set();
+    if (userIds.length === 0) {
+      return { botIds: new Set(), bingoEnabledBotIds: new Set(), nonBingoBotIds: new Set() };
+    }
 
     const users = await manager.getRepository(User).find({
       where: { id: In(userIds) },
       select: ['id', 'productMetadata'],
     });
-    return new Set(users.filter((user) => this.isBotUser(user)).map((user) => user.id));
+    const botIds = new Set<string>();
+    const bingoEnabledBotIds = new Set<string>();
+    const nonBingoBotIds = new Set<string>();
+
+    for (const user of users) {
+      if (!this.isBotUser(user)) continue;
+      botIds.add(user.id);
+      if (this.isBingoEnabledBotUser(user)) {
+        bingoEnabledBotIds.add(user.id);
+      } else {
+        nonBingoBotIds.add(user.id);
+      }
+    }
+
+    return { botIds, bingoEnabledBotIds, nonBingoBotIds };
+  }
+
+  private async getBotUserIdsForTickets(tickets: BingoTicket[], manager: EntityManager): Promise<Set<string>> {
+    return (await this.getBotUserGroupsForTickets(tickets, manager)).botIds;
   }
 
   private awardedBotUserIdsForTickets(tickets: BingoTicket[], botIds: Set<string>): Set<string> {
@@ -2459,6 +2491,7 @@ export class BingoService implements OnModuleInit {
       if (room.status === 'completed' || room.status === 'cancelled') {
         const soldTickets = await this.countSoldTickets(validRoomId, manager);
         const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
+        await this.refreshBotWinnerDisplayNames(room, manager);
         return this.toRoomResponse(room, soldTickets, takenSpots);
       }
 
@@ -2598,6 +2631,7 @@ export class BingoService implements OnModuleInit {
       if (room.status === 'completed') room.activeGuard = null;
 
       await manager.save(room);
+      await this.refreshBotWinnerDisplayNames(room, manager);
       const soldTickets = await this.countSoldTickets(validRoomId, manager);
       const takenSpots = room.winMode === 'prefilled' ? await this.getTakenSpots(validRoomId) : undefined;
       return this.toRoomResponse(room, soldTickets, takenSpots);
@@ -2678,7 +2712,9 @@ export class BingoService implements OnModuleInit {
     // botMaxRealPlayers REAL players, guaranteed/hybrid/cartel-dual modes redirect
     // a real user's win to a bot. `statistical`/`off` never redirect here —
     // statistical relies purely on bots holding most cartelas (a fair draw).
-    const botIds = await this.getBotUserIdsForTickets(inPlayTickets, manager);
+    const botGroups = await this.getBotUserGroupsForTickets(inPlayTickets, manager);
+    const botIds = botGroups.botIds;
+    const winnerEligibleTickets = inPlayTickets.filter((ticket) => !botGroups.nonBingoBotIds.has(ticket.userId));
     const awardedBotUserIds = this.awardedBotUserIdsForTickets(inPlayTickets, botIds);
     const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager);
     const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
@@ -2701,7 +2737,7 @@ export class BingoService implements OnModuleInit {
       if (!pattern) continue;
 
       const winner = this.pickDerashAutoWinner({
-        tickets: inPlayTickets,
+        tickets: winnerEligibleTickets,
         botIds,
         awardedBotUserIds,
         recentBotWinnerUserIds,
@@ -2718,7 +2754,7 @@ export class BingoService implements OnModuleInit {
       let awardee = winner;
       if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
         const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
-        const botAwardee = this.pickBotRedirectWinner(inPlayTickets, botIds, pattern, room.drawnNumbers, excludedBotUserIds);
+        const botAwardee = this.pickBotRedirectWinner(winnerEligibleTickets, botGroups.bingoEnabledBotIds, pattern, room.drawnNumbers, excludedBotUserIds);
         if (botAwardee) {
           awardee = botAwardee;
           this.logger.log(
@@ -2886,7 +2922,8 @@ export class BingoService implements OnModuleInit {
     const totalPotMinor = soldTickets * room.ticketPriceMinor;
     const houseEdgePct = room.houseEdgePct ?? 20;
 
-    const botIds = await this.getBotUserIdsForTickets(inPlay, manager);
+    const botGroups = await this.getBotUserGroupsForTickets(inPlay, manager);
+    const botIds = botGroups.botIds;
     const awardedBotUserIds = this.awardedBotUserIdsForTickets(inPlay, botIds);
     const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager);
 
@@ -2900,6 +2937,9 @@ export class BingoService implements OnModuleInit {
       while (rankCursor < ranked.length) {
         const candidate = inPlay[ranked[rankCursor].key];
         rankCursor += 1;
+        if (botGroups.nonBingoBotIds.has(candidate.userId)) {
+          continue;
+        }
         if (botIds.has(candidate.userId) && awardedBotUserIds.has(candidate.userId)) {
           continue;
         }

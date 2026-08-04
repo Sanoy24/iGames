@@ -793,6 +793,41 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(winner).toBeNull();
   });
 
+  it('classifies master bots without Bingo enabled as ineligible for Bingo winner selection', async () => {
+    const { service } = makeService({ rooms: [] });
+    const manager = {
+      getRepository: jest.fn().mockReturnValue({
+        find: jest.fn().mockResolvedValue([
+          {
+            id: 'bot-1',
+            productMetadata: { botPolicy: { active: true } },
+          },
+          {
+            id: 'bot-2',
+            productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+          },
+          {
+            id: 'human-1',
+            productMetadata: {},
+          },
+        ]),
+      }),
+    };
+
+    const groups = await (service as any).getBotUserGroupsForTickets(
+      [
+        { userId: 'bot-1' },
+        { userId: 'bot-2' },
+        { userId: 'human-1' },
+      ],
+      manager,
+    );
+
+    expect([...groups.botIds].sort()).toEqual(['bot-1', 'bot-2']);
+    expect([...groups.bingoEnabledBotIds]).toEqual(['bot-2']);
+    expect([...groups.nonBingoBotIds]).toEqual(['bot-1']);
+  });
+
   it('records the room-scoped Bingo bot name in winner standings instead of the bot account name', async () => {
     const { service, walletService } = makeService({ rooms: [] });
     const room = makeRoom({
@@ -942,6 +977,49 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(entry.winnerDisplayName).toBe('Hana');
     expect(entry.winnerPhoneLast4).not.toBe('8975');
     expect(roomRepoSave).toHaveBeenCalled();
+  });
+
+  it('refreshes bot winner display before draw responses are emitted', async () => {
+    const { service, mockRoomRepo, dataSource } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'completed',
+      settlementSummary: {
+        '1st': {
+          winnerCount: 1,
+          winnerId: 'ticket-1',
+          winnerDisplayName: 'Abrsh',
+          winnerPhoneLast4: '8975',
+          winnerIsBot: true,
+        },
+      },
+    });
+    const refreshSpy = jest.spyOn(service as any, 'refreshBotWinnerDisplayNames').mockImplementation(async (value: unknown) => {
+      const r = value as BingoRoom;
+      r.settlementSummary = {
+        ...(r.settlementSummary ?? {}),
+        '1st': {
+          ...((r.settlementSummary ?? {})['1st'] as Record<string, unknown>),
+          winnerDisplayName: 'Hana',
+          winnerPhoneLast4: '0851',
+        },
+      };
+    });
+    const manager = {
+      findOne: jest.fn().mockResolvedValue(room),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+
+    const response = await service.drawNextNumber(room.id);
+    const entry = response.settlementSummary['1st'] as Record<string, unknown>;
+
+    expect(refreshSpy).toHaveBeenCalled();
+    expect(entry.winnerDisplayName).toBe('Hana');
+    expect(entry.winnerPhoneLast4).toBe('0851');
   });
 });
 

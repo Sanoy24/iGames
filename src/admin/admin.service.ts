@@ -1006,6 +1006,11 @@ export class AdminService implements OnApplicationBootstrap {
                   .findBy({ id: In(adminIds) })
             : [];
         const adminNameById = new Map(admins.map((a) => [a.id, a.displayName]));
+        const telebirrDepositMinor = deposits.reduce(
+            (sum, deposit) => sum + Number(deposit.amountMinor),
+            0,
+        );
+        const adminTopupMinor = Number(adminTopupRows[0]?.total ?? 0);
 
         const adminAdjustments = adminAdjustmentEntries.map((e) => {
             const performedByAdminId =
@@ -1045,7 +1050,7 @@ export class AdminService implements OnApplicationBootstrap {
                             sum + Number(withdrawal.amountMinor),
                         0,
                     ),
-                adminTopupMinor: Number(adminTopupRows[0]?.total ?? 0),
+                adminTopupMinor,
             },
         };
     }

@@ -1124,6 +1124,152 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(room.settledTiers).toEqual([]);
   });
 
+  it('redirects a manual real-user Bingo claim to an eligible bot in below-threshold cartel-dual', async () => {
+    const { service, dataSource } = makeService({ rooms: [] });
+    const userId = '550e8400-e29b-41d4-a716-446655440101';
+    const ticketId = '550e8400-e29b-41d4-a716-446655440102';
+    const botId = '550e8400-e29b-41d4-a716-446655440103';
+    const room = makeRoom({
+      winMode: 'prefilled',
+      drawnNumbers: [1],
+      status: 'running',
+    });
+    const realTicket = {
+      id: ticketId,
+      userId,
+      roomId: room.id,
+      grid: [[1]],
+      markedNumbers: [],
+      wonTiers: [],
+      completedLines: [],
+      completedPatterns: [],
+      autoClaim: false,
+      stakeMinor: 20,
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const botTicket = {
+      id: '550e8400-e29b-41d4-a716-446655440104',
+      userId: botId,
+      roomId: room.id,
+      grid: [[1]],
+      markedNumbers: [],
+      wonTiers: [],
+      completedLines: [],
+      completedPatterns: [],
+      autoClaim: true,
+      stakeMinor: 20,
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn().mockImplementation((_entity: unknown, options: any) => {
+        if (options?.where?.id === room.id) return Promise.resolve(room);
+        if (options?.where?.id === ticketId) return Promise.resolve(realTicket);
+        return Promise.resolve(null);
+      }),
+      find: jest.fn().mockResolvedValue([realTicket, botTicket]),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
+      botWinMode: 'cartel-dual',
+      botWinnerCooldownRooms: 5,
+    }) as any);
+    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
+      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
+    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
+    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
+      botIds: new Set([botId]),
+      bingoEnabledBotIds: new Set([botId]),
+      nonBingoBotIds: new Set(),
+    });
+    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
+    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
+    jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(botTicket);
+    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+    jest.spyOn(service as any, 'finalizeDerashIfDone').mockResolvedValue(false);
+    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace').mockResolvedValue(true);
+
+    const outcome = await service.claimBingo({ userId, roomId: room.id, ticketId });
+
+    expect(outcome.result).toBe('ignored');
+    expect(awardSpy).toHaveBeenCalledWith(expect.objectContaining({
+      winner: botTicket,
+      place: '1st',
+    }));
+  });
+
+  it('ignores a manual real-user Bingo claim in below-threshold cartel-dual when no bot can prove the pattern yet', async () => {
+    const { service, dataSource } = makeService({ rooms: [] });
+    const userId = '550e8400-e29b-41d4-a716-446655440111';
+    const ticketId = '550e8400-e29b-41d4-a716-446655440112';
+    const room = makeRoom({
+      winMode: 'prefilled',
+      drawnNumbers: [1],
+      status: 'running',
+    });
+    const realTicket = {
+      id: ticketId,
+      userId,
+      roomId: room.id,
+      grid: [[1]],
+      markedNumbers: [],
+      wonTiers: [],
+      completedLines: [],
+      completedPatterns: [],
+      autoClaim: false,
+      stakeMinor: 20,
+      payoutMinor: 0,
+      status: 'active',
+      settlementStatus: 'pending',
+      walletCredits: [],
+    };
+    const manager = {
+      findOne: jest.fn().mockImplementation((_entity: unknown, options: any) => {
+        if (options?.where?.id === room.id) return Promise.resolve(room);
+        if (options?.where?.id === ticketId) return Promise.resolve(realTicket);
+        return Promise.resolve(null);
+      }),
+      find: jest.fn().mockResolvedValue([realTicket]),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
+      botWinMode: 'cartel-dual',
+      botWinnerCooldownRooms: 5,
+    }) as any);
+    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
+      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
+    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
+    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
+      botIds: new Set(),
+      bingoEnabledBotIds: new Set(),
+      nonBingoBotIds: new Set(),
+    });
+    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
+    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
+    jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(null);
+    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(1);
+    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace').mockResolvedValue(true);
+
+    const outcome = await service.claimBingo({ userId, roomId: room.id, ticketId });
+
+    expect(outcome.result).toBe('ignored');
+    expect(realTicket.status).toBe('active');
+    expect(awardSpy).not.toHaveBeenCalled();
+  });
+
   it('classifies master bots without Bingo enabled as ineligible for Bingo winner selection', async () => {
     const { service } = makeService({ rooms: [] });
     const manager = {

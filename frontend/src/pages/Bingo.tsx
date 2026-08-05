@@ -1995,6 +1995,8 @@ export function Bingo({ onBack }: BingoProps) {
     );
     const [localTickets, setLocalTickets] = useState<BingoTicket[]>([]);
     const [autoMode, setAutoMode] = useState(true);
+    const autoPreferenceRoomRef = useRef<string | null>(null);
+    const autoPreferenceInitializedRef = useRef(false);
     const [claimingId, setClaimingId] = useState<string | null>(null);
     const localRoomIdRef = useRef<string | null>(null);
     const [showChat, setShowChat] = useState(false);
@@ -2781,24 +2783,29 @@ export function Bingo({ onBack }: BingoProps) {
 
     const alreadyBought = myTickets.length > 0;
 
-    // Keep the Auto switch in sync with the server (source of truth). Only ACTIVE
-    // cards participate in the Auto/Manual preference, so a disqualified card must
-    // not force the switch OFF for the player's remaining live cards. Re-derives on
-    // every poll so a refresh never desyncs it — except while a toggle is in
-    // flight, so an older poll can't flip it back (which would hide the BINGO
-    // buttons for a beat).
+    // Initialize the player's Auto/Manual preference once when a room's cards first
+    // arrive. Do not re-derive it on every draw/status update: a winning or
+    // disqualified card changing state must never move the player's toggle while
+    // they are watching the Now Calling board.
     const autoBusyRef = useRef(false);
     useEffect(() => {
-        if (autoBusyRef.current) return;
+        if (autoPreferenceRoomRef.current !== room?.id) {
+            autoPreferenceRoomRef.current = room?.id ?? null;
+            autoPreferenceInitializedRef.current = false;
+        }
+        if (autoBusyRef.current || autoPreferenceInitializedRef.current) return;
         const activeTickets = (room?.tickets ?? []).filter((t) => t.status === 'active');
-        if (activeTickets.length > 0)
+        if (activeTickets.length > 0) {
             setAutoMode(activeTickets.every((t) => t.autoClaim !== false));
-    }, [room?.tickets]);
+            autoPreferenceInitializedRef.current = true;
+        }
+    }, [room?.id, room?.tickets]);
 
     const toggleAuto = async () => {
         if (!room) return;
         const next = !autoMode;
         autoBusyRef.current = true;
+        autoPreferenceInitializedRef.current = true;
         setAutoMode(next); // optimistic
         try {
             await bingoApi.setAuto(room.id, next);

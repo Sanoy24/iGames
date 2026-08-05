@@ -2848,6 +2848,11 @@ export class BingoService implements OnModuleInit {
     const participation = this.resolveBingoBotParticipation(cfg);
     const belowThreshold = participation.belowEnabled && realPlayers < participation.belowThreshold;
     const enforceCartelDualBotWin = belowThreshold && cfg.botWinMode === 'cartel-dual';
+    // A full derash draw is the final settlement opportunity. Every valid card
+    // has all of its numbers available by then, so Cartel Dual must not leave a
+    // real-user place open and finish the room without a winner if the bot card
+    // was not recognized during an earlier draw.
+    const finalDerashDraw = room.drawnNumbers.length >= 75;
     const redirectRealWinsToBot =
       belowThreshold &&
       (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid' || cfg.botWinMode === 'cartel-dual');
@@ -2874,7 +2879,32 @@ export class BingoService implements OnModuleInit {
       });
       // No eligible card completes THIS place's pattern yet — try the next place;
       // a later draw may fill this one.
-      if (winnerCandidates.length === 0) continue;
+      if (winnerCandidates.length === 0) {
+        if (enforceCartelDualBotWin && finalDerashDraw) {
+          const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
+          const finalBotAwardee = this.pickBotRedirectWinner(
+            winnerEligibleTickets,
+            botGroups.bingoEnabledBotIds,
+            pattern,
+            room.drawnNumbers,
+            excludedBotUserIds,
+          );
+          if (finalBotAwardee) {
+            const awarded = await this.awardDerashPlace({
+              room,
+              winner: finalBotAwardee,
+              place,
+              pattern,
+              totalPotMinor,
+              houseEdgePct,
+              cfg,
+              manager,
+            });
+            if (awarded) awardedBotUserIds.add(finalBotAwardee.userId);
+          }
+        }
+        continue;
+      }
 
       // House-retention redirect: if the natural winner is a REAL player and the
       // mode calls for it, hand the place to a bot instead (prefer a bot whose
@@ -2889,7 +2919,7 @@ export class BingoService implements OnModuleInit {
             pattern,
             room.drawnNumbers,
             excludedBotUserIds,
-            { requireCompletedPattern: enforceCartelDualBotWin },
+            { requireCompletedPattern: enforceCartelDualBotWin && !finalDerashDraw },
           );
           if (botAwardee) {
             awardee = botAwardee;
@@ -3584,16 +3614,86 @@ export class BingoService implements OnModuleInit {
       // Non-exclusive: one tap grabs all the tiers the card currently completes and
       // that no one has taken yet — e.g. a card with three lines claims 1st (and
       // 2nd/3rd too if they are somehow still open).
+      let cartelDualContext: {
+        botIds: Set<string>;
+        bingoEnabledBotIds: Set<string>;
+        winnerEligibleTickets: BingoTicket[];
+        awardedBotUserIds: Set<string>;
+        recentBotWinnerUserIds: Set<string>;
+      } | null | undefined;
+      const getCartelDualContext = async () => {
+        if (cartelDualContext !== undefined) return cartelDualContext;
+        const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
+        const participation = this.resolveBingoBotParticipation(cfg);
+        const belowThreshold = participation.belowEnabled && realPlayers < participation.belowThreshold;
+        if (cfg.botWinMode !== 'cartel-dual' || !belowThreshold) {
+          cartelDualContext = null;
+          return cartelDualContext;
+        }
+
+        const inPlayTickets = await manager.find(BingoTicket, {
+          where: { roomId: room.id, status: In(['active', 'won']) },
+          order: { createdAt: 'ASC' },
+        });
+        for (const inPlayTicket of inPlayTickets) {
+          inPlayTicket.markedNumbers = inPlayTicket.grid
+            .flat()
+            .filter((v): v is number => v !== null && drawn.has(v))
+            .sort((a, b) => a - b);
+          await manager.save(inPlayTicket);
+        }
+        const botGroups = await this.getBotUserGroupsForTickets(inPlayTickets, manager);
+        const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
+        cartelDualContext = {
+          botIds: botGroups.botIds,
+          bingoEnabledBotIds: botGroups.bingoEnabledBotIds,
+          winnerEligibleTickets: inPlayTickets.filter((candidate) => !botGroups.nonBingoBotIds.has(candidate.userId)),
+          awardedBotUserIds: this.awardedBotUserIdsForTickets(inPlayTickets, botGroups.botIds),
+          recentBotWinnerUserIds: await this.getPreviousBingoBotWinnerUserIds(room, manager, cooldownRooms),
+        };
+        return cartelDualContext;
+      };
+
       let awardedAny = false;
+      let callerWonAny = false;
+      let heldByCartelDual = false;
+      const finalDerashDraw = room.drawnNumbers.length >= 75;
       for (const place of this.openPrefilledPlaces(room, cfg)) {
         const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
         if (!completesPattern(pattern)) continue;
+        let awardee = ticket;
+        const cartelContext = await getCartelDualContext();
+        if (cartelContext && !cartelContext.botIds.has(ticket.userId)) {
+          const excludedBotUserIds = new Set([
+            ...cartelContext.awardedBotUserIds,
+            ...cartelContext.recentBotWinnerUserIds,
+          ]);
+          const botAwardee = this.pickBotRedirectWinner(
+            cartelContext.winnerEligibleTickets,
+            cartelContext.bingoEnabledBotIds,
+            pattern as BingoPattern,
+            room.drawnNumbers,
+            excludedBotUserIds,
+            { requireCompletedPattern: !finalDerashDraw },
+          );
+          if (!botAwardee) {
+            heldByCartelDual = true;
+            this.logger.warn(
+              `Cartel Dual ignored manual real-user claim in room ${room.id} place ${place}: no eligible bot completed the pattern yet`,
+            );
+            continue;
+          }
+          awardee = botAwardee;
+          this.logger.log(
+            `Bot win-steer (cartel-dual manual claim): room ${room.id} place ${place} redirected from real user ${ticket.userId} to bot ${botAwardee.userId}`,
+          );
+        }
         const soldTickets = await this.countSoldTickets(roomId, manager);
         const totalPotMinor = soldTickets * room.ticketPriceMinor;
         const houseEdgePct = room.houseEdgePct ?? 20;
         const awarded = await this.awardDerashPlace({
           room,
-          winner: ticket,
+          winner: awardee,
           place,
           pattern: pattern as BingoPattern,
           totalPotMinor,
@@ -3602,13 +3702,22 @@ export class BingoService implements OnModuleInit {
           manager,
         });
         awardedAny = awardedAny || awarded;
+        callerWonAny = callerWonAny || (awarded && awardee.id === ticket.id);
+        if (awarded && cartelContext?.botIds.has(awardee.userId)) {
+          cartelContext.awardedBotUserIds.add(awardee.userId);
+        }
       }
 
       if (awardedAny) {
         // Filling the last place can end the game (and reconcile the pool).
         await this.finalizeDerashIfDone(room, cfg, 75, manager);
         await manager.save(room);
-        return finish('won');
+        return finish(callerWonAny ? 'won' : 'ignored');
+      }
+
+      if (heldByCartelDual) {
+        await manager.save(ticket);
+        return finish('ignored');
       }
 
       // Nothing to claim. A card that already won something isn't punished for a
@@ -4253,8 +4362,12 @@ export class BingoService implements OnModuleInit {
             botHeldCounts.set(botId, held + 1);
             remaining -= 1;
             changed = true;
-          } catch {
-            // Bot may be out of balance or the room may have filled since we read it.
+          } catch (err) {
+            this.logger.warn(
+              `Failed to buy Bingo bot cartela #${cartelaNumber} for bot ${botId} in room ${validRoomId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
           }
         }
       }

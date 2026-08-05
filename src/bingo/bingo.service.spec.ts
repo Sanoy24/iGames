@@ -471,6 +471,46 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(saveSpy).not.toHaveBeenCalled();
   });
 
+  it('rejects cartel-dual config when the cooldown leaves fewer than two eligible Bingo bots', async () => {
+    const { service, mockConfigRepo } = makeService({ rooms: [] });
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+      key: 'global',
+      botWinMode: 'statistical',
+      botWinnerCooldownRooms: 25,
+    } as any);
+    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2', 'bot-3']));
+    jest.spyOn(service as any, 'getRecentBingoBotWinnerUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2']));
+    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
+
+    await expect(service.updateBingoConfig({ botWinMode: 'cartel-dual' } as any)).rejects.toThrow(
+      'Cartel Dual requires at least 2 cooldown-eligible Bingo bots',
+    );
+
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it('saves bot winner cooldown rooms from the admin config', async () => {
+    const { service, mockConfigRepo } = makeService({ rooms: [] });
+    const cfg = {
+      key: 'global',
+      botWinMode: 'statistical',
+      botWinnerCooldownRooms: 25,
+    };
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(cfg as any);
+    jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(null);
+    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
+
+    await service.updateBingoConfig({ botWinnerCooldownRooms: 7 } as any);
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ botWinnerCooldownRooms: 7 }));
+  });
+
+  it('defaults old configs without bot winner cooldown rooms to the legacy cooldown', () => {
+    const { service } = makeService({ rooms: [] });
+
+    expect((service as any).resolveBotWinnerCooldownRooms({})).toBe(25);
+  });
+
   it('rejects cartela returns during the freeze window before the draw', async () => {
     const { service, dataSource } = makeService({ rooms: [] });
     const room = makeRoom({
@@ -716,6 +756,38 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(purchaseSpy.mock.calls.map((call) => call[0]?.cartelaNumbers?.[0])).toEqual([1, 2]);
   });
 
+  it('assigns the second cartel-dual bot cartela to a different bot account when one bot already holds a card', async () => {
+    const { service, mockRoomRepo } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      status: 'open',
+      soldTickets: 2,
+      scheduledStartAt: new Date(Date.now() + 20_000),
+    });
+    mockRoomRepo.findOneBy.mockResolvedValue(room);
+    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
+      botWinMode: 'cartel-dual',
+    }) as any);
+    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(1);
+    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(1);
+    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(2 as any);
+    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2']));
+    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
+    jest.spyOn(service as any, 'countUserCartelasInRoom').mockImplementation(async (botId: unknown) => (
+      botId === 'bot-1' ? 1 : 0
+    ));
+    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([7, 8, 9]);
+    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]]);
+    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
+
+    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
+
+    expect(purchaseSpy).toHaveBeenCalledTimes(1);
+    expect(purchaseSpy.mock.calls[0][0].userId).toBe('bot-2');
+    expect(purchaseSpy.mock.calls[0][0].cartelaNumbers).toEqual([7]);
+  });
+
   it('enforces the per-bot cartela cap while still letting bots join above threshold independently', async () => {
     const { service, mockRoomRepo } = makeService({ rooms: [] });
     const room = makeRoom({
@@ -884,6 +956,41 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(roomFind).toHaveBeenCalledWith(expect.objectContaining({ take: 26 }));
   });
 
+  it('uses the configured bot winner cooldown window for recent winner rotation', async () => {
+    const { service } = makeService({ rooms: [] });
+    const currentRoom = makeRoom({ id: '00000000-0000-0000-0000-000000000199' });
+    const completedRooms = Array.from({ length: 3 }, (_, index) => makeRoom({
+      id: `00000000-0000-0000-0000-00000000020${index}`,
+      status: 'completed',
+      settlementSummary: {
+        '1st': { winnerId: `ticket-${index + 1}` },
+      },
+      updatedAt: new Date(Date.now() - index * 1000),
+    }));
+    const roomFind = jest.fn().mockResolvedValue([currentRoom, ...completedRooms]);
+    const manager = {
+      getRepository: jest.fn().mockImplementation((entity: unknown) => {
+        const entityName = (entity as { name?: string })?.name;
+        if (entityName === 'BingoRoom') {
+          return {
+            find: roomFind,
+          };
+        }
+        return {
+          find: jest.fn().mockResolvedValue([
+            { id: 'ticket-1', userId: 'bot-1', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
+            { id: 'ticket-2', userId: 'bot-2', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
+          ]),
+        };
+      }),
+    };
+
+    const recent = await (service as any).getPreviousBingoBotWinnerUserIds(currentRoom, manager, 2);
+
+    expect(recent).toEqual(new Set(['bot-1', 'bot-2']));
+    expect(roomFind).toHaveBeenCalledWith(expect.objectContaining({ take: 3 }));
+  });
+
   it('includes room-scoped bot identities in admin room details', async () => {
     const { service, mockRoomRepo, mockTicketRepo } = makeService({ rooms: [] });
     const room = makeRoom({
@@ -960,6 +1067,61 @@ describe('BingoService cartela lifecycle guards', () => {
     expect(firstAwardInput.winner.userId).toBe('bot-1');
     expect(secondAwardInput.winner.userId).toBe('bot-2');
     expect(secondAwardInput.place).toBe('1st');
+  });
+
+  it('does not award a real player while below-threshold cartel-dual is waiting for an eligible bot', async () => {
+    const { service } = makeService({ rooms: [] });
+    const room = makeRoom({
+      winMode: 'prefilled',
+      drawnNumbers: [1],
+      status: 'running',
+    });
+    const realTicket = {
+      id: 'ticket-real',
+      userId: 'player-1',
+      grid: [[1]],
+      markedNumbers: [],
+      wonTiers: [],
+      autoClaim: true,
+    };
+    const botTicket = {
+      id: 'ticket-bot',
+      userId: 'bot-1',
+      grid: [[2]],
+      markedNumbers: [],
+      wonTiers: [],
+      autoClaim: true,
+    };
+    const manager = {
+      find: jest.fn().mockResolvedValueOnce([realTicket, botTicket]).mockResolvedValueOnce([]),
+      save: jest.fn().mockImplementation(async (value) => value),
+    };
+    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
+      botIds: new Set(['bot-1']),
+      bingoEnabledBotIds: new Set(['bot-1']),
+      nonBingoBotIds: new Set(),
+    });
+    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
+    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
+    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
+    jest.spyOn(service as any, 'resolveBingoBotParticipation').mockReturnValue({
+      belowEnabled: true,
+      belowThreshold: 10,
+      aboveEnabled: false,
+      aboveThreshold: 50,
+      shouldParticipate: () => true,
+    });
+    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
+    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+    jest.spyOn(service as any, 'pickDerashAutoWinnerCandidates').mockReturnValue([realTicket]);
+    jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(null);
+    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace').mockResolvedValue(true);
+
+    await (service as any).evaluateAndSettleDerash(room, { botWinMode: 'cartel-dual' }, manager);
+
+    expect(awardSpy).not.toHaveBeenCalled();
+    expect(room.settledTiers).toEqual([]);
   });
 
   it('classifies master bots without Bingo enabled as ineligible for Bingo winner selection', async () => {

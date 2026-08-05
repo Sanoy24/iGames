@@ -300,6 +300,8 @@ export type BingoConfig = {
   botBonusWinMode?: 'interval' | 'random';
   botBonusWinEveryNRounds?: number;
   botBonusWinChancePct?: number;
+  /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
+  botWinnerCooldownRooms?: number;
   prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;

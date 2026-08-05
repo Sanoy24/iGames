@@ -102,6 +102,10 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0) @Max(100)
   botBonusWinChancePct?: number;
 
+  /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
+  @IsOptional() @IsInt() @Min(0)
+  botWinnerCooldownRooms?: number;
+
   @IsOptional() @IsIn(['race', 'leaderboard'])
   prefilledRankingMode?: 'race' | 'leaderboard';
 

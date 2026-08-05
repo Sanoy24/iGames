@@ -2919,6 +2919,7 @@ function BingoAdmin() {
   // room that's gone once this round ends.
   const [isPersistent, setIsPersistent] = useState(false);
   const [reservedCartelActiveBingoBots, setReservedCartelActiveBingoBots] = useState<number | null>(null);
+  const [reservedCartelActiveAliasNames, setReservedCartelActiveAliasNames] = useState<number | null>(null);
 
   const [cfgForm, setCfgForm] = useState<Partial<BingoConfig>>({
     enabled: true,
@@ -2953,6 +2954,7 @@ function BingoAdmin() {
     botBonusWinMode: 'interval' as 'interval' | 'random',
     botBonusWinEveryNRounds: 0,
     botBonusWinChancePct: 0,
+    botWinnerCooldownRooms: 25,
     prefilledRankingMode: 'race' as 'race' | 'leaderboard',
     prefilledFirstPlacePct: 80,
     prefilledSecondPlaceEnabled: false,
@@ -3013,6 +3015,7 @@ function BingoAdmin() {
         botBonusWinMode: (c.botBonusWinMode ?? 'interval') as 'interval' | 'random',
         botBonusWinEveryNRounds: c.botBonusWinEveryNRounds ?? c.globalBingoBotWinInterval ?? 0,
         botBonusWinChancePct: c.botBonusWinChancePct ?? 0,
+        botWinnerCooldownRooms: c.botWinnerCooldownRooms ?? 25,
         prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as 'race' | 'leaderboard',
         prefilledFirstPlacePct: c.prefilledFirstPlacePct ?? 80,
         prefilledSecondPlaceEnabled: c.prefilledSecondPlaceEnabled ?? false,
@@ -3039,12 +3042,17 @@ function BingoAdmin() {
 
   const loadReservedCartelBots = useCallback(async () => {
     try {
-      const bots = await adminBotsApi.listBots();
+      const [bots, aliasNames] = await Promise.all([
+        adminBotsApi.listBots(),
+        adminBotsApi.listBotNames(),
+      ]);
       setReservedCartelActiveBingoBots(
-        bots.filter((bot) => bot.botPolicy?.active !== false && bot.botPolicy.games?.bingo?.active !== false).length,
+        bots.filter((bot) => bot.botPolicy?.active === true && bot.botPolicy?.games?.bingo?.active === true).length,
       );
+      setReservedCartelActiveAliasNames(aliasNames.filter((name) => name.active).length);
     } catch (e) {
       setReservedCartelActiveBingoBots(null);
+      setReservedCartelActiveAliasNames(null);
       addToast('error', getErrorMessage(e));
     }
   }, [addToast]);
@@ -3089,7 +3097,7 @@ function BingoAdmin() {
       if (payload.botWinMode === 'cartel-dual' && reservedCartelActiveBingoBots !== null && reservedCartelActiveBingoBots < 2) {
         addToast(
           'error',
-          `Cartel Dual requires at least 2 active Bingo-enabled bots. Current active Bingo bots: ${reservedCartelActiveBingoBots}.`,
+          `Cartel Dual requires at least 2 active Bingo-enabled bot accounts. Current active bot accounts: ${reservedCartelActiveBingoBots}.`,
         );
         return;
       }
@@ -3727,12 +3735,20 @@ function BingoAdmin() {
               {cfgForm.botWinMode === 'cartel-dual' && reservedCartelActiveBingoBots !== null && (
                 <span className="adm-field-hint" style={{ color: reservedCartelActiveBingoBots < 2 ? '#f87171' : '#86efac' }}>
                   {reservedCartelActiveBingoBots < 2
-                    ? `Cartel Dual needs at least 2 active Bingo-enabled bots. Current active: ${reservedCartelActiveBingoBots}.`
-                    : `Cartel Dual ready: ${reservedCartelActiveBingoBots} active Bingo-enabled bots available.`}
+                    ? `Cartel Dual needs at least 2 active Bingo-enabled bot accounts. Current bot accounts: ${reservedCartelActiveBingoBots}. Active alias names: ${reservedCartelActiveAliasNames ?? 'unknown'}.`
+                    : `Cartel Dual ready: ${reservedCartelActiveBingoBots} active Bingo bot accounts available. Active alias names: ${reservedCartelActiveAliasNames ?? 'unknown'}.`}
                 </span>
               )}
               <span className="adm-field-hint">
                 Applies only while real players are below the threshold above. <b>Cartel Dual</b> is the most concealed: 1st and 2nd place are each shown with a different name from the alias pool below, making them look like two unrelated real players.
+              </span>
+            </label>
+            <label className="adm-field">
+              <span>Bot Winner Cooldown Rooms</span>
+              <input className="input" type="number" min={0} value={cfgForm.botWinnerCooldownRooms ?? 25}
+                onChange={(e) => setCfgForm((f) => ({ ...f, botWinnerCooldownRooms: Number(e.target.value) }))} />
+              <span className="adm-field-hint">
+                After a cartel bot wins, skip that bot for this many completed Bingo rooms before it can win again.
               </span>
             </label>
             <label className="adm-field" style={{ gridColumn: 'span 3' }}>

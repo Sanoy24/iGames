@@ -34,7 +34,7 @@ import { BotName } from '../bots/entities/bot-name.entity';
 /** Prefilled/derash finishing places, in award order. */
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
-const BINGO_BOT_WINNER_COOLDOWN_ROOMS = 25;
+const DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS = 25;
 
 type RoomBotIdentity = BingoBotIdentity;
 
@@ -303,11 +303,16 @@ export class BingoService implements OnModuleInit {
         botBonusWinMode: 'interval',
         botBonusWinEveryNRounds: 0,
         botBonusWinChancePct: 0,
+        botWinnerCooldownRooms: DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS,
         globalBingoBotWinInterval: 0,
       });
       await this.bingoConfigRepository.save(cfg);
     }
     return cfg;
+  }
+
+  private resolveBotWinnerCooldownRooms(cfg?: Pick<BingoConfig, 'botWinnerCooldownRooms'> | null): number {
+    return Math.max(0, Math.floor(cfg?.botWinnerCooldownRooms ?? DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS));
   }
 
   private resolveBingoBotParticipation(cfg: BingoConfig): {
@@ -429,15 +434,20 @@ export class BingoService implements OnModuleInit {
     );
   }
 
-  private async getPreviousBingoBotWinnerUserIds(room: BingoRoom, manager: EntityManager): Promise<Set<string>> {
+  private async getRecentBingoBotWinnerUserIds(
+    manager: EntityManager,
+    cooldownRooms: number,
+    currentRoomId?: string,
+  ): Promise<Set<string>> {
+    if (cooldownRooms <= 0) return new Set();
     const previousRooms = await manager.getRepository(BingoRoom).find({
       where: { status: 'completed' },
       order: { updatedAt: 'DESC' },
-      take: BINGO_BOT_WINNER_COOLDOWN_ROOMS + 1,
+      take: cooldownRooms + (currentRoomId ? 1 : 0),
     });
     const previousSummaries = previousRooms
-      .filter((candidate) => candidate.id !== room.id)
-      .slice(0, BINGO_BOT_WINNER_COOLDOWN_ROOMS)
+      .filter((candidate) => candidate.id !== currentRoomId)
+      .slice(0, cooldownRooms)
       .map((candidate) => candidate.settlementSummary)
       .filter((summary): summary is Record<string, unknown> => !!summary);
     if (previousSummaries.length === 0) return new Set();
@@ -462,6 +472,14 @@ export class BingoService implements OnModuleInit {
         .filter((ticket) => ticket.user && this.isBingoEnabledBotUser(ticket.user))
         .map((ticket) => ticket.userId),
     );
+  }
+
+  private async getPreviousBingoBotWinnerUserIds(
+    room: BingoRoom,
+    manager: EntityManager,
+    cooldownRooms = DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS,
+  ): Promise<Set<string>> {
+    return this.getRecentBingoBotWinnerUserIds(manager, cooldownRooms, room.id);
   }
 
   private completesPrefilledPattern(ticket: BingoTicket, pattern: BingoPattern, drawnNumbers: number[]): boolean {
@@ -738,6 +756,8 @@ export class BingoService implements OnModuleInit {
     room: BingoRoom,
     manager: EntityManager,
   ): Promise<void> {
+    const cfg = await this.getBingoConfig();
+    const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
     const summary = room.settlementSummary ?? {};
     const entries = Object.values(summary).filter(
       (entry): entry is Record<string, unknown> =>
@@ -774,7 +794,7 @@ export class BingoService implements OnModuleInit {
         entry.winnerBotAccountId !== ticket.userId ||
         entry.winnerIdentitySource !== 'bingo_bot_name_pool' ||
         entry.winnerMaskedPhone !== this.formatBotPhoneSuffix(display.phoneLast4) ||
-        entry.botWinnerCooldownRooms !== BINGO_BOT_WINNER_COOLDOWN_ROOMS
+        entry.botWinnerCooldownRooms !== cooldownRooms
       ) {
         nextSummary[place] = {
           ...entry,
@@ -785,7 +805,7 @@ export class BingoService implements OnModuleInit {
           winnerBotAccountId: ticket.userId,
           winnerIdentitySource: 'bingo_bot_name_pool',
           winnerMaskedPhone: this.formatBotPhoneSuffix(display.phoneLast4),
-          botWinnerCooldownRooms: BINGO_BOT_WINNER_COOLDOWN_ROOMS,
+          botWinnerCooldownRooms: cooldownRooms,
         };
         changed = true;
       }
@@ -899,10 +919,22 @@ export class BingoService implements OnModuleInit {
     const cfg = await this.getBingoConfig();
     Object.assign(cfg, dto);
     if (cfg.botWinMode === 'cartel-dual') {
+      const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
       const activeBingoBots = await this.getActiveBotUserIds(this.bingoRoomRepository.manager);
       if (activeBingoBots.size < 2) {
         throw new BadRequestException(
           `Cartel Dual requires at least 2 active Bingo-enabled bots. Current active Bingo bots: ${activeBingoBots.size}.`,
+        );
+      }
+      const coolingDownBots = await this.getRecentBingoBotWinnerUserIds(
+        this.bingoRoomRepository.manager,
+        cooldownRooms,
+      );
+      const eligibleBingoBots = [...activeBingoBots].filter((botId) => !coolingDownBots.has(botId));
+      if (eligibleBingoBots.length < 2) {
+        throw new BadRequestException(
+          `Cartel Dual requires at least 2 cooldown-eligible Bingo bots. ` +
+            `Active: ${activeBingoBots.size}, cooling down: ${coolingDownBots.size}, eligible: ${eligibleBingoBots.length}.`,
         );
       }
     }
@@ -2810,10 +2842,12 @@ export class BingoService implements OnModuleInit {
     const botIds = botGroups.botIds;
     const winnerEligibleTickets = inPlayTickets.filter((ticket) => !botGroups.nonBingoBotIds.has(ticket.userId));
     const awardedBotUserIds = this.awardedBotUserIdsForTickets(inPlayTickets, botIds);
-    const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager);
+    const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
+    const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager, cooldownRooms);
     const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
     const participation = this.resolveBingoBotParticipation(cfg);
     const belowThreshold = participation.belowEnabled && realPlayers < participation.belowThreshold;
+    const enforceCartelDualBotWin = belowThreshold && cfg.botWinMode === 'cartel-dual';
     const redirectRealWinsToBot =
       belowThreshold &&
       (cfg.botWinMode === 'guaranteed' || cfg.botWinMode === 'hybrid' || cfg.botWinMode === 'cartel-dual');
@@ -2849,12 +2883,24 @@ export class BingoService implements OnModuleInit {
         let awardee = winner;
         if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
           const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
-          const botAwardee = this.pickBotRedirectWinner(winnerEligibleTickets, botGroups.bingoEnabledBotIds, pattern, room.drawnNumbers, excludedBotUserIds);
+          const botAwardee = this.pickBotRedirectWinner(
+            winnerEligibleTickets,
+            botGroups.bingoEnabledBotIds,
+            pattern,
+            room.drawnNumbers,
+            excludedBotUserIds,
+            { requireCompletedPattern: enforceCartelDualBotWin },
+          );
           if (botAwardee) {
             awardee = botAwardee;
             this.logger.log(
               `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
             );
+          } else if (enforceCartelDualBotWin) {
+            this.logger.warn(
+              `Cartel Dual held room ${room.id} place ${place} open: real user ${winner.userId} completed before any eligible bot`,
+            );
+            continue;
           }
         }
 
@@ -3024,7 +3070,8 @@ export class BingoService implements OnModuleInit {
     const botGroups = await this.getBotUserGroupsForTickets(inPlay, manager);
     const botIds = botGroups.botIds;
     const awardedBotUserIds = this.awardedBotUserIdsForTickets(inPlay, botIds);
-    const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager);
+    const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
+    const recentBotWinnerUserIds = await this.getPreviousBingoBotWinnerUserIds(room, manager, cooldownRooms);
 
     // Assign ranks by queue position, skipping bot users that already took a
     // prize so the final standings do not show the same bot identity repeatedly.
@@ -3107,6 +3154,7 @@ export class BingoService implements OnModuleInit {
     const { room, winner, place, pattern, totalPotMinor, houseEdgePct, cfg, manager, overrideDisplayName } = input;
     const prizePoolMinor = Math.floor(totalPotMinor * (1 - houseEdgePct / 100));
     const prizeMinor = this.computePrefilledPrizeMinor(totalPotMinor, place, houseEdgePct, cfg);
+    const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
     if (this.hasTicketAlreadyWonDerashPlace(room, winner.id)) {
       this.logger.warn(`Skipped duplicate Bingo place ${place} for already-awarded ticket ${winner.id} in room ${room.id}`);
       return false;
@@ -3185,7 +3233,7 @@ export class BingoService implements OnModuleInit {
           : phoneLast4
             ? `••${phoneLast4}`
             : '',
-        botWinnerCooldownRooms: display.isBot ? BINGO_BOT_WINNER_COOLDOWN_ROOMS : undefined,
+        botWinnerCooldownRooms: display.isBot ? cooldownRooms : undefined,
         winnerCartelaNumber: winner.cartelaNumber,
         // Winner card so every client in the room can render the result.
         winnerGrid: winner.grid,
@@ -4166,11 +4214,16 @@ export class BingoService implements OnModuleInit {
     if (desiredBotCartelas > currentBotCartelas) {
       const freeCartelas = this.shuffle(await this.listAvailableCartelaNumbers(validRoomId));
       let remaining = Math.min(desiredBotCartelas - currentBotCartelas, freeCartelas.length);
-      const shuffledBotIds = this.shuffle(botIdsForPurchase);
+      let shuffledBotIds = this.shuffle(botIdsForPurchase);
       const botHeldCounts = new Map<string, number>();
       await Promise.all(shuffledBotIds.map(async (botId) => {
         botHeldCounts.set(botId, await this.countUserCartelasInRoom(botId, validRoomId));
       }));
+      if (cfg.botWinMode === 'cartel-dual') {
+        shuffledBotIds = [...shuffledBotIds].sort(
+          (a, b) => (botHeldCounts.get(a) ?? 0) - (botHeldCounts.get(b) ?? 0),
+        );
+      }
 
       while (remaining > 0 && freeCartelas.length > 0 && shuffledBotIds.length > 0) {
         const allAtCap = shuffledBotIds.every(
@@ -4259,6 +4312,7 @@ export class BingoService implements OnModuleInit {
     pattern: BingoPattern,
     drawnNumbers: number[],
     excludedBotUserIds: Set<string> = new Set(),
+    options: { requireCompletedPattern?: boolean } = {},
   ): BingoTicket | null {
     const botTickets = this.shuffle(inPlay.filter((t) => botIds.has(t.userId) && !excludedBotUserIds.has(t.userId)));
     if (botTickets.length === 0) return null;
@@ -4271,6 +4325,7 @@ export class BingoService implements OnModuleInit {
         .completedPatternIds.includes(pattern.id),
     );
     if (naturalWinner) return naturalWinner;
+    if (options.requireCompletedPattern) return null;
 
     // Second preference: the bot ticket with the most matched cells on its own grid
     // (closest to completing). We return it AS-IS — its own real cartela layout —

@@ -226,6 +226,10 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   botBonusWinChancePct: number;
 
+  /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
+  @Column({ type: 'int', default: 25 })
+  botWinnerCooldownRooms: number;
+
   /**
    * JSON-encoded array of alias names the reserved cartel rotates through.
    * e.g. `["Abrsh","Derash","Yonas","Tigist","Hailu"]`.

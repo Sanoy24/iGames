@@ -193,6 +193,7 @@ export type BingoRoom = {
   settlementSummary: Record<string, unknown>;
   houseEdgePct: number;
   prizeMinor: number;
+  botIdentityMap?: Record<string, { displayName: string; phoneSuffix: string }>;
   takenSpots?: number[];
   cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;

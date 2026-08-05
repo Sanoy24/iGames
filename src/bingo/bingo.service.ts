@@ -34,7 +34,7 @@ import { BotName } from '../bots/entities/bot-name.entity';
 /** Prefilled/derash finishing places, in award order. */
 export type PrefilledPlace = '1st' | '2nd' | '3rd' | '4th' | '5th';
 export const PREFILLED_PLACES: PrefilledPlace[] = ['1st', '2nd', '3rd', '4th', '5th'];
-const BINGO_BOT_WINNER_COOLDOWN_ROOMS = 10;
+const BINGO_BOT_WINNER_COOLDOWN_ROOMS = 25;
 
 type RoomBotIdentity = BingoBotIdentity;
 
@@ -365,13 +365,13 @@ export class BingoService implements OnModuleInit {
     maxCartelasPerBotPerRoom: number;
     realCartelas: number;
     botCount: number;
+    minTotalCartelas?: number;
   }): number {
     if (input.botCount <= 0) return 0;
     const capTotal = input.maxCartelasPerBotPerRoom * input.botCount;
-    if (input.mode === 'fixed_cap') {
-      return capTotal;
-    }
-    return Math.min(input.realCartelas, capTotal);
+    const baseTarget = input.mode === 'fixed_cap' ? capTotal : input.realCartelas;
+    const minimumTarget = Math.max(0, input.minTotalCartelas ?? 0);
+    return Math.min(capTotal, Math.max(baseTarget, minimumTarget));
   }
 
   private isBotUser(user?: Pick<User, 'productMetadata'> | null): boolean {
@@ -898,6 +898,14 @@ export class BingoService implements OnModuleInit {
   async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
     const cfg = await this.getBingoConfig();
     Object.assign(cfg, dto);
+    if (cfg.botWinMode === 'cartel-dual') {
+      const activeBingoBots = await this.getActiveBotUserIds(this.bingoRoomRepository.manager);
+      if (activeBingoBots.size < 2) {
+        throw new BadRequestException(
+          `Cartel Dual requires at least 2 active Bingo-enabled bots. Current active Bingo bots: ${activeBingoBots.size}.`,
+        );
+      }
+    }
     const saved = await this.bingoConfigRepository.save(cfg);
     // Apply a win-mode change right away: if the currently open room no longer
     // matches the configured mode, autoCreateNextRoom cancels it and opens a
@@ -2192,6 +2200,7 @@ export class BingoService implements OnModuleInit {
         ...roomResponse,
         rankingMode: room.rankingMode,
         rngAuditLogIds: room.rngAuditLogIds ?? [],
+        botIdentityMap: room.botIdentityMap ?? {},
         createdAt: room.createdAt,
       },
       totals: {
@@ -4139,6 +4148,7 @@ export class BingoService implements OnModuleInit {
           maxCartelasPerBotPerRoom: cartelaPolicy.maxCartelasPerBotPerRoom,
           realCartelas,
           botCount: activeBotIds.size,
+          minTotalCartelas: cfg.botWinMode === 'cartel-dual' ? 2 : 0,
         })
       : 0;
 

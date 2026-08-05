@@ -58,6 +58,14 @@ export class SystemConfig {
   @Column({ type: 'int', default: 0 })
   referralCommissionPct: number;
 
+  /**
+   * Minimum hours an agent must wait between their own self-service settlement
+   * requests (see AgentsService.requestSettlement). 0 = no cooldown. Does not
+   * apply to settlements an admin creates directly.
+   */
+  @Column({ type: 'int', default: 0 })
+  agentSettlementCooldownHours: number;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

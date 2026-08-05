@@ -78,6 +78,12 @@ export class AgentSettlement {
   @Column({ type: 'varchar', length: 1000, nullable: true })
   notes?: string | null;
 
+  /** True when the agent submitted this via the self-service "Request Settlement"
+   * button (as opposed to an admin creating it directly). Used to scope the
+   * cooldown to the agent's own request cadence, not admin activity. */
+  @Column({ type: 'boolean', default: false })
+  requestedByAgent: boolean;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 

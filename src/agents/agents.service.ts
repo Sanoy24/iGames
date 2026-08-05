@@ -1,7 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { WalletService } from '../wallet/wallet.service';
 import { AgentShift } from './entities/agent-shift.entity';
 import { CreateShiftDto } from './dto/create-shift.dto';
@@ -9,7 +9,7 @@ import { UsersService } from '../users/users.service';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { WithdrawalFeeRange } from '../wallet/entities/withdrawal-fee-range.entity';
 import { resolveWithdrawalFeeMinor } from '../wallet/withdrawal-fee-range.util';
-import { isAgentEffectivelyOnDuty, getEarningsWindowStarts } from '../common/agent-duty.util';
+import { isAgentEffectivelyOnDuty } from '../common/agent-duty.util';
 import { buildReferralPayload } from '../common/referral-code.util';
 import { PayoutProvider, WithdrawalProofVerifierService } from './withdrawal-proof-verifier.service';
 import {
@@ -17,6 +17,8 @@ import {
   AgentSettlementPaymentMethod,
   AgentSettlementStatus,
 } from './entities/agent-settlement.entity';
+
+type SettlementBlockReason = 'pending_exists' | 'cooldown' | 'nothing_to_settle' | null;
 
 @Injectable()
 export class AgentsService {
@@ -464,37 +466,36 @@ export class AgentsService {
     };
   }
 
-  /** Agent Dashboard summary — referred/active players, earnings by source and
-   * time window, and withdrawal request counts. */
+  /** Agent Dashboard summary — referred/active players, lifetime earnings by
+   * source, settlement standing, and withdrawal request counts. */
   async getDashboardSummary(agentId: string): Promise<{
     totalReferredPlayers: number;
     activePlayers: number;
     gameCommission: { totalMinor: number; count: number };
     withdrawalFeesEarnedMinor: number;
     totalEarningsMinor: number;
+    totalSettledMinor: number;
+    remainingMinor: number;
+    canRequestSettlement: boolean;
+    settlementBlockReason: SettlementBlockReason;
+    settlementCooldownEndsAt: Date | null;
     pendingWithdrawalRequests: number;
     completedWithdrawalRequests: number;
-    earnings: { todayMinor: number; weeklyMinor: number; monthlyMinor: number; lifetimeMinor: number };
   }> {
-    const { todayStart, weekStart, monthStart } = getEarningsWindowStarts();
     const activeSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
     const [
       totalReferredPlayers,
       activePlayers,
       lifetime,
-      today,
-      weekly,
-      monthly,
+      eligibility,
       pendingWithdrawalRequests,
       completedWithdrawalRequests,
     ] = await Promise.all([
       this.usersService.countReferredPlayers(agentId),
       this.usersService.countActiveReferredPlayers(agentId, activeSince),
       this.computeAgentEarnings(agentId),
-      this.computeAgentEarnings(agentId, { start: todayStart }),
-      this.computeAgentEarnings(agentId, { start: weekStart }),
-      this.computeAgentEarnings(agentId, { start: monthStart }),
+      this.getSettlementEligibility(agentId),
       this.walletService.countPendingAgentWithdrawals(agentId),
       this.walletService.countCompletedAgentWithdrawals(agentId),
     ]);
@@ -508,14 +509,13 @@ export class AgentsService {
       },
       withdrawalFeesEarnedMinor: lifetime.withdrawalFeesMinor,
       totalEarningsMinor: lifetime.totalEarningsMinor,
+      totalSettledMinor: eligibility.totalSettledMinor,
+      remainingMinor: eligibility.remainingMinor,
+      canRequestSettlement: eligibility.canRequest,
+      settlementBlockReason: eligibility.blockReason,
+      settlementCooldownEndsAt: eligibility.cooldownEndsAt,
       pendingWithdrawalRequests,
       completedWithdrawalRequests,
-      earnings: {
-        todayMinor: today.totalEarningsMinor,
-        weeklyMinor: weekly.totalEarningsMinor,
-        monthlyMinor: monthly.totalEarningsMinor,
-        lifetimeMinor: lifetime.totalEarningsMinor,
-      },
     };
   }
 
@@ -525,6 +525,142 @@ export class AgentsService {
   // endpoint that snapshots the period's earnings, one update endpoint that
   // sets status/payment fields freely — the only enforced rule is that an
   // FT number + receipt must be present before a settlement can be 'paid'.
+
+  /**
+   * How much of an agent's lifetime earnings is still unclaimed by any
+   * settlement, and whether they're currently allowed to request one.
+   * "Claimed" includes 'pending' and 'approved' settlements (not just 'paid')
+   * so the displayed remaining/request amount never double-counts money
+   * already tied up in an open request — see PROGRESS discussion on
+   * agent-initiated settlements.
+   */
+  private async getSettlementEligibility(agentId: string): Promise<{
+    remainingMinor: number;
+    claimedMinor: number;
+    totalSettledMinor: number;
+    canRequest: boolean;
+    blockReason: SettlementBlockReason;
+    cooldownEndsAt: Date | null;
+  }> {
+    const [lifetime, claimedRow, settledRow, unresolved, lastRequested, cfg] = await Promise.all([
+      this.computeAgentEarnings(agentId),
+      this.agentSettlementRepository
+        .createQueryBuilder('s')
+        .select('COALESCE(SUM(s.amountPaidMinor), 0)', 'sum')
+        .where('s.agentId = :agentId AND s.status IN (:...statuses)', {
+          agentId,
+          statuses: ['paid', 'pending', 'approved'],
+        })
+        .getRawOne<{ sum: string }>(),
+      this.agentSettlementRepository
+        .createQueryBuilder('s')
+        .select('COALESCE(SUM(s.amountPaidMinor), 0)', 'sum')
+        .where('s.agentId = :agentId AND s.status = :status', { agentId, status: 'paid' })
+        .getRawOne<{ sum: string }>(),
+      this.agentSettlementRepository.findOne({
+        where: { agentId, status: In(['pending', 'approved']) },
+        order: { createdAt: 'DESC' },
+      }),
+      this.agentSettlementRepository.findOne({
+        where: { agentId, requestedByAgent: true },
+        order: { createdAt: 'DESC' },
+      }),
+      this.systemConfigRepository.findOneBy({ key: 'global' }),
+    ]);
+
+    const claimedMinor = Number(claimedRow?.sum ?? 0);
+    const totalSettledMinor = Number(settledRow?.sum ?? 0);
+    const remainingMinor = Math.max(0, lifetime.totalEarningsMinor - claimedMinor);
+
+    const cooldownHours = cfg?.agentSettlementCooldownHours ?? 0;
+    let cooldownEndsAt: Date | null = null;
+    if (cooldownHours > 0 && lastRequested) {
+      const endsAt = new Date(lastRequested.createdAt.getTime() + cooldownHours * 60 * 60 * 1000);
+      if (endsAt > new Date()) cooldownEndsAt = endsAt;
+    }
+
+    let blockReason: SettlementBlockReason = null;
+    if (unresolved) blockReason = 'pending_exists';
+    else if (cooldownEndsAt) blockReason = 'cooldown';
+    else if (remainingMinor <= 0) blockReason = 'nothing_to_settle';
+
+    return {
+      remainingMinor,
+      claimedMinor,
+      totalSettledMinor,
+      canRequest: blockReason === null,
+      blockReason,
+      cooldownEndsAt,
+    };
+  }
+
+  /**
+   * Agent self-service settlement request — covers the agent's own earnings
+   * from the end of their last paid/pending/approved settlement (or their
+   * account creation, if they've never had one) through now. Lands as an
+   * ordinary 'pending' row in the same admin review queue as an admin-created
+   * settlement (see createSettlement below); `requestedByAgent: true` is the
+   * only distinguishing mark, used for the cooldown in getSettlementEligibility.
+   */
+  async requestSettlement(agentId: string): Promise<AgentSettlement> {
+    const eligibility = await this.getSettlementEligibility(agentId);
+    if (eligibility.blockReason === 'pending_exists') {
+      throw new ConflictException('You already have a settlement request awaiting review.');
+    }
+    if (eligibility.blockReason === 'cooldown') {
+      throw new ConflictException(
+        `You can request again at ${eligibility.cooldownEndsAt!.toISOString()}.`,
+      );
+    }
+    if (eligibility.blockReason === 'nothing_to_settle') {
+      throw new BadRequestException('No new earnings to settle yet.');
+    }
+
+    const periodEnd = new Date();
+    const lastResolved = await this.agentSettlementRepository.findOne({
+      where: { agentId, status: In(['paid', 'pending', 'approved']) },
+      order: { periodEnd: 'DESC' },
+    });
+    const periodStart = lastResolved
+      ? lastResolved.periodEnd
+      : (await this.usersService.findById(agentId)).createdAt;
+
+    const period = await this.computeAgentEarnings(agentId, { start: periodStart, end: periodEnd });
+    const lifetimeToPeriodEnd = await this.computeAgentEarnings(agentId, { end: periodEnd });
+    const amountPaidMinor = period.totalEarningsMinor;
+    const outstandingBalanceMinor =
+      lifetimeToPeriodEnd.totalEarningsMinor - (eligibility.claimedMinor + amountPaidMinor);
+
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(AgentSettlement);
+      const settlement = repo.create({
+        agentId,
+        periodStart,
+        periodEnd,
+        gameCommissionMinor: period.gameCommissionMinor,
+        withdrawalFeesMinor: period.withdrawalFeesMinor,
+        totalEarnedMinor: period.totalEarningsMinor,
+        amountPaidMinor,
+        outstandingBalanceMinor,
+        status: 'pending',
+        requestedByAgent: true,
+        notes: null,
+      });
+      const saved = await repo.save(settlement);
+
+      await this.walletService.recordAgentAction(
+        {
+          agentId,
+          actionType: 'settlement_requested',
+          amountMinor: saved.amountPaidMinor,
+          metadata: { settlementId: saved.id, periodStart, periodEnd, status: saved.status },
+        },
+        manager,
+      );
+
+      return saved;
+    });
+  }
 
   async createSettlement(
     agentId: string,

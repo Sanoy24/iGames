@@ -90,6 +90,13 @@ export class AgentsController {
     return this.agentsService.listSettlements(agent.id, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
   }
 
+  /** Agent self-service: request a settlement for their own unclaimed earnings. */
+  @Post('settlements/request')
+  @HttpCode(HttpStatus.CREATED)
+  requestSettlement(@CurrentUser() agent: AuthenticatedUser) {
+    return this.agentsService.requestSettlement(agent.id);
+  }
+
   /**
    * The requesting agent's referral code + shareable deep link. Always scoped off
    * the authenticated agent, so one agent can never read another's code.

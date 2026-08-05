@@ -1652,6 +1652,7 @@ function ConfigAdmin() {
     withdrawalMaxAmountMinor: 0, maxPendingWithdrawalsPerUser: 1,
     agentRoomsEnabled: false,
     referralCommissionPct: 0,
+    agentSettlementCooldownHours: 0,
   });
   const [perf, setPerf] = useState<AgentPerformance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1666,6 +1667,7 @@ function ConfigAdmin() {
     maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
     agentRoomsEnabled: c.agentRoomsEnabled ?? false,
     referralCommissionPct: c.referralCommissionPct ?? 0,
+    agentSettlementCooldownHours: c.agentSettlementCooldownHours ?? 0,
   });
 
   useEffect(() => {
@@ -1730,6 +1732,13 @@ function ConfigAdmin() {
         <div className="adm-panel-head">Referral Commission</div>
         <div className="adm-field-grid">
           {field('referralCommissionPct', 'Global Default Commission %', "paid to a player's referring agent, on that player's Bingo GGR. An agent's own override (set on their agent profile) takes priority over this default.")}
+        </div>
+      </div>
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Agent Settlements</div>
+        <div className="adm-field-grid">
+          {field('agentSettlementCooldownHours', 'Settlement Request Cooldown (hours)', "0 = agents can request anytime; otherwise the minimum wait between an agent's own settlement requests. Doesn't apply to settlements you create directly.")}
         </div>
       </div>
 
@@ -2909,6 +2918,7 @@ function BingoAdmin() {
   // the same name/price/prizes/style after every round, instead of a one-off
   // room that's gone once this round ends.
   const [isPersistent, setIsPersistent] = useState(false);
+  const [reservedCartelActiveBingoBots, setReservedCartelActiveBingoBots] = useState<number | null>(null);
 
   const [cfgForm, setCfgForm] = useState<Partial<BingoConfig>>({
     enabled: true,
@@ -3027,6 +3037,18 @@ function BingoAdmin() {
     catch (e) { addToast('error', getErrorMessage(e)); }
   }, [addToast]);
 
+  const loadReservedCartelBots = useCallback(async () => {
+    try {
+      const bots = await adminBotsApi.listBots();
+      setReservedCartelActiveBingoBots(
+        bots.filter((bot) => bot.botPolicy?.active !== false && bot.botPolicy.games?.bingo?.active !== false).length,
+      );
+    } catch (e) {
+      setReservedCartelActiveBingoBots(null);
+      addToast('error', getErrorMessage(e));
+    }
+  }, [addToast]);
+
   const loadRooms = useCallback(async (nextPage = 1) => {
     setRoomsLoading(true);
     try {
@@ -3047,7 +3069,8 @@ function BingoAdmin() {
     void loadRooms(1);
     void loadSlots();
     void loadCustomSlots();
-  }, [loadMeta, loadRooms, loadSlots, loadCustomSlots]);
+    void loadReservedCartelBots();
+  }, [loadMeta, loadRooms, loadSlots, loadCustomSlots, loadReservedCartelBots]);
 
   const goToRoomPage = async (nextPage: number) => {
     if (nextPage === page) return;
@@ -3056,13 +3079,20 @@ function BingoAdmin() {
   };
 
   const refreshBingo = useCallback(async () => {
-    await Promise.all([loadMeta(), loadRooms(page), loadSlots(), loadCustomSlots()]);
-  }, [loadMeta, loadRooms, loadSlots, loadCustomSlots, page]);
+    await Promise.all([loadMeta(), loadRooms(page), loadSlots(), loadCustomSlots(), loadReservedCartelBots()]);
+  }, [loadMeta, loadRooms, loadSlots, loadCustomSlots, loadReservedCartelBots, page]);
 
   const saveConfig = async () => {
     setBusy('cfg');
     try {
       const payload = { ...cfgForm };
+      if (payload.botWinMode === 'cartel-dual' && reservedCartelActiveBingoBots !== null && reservedCartelActiveBingoBots < 2) {
+        addToast(
+          'error',
+          `Cartel Dual requires at least 2 active Bingo-enabled bots. Current active Bingo bots: ${reservedCartelActiveBingoBots}.`,
+        );
+        return;
+      }
       if (payload.botAliasPool) {
         const aliases = payload.botAliasPool.split(',').map(s => s.trim()).filter(Boolean);
         payload.botAliasPool = aliases.length > 0 ? JSON.stringify(aliases) : null;
@@ -3694,6 +3724,13 @@ function BingoAdmin() {
                 <option value="hybrid">Hybrid - flood cartelas AND redirect any real-user win to cartel</option>
                 <option value="cartel-dual">Cartel Dual - cartel wins 1st AND 2nd place under different alias names (most concealed)</option>
               </select>
+              {cfgForm.botWinMode === 'cartel-dual' && reservedCartelActiveBingoBots !== null && (
+                <span className="adm-field-hint" style={{ color: reservedCartelActiveBingoBots < 2 ? '#f87171' : '#86efac' }}>
+                  {reservedCartelActiveBingoBots < 2
+                    ? `Cartel Dual needs at least 2 active Bingo-enabled bots. Current active: ${reservedCartelActiveBingoBots}.`
+                    : `Cartel Dual ready: ${reservedCartelActiveBingoBots} active Bingo-enabled bots available.`}
+                </span>
+              )}
               <span className="adm-field-hint">
                 Applies only while real players are below the threshold above. <b>Cartel Dual</b> is the most concealed: 1st and 2nd place are each shown with a different name from the alias pool below, making them look like two unrelated real players.
               </span>
@@ -4173,6 +4210,9 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
     botWinnerCooldownRooms?: number;
   }>;
   const winnerPlaces = room ? Object.keys(summary) : [];
+  const roomBotIdentities = Object.entries(room?.botIdentityMap ?? {})
+    .map(([botId, identity]) => ({ botId, ...identity }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.botId.localeCompare(b.botId));
   const winners = details?.tickets.filter((t) => t.payoutMinor > 0 || t.wonTiers.length > 0) ?? [];
   const [openCard, setOpenCard] = useState<string | null>(null);
 
@@ -4258,6 +4298,12 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
                             <span>Cartela <strong>#{w.winnerCartelaNumber ?? '—'}</strong></span>
                             <span>·</span>
                             <span>Pattern: <strong>{w.patternName ?? 'Any Line'}</strong></span>
+                            {w.winnerUserId && (
+                              <>
+                                <span>·</span>
+                                <span title={w.winnerUserId}>User: <strong>{w.winnerUserId.slice(0, 8)}…</strong></span>
+                              </>
+                            )}
                             {w.winnerIsBot && (
                               <>
                                 <span>·</span>
@@ -4283,6 +4329,28 @@ function BingoRoundDetailsModal({ details, loading, onClose }: {
                         </div>
                       );
                     })}
+                </div>
+              )}
+            </div>
+
+            {/* Room bot identities */}
+            <div>
+              <div className="adm-panel-head" style={{ padding: 0, marginBottom: 8, background: 'none' }}>
+                Room bot identities ({roomBotIdentities.length})
+              </div>
+              {roomBotIdentities.length === 0 ? (
+                <div className="adm-td-muted" style={{ fontSize: 12 }}>No room-scoped bot identities recorded.</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+                  {roomBotIdentities.map((identity) => (
+                    <div key={identity.botId} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: 12, background: 'rgba(255,255,255,0.02)' }}>
+                      <div style={{ fontWeight: 800, fontSize: 13 }}>{identity.displayName}</div>
+                      <div className="adm-td-muted" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.6 }}>
+                        <div>Bot account: <strong title={identity.botId}>{identity.botId.slice(0, 8)}…</strong></div>
+                        <div>Masked suffix: <strong>{`••${identity.phoneSuffix}`}</strong></div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

@@ -66,6 +66,7 @@ export function Agent() {
   const [transferPhone, setTransferPhone] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [submittingTransfer, setSubmittingTransfer] = useState(false);
+  const [requestingSettlement, setRequestingSettlement] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -107,6 +108,19 @@ export function Agent() {
       addToast('error', getErrorMessage(err));
     } finally {
       setSubmittingTransfer(false);
+    }
+  };
+
+  const handleRequestSettlement = async () => {
+    setRequestingSettlement(true);
+    try {
+      await agentApi.requestSettlement();
+      addToast('success', t('agent.settlementRequested', { defaultValue: 'Settlement requested — an admin will review it shortly.' }));
+      agentApi.getDashboard().then(setDashboard).catch(() => undefined);
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setRequestingSettlement(false);
     }
   };
 
@@ -298,18 +312,45 @@ export function Agent() {
               <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.withdrawalFeesEarnedMinor)}</div>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 12 }}>
-            {[
-              { label: t('agent.today', { defaultValue: 'Today' }), value: formatCredits(dashboard.earnings.todayMinor) },
-              { label: t('agent.thisWeek', { defaultValue: 'This Week' }), value: formatCredits(dashboard.earnings.weeklyMinor) },
-              { label: t('agent.thisMonth', { defaultValue: 'This Month' }), value: formatCredits(dashboard.earnings.monthlyMinor) },
-              { label: t('agent.lifetime', { defaultValue: 'Lifetime' }), value: formatCredits(dashboard.earnings.lifetimeMinor) },
-            ].map((s) => (
-              <div key={s.label} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 9, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
-                <div style={{ fontWeight: 700, fontSize: 12 }}>{s.value}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.totalSettled', { defaultValue: 'Total Settled' })}
               </div>
-            ))}
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{formatCredits(dashboard.totalSettledMinor)}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.remaining', { defaultValue: 'Remaining' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.remainingMinor)}</div>
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ width: '100%' }}
+              disabled={!dashboard.canRequestSettlement || requestingSettlement}
+              onClick={handleRequestSettlement}
+            >
+              {requestingSettlement
+                ? t('agent.requestingSettlement', { defaultValue: 'Requesting…' })
+                : t('agent.requestSettlement', { defaultValue: 'Request Settlement' })}
+            </button>
+            {!dashboard.canRequestSettlement && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+                {dashboard.settlementBlockReason === 'pending_exists' &&
+                  t('agent.settlementPendingReview', { defaultValue: 'You already have a settlement request awaiting review.' })}
+                {dashboard.settlementBlockReason === 'cooldown' && dashboard.settlementCooldownEndsAt &&
+                  t('agent.settlementCooldown', {
+                    time: formatDateTime(dashboard.settlementCooldownEndsAt),
+                    defaultValue: `You can request again at ${formatDateTime(dashboard.settlementCooldownEndsAt)}.`,
+                  })}
+                {dashboard.settlementBlockReason === 'nothing_to_settle' &&
+                  t('agent.settlementNothingToSettle', { defaultValue: 'No new earnings to settle yet.' })}
+              </div>
+            )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
             <div style={{ textAlign: 'center' }}>

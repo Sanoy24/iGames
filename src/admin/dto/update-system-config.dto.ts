@@ -44,4 +44,10 @@ export class UpdateSystemConfigDto {
   @Min(0)
   @Max(100)
   referralCommissionPct?: number;
+
+  /** Minimum hours between an agent's own self-service settlement requests. 0 = no cooldown. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  agentSettlementCooldownHours?: number;
 }

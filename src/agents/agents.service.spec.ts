@@ -371,16 +371,31 @@ function makeSettlementService(input: {
   earningsForPeriod?: { referralCommission: number; referralCommissionCount?: number; withdrawalFees: number };
   earningsLifetime?: { referralCommission: number; referralCommissionCount?: number; withdrawalFees: number };
   existingSettlement?: Record<string, unknown> | null;
+  // ── requestSettlement / getSettlementEligibility knobs ──
+  claimedMinor?: number;
+  unresolvedSettlement?: Record<string, unknown> | null;
+  lastRequestedSettlement?: Record<string, unknown> | null;
+  lastResolvedSettlement?: Record<string, unknown> | null;
+  cooldownHours?: number;
+  agentCreatedAt?: Date;
+  // ── getDashboardSummary knobs ──
+  totalReferredPlayers?: number;
+  activePlayers?: number;
+  pendingWithdrawalRequests?: number;
+  completedWithdrawalRequests?: number;
 }) {
   const zero = { referralCommission: 0, referralCommissionCount: 0, withdrawalFees: 0 };
-  let call = 0;
   const systemConfigRepository = {
-    // computeAgentEarnings is called twice by createSettlement: once for the
-    // period, once for lifetime-to-periodEnd.
-    query: jest.fn().mockImplementation(() => {
-      call += 1;
-      return Promise.resolve([call === 1 ? (input.earningsForPeriod ?? zero) : (input.earningsLifetime ?? zero)]);
+    // computeAgentEarnings's bound params array grows with how it's called:
+    // [agentId] (unbounded/lifetime), [agentId, end] (lifetime-to-periodEnd),
+    // [agentId, start, end] (the settlement's own period) — dispatch on that
+    // instead of call order, since requestSettlement fires an extra unbounded
+    // call (inside getSettlementEligibility) ahead of the period-bounded ones,
+    // and Promise.all doesn't guarantee which of several concurrent calls lands first.
+    query: jest.fn().mockImplementation((_sql: string, params: unknown[] = []) => {
+      return Promise.resolve([params.length >= 3 ? (input.earningsForPeriod ?? zero) : (input.earningsLifetime ?? zero)]);
     }),
+    findOneBy: jest.fn().mockResolvedValue({ agentSettlementCooldownHours: input.cooldownHours ?? 0 }),
   };
 
   const settlementRepo = {
@@ -395,30 +410,63 @@ function makeSettlementService(input: {
   };
 
   const agentSettlementRepository = {
-    createQueryBuilder: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      getRawOne: jest.fn().mockResolvedValue({ sum: String(input.priorPaidMinor ?? 0) }),
+    // priorPaidRow/claimedRow (agentId + status IN [...]) and settledRow
+    // (agentId + status = 'paid') are distinguished by whether the bound
+    // params carry `statuses` (array) or a single `status`.
+    createQueryBuilder: jest.fn().mockImplementation(() => {
+      const builder: any = {};
+      builder.select = jest.fn().mockReturnValue(builder);
+      builder.where = jest.fn((_sql: string, params: any) => {
+        builder.__params = params;
+        return builder;
+      });
+      builder.getRawOne = jest.fn(() => {
+        const sum = builder.__params?.statuses !== undefined
+          ? (input.claimedMinor ?? 0)
+          : (input.priorPaidMinor ?? 0);
+        return Promise.resolve({ sum: String(sum) });
+      });
+      return builder;
     }),
     findOneBy: jest.fn().mockResolvedValue(input.existingSettlement ?? null),
     findAndCount: jest.fn().mockResolvedValue([[], 0]),
+    // Distinguished by `order`: unresolved (status pending/approved) orders by
+    // createdAt; lastResolved (status paid/pending/approved) orders by periodEnd.
+    findOne: jest.fn().mockImplementation((opts: any) => {
+      if (opts.where?.requestedByAgent !== undefined) {
+        return Promise.resolve(input.lastRequestedSettlement ?? null);
+      }
+      if (opts.order?.periodEnd) {
+        return Promise.resolve(input.lastResolvedSettlement ?? null);
+      }
+      return Promise.resolve(input.unresolvedSettlement ?? null);
+    }),
   };
 
-  const walletService = { recordAgentAction: jest.fn().mockResolvedValue(undefined) };
+  const walletService = {
+    recordAgentAction: jest.fn().mockResolvedValue(undefined),
+    countPendingAgentWithdrawals: jest.fn().mockResolvedValue(input.pendingWithdrawalRequests ?? 0),
+    countCompletedAgentWithdrawals: jest.fn().mockResolvedValue(input.completedWithdrawalRequests ?? 0),
+  };
+  const usersService = {
+    findById: jest.fn().mockResolvedValue({ id: 'agent-1', createdAt: input.agentCreatedAt ?? new Date('2026-01-01T00:00:00Z') }),
+    countReferredPlayers: jest.fn().mockResolvedValue(input.totalReferredPlayers ?? 0),
+    countActiveReferredPlayers: jest.fn().mockResolvedValue(input.activePlayers ?? 0),
+  };
 
   const service = new AgentsService(
     {} as any,
     systemConfigRepository as any,
     {} as any,
     walletService as any,
-    {} as any,
+    usersService as any,
     {} as any,
     {} as any,
     dataSource as any,
     agentSettlementRepository as any,
   );
 
-  return { service, settlementRepo, agentSettlementRepository, walletService };
+  return { service, settlementRepo, agentSettlementRepository, walletService, usersService };
 }
 
 describe('AgentsService.createSettlement', () => {
@@ -484,5 +532,135 @@ describe('AgentsService.updateSettlement', () => {
     });
 
     await expect(service.updateSettlement('s-1', { status: 'approved' }, 'admin-1')).resolves.toBeTruthy();
+  });
+});
+
+describe('AgentsService.requestSettlement', () => {
+  it('anchors the period to the last resolved settlement and claims exactly the new earnings', async () => {
+    const { service, settlementRepo, walletService } = makeSettlementService({
+      claimedMinor: 1000, // already paid/pending/approved so far
+      earningsForPeriod: { referralCommission: 2500, withdrawalFees: 300 }, // new period: 2800
+      earningsLifetime: { referralCommission: 3500, withdrawalFees: 300 }, // lifetime-to-now: 3800
+      lastResolvedSettlement: { id: 's-0', periodEnd: new Date('2026-07-01T00:00:00Z') },
+    });
+
+    const saved = await service.requestSettlement('agent-1');
+
+    expect(settlementRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        periodStart: new Date('2026-07-01T00:00:00Z'),
+        gameCommissionMinor: 2500,
+        withdrawalFeesMinor: 300,
+        totalEarnedMinor: 2800,
+        amountPaidMinor: 2800,
+        status: 'pending',
+        requestedByAgent: true,
+      }),
+    );
+    // outstanding = lifetime(3800) - (claimed(1000) + thisPayment(2800)) = 0
+    expect((saved as any).outstandingBalanceMinor).toBe(0);
+    expect(walletService.recordAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-1', actionType: 'settlement_requested' }),
+      expect.anything(),
+    );
+  });
+
+  it('falls back to the agent account creation date when there is no prior settlement', async () => {
+    const createdAt = new Date('2026-02-15T00:00:00Z');
+    const { service, settlementRepo } = makeSettlementService({
+      earningsForPeriod: { referralCommission: 500, withdrawalFees: 0 },
+      earningsLifetime: { referralCommission: 500, withdrawalFees: 0 },
+      agentCreatedAt: createdAt,
+    });
+
+    await service.requestSettlement('agent-1');
+
+    expect(settlementRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ periodStart: createdAt }),
+    );
+  });
+
+  it('rejects when a pending or approved settlement already exists', async () => {
+    const { service } = makeSettlementService({
+      unresolvedSettlement: { id: 's-1', status: 'pending' },
+    });
+
+    await expect(service.requestSettlement('agent-1')).rejects.toThrow(/already have a settlement request/i);
+  });
+
+  it('rejects during the admin-configured cooldown window since the agent\'s last request', async () => {
+    const { service } = makeSettlementService({
+      cooldownHours: 24,
+      lastRequestedSettlement: { id: 's-1', createdAt: new Date() },
+    });
+
+    await expect(service.requestSettlement('agent-1')).rejects.toThrow(/request again at/i);
+  });
+
+  it('allows a new request once the cooldown window has elapsed', async () => {
+    const { service, settlementRepo } = makeSettlementService({
+      cooldownHours: 24,
+      lastRequestedSettlement: { id: 's-1', createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) },
+      earningsForPeriod: { referralCommission: 100, withdrawalFees: 0 },
+      earningsLifetime: { referralCommission: 100, withdrawalFees: 0 },
+    });
+
+    await service.requestSettlement('agent-1');
+
+    expect(settlementRepo.create).toHaveBeenCalled();
+  });
+
+  it('rejects when there are no new earnings to settle', async () => {
+    const { service } = makeSettlementService({
+      earningsForPeriod: { referralCommission: 0, withdrawalFees: 0 },
+      earningsLifetime: { referralCommission: 0, withdrawalFees: 0 },
+    });
+
+    await expect(service.requestSettlement('agent-1')).rejects.toThrow(/no new earnings/i);
+  });
+});
+
+describe('AgentsService.getDashboardSummary', () => {
+  it('reports total settled, remaining, and settlement eligibility instead of the old time-window breakdown', async () => {
+    const { service } = makeSettlementService({
+      earningsForPeriod: { referralCommission: 4000, withdrawalFees: 500 }, // lifetime total 4500
+      earningsLifetime: { referralCommission: 4000, withdrawalFees: 500 },
+      claimedMinor: 1500,
+      priorPaidMinor: 1000, // status='paid' only, for totalSettledMinor
+      totalReferredPlayers: 6,
+      activePlayers: 2,
+      pendingWithdrawalRequests: 1,
+      completedWithdrawalRequests: 3,
+    });
+
+    const summary = await service.getDashboardSummary('agent-1');
+
+    expect(summary).toEqual(
+      expect.objectContaining({
+        totalReferredPlayers: 6,
+        activePlayers: 2,
+        totalEarningsMinor: 4500,
+        totalSettledMinor: 1000,
+        remainingMinor: 3000, // 4500 - 1500 claimed (paid+pending+approved)
+        canRequestSettlement: true,
+        settlementBlockReason: null,
+        pendingWithdrawalRequests: 1,
+        completedWithdrawalRequests: 3,
+      }),
+    );
+    expect(summary).not.toHaveProperty('earnings');
+  });
+
+  it('reports canRequestSettlement: false with a reason when a settlement is already pending', async () => {
+    const { service } = makeSettlementService({
+      earningsForPeriod: { referralCommission: 100, withdrawalFees: 0 },
+      earningsLifetime: { referralCommission: 100, withdrawalFees: 0 },
+      unresolvedSettlement: { id: 's-1', status: 'pending' },
+    });
+
+    const summary = await service.getDashboardSummary('agent-1');
+
+    expect(summary.canRequestSettlement).toBe(false);
+    expect(summary.settlementBlockReason).toBe('pending_exists');
   });
 });

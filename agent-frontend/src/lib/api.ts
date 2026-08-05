@@ -357,15 +357,21 @@ export type AgentSelfPerformance = {
   depositCommissionEarnedMinor: number;
 };
 
+export type SettlementBlockReason = 'pending_exists' | 'cooldown' | 'nothing_to_settle' | null;
+
 export type AgentDashboardSummary = {
   totalReferredPlayers: number;
   activePlayers: number;
   gameCommission: { totalMinor: number; count: number };
   withdrawalFeesEarnedMinor: number;
   totalEarningsMinor: number;
+  totalSettledMinor: number;
+  remainingMinor: number;
+  canRequestSettlement: boolean;
+  settlementBlockReason: SettlementBlockReason;
+  settlementCooldownEndsAt: string | null;
   pendingWithdrawalRequests: number;
   completedWithdrawalRequests: number;
-  earnings: { todayMinor: number; weeklyMinor: number; monthlyMinor: number; lifetimeMinor: number };
 };
 
 export type AgentSettlementStatus = 'pending' | 'approved' | 'paid' | 'rejected';
@@ -388,6 +394,7 @@ export type AgentSettlement = {
   paidAt?: string | null;
   paidByAdminId?: string | null;
   notes?: string | null;
+  requestedByAgent: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -777,6 +784,7 @@ export const agentApi = {
   getDashboard: () => api.get<AgentDashboardSummary>('/agent/dashboard').then((r) => r.data),
   getSettlements: (page = 1, limit = 50) =>
     api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>('/agent/settlements', { params: { page, limit } }).then((r) => r.data),
+  requestSettlement: () => api.post<AgentSettlement>('/agent/settlements/request').then((r) => r.data),
   getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),

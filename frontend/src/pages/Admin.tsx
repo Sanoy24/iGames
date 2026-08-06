@@ -35,7 +35,7 @@ import {
   type CoverageGap,
   type ConfigChangeLog,
 } from '../lib/api';
-import type { AdminLocation, BingoConfig, BingoPattern, BingoRoom, BingoRoomSlot, BingoCustomRoomSlot, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
+import type { AdminLocation, BingoConfig, BingoOperationalAlert, BingoPattern, BingoRoom, BingoRoomSlot, BingoCustomRoomSlot, BingoStalledRoom, KenoConfig, KenoDraw, KenoPaytableEntry, User, Wallet as WalletType, Withdrawal } from '../lib/models';
 import { BINGO_CARD_PALETTES, getBingoCardPalette, type BingoCardPaletteId } from '../lib/bingoCardPalette';
 import { createIdempotencyKey, formatCreditsFull, formatDateTime, formatRelativeTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';

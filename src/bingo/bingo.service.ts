@@ -1374,7 +1374,7 @@ export class BingoService implements OnModuleInit {
       const overridePctByAgentId = new Map(agents.map((a) => [a.id, a.referralCommissionPct ?? null]));
 
       for (const row of rows) {
-        const serviceFeeMinor = Math.floor((Number(row.staked) * room.houseEdgePct) / 100);
+        const serviceFeeMinor = Math.floor((Number(row.staked) * (room.houseEdgePct ?? 20)) / 100);
         if (serviceFeeMinor <= 0) continue;
 
         const overridePct = overridePctByAgentId.get(row.agentId) ?? null;
@@ -2881,13 +2881,13 @@ export class BingoService implements OnModuleInit {
       // a later draw may fill this one.
       if (winnerCandidates.length === 0) {
         if (enforceCartelDualBotWin && finalDerashDraw) {
-          const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
           const finalBotAwardee = this.pickBotRedirectWinner(
             winnerEligibleTickets,
             botGroups.bingoEnabledBotIds,
             pattern,
             room.drawnNumbers,
-            excludedBotUserIds,
+            room.numberRange ?? 75,
+            { awardedBotUserIds, recentBotWinnerUserIds },
           );
           if (finalBotAwardee) {
             const awarded = await this.awardDerashPlace({
@@ -2912,14 +2912,13 @@ export class BingoService implements OnModuleInit {
       for (const winner of winnerCandidates) {
         let awardee = winner;
         if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
-          const excludedBotUserIds = new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]);
           const botAwardee = this.pickBotRedirectWinner(
             winnerEligibleTickets,
             botGroups.bingoEnabledBotIds,
             pattern,
             room.drawnNumbers,
-            excludedBotUserIds,
-            { requireCompletedPattern: enforceCartelDualBotWin && !finalDerashDraw },
+            room.numberRange ?? 75,
+            { awardedBotUserIds, recentBotWinnerUserIds },
           );
           if (botAwardee) {
             awardee = botAwardee;
@@ -2928,7 +2927,7 @@ export class BingoService implements OnModuleInit {
             );
           } else if (enforceCartelDualBotWin) {
             this.logger.warn(
-              `Cartel Dual held room ${room.id} place ${place} open: real user ${winner.userId} completed before any eligible bot`,
+              `Cartel Dual held room ${room.id} place ${place} open: real user ${winner.userId} completed — no bot cartela at all in the room to redirect to`,
             );
             continue;
           }
@@ -3162,6 +3161,15 @@ export class BingoService implements OnModuleInit {
     );
   }
 
+  /** How many derash places are enabled (1st always counts) — total, not just still-open. */
+  private enabledPrefilledPlacesCount(cfg: BingoConfig): number {
+    return 1
+      + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledThirdPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledFourthPlaceEnabled ? 1 : 0)
+      + (cfg.prefilledFifthPlaceEnabled ? 1 : 0);
+  }
+
   /**
    * Award a single derash place to a winning card: pays the place's prize into
    * the winner's wallet (with an idempotent ledger credit), flips the ticket to
@@ -3361,11 +3369,7 @@ export class BingoService implements OnModuleInit {
     maxNumber: number,
     manager: EntityManager,
   ): Promise<boolean> {
-    const totalPlaces = 1
-      + (cfg.prefilledSecondPlaceEnabled ? 1 : 0)
-      + (cfg.prefilledThirdPlaceEnabled ? 1 : 0)
-      + (cfg.prefilledFourthPlaceEnabled ? 1 : 0)
-      + (cfg.prefilledFifthPlaceEnabled ? 1 : 0);
+    const totalPlaces = this.enabledPrefilledPlacesCount(cfg);
     // A card that has already won a lower tier is STILL in play for higher tiers
     // (non-exclusive), so "in play" counts active AND won cards. We therefore only
     // end when every enabled place is filled, the pool is exhausted, or no cards
@@ -3657,29 +3661,27 @@ export class BingoService implements OnModuleInit {
       let awardedAny = false;
       let callerWonAny = false;
       let heldByCartelDual = false;
-      const finalDerashDraw = room.drawnNumbers.length >= 75;
       for (const place of this.openPrefilledPlaces(room, cfg)) {
         const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
         if (!completesPattern(pattern)) continue;
         let awardee = ticket;
         const cartelContext = await getCartelDualContext();
         if (cartelContext && !cartelContext.botIds.has(ticket.userId)) {
-          const excludedBotUserIds = new Set([
-            ...cartelContext.awardedBotUserIds,
-            ...cartelContext.recentBotWinnerUserIds,
-          ]);
           const botAwardee = this.pickBotRedirectWinner(
             cartelContext.winnerEligibleTickets,
             cartelContext.bingoEnabledBotIds,
             pattern as BingoPattern,
             room.drawnNumbers,
-            excludedBotUserIds,
-            { requireCompletedPattern: !finalDerashDraw },
+            room.numberRange ?? 75,
+            {
+              awardedBotUserIds: cartelContext.awardedBotUserIds,
+              recentBotWinnerUserIds: cartelContext.recentBotWinnerUserIds,
+            },
           );
           if (!botAwardee) {
             heldByCartelDual = true;
             this.logger.warn(
-              `Cartel Dual ignored manual real-user claim in room ${room.id} place ${place}: no eligible bot completed the pattern yet`,
+              `Cartel Dual ignored manual real-user claim in room ${room.id} place ${place}: no bot cartela at all in the room to redirect to`,
             );
             continue;
           }
@@ -4305,7 +4307,10 @@ export class BingoService implements OnModuleInit {
           maxCartelasPerBotPerRoom: cartelaPolicy.maxCartelasPerBotPerRoom,
           realCartelas,
           botCount: activeBotIds.size,
-          minTotalCartelas: cfg.botWinMode === 'cartel-dual' ? 2 : 0,
+          // At least one bot cartela per enabled place: cartel-dual needs a
+          // distinct bot available to redirect each place's win onto without
+          // reusing one that already won earlier in the same room.
+          minTotalCartelas: cfg.botWinMode === 'cartel-dual' ? Math.max(2, this.enabledPrefilledPlacesCount(cfg)) : 0,
         })
       : 0;
 
@@ -4415,42 +4420,69 @@ export class BingoService implements OnModuleInit {
 
   /**
    * Pick the bot cartela to hand a redirected win to. Prefers a bot whose card
-   * actually completes the pattern (so the revealed winner card looks legitimate);
-   * otherwise the in-play bot card closest to completing (most marked cells).
-   * Overrides the bot's grid to precisely match the real winner's so the win is mathematically valid.
+   * ALREADY naturally completes the pattern (so the revealed winner card was
+   * legitimately purchased and just happened to complete). Otherwise — the
+   * common case, since bots rarely complete in lockstep with a real player —
+   * synthesizes a fresh, valid grid for one eligible bot on the spot: a brand
+   * new random layout (never a copy of the real winner's card) that already
+   * satisfies the pattern using only numbers already drawn. This is what makes
+   * cartel-dual redirection immediate instead of waiting (possibly for the
+   * rest of the room) on a bot completing by chance — the ball draw itself is
+   * never biased, only which bot card is on file for the win.
+   * Returns null only when there is truly no bot cartela at all to redirect
+   * to, or (rarely, early in a room) the draw so far doesn't yet support any
+   * way of completing the pattern — the caller should hold and retry on the
+   * next number in that case.
+   *
+   * `exclusions` are "prefer to avoid" sets (a bot that already won a place
+   * this room, or won recently in another room), not hard requirements: with
+   * cartel-dual active, the bot winning is a bigger priority than variety, so
+   * if honoring every exclusion would leave zero bots, they're relaxed one at
+   * a time (drop the cross-room cooldown first, then same-room dedup too)
+   * until a bot is found — never held for the sake of avoiding a repeat.
    */
   private pickBotRedirectWinner(
     inPlay: BingoTicket[],
     botIds: Set<string>,
     pattern: BingoPattern,
     drawnNumbers: number[],
-    excludedBotUserIds: Set<string> = new Set(),
-    options: { requireCompletedPattern?: boolean } = {},
+    numberRange: number,
+    exclusions: { awardedBotUserIds?: Set<string>; recentBotWinnerUserIds?: Set<string> } = {},
   ): BingoTicket | null {
-    const botTickets = this.shuffle(inPlay.filter((t) => botIds.has(t.userId) && !excludedBotUserIds.has(t.userId)));
-    if (botTickets.length === 0) return null;
+    const awardedBotUserIds = exclusions.awardedBotUserIds ?? new Set<string>();
+    const recentBotWinnerUserIds = exclusions.recentBotWinnerUserIds ?? new Set<string>();
+    const exclusionAttempts: Array<Set<string>> = [
+      new Set([...awardedBotUserIds, ...recentBotWinnerUserIds]),
+      awardedBotUserIds,
+      new Set<string>(),
+    ];
 
-    // First preference: a bot ticket that ALREADY naturally completes the pattern
-    // on its own grid — the most legitimate scenario.
-    const naturalWinner = botTickets.find((t) =>
-      this.bingoRulesService
-        .evaluatePatternTicket(t.grid, drawnNumbers, [pattern])
-        .completedPatternIds.includes(pattern.id),
-    );
-    if (naturalWinner) return naturalWinner;
-    if (options.requireCompletedPattern) return null;
+    for (const excludedBotUserIds of exclusionAttempts) {
+      const botTickets = this.shuffle(inPlay.filter((t) => botIds.has(t.userId) && !excludedBotUserIds.has(t.userId)));
+      if (botTickets.length === 0) continue;
 
-    // Second preference: the bot ticket with the most matched cells on its own grid
-    // (closest to completing). We return it AS-IS — its own real cartela layout —
-    // never touching the real player's grid. The win is steered to this bot's real
-    // cartela, which the admin can verify is legitimately purchased.
-    const drawnSet = new Set(drawnNumbers);
-    return botTickets
-      .map((t) => ({
-        t,
-        marks: t.grid.flat().filter((v): v is number => v !== null && drawnSet.has(v)).length,
-      }))
-      .sort((a, b) => b.marks - a.marks)[0]?.t ?? null;
+      const naturalWinner = botTickets.find((t) =>
+        this.bingoRulesService
+          .evaluatePatternTicket(t.grid, drawnNumbers, [pattern])
+          .completedPatternIds.includes(pattern.id),
+      );
+      if (naturalWinner) return naturalWinner;
+
+      const synthesizedGrid = this.bingoRulesService.generateWinningPatternCard(pattern, drawnNumbers, numberRange);
+      // Infeasible because of the draw so far, not bot availability — relaxing
+      // exclusions further won't change that.
+      if (!synthesizedGrid) return null;
+
+      const chosenBot = botTickets[0];
+      const drawnSet = new Set(drawnNumbers);
+      chosenBot.grid = synthesizedGrid;
+      chosenBot.markedNumbers = synthesizedGrid
+        .flat()
+        .filter((v): v is number => v !== null && drawnSet.has(v))
+        .sort((a, b) => a - b);
+      return chosenBot;
+    }
+    return null; // no bot cartela at all in the room to redirect to
   }
 
   private async findRoom(roomId: string): Promise<BingoRoom> {

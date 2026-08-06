@@ -1955,21 +1955,6 @@ function BingoLobby({
     );
 }
 
-// The live "N playing" pill subscribes to liveCounts on its own. liveCounts ticks
-// constantly over the socket, so keeping that subscription out of the big Bingo
-// component below means a tick re-renders only this tiny pill, not the whole board.
-const BingoOnlinePill = memo(function BingoOnlinePill() {
-    const { t } = useTranslation();
-    const bingoOnline = useStore((s) => s.liveCounts?.bingoOnline ?? 0);
-    if (bingoOnline <= 0) return null;
-    return (
-        <span className='live-badge-pulse'>
-            <span className='pulse-dot' />
-            {t('home.playing', { count: bingoOnline })}
-        </span>
-    );
-});
-
 export function Bingo({ onBack }: BingoProps) {
     const { t } = useTranslation();
     const addToast = useStore((s) => s.addToast);
@@ -3135,7 +3120,6 @@ export function Bingo({ onBack }: BingoProps) {
                     <ArrowLeft size={14} /> {t('nav.home')}
                 </button>
                 <div className='flex items-center gap-2'>
-                    <BingoOnlinePill />
                     <button
                         onClick={() => setSoundMuted(!soundMuted)}
                         className='btn btn-ghost btn-sm icon-btn'

@@ -874,10 +874,76 @@ describe('BingoService cartela lifecycle guards', () => {
       new Set(['bot-1', 'bot-2']),
       { id: 'pattern-1' },
       [1],
-      new Set(['bot-1']),
+      75,
+      { awardedBotUserIds: new Set(['bot-1']) },
     );
 
     expect(winner?.userId).toBe('bot-2');
+  });
+
+  it('relaxes exclusions (cooldown, then same-room dedup) rather than holding when they would leave zero bots', () => {
+    const { service } = makeService({ rooms: [] });
+    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
+      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+
+    // Only one bot cartela is in the room, and it's both already-awarded this
+    // room AND on cross-room cooldown — the strict exclusion set would leave
+    // zero bots. Cartel-dual must still redirect the win onto it rather than
+    // holding the real player's win indefinitely.
+    const winner = (service as any).pickBotRedirectWinner(
+      [{ id: 'ticket-1', userId: 'bot-1', grid: [[1]] }],
+      new Set(['bot-1']),
+      { id: 'pattern-1' },
+      [1],
+      75,
+      { awardedBotUserIds: new Set(['bot-1']), recentBotWinnerUserIds: new Set(['bot-1']) },
+    );
+
+    expect(winner?.userId).toBe('bot-1');
+  });
+
+  it('synthesizes a fresh, valid winning grid for a bot when none naturally completes the pattern', () => {
+    const { service } = makeService({ rooms: [] });
+    const pattern = { id: 'pattern-1', patternType: 'any_line' } as any;
+    const drawnNumbers = [3, 20, 35, 50, 65, 7, 22, 37, 52, 67];
+    const botTicket = {
+      id: 'ticket-bot',
+      userId: 'bot-1',
+      // Doesn't complete any_line against drawnNumbers above — forces the
+      // fallback (synthesis) path instead of the natural-winner shortcut.
+      grid: [
+        [99, null, null, null, null],
+        [null, null, null, null, null],
+        [null, null, null, null, null],
+        [null, null, null, null, null],
+        [null, null, null, null, null],
+      ] as (number | null)[][],
+      markedNumbers: [] as number[],
+    };
+
+    const winner = (service as any).pickBotRedirectWinner(
+      [botTicket],
+      new Set(['bot-1']),
+      pattern,
+      drawnNumbers,
+      75,
+    );
+
+    expect(winner).toBe(botTicket);
+    const rulesService = (service as any).bingoRulesService;
+    const { completedPatternIds } = rulesService.evaluatePatternTicket(winner.grid, drawnNumbers, [pattern]);
+    expect(completedPatternIds).toContain('pattern-1');
+    const numbers = winner.grid.flat().filter((v: number | null) => v !== null);
+    expect(new Set(numbers).size).toBe(numbers.length);
+  });
+
+  it('holds (returns null) when there is no eligible bot to synthesize a win onto', () => {
+    const { service } = makeService({ rooms: [] });
+    const pattern = { id: 'pattern-1', patternType: 'any_line' } as any;
+
+    const winner = (service as any).pickBotRedirectWinner([], new Set(['bot-1']), pattern, [1, 2, 3], 75);
+
+    expect(winner).toBeNull();
   });
 
   it('randomizes Derash bot winners while skipping the previous room bot winner', () => {

@@ -13,6 +13,8 @@ const STATUS_BADGE: Record<string, string> = {
 
 const PAYMENT_METHODS: AgentSettlementPaymentMethod[] = ['bank_transfer', 'cash', 'mobile_money', 'other'];
 
+type SettlementFilter = 'all' | 'agent_requests' | 'pending';
+
 export function SettlementsAdmin() {
   const [agents, setAgents] = useState<User[]>([]);
   const [settlements, setSettlements] = useState<AgentSettlement[]>([]);
@@ -20,6 +22,7 @@ export function SettlementsAdmin() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [filter, setFilter] = useState<SettlementFilter>('all');
 
   const [newAgentId, setNewAgentId] = useState('');
   const [newPeriodStart, setNewPeriodStart] = useState('');
@@ -131,6 +134,13 @@ export function SettlementsAdmin() {
     }));
   };
 
+  const pendingAgentRequests = settlements.filter((s) => s.requestedByAgent && s.status === 'pending');
+  const visibleSettlements = settlements.filter((s) => {
+    if (filter === 'agent_requests') return s.requestedByAgent;
+    if (filter === 'pending') return s.status === 'pending';
+    return true;
+  });
+
   return (
     <div className="stack-lg">
       <div className="adm-panel">
@@ -141,6 +151,32 @@ export function SettlementsAdmin() {
           A settlement is a real-world payout to an agent, kept separate from what they've earned — recording
           one doesn't touch their in-app wallet balance.
         </p>
+
+        {pendingAgentRequests.length > 0 && (
+          <div
+            style={{
+              margin: '0 16px 12px', padding: '10px 14px', borderRadius: 10,
+              background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)',
+              display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600,
+            }}
+          >
+            {pendingAgentRequests.length} settlement request{pendingAgentRequests.length === 1 ? '' : 's'} from agents awaiting review
+            <button className="adm-btn" style={{ marginLeft: 'auto' }} onClick={() => setFilter('agent_requests')}>Review</button>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 6, padding: '0 16px 12px' }}>
+          {(['all', 'agent_requests', 'pending'] as SettlementFilter[]).map((f) => (
+            <button
+              key={f}
+              className="adm-btn"
+              style={filter === f ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' } : undefined}
+              onClick={() => setFilter(f)}
+            >
+              {f === 'all' ? 'All' : f === 'agent_requests' ? 'Agent Requests' : 'Pending'}
+            </button>
+          ))}
+        </div>
 
         {error && <div className="adm-error-box" style={{ margin: '12px 16px' }}>{error}</div>}
 
@@ -173,17 +209,20 @@ export function SettlementsAdmin() {
 
         {loading ? (
           <div className="adm-empty">Loading settlements…</div>
-        ) : settlements.length === 0 ? (
-          <div className="adm-empty">No settlements recorded yet.</div>
+        ) : visibleSettlements.length === 0 ? (
+          <div className="adm-empty">{settlements.length === 0 ? 'No settlements recorded yet.' : 'No settlements match this filter.'}</div>
         ) : (
           <div className="adm-list">
-            {settlements.map((s) => {
+            {visibleSettlements.map((s) => {
               const form = payForm[s.id] ?? { paymentMethod: 'bank_transfer' as AgentSettlementPaymentMethod, ftNumber: '', receiptFile: null, paidAt: '', amountPaidMinor: '' };
               return (
                 <div key={s.id} className="adm-w-row">
                   <div className="adm-w-main" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
                     <div className="adm-w-info">
-                      <strong>{s.agent?.displayName ?? s.agentId.slice(0, 8)}</strong>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <strong>{s.agent?.displayName ?? s.agentId.slice(0, 8)}</strong>
+                        {s.requestedByAgent && <span className="badge badge-gray">Agent request</span>}
+                      </div>
                       <span className="adm-td-muted">{formatDateTime(s.periodStart)} – {formatDateTime(s.periodEnd)}</span>
                       <span className="adm-td-muted">Earned {formatCreditsFull(s.totalEarnedMinor)} · Paid {formatCreditsFull(s.amountPaidMinor)}</span>
                     </div>

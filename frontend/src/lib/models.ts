@@ -173,6 +173,25 @@ export type BingoPatternPrize = {
   prizeMinor: number;
 };
 
+/** A 'running' room whose draw has stopped making progress — see
+ * BingoService.findStalledRunningRooms on the backend for what this means. */
+export type BingoStalledRoom = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  stalledSeconds: number;
+};
+
+export type BingoOperationalAlertKind = 'pattern_resolution_failed';
+
+export type BingoOperationalAlert = {
+  id: string;
+  kind: BingoOperationalAlertKind;
+  roomId?: string | null;
+  message: string;
+  createdAt: string;
+};
+
 export type BingoRoom = {
   id: string;
   name: string;

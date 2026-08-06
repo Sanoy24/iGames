@@ -130,6 +130,24 @@ export class BingoAdminController {
     return this.bingoService.getRoomAdminDetails(roomId);
   }
 
+  /** Rooms that are 'running' but haven't successfully drawn in a while — see
+   * BingoService.findStalledRunningRooms for what "stopped progressing" means. */
+  @Get('rooms/stalled')
+  @ApiOkResponse({ description: 'Running rooms whose draw has stopped making progress (a repeatedly-failing draw, etc).' })
+  async listStalledRooms() {
+    const cfg = await this.bingoService.getBingoConfig();
+    const thresholdSeconds = Math.max(20, 5 * Math.max(1, cfg.drawIntervalSeconds ?? 2));
+    return this.bingoService.findStalledRunningRooms(thresholdSeconds);
+  }
+
+  /** Recent operational alerts (misconfiguration/failure traces that would
+   * otherwise only be visible in server logs). */
+  @Get('alerts')
+  @ApiOkResponse({ description: 'Recent Bingo operational alerts, most-recent-first.' })
+  listAlerts() {
+    return this.bingoService.listOperationalAlerts();
+  }
+
   @Post('rooms/:id/cancel')
   async cancelRoom(@Param('id') roomId: string) {
     const room = await this.bingoService.cancelRoom(roomId);

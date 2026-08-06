@@ -21,6 +21,7 @@ import { CreateBingoPatternDto, UpdateBingoPatternDto } from './dto/create-bingo
 import { BingoConfig } from './entities/bingo-config.entity';
 import { BingoCustomRoomSlot } from './entities/bingo-custom-room-slot.entity';
 import { CommissionSettlementError } from './entities/commission-settlement-error.entity';
+import { BingoOperationalAlert } from './entities/bingo-operational-alert.entity';
 import { BingoBotIdentity, BingoRoom, BingoPrizeTier, BingoPrizeConfig, BingoPatternPrize, BingoWinMode } from './entities/bingo-room.entity';
 import { BingoGrid, BingoTicket } from './entities/bingo-ticket.entity';
 import { isValidCardPaletteId, randomCardBallNumber, randomCardBallNumberAvoiding, randomCardPaletteId } from './bingo-card-palette.util';
@@ -195,6 +196,8 @@ export class BingoService implements OnModuleInit {
     private readonly bingoCustomRoomSlotRepository: Repository<BingoCustomRoomSlot>,
     @InjectRepository(CommissionSettlementError)
     private readonly commissionSettlementErrorRepository: Repository<CommissionSettlementError>,
+    @InjectRepository(BingoOperationalAlert)
+    private readonly bingoOperationalAlertRepository: Repository<BingoOperationalAlert>,
     @InjectRepository(BingoPattern)
     private readonly bingoPatternRepository: Repository<BingoPattern>,
     private readonly bingoRulesService: BingoRulesService,
@@ -203,6 +206,11 @@ export class BingoService implements OnModuleInit {
     private readonly notificationsService: NotificationsService,
     private readonly gamesService: GamesService
   ) {}
+
+  // Config-level pattern-resolution failures apply to every room identically, so
+  // throttle by `${place}:${id}` rather than per-room — otherwise a persistent
+  // misconfiguration would log/alert once per open place per draw per room.
+  private readonly patternResolutionAlertLastLoggedAt = new Map<string, number>();
 
   async onModuleInit(): Promise<void> {
     try {
@@ -228,6 +236,13 @@ export class BingoService implements OnModuleInit {
   async updatePattern(id: string, dto: UpdateBingoPatternDto): Promise<BingoPattern> {
     const pattern = await this.bingoPatternRepository.findOneBy({ id });
     if (!pattern) throw new NotFoundException('Bingo pattern not found');
+    // The derash fallback (resolvePrefilledPlacePattern) hardcodes a lookup by
+    // NAME for "Any Line" when no per-place pattern is configured — renaming the
+    // built-in pattern would silently break that fallback for every room, with no
+    // error anywhere (the place would just stop settling). Block it here instead.
+    if (pattern.isBuiltIn && dto.name !== undefined && dto.name !== pattern.name) {
+      throw new BadRequestException('Built-in pattern names cannot be changed');
+    }
     Object.assign(pattern, dto);
     return this.bingoPatternRepository.save(pattern);
   }
@@ -236,6 +251,24 @@ export class BingoService implements OnModuleInit {
     const pattern = await this.bingoPatternRepository.findOneBy({ id });
     if (!pattern) throw new NotFoundException('Bingo pattern not found');
     if (pattern.isBuiltIn) throw new BadRequestException('Built-in patterns cannot be deleted');
+    const cfg = await this.getBingoConfig();
+    const referencingPlaces = (
+      [
+        ['1st', cfg.prefilledFirstPatternId],
+        ['2nd', cfg.prefilledSecondPatternId],
+        ['3rd', cfg.prefilledThirdPatternId],
+        ['4th', cfg.prefilledFourthPatternId],
+        ['5th', cfg.prefilledFifthPatternId],
+        ['default', cfg.prefilledWinPatternId],
+      ] as const
+    )
+      .filter(([, patternId]) => patternId === id)
+      .map(([place]) => place);
+    if (referencingPlaces.length > 0) {
+      throw new BadRequestException(
+        `Pattern is still configured for: ${referencingPlaces.join(', ')}. Reassign those places to a different pattern first.`,
+      );
+    }
     await this.bingoPatternRepository.remove(pattern);
   }
 
@@ -918,6 +951,27 @@ export class BingoService implements OnModuleInit {
   async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
     const cfg = await this.getBingoConfig();
     Object.assign(cfg, dto);
+    // A stale/typo'd pattern id here is otherwise invisible until draw time, where
+    // resolvePrefilledPlacePattern silently skips the place forever (no log, no
+    // error) — catch it here instead, at the moment it's introduced.
+    const configuredPatternIds = (
+      [
+        cfg.prefilledWinPatternId,
+        cfg.prefilledFirstPatternId,
+        cfg.prefilledSecondPatternId,
+        cfg.prefilledThirdPatternId,
+        cfg.prefilledFourthPatternId,
+        cfg.prefilledFifthPatternId,
+      ] as Array<string | null | undefined>
+    ).filter((id): id is string => !!id);
+    if (configuredPatternIds.length > 0) {
+      const found = await this.bingoPatternRepository.findBy({ id: In(configuredPatternIds) });
+      const foundIds = new Set(found.map((p) => p.id));
+      const missing = [...new Set(configuredPatternIds)].filter((id) => !foundIds.has(id));
+      if (missing.length > 0) {
+        throw new BadRequestException(`Unknown Bingo pattern id(s): ${missing.join(', ')}`);
+      }
+    }
     if (cfg.botWinMode === 'cartel-dual') {
       const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
       const activeBingoBots = await this.getActiveBotUserIds(this.bingoRoomRepository.manager);
@@ -1532,6 +1586,40 @@ export class BingoService implements OnModuleInit {
       [seconds],
     );
     return rows.map((r) => r.id);
+  }
+
+  /**
+   * Rooms stuck mid-round: `status='running'` but `updatedAt` hasn't advanced in
+   * a while. A room's `updatedAt` only moves on a SUCCESSFUL draw
+   * (`drawNextNumber`'s transaction), so a room whose draw keeps throwing and
+   * rolling back (the scheduler retries forever, logging an error each time —
+   * see `BingoScheduler.drawNextNumbers`) sits here indefinitely with no other
+   * signal anywhere that anything is wrong. This is a generic "stopped making
+   * progress" detector — it doesn't need to know why a room stalled, so it also
+   * catches failure modes beyond the one that motivated it.
+   */
+  async findStalledRunningRooms(
+    thresholdSeconds: number,
+  ): Promise<Array<{ id: string; name: string; updatedAt: Date; stalledSeconds: number }>> {
+    const seconds = Math.max(1, thresholdSeconds);
+    const rows: Array<{ id: string; name: string; updatedAt: Date; stalledSeconds: number | string }> =
+      await this.bingoRoomRepository.query(
+        `SELECT id, name, updatedAt, TIMESTAMPDIFF(SECOND, updatedAt, NOW()) stalledSeconds
+           FROM bingo_rooms
+          WHERE status = 'running' AND updatedAt <= (NOW() - INTERVAL ? SECOND)
+          ORDER BY updatedAt ASC`,
+        [seconds],
+      );
+    return rows.map((r) => ({ ...r, stalledSeconds: Number(r.stalledSeconds) }));
+  }
+
+  /** Recent operational alerts (see BingoOperationalAlert), most-recent-first. */
+  async listOperationalAlerts(limit = 100): Promise<BingoOperationalAlert[]> {
+    const safeLimit = Math.min(Math.max(limit || 100, 1), 200);
+    return this.bingoOperationalAlertRepository.find({
+      order: { createdAt: 'DESC' },
+      take: safeLimit,
+    });
   }
 
   async findRoomsToStart(): Promise<BingoRoomResponse[]> {
@@ -2227,6 +2315,14 @@ export class BingoService implements OnModuleInit {
       }),
     );
 
+    // Only meaningful for a still-'running' room — a stopped-progressing room is
+    // the symptom of a draw that keeps failing and rolling back (see
+    // findStalledRunningRooms's doc comment). 0 for any other status.
+    const stalledSeconds =
+      room.status === 'running'
+        ? Math.max(0, Math.floor((Date.now() - room.updatedAt.getTime()) / 1000))
+        : 0;
+
     return {
       room: {
         ...roomResponse,
@@ -2234,6 +2330,8 @@ export class BingoService implements OnModuleInit {
         rngAuditLogIds: room.rngAuditLogIds ?? [],
         botIdentityMap: room.botIdentityMap ?? {},
         createdAt: room.createdAt,
+        updatedAt: room.updatedAt,
+        stalledSeconds,
       },
       totals: {
         soldTickets,
@@ -2866,7 +2964,7 @@ export class BingoService implements OnModuleInit {
     // (weight / enabled-total); the pool is topped up to weight / FILLED-total at
     // completion by reconcileDerashPool, so unfilled places never leak to the house.
     for (const place of this.openPrefilledPlaces(room, cfg)) {
-      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager, room.id);
       if (!pattern) continue;
 
       const winnerCandidates = this.pickDerashAutoWinnerCandidates({
@@ -2964,7 +3062,7 @@ export class BingoService implements OnModuleInit {
           .sort((a, b) => a - b);
       }
       for (const place of this.openPrefilledPlaces(room, cfg)) {
-        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager, room.id);
         if (!pattern) continue;
         const dqWinner = pendingDq.find((t) =>
           this.bingoRulesService
@@ -3024,7 +3122,7 @@ export class BingoService implements OnModuleInit {
 
     let ended = room.drawnNumbers.length >= maxNumber;
     if (!ended && room.drawnNumbers.length >= minDrawsBeforeWin) {
-      const firstPattern = await this.resolvePrefilledPlacePattern(cfg, '1st', manager);
+      const firstPattern = await this.resolvePrefilledPlacePattern(cfg, '1st', manager, room.id);
       if (firstPattern) {
         ended = inPlay.some((t) =>
           this.bingoRulesService
@@ -3077,7 +3175,7 @@ export class BingoService implements OnModuleInit {
 
     const placePattern = new Map<PrefilledPlace, BingoPattern>();
     for (const place of places) {
-      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+      const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager, room.id);
       if (pattern) placePattern.set(place, pattern);
     }
     if (placePattern.size === 0) return;
@@ -3601,7 +3699,7 @@ export class BingoService implements OnModuleInit {
       // Does the card complete ANY enabled winning pattern right now?
       const cardHasBingo = async (): Promise<boolean> => {
         for (const place of this.openPrefilledPlaces(room, cfg)) {
-          const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+          const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager, room.id);
           if (completesPattern(pattern)) return true;
         }
         return false;
@@ -3673,7 +3771,7 @@ export class BingoService implements OnModuleInit {
       let callerWonAny = false;
       let heldByCartelDual = false;
       for (const place of this.openPrefilledPlaces(room, cfg)) {
-        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager);
+        const pattern = await this.resolvePrefilledPlacePattern(cfg, place, manager, room.id);
         if (!completesPattern(pattern)) continue;
         let awardee = ticket;
         const cartelContext = await getCartelDualContext();
@@ -3794,6 +3892,7 @@ export class BingoService implements OnModuleInit {
     cfg: BingoConfig,
     place: PrefilledPlace,
     manager: EntityManager,
+    roomId: string,
   ): Promise<BingoPattern | null> {
     const perPlaceId: Record<PrefilledPlace, string | null | undefined> = {
       '1st': cfg.prefilledFirstPatternId,
@@ -3807,7 +3906,32 @@ export class BingoService implements OnModuleInit {
       const chosen = await manager.findOne(BingoPattern, { where: { id } });
       if (chosen) return chosen;
     }
-    return manager.findOne(BingoPattern, { where: { name: 'Any Line' } });
+    const fallback = await manager.findOne(BingoPattern, { where: { name: 'Any Line' } });
+    if (fallback) return fallback;
+
+    // Genuinely unresolvable: the configured id (if any) doesn't exist AND the
+    // hardcoded "Any Line" fallback is missing too. Without this, the place is
+    // silently skipped forever, every draw, with no trace anywhere. Throttled
+    // per (place, id) — this is a config-level failure, identical for every room,
+    // so logging it on every draw of every room would just be noise.
+    const throttleKey = `${place}:${id ?? 'fallback'}`;
+    const lastLoggedAt = this.patternResolutionAlertLastLoggedAt.get(throttleKey) ?? 0;
+    const now = Date.now();
+    if (now - lastLoggedAt > 10 * 60 * 1000) {
+      this.patternResolutionAlertLastLoggedAt.set(throttleKey, now);
+      const message = `Cannot resolve a winning pattern for place ${place} (configured id: ${id ?? 'none'}, and no fallback "Any Line" pattern exists) — this place will not settle until fixed.`;
+      this.logger.error(`[room ${roomId}] ${message}`);
+      await this.bingoOperationalAlertRepository
+        .save(
+          this.bingoOperationalAlertRepository.create({
+            kind: 'pattern_resolution_failed',
+            roomId,
+            message,
+          }),
+        )
+        .catch(() => undefined);
+    }
+    return null;
   }
 
   /**

@@ -616,6 +616,7 @@ function CurrentBallDisplay({
     count,
     max,
     catchingUp,
+    catchupKind,
 }: {
     drawnNumbers: number[];
     isPatternMode: boolean;
@@ -623,6 +624,7 @@ function CurrentBallDisplay({
     count: number;
     max: number;
     catchingUp?: boolean;
+    catchupKind?: 'live' | 'completed';
 }) {
     const { t } = useTranslation();
     // `drawnNumbers` is the parent's already-paced "revealed" list, so the last
@@ -638,11 +640,17 @@ function CurrentBallDisplay({
             : '';
 
     if (status === 'completed') {
+        // While the paced reveal is still catching the card up to the round's
+        // actual final state, say so explicitly instead of declaring "complete"
+        // over a board that's visibly still filling in.
+        const replaying = catchingUp && catchupKind === 'completed';
         return (
             <div className='flex flex-col items-center gap-1.5 py-2'>
                 <Trophy size={24} className='text-amber-400' />
-                <span className='text-[10px] font-black text-amber-500 uppercase tracking-widest'>
-                    {t('bingo.drawComplete')}
+                <span
+                    className={`text-[10px] font-black uppercase tracking-widest ${replaying ? 'text-amber-400' : 'text-amber-500'}`}
+                >
+                    {replaying ? t('bingo.replayingResult') : t('bingo.drawComplete')}
                 </span>
                 <span className='text-[9px] font-mono text-slate-500'>
                     {t('bingo.numbersCalled', { count, max })}
@@ -2651,8 +2659,10 @@ export function Bingo({ onBack }: BingoProps) {
     // ── Paced reveal ─────────────────────────────────────────────────────────────
     // One shared cursor drives "now calling", the board and every card so they all
     // advance TOGETHER, one ball at a time at a readable pace — even when a poll
-    // delivers several numbers at once. Snap to full on room switch (no history
-    // replay) and on completion (show the final state immediately).
+    // delivers several numbers at once. Snap instantly to full only on room switch
+    // (no history replay) or cancellation. On completion, reveal keeps pacing
+    // through (see the effect below) so the card never jumps to "done" ahead of
+    // the round actually resolving.
     const [revealedCount, setRevealedCount] = useState(0);
     const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     // Server's actual draw cadence, learned from the most recent draw event.
@@ -2661,12 +2671,25 @@ export function Bingo({ onBack }: BingoProps) {
     // True briefly right after a large-backlog snap, so the UI can show "Catching
     // up…" instead of letting the jump look like an unexplained teleport.
     const [isCatchingUp, setIsCatchingUp] = useState(false);
+    // Distinguishes "you fell behind a still-live game" from "you're seeing the
+    // recap of a round that already ended" — same jump-forward mechanics, but the
+    // second one must never read as if it just happened live.
+    const [catchupKind, setCatchupKind] = useState<'live' | 'completed'>('live');
     const catchupBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Mirrors isCatchingUp/catchupKind for processNextReveal (a stable useCallback)
+    // to read without needing them in its dependency list.
+    const replayingCompletedRef = useRef(false);
+    useEffect(() => {
+        replayingCompletedRef.current = isCatchingUp && catchupKind === 'completed';
+    }, [isCatchingUp, catchupKind]);
 
     const processNextReveal = useCallback(() => {
         revealTimerRef.current = null;
         setRevealedCount((c) => c + 1);
-        soundEngine.pop();
+        // A tick playing out during a "replaying an already-decided round" catch-up
+        // is narrating balls drawn seconds/minutes ago — keep the visual marking
+        // (honest, unchanged) but skip the "live call" sound cue for it.
+        if (!replayingCompletedRef.current) soundEngine.pop();
     }, []);
 
     useEffect(() => {
@@ -2675,8 +2698,8 @@ export function Bingo({ onBack }: BingoProps) {
 
     useEffect(() => {
         const total = drawnNumbers.length;
-        // Snap to the final state on completion/cancel (no replay) and clamp any overshoot.
-        if (room?.status === 'completed' || room?.status === 'cancelled') {
+        // Cancelled rooms have no result to narrate — snap immediately, nothing lost.
+        if (room?.status === 'cancelled') {
             if (revealTimerRef.current) {
                 clearTimeout(revealTimerRef.current);
                 revealTimerRef.current = null;
@@ -2695,6 +2718,13 @@ export function Bingo({ onBack }: BingoProps) {
         // from the fast socket arrivals.
         if (revealTimerRef.current) return;
 
+        // A completed room falls through to the SAME backlog/steady-cadence logic
+        // below as a still-running one — no special instant snap. A card that was
+        // already keeping up finishes marking at the same pace it ran all round
+        // (landing "fully marked" around when the first win popup arms, never
+        // before); a card that had fallen behind (backgrounded tab, dropped
+        // socket) correctly falls into the catch-up branch instead of silently
+        // jumping to the final state with no explanation.
         const backlog = total - revealedCount;
         if (backlog > REVEAL_CATCHUP_BACKLOG) {
             // Fell far behind — jump straight to near-live instead of animating
@@ -2704,6 +2734,7 @@ export function Bingo({ onBack }: BingoProps) {
             const target = Math.max(0, total - CATCHUP_TAIL);
             setRevealedCount(target);
             setIsCatchingUp(true);
+            setCatchupKind(room?.status === 'completed' ? 'completed' : 'live');
             if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
             catchupBadgeTimerRef.current = setTimeout(() => setIsCatchingUp(false), CATCHUP_BADGE_MS);
             return;
@@ -2764,6 +2795,16 @@ export function Bingo({ onBack }: BingoProps) {
         () => new Set(drawnNumbers.slice(0, ticketCount)),
         [drawnNumbers, ticketCount],
     );
+
+    // True for the whole stretch between a round ending and its last place's win
+    // popup closing — including the silent gaps before a popup arms and between
+    // successive popups, which neither LivePlaceWinPopup nor RoomResultOverlay
+    // covers on their own. Keyed off the same signal RoomResultOverlay already
+    // gates on (livePlaceQueue.length === 0) so the two stay in sync without a
+    // second independent timer. Always-mounted while true — never itself a source
+    // of a gap — so the player never sees a fully-marked card with nothing
+    // acknowledging the round is being resolved.
+    const resultsRevealing = room?.status === 'completed' && livePlaceQueue.length > 0;
 
     // When a place is won, the server already knows the winner.
     // We intentionally do NOT snap the paced reveal here to keep the drawing uniform.
@@ -3379,7 +3420,17 @@ export function Bingo({ onBack }: BingoProps) {
                                         count={revealedNumbers.length}
                                         max={ballCount}
                                         catchingUp={isCatchingUp}
+                                        catchupKind={catchupKind}
                                     />
+                                    {/* Always-mounted (no arm/disarm timer of its own) so it
+                                  bridges the real gaps before/between win popups — the round
+                                  ending must never look like nothing is happening. */}
+                                    {resultsRevealing && (
+                                        <div className='flex items-center gap-1.5 text-[8px] font-black uppercase tracking-wide text-emerald-400'>
+                                            <span className='w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse' />
+                                            {t('bingo.resultsRevealing')}
+                                        </div>
+                                    )}
                                     {phase === 'buy' &&
                                         (timeRemainingSecs !== null ? (
                                             <div className='mt-1 text-center'>

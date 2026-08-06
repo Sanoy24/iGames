@@ -131,9 +131,11 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
 
   const mockPatternRepo = {
     find: jest.fn().mockResolvedValue([]),
+    findBy: jest.fn().mockResolvedValue([]),
     findOneBy: jest.fn().mockResolvedValue(null),
     save: jest.fn().mockImplementation((p) => Promise.resolve(p)),
     create: jest.fn().mockImplementation((dto) => dto),
+    remove: jest.fn().mockResolvedValue(undefined),
   };
 
   const mockCustomRoomSlotRepo = {
@@ -150,6 +152,12 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     create: jest.fn().mockImplementation((dto) => dto),
   };
 
+  const mockOperationalAlertRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
+    create: jest.fn().mockImplementation((dto) => dto),
+  };
+
   const walletService = { debitInSession: jest.fn(), creditInSession: jest.fn() };
   const dataSource = { transaction: jest.fn() as any };
 
@@ -162,6 +170,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     mockConfigRepo as any,
     mockCustomRoomSlotRepo as any,
     mockCommissionSettlementErrorRepo as any,
+    mockOperationalAlertRepo as any,
     mockPatternRepo as any,
     new (require('./bingo-rules.service').BingoRulesService)(),
     { drawUniqueNumbers: jest.fn() } as any,
@@ -170,7 +179,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
   );
 
-  return { service, mockRoomRepo, mockBotNameRepo, mockTicketRepo, mockCardRepo, mockConfigRepo, mockPatternRepo, walletService, dataSource };
+  return { service, mockRoomRepo, mockBotNameRepo, mockTicketRepo, mockCardRepo, mockConfigRepo, mockPatternRepo, mockOperationalAlertRepo, walletService, dataSource };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -385,6 +394,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40, resultDisplaySeconds: 10, enabled: true, defaultTicketPriceMinor: 100, defaultMaxTickets: 100, defaultOneLineMinor: 5000, defaultTwoLinesMinor: 10000, defaultFullHouseMinor: 20000, autoRepeatIntervalMinutes: 5, minTicketsToStart: 1 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
       { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
       { save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
+      { find: jest.fn().mockResolvedValue([]), save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
@@ -420,6 +430,7 @@ describe('BingoService.findRunningRoomIdsDue — unit', () => {
       { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
       { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
       { save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
+      { find: jest.fn().mockResolvedValue([]), save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
       { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
       new (require('./bingo-rules.service').BingoRulesService)(),
       { drawUniqueNumbers: jest.fn() } as any,
@@ -1963,5 +1974,136 @@ describe('BingoService.setAutoClaim — active-card scope', () => {
       { userId: '550e8400-e29b-41d4-a716-446655440099', roomId: '550e8400-e29b-41d4-a716-446655440088', status: 'active' },
       { autoClaim: true },
     );
+  });
+});
+
+// ─── Pattern-resolution hardening (prevent + detect a silently-broken place) ───
+describe('BingoService — pattern-resolution hardening', () => {
+  it('updatePattern rejects renaming a built-in pattern', async () => {
+    const { service, mockPatternRepo } = makeService({ rooms: [] });
+    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p1', isBuiltIn: true, name: 'Any Line' });
+
+    await expect(service.updatePattern('p1', { name: 'Not Any Line' } as any)).rejects.toThrow(
+      'Built-in pattern names cannot be changed',
+    );
+    expect(mockPatternRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('updatePattern still allows other fields to change on a built-in pattern', async () => {
+    const { service, mockPatternRepo } = makeService({ rooms: [] });
+    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p1', isBuiltIn: true, name: 'Any Line', enabled: true });
+
+    await service.updatePattern('p1', { enabled: false } as any);
+
+    expect(mockPatternRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'p1', enabled: false }),
+    );
+  });
+
+  it('deletePattern rejects removing a pattern still referenced by the config', async () => {
+    const { service, mockPatternRepo } = makeService({ rooms: [] });
+    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p2', isBuiltIn: false, name: 'Custom' });
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+      key: 'global',
+      prefilledSecondPatternId: 'p2',
+    } as any);
+
+    await expect(service.deletePattern('p2')).rejects.toThrow('2nd');
+    expect(mockPatternRepo.remove).not.toHaveBeenCalled();
+  });
+
+  it('deletePattern succeeds for a custom pattern no place references', async () => {
+    const { service, mockPatternRepo } = makeService({ rooms: [] });
+    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p3', isBuiltIn: false, name: 'Custom' });
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+      key: 'global',
+      prefilledFirstPatternId: 'some-other-id',
+    } as any);
+
+    await service.deletePattern('p3');
+
+    expect(mockPatternRepo.remove).toHaveBeenCalled();
+  });
+
+  it('updateBingoConfig rejects an unresolvable pattern id', async () => {
+    const { service, mockConfigRepo, mockPatternRepo } = makeService({ rooms: [] });
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({ key: 'global' } as any);
+    mockPatternRepo.findBy.mockResolvedValue([]); // nothing matches
+    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
+
+    await expect(
+      service.updateBingoConfig({ prefilledFirstPatternId: 'does-not-exist' } as any),
+    ).rejects.toThrow('Unknown Bingo pattern id(s)');
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it('updateBingoConfig accepts a pattern id that resolves', async () => {
+    const { service, mockConfigRepo, mockPatternRepo } = makeService({ rooms: [] });
+    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({ key: 'global' } as any);
+    mockPatternRepo.findBy.mockResolvedValue([{ id: 'valid-id' }]);
+    jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(null);
+
+    await service.updateBingoConfig({ prefilledFirstPatternId: 'valid-id' } as any);
+
+    expect(mockConfigRepo.save).toHaveBeenCalled();
+  });
+
+  it('resolvePrefilledPlacePattern logs and records an alert when it cannot resolve any pattern, but only once within the throttle window', async () => {
+    const { service, mockOperationalAlertRepo } = makeService({ rooms: [] });
+    const manager = { findOne: jest.fn().mockResolvedValue(null) } as any;
+    const cfg = { prefilledFirstPatternId: 'missing-id' } as any;
+
+    const first = await (service as any).resolvePrefilledPlacePattern(cfg, '1st', manager, 'room-1');
+    const second = await (service as any).resolvePrefilledPlacePattern(cfg, '1st', manager, 'room-2');
+
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    // Config-level failure — throttled by (place, id), not by room, so the
+    // second call (a different room, same misconfiguration) doesn't re-alert.
+    expect(mockOperationalAlertRepo.save).toHaveBeenCalledTimes(1);
+    expect(mockOperationalAlertRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'pattern_resolution_failed' }),
+    );
+  });
+
+  it('resolvePrefilledPlacePattern resolves normally when a pattern is found', async () => {
+    const { service } = makeService({ rooms: [] });
+    const pattern = { id: 'p1', name: 'Any Line' };
+    const manager = { findOne: jest.fn().mockResolvedValue(pattern) } as any;
+    const cfg = { prefilledFirstPatternId: 'p1' } as any;
+
+    const resolved = await (service as any).resolvePrefilledPlacePattern(cfg, '1st', manager, 'room-1');
+
+    expect(resolved).toBe(pattern);
+  });
+});
+
+// ─── Stalled-room / operational-alert observability (admin visibility) ────────
+describe('BingoService — operational observability', () => {
+  it('findStalledRunningRooms queries running rooms whose updatedAt is stale', async () => {
+    const { service, mockRoomRepo } = makeService({ rooms: [] });
+    const staleRow = { id: 'room-1', name: 'Stuck Room', updatedAt: new Date(), stalledSeconds: '45' };
+    mockRoomRepo.query.mockResolvedValue([staleRow]);
+
+    const result = await service.findStalledRunningRooms(20);
+
+    expect(mockRoomRepo.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'running'"),
+      [20],
+    );
+    expect(result).toEqual([{ ...staleRow, stalledSeconds: 45 }]);
+  });
+
+  it('listOperationalAlerts returns recent alerts most-recent-first', async () => {
+    const { service, mockOperationalAlertRepo } = makeService({ rooms: [] });
+    const rows = [{ id: 'a1' }, { id: 'a2' }];
+    mockOperationalAlertRepo.find.mockResolvedValue(rows);
+
+    const result = await service.listOperationalAlerts();
+
+    expect(mockOperationalAlertRepo.find).toHaveBeenCalledWith(
+      expect.objectContaining({ order: { createdAt: 'DESC' } }),
+    );
+    expect(result).toBe(rows);
   });
 });

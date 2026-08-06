@@ -2,11 +2,13 @@ import axios from 'axios';
 import type {
   AuthTokenResponse,
   BingoConfig,
+  BingoOperationalAlert,
   BingoPattern,
   BingoRoom,
   BingoRoomSlot,
   BingoCustomRoomSlot,
   BingoRoomState,
+  BingoStalledRoom,
   BingoTicket,
   CrashBet,
   CrashConfig,
@@ -722,6 +724,12 @@ export const adminBingoApi = {
     api.delete(`/admin/bingo/patterns/${id}`).then((r) => r.data),
   seedPatterns: () =>
     api.post<BingoPattern[]>('/admin/bingo/patterns/seed').then((r) => r.data),
+  /** Running rooms whose draw has stopped making progress. */
+  listStalledRooms: () =>
+    api.get<BingoStalledRoom[]>('/admin/bingo/rooms/stalled').then((r) => r.data),
+  /** Recent operational alerts (misconfig/failure traces), most-recent-first. */
+  listAlerts: () =>
+    api.get<BingoOperationalAlert[]>('/admin/bingo/alerts').then((r) => r.data),
 };
 
 // ── Admin: Bots ───────────────────────────────────────────────────

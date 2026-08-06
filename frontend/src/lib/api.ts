@@ -369,6 +369,8 @@ export type PlatformStats = {
   totalPayoutsMinor: number;
   totalRefundsMinor: number;
   totalLiabilitiesMinor: number;
+  /** Slice of totalPayoutsMinor that went to bot-controlled accounts — real, spendable money. */
+  totalBotWinningsMinor: number;
   breakdown: Record<string, number>;
 };
 
@@ -425,6 +427,12 @@ export type AgentPerformance = {
   depositCount: number;
   depositVolumeMinor: number;
   depositCommissionEarnedMinor: number;
+  /** Referral commission + withdrawal fees — matches what settlements are computed from. */
+  totalEarningsMinor: number;
+  /** Sum of settlements actually paid out (status = 'paid'). */
+  totalSettledMinor: number;
+  /** totalEarningsMinor minus everything already claimed (paid, pending, or approved). */
+  remainingMinor: number;
 };
 
 export type AgentSelfPerformance = {
@@ -1438,7 +1446,7 @@ export default api;
   
 export const adminGameTransactionsApi = {
   getGameTransactions: (page?: number, limit?: number) =>
-    api.get<{ data: any[], total: number }>('/admin/game-transactions', { params: { page, limit } }).then((r) => r.data)
+    api.get<{ data: any[], total: number, totalBotWinMinor: number }>('/admin/game-transactions', { params: { page, limit } }).then((r) => r.data)
 };
 
 export const adminDepositsApi = {

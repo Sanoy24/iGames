@@ -208,6 +208,7 @@ function OverviewAdmin() {
         <Kpi label="Total Volume"          value={formatCreditsFull(stats.totalVolumeMinor)} color="#6366f1" icon={<Coins size={16} />} />
         <Kpi label="Total Payouts"         value={formatCreditsFull(stats.totalPayoutsMinor)} color="#ef4444" icon={<Wallet size={16} />} />
         <Kpi label="Total Liabilities"     value={formatCreditsFull(stats.totalLiabilitiesMinor)} color="#f59e0b" icon={<Shield size={16} />} />
+        <Kpi label="Bot Winnings (real money)" value={formatCreditsFull(stats.totalBotWinningsMinor)} color="#a855f7" icon={<Bot size={16} />} />
       </div>
 
       <div className="adm-dash-grid">
@@ -1779,7 +1780,7 @@ function ConfigAdmin() {
           <table className="adm-table">
             <thead>
               <tr className="adm-tr">
-                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Bingo comm.</th><th>Bingo comm. count</th><th>Deposits</th><th>Deposit vol.</th><th>Deposit comm.</th>
+                <th>Agent</th><th>Customers</th><th>Tickets</th><th>Players</th><th>Staked</th><th>Paid out</th><th>GGR (house)</th><th>Bingo comm.</th><th>Bingo comm. count</th><th>Deposits</th><th>Deposit vol.</th><th>Deposit comm.</th><th>Total earnings</th><th>Settled</th><th>Remaining</th>
               </tr>
             </thead>
             <tbody>
@@ -1799,6 +1800,11 @@ function ConfigAdmin() {
                   <td className="adm-td-muted">{p.depositCount}</td>
                   <td>{formatCreditsFull(p.depositVolumeMinor)}</td>
                   <td style={{ color: 'var(--gold, #f59e0b)' }}>{formatCreditsFull(p.depositCommissionEarnedMinor)}</td>
+                  <td><strong>{formatCreditsFull(p.totalEarningsMinor)}</strong></td>
+                  <td style={{ color: 'var(--green)' }}>{formatCreditsFull(p.totalSettledMinor)}</td>
+                  <td style={{ color: p.remainingMinor > 0 ? 'var(--danger)' : 'var(--adm-muted, #888)' }}>
+                    {formatCreditsFull(p.remainingMinor)}
+                  </td>
                 </tr>
               ))}
             </tbody>

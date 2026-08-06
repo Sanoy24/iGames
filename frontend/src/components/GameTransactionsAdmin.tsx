@@ -9,6 +9,7 @@ export function GameTransactionsAdmin() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [totalBotWinMinor, setTotalBotWinMinor] = useState(0);
 
   const limit = 20;
 
@@ -19,6 +20,7 @@ export function GameTransactionsAdmin() {
       const res = await adminGameTransactionsApi.getGameTransactions(page, limit);
       setData(res.data);
       setTotal(res.total);
+      setTotalBotWinMinor(res.totalBotWinMinor);
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
@@ -73,6 +75,11 @@ export function GameTransactionsAdmin() {
       </div>
 
       {error && <div className="adm-error-box" style={{ margin: '12px 16px' }}>{error}</div>}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px 12px' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Total real money bot has won (all time, all Bingo rooms):</span>
+        <span className="badge badge-gold" style={{ fontSize: 13 }}>{formatCreditsFull(totalBotWinMinor)} ETB</span>
+      </div>
 
       <div className="adm-table-wrap">
         <table className="adm-table">

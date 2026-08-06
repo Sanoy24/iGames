@@ -540,14 +540,24 @@ export class AdminService implements OnApplicationBootstrap {
     async getGameTransactions(page: number, limit: number) {
         const skip = (page - 1) * limit;
 
-        const [rooms, total] = await this.dataSource
-            .getRepository(BingoRoom)
-            .findAndCount({
+        const [rooms, total, [botWinRow]] = await Promise.all([
+            this.dataSource.getRepository(BingoRoom).find({
                 where: { status: 'completed' },
                 order: { scheduledStartAt: 'DESC' },
                 skip,
                 take: limit,
-            });
+            }),
+            this.dataSource.getRepository(BingoRoom).count({ where: { status: 'completed' } }),
+            // Lifetime total — across every completed room, not just this page —
+            // so "real money bot win" is visible as a single figure, not something
+            // an admin has to page through and sum by hand.
+            this.dataSource.query(
+                `SELECT COALESCE(SUM(t.payoutMinor), 0) totalBotWin
+                   FROM bingo_tickets t
+                   JOIN users u ON u.id = t.userId
+                  WHERE JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NOT NULL`,
+            ),
+        ]);
 
         const transactions = await Promise.all(
             rooms.map(async (room) => {
@@ -613,7 +623,7 @@ export class AdminService implements OnApplicationBootstrap {
             }),
         );
 
-        return { data: transactions, total, page, limit };
+        return { data: transactions, total, page, limit, totalBotWinMinor: Number(botWinRow?.totalBotWin ?? 0) };
     }
 
     /**
@@ -811,12 +821,24 @@ export class AdminService implements OnApplicationBootstrap {
         // Online users count from socket gateway
         const liveCounts = this.gameEventsGateway.getLiveCounts();
 
+        // Real money paid out to bot-controlled accounts (win-steering payouts,
+        // e.g. Bingo cartel-dual redirects) — a slice of totalPayoutsMinor above,
+        // broken out so it's visible that this liability is real, not cosmetic.
+        const [botWinRow] = await this.dataSource.query(
+            `SELECT COALESCE(SUM(le.amountMinor), 0) totalBotWin
+               FROM ledger_entries le
+               JOIN users u ON u.id = le.userId
+              WHERE le.entryType = 'win' AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NOT NULL`,
+        );
+        const totalBotWinningsMinor = Number(botWinRow?.totalBotWin ?? 0);
+
         return {
             ggrMinor: ggr,
             totalVolumeMinor: totals.ticketPurchases,
             totalPayoutsMinor: totals.payouts,
             totalRefundsMinor: totals.refunds,
             totalLiabilitiesMinor: totalLiabilities,
+            totalBotWinningsMinor,
             breakdown: {
                 ...totals,
                 totalUsers,
@@ -1135,6 +1157,9 @@ export class AdminService implements OnApplicationBootstrap {
             depositCount: number;
             depositVolumeMinor: number;
             depositCommissionEarnedMinor: number;
+            totalEarningsMinor: number;
+            totalSettledMinor: number;
+            remainingMinor: number;
         }>
     > {
         // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
@@ -1159,6 +1184,9 @@ export class AdminService implements OnApplicationBootstrap {
             deposits: string | number;
             depositVolume: string | number;
             depositCommission: string | number;
+            referralCommission: string | number;
+            settledMinor: string | number;
+            claimedMinor: string | number;
         }> = await this.dataSource.query(
             `SELECT u.id, u.displayName,
               COALESCE(c.customers, 0) customers,
@@ -1171,7 +1199,10 @@ export class AdminService implements OnApplicationBootstrap {
               COALESCE(wf.withdrawalFees, 0) withdrawalFees,
               COALESCE(d.deposits, 0) deposits,
               COALESCE(d.depositVolume, 0) depositVolume,
-              COALESCE(dcm.commission, 0) depositCommission
+              COALESCE(dcm.commission, 0) depositCommission,
+              COALESCE(rc.referralCommission, 0) referralCommission,
+              COALESCE(st.settledMinor, 0) settledMinor,
+              COALESCE(st.claimedMinor, 0) claimedMinor
          FROM users u
          LEFT JOIN (
            SELECT t.agentId, COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
@@ -1213,6 +1244,19 @@ export class AdminService implements OnApplicationBootstrap {
             WHERE entryType = 'agent_receipt' AND sourceType = 'deposit_commission'
             GROUP BY userId
          ) dcm ON dcm.userId = u.id
+         LEFT JOIN (
+           SELECT userId, SUM(amountMinor) referralCommission
+             FROM ledger_entries
+            WHERE entryType = 'agent_receipt' AND sourceType = 'bingo_referral_commission'
+            GROUP BY userId
+         ) rc ON rc.userId = u.id
+         LEFT JOIN (
+           SELECT agentId,
+                  SUM(CASE WHEN status = 'paid' THEN amountPaidMinor ELSE 0 END) settledMinor,
+                  SUM(CASE WHEN status IN ('paid', 'pending', 'approved') THEN amountPaidMinor ELSE 0 END) claimedMinor
+             FROM agent_settlements
+            GROUP BY agentId
+         ) st ON st.agentId = u.id
         WHERE JSON_CONTAINS(u.roles, '"agent"')
         ORDER BY staked DESC`,
         );
@@ -1220,6 +1264,14 @@ export class AdminService implements OnApplicationBootstrap {
         return rows.map((r) => {
             const stakedMinor = Number(r.staked ?? 0);
             const payoutMinor = Number(r.payout ?? 0);
+            // Total earnings here matches AgentsService.computeAgentEarnings exactly
+            // (referral commission + withdrawal fees) — NOT the legacy-inclusive
+            // `commission` field above — so it lines up with what settlements
+            // (agent_settlements, computed from that same source) actually claim
+            // against. Using the broader figure would make "remaining" look wrong.
+            const withdrawalFeesEarnedMinor = Number(r.withdrawalFees ?? 0);
+            const totalEarningsMinor = Number(r.referralCommission ?? 0) + withdrawalFeesEarnedMinor;
+            const claimedMinor = Number(r.claimedMinor ?? 0);
             return {
                 agentId: r.id,
                 displayName: r.displayName,
@@ -1231,10 +1283,13 @@ export class AdminService implements OnApplicationBootstrap {
                 ggrMinor: stakedMinor - payoutMinor,
                 commissionEarnedMinor: Number(r.commission ?? 0),
                 commissionEarnedCount: Number(r.commissionCount ?? 0),
-                withdrawalFeesEarnedMinor: Number(r.withdrawalFees ?? 0),
+                withdrawalFeesEarnedMinor,
                 depositCount: Number(r.deposits ?? 0),
                 depositVolumeMinor: Number(r.depositVolume ?? 0),
                 depositCommissionEarnedMinor: Number(r.depositCommission ?? 0),
+                totalEarningsMinor,
+                totalSettledMinor: Number(r.settledMinor ?? 0),
+                remainingMinor: Math.max(0, totalEarningsMinor - claimedMinor),
             };
         });
     }

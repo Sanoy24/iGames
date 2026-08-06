@@ -340,4 +340,62 @@ describe('BingoRulesService', () => {
       expect(completedPatternIds).toContain('p1');
     });
   });
+
+  // ─── explainPatternCompletion ────────────────────────────────────────────
+  describe('explainPatternCompletion', () => {
+    const pattern = (patternType: string, mask?: boolean[][]) =>
+      ({ id: 'p1', patternType, mask }) as any;
+    const cellSet = (cells: Array<{ row: number; col: number }>) =>
+      new Set(cells.map((c) => `${c.row}:${c.col}`));
+
+    // Row 0 complete, row 1 ALSO complete by coincidence (extra numbers drawn
+    // beyond what row 0 needed) — the exact scenario that must not render as
+    // "won by two lines" for an any_line (single-line) pattern.
+    const grid: (number | null)[][] = [
+      [1, 2, 3, 4, 5],
+      [6, 7, 8, 9, 10],
+      [11, 12, null, 13, 14],
+      [15, 16, 17, 18, 19],
+      [20, 21, 22, 23, 24],
+    ];
+    const bothRowsDrawn = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    it('any_line returns exactly one line, not every complete line on the card', () => {
+      const cells = service.explainPatternCompletion(grid, bothRowsDrawn, pattern('any_line'));
+      expect(cells).not.toBeNull();
+      expect(cells).toHaveLength(5);
+      // Every returned cell belongs to a single row (0 or 1), never a mix of both.
+      const rows = new Set(cells!.map((c) => c.row));
+      expect(rows.size).toBe(1);
+    });
+
+    it('any_two_lines returns exactly two lines even if a third happens to be complete', () => {
+      const allRowsDrawn = grid.flat().filter((v): v is number => v !== null);
+      const cells = service.explainPatternCompletion(grid, allRowsDrawn, pattern('any_two_lines'));
+      expect(cells).not.toBeNull();
+      const rows = new Set(cells!.map((c) => c.row));
+      // 2 lines of 5 cells each, minus no overlap (distinct rows) = 2 distinct rows.
+      expect(rows.size).toBe(2);
+    });
+
+    it('returns null when the pattern is not actually completed', () => {
+      const cells = service.explainPatternCompletion(grid, [1, 2, 3], pattern('any_line'));
+      expect(cells).toBeNull();
+    });
+
+    it('fixed mask returns exactly the mask cells', () => {
+      const corners: boolean[][] = [
+        [true, false, false, false, true],
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [true, false, false, false, true],
+      ];
+      const cells = service.explainPatternCompletion(grid, [1, 5, 20, 24], pattern('fixed', corners));
+      expect(cells).not.toBeNull();
+      expect(cellSet(cells!)).toEqual(cellSet([
+        { row: 0, col: 0 }, { row: 0, col: 4 }, { row: 4, col: 0 }, { row: 4, col: 4 },
+      ]));
+    });
+  });
 });

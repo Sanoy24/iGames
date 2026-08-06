@@ -972,11 +972,18 @@ function WinnerBingoCard({
     grid,
     drawnNumbers,
     markedNumbers,
+    winCells,
     lastCalled,
 }: {
     grid: Array<Array<number | null>>;
     drawnNumbers: number[];
     markedNumbers?: number[];
+    /** The exact cells that satisfied the awarded pattern (server-computed).
+     * When present, ONLY these render as the win — a card can legitimately
+     * have extra lines complete by chance, and those must not be shown as if
+     * they were required to win. Falls back to auto-detecting any complete
+     * line when absent (older rooms settled before this field existed). */
+    winCells?: Array<{ row: number; col: number }>;
     lastCalled: number | null;
 }) {
     // Prefer the server's authoritative marked set (the exact cells the win was
@@ -992,21 +999,27 @@ function WinnerBingoCard({
         row.map((cell) => cell === null || hitSet.has(cell)),
     );
     const win = grid.map((row) => row.map(() => false));
-    for (let r = 0; r < rows; r++)
-        if (marked[r].every(Boolean))
-            for (let c = 0; c < cols; c++) win[r][c] = true;
-    for (let c = 0; c < cols; c++)
-        if (marked.every((row) => row[c]))
-            for (let r = 0; r < rows; r++) win[r][c] = true;
-    if (rows === 5 && cols === 5) {
-        if ([0, 1, 2, 3, 4].every((i) => marked[i][i]))
-            [0, 1, 2, 3, 4].forEach((i) => {
-                win[i][i] = true;
-            });
-        if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i]))
-            [0, 1, 2, 3, 4].forEach((i) => {
-                win[i][4 - i] = true;
-            });
+    if (winCells && winCells.length > 0) {
+        for (const { row, col } of winCells) {
+            if (win[row]) win[row][col] = true;
+        }
+    } else {
+        for (let r = 0; r < rows; r++)
+            if (marked[r].every(Boolean))
+                for (let c = 0; c < cols; c++) win[r][c] = true;
+        for (let c = 0; c < cols; c++)
+            if (marked.every((row) => row[c]))
+                for (let r = 0; r < rows; r++) win[r][c] = true;
+        if (rows === 5 && cols === 5) {
+            if ([0, 1, 2, 3, 4].every((i) => marked[i][i]))
+                [0, 1, 2, 3, 4].forEach((i) => {
+                    win[i][i] = true;
+                });
+            if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i]))
+                [0, 1, 2, 3, 4].forEach((i) => {
+                    win[i][4 - i] = true;
+                });
+        }
     }
 
     return (
@@ -1117,6 +1130,8 @@ function BingoLiveWinCard({
     const grid = entry.winnerGrid as Array<Array<number | null>>;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
+    const winCells =
+        (entry.winPatternCells as Array<{ row: number; col: number }> | undefined) ?? undefined;
     const name =
         (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
@@ -1195,6 +1210,7 @@ function BingoLiveWinCard({
                             grid={grid}
                             drawnNumbers={drawnNumbers}
                             markedNumbers={marked}
+                            winCells={winCells}
                             lastCalled={lastCalled}
                         />
                         <div className='flex items-center justify-between px-1 pt-1.5'>

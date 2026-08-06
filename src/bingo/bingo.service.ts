@@ -3253,6 +3253,14 @@ export class BingoService implements OnModuleInit {
 
     await manager.save(winner);
 
+    // The MINIMAL cells that actually satisfied the pattern — not every line
+    // that happens to also be complete on the card (a card can have more
+    // marked lines than the place required, by pure chance). The client
+    // highlights exactly this, so a 1-line place never renders as if it took
+    // 2+ lines to win. Null only if resolution genuinely can't reproduce the
+    // completion (shouldn't happen since the caller already verified it).
+    const winPatternCells = this.bingoRulesService.explainPatternCompletion(winner.grid, room.drawnNumbers, pattern);
+
     room.settledTiers = [...room.settledTiers, place];
     room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
     room.settlementSummary = {
@@ -3276,6 +3284,7 @@ export class BingoService implements OnModuleInit {
         // Winner card so every client in the room can render the result.
         winnerGrid: winner.grid,
         winnerMarkedNumbers: winner.markedNumbers,
+        winPatternCells,
         patternName: pattern.name,
         prizeMinor,
         totalPotMinor,
@@ -3323,6 +3332,7 @@ export class BingoService implements OnModuleInit {
       ? await this.resolveDisplayedNameForUser(room, dqUser, manager)
       : { displayName: 'Player', phoneLast4: '', phoneSuffix: undefined, isBot: false };
     const phoneLast4 = display.phoneLast4;
+    const winPatternCells = this.bingoRulesService.explainPatternCompletion(dqTicket.grid, room.drawnNumbers, pattern);
 
     // Close the place to everyone (settled) but with NO paying winner.
     room.settledTiers = [...room.settledTiers, place];
@@ -3341,6 +3351,7 @@ export class BingoService implements OnModuleInit {
         winnerCartelaNumber: dqTicket.cartelaNumber,
         winnerGrid: dqTicket.grid,
         winnerMarkedNumbers: dqTicket.markedNumbers,
+        winPatternCells,
         patternName: pattern.name,
         // What the player forfeited = what the house kept for this place.
         prizeMinor: forfeitedMinor,

@@ -469,6 +469,81 @@ export class BingoRulesService {
     return { markedNumbers, completedPatternIds };
   }
 
+  /**
+   * The MINIMAL, specific set of cells that satisfies `pattern` on this marked
+   * grid — exactly one line for `any_line`, exactly the two lines used for
+   * `any_two_lines`, exactly the fixed mask's cells, etc. Never "every line
+   * that happens to also be complete" — a card can legitimately have more
+   * marked lines than the pattern required (pure chance), and highlighting
+   * all of them makes a 1-line win look like it needed 2+. Used to render the
+   * win truthfully. Returns null if the pattern isn't actually completed.
+   * Picks deterministically (rows, then columns, then diagonals, in index
+   * order) when more than one line qualifies.
+   */
+  explainPatternCompletion(
+    grid: (number | null)[][],
+    drawnNumbers: number[],
+    pattern: Pick<BingoPattern, 'patternType' | 'mask'>,
+  ): Array<{ row: number; col: number }> | null {
+    const drawn = new Set(drawnNumbers);
+    const marked: boolean[][] = grid.map((row) => row.map((cell) => cell === null || drawn.has(cell)));
+    const ROWS = marked.length;
+    const COLS = marked[0]?.length ?? 0;
+
+    const rowCells = (r: number) => Array.from({ length: COLS }, (_, c) => ({ row: r, col: c }));
+    const colCells = (c: number) => Array.from({ length: ROWS }, (_, r) => ({ row: r, col: c }));
+    const diagCells = (which: 0 | 1) =>
+      [0, 1, 2, 3, 4].map((i) => (which === 0 ? { row: i, col: i } : { row: i, col: 4 - i }));
+    const isComplete = (line: Array<{ row: number; col: number }>) =>
+      line.every(({ row, col }) => marked[row]?.[col]);
+
+    const completedRows = Array.from({ length: ROWS }, (_, r) => rowCells(r)).filter(isComplete);
+    const completedCols = Array.from({ length: COLS }, (_, c) => colCells(c)).filter(isComplete);
+    const completedDiags =
+      ROWS === 5 && COLS === 5 ? [diagCells(0), diagCells(1)].filter(isComplete) : [];
+    const completedLines = [...completedRows, ...completedCols, ...completedDiags];
+
+    const union = (lines: Array<Array<{ row: number; col: number }>>) => {
+      const byKey = new Map<string, { row: number; col: number }>();
+      for (const line of lines) for (const cell of line) byKey.set(`${cell.row}:${cell.col}`, cell);
+      return [...byKey.values()];
+    };
+
+    switch (pattern.patternType as PatternType) {
+      case 'any_row':
+        return completedRows[0] ?? null;
+      case 'any_col':
+        return completedCols[0] ?? null;
+      case 'any_diagonal':
+        return completedDiags[0] ?? null;
+      case 'any_line':
+        return completedLines[0] ?? null;
+      case 'any_two_lines':
+        return completedLines.length >= 2 ? union(completedLines.slice(0, 2)) : null;
+      case 'any_three_lines':
+        return completedLines.length >= 3 ? union(completedLines.slice(0, 3)) : null;
+      case 'fixed': {
+        if (!pattern.mask) return null;
+        const required: Array<{ row: number; col: number }> = [];
+        pattern.mask.forEach((maskRow, row) =>
+          maskRow.forEach((need, col) => {
+            if (need) required.push({ row, col });
+          }),
+        );
+        return required.length > 0 && isComplete(required) ? required : null;
+      }
+      case 'coverall': {
+        const required: Array<{ row: number; col: number }> = [];
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) required.push({ row, col });
+        }
+        return isComplete(required) ? required : null;
+      }
+      default:
+        return null;
+    }
+  }
+
   // ── Bot win-steering ───────────────────────────────────────────────────────
 
   /**

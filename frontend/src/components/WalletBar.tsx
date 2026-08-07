@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { RefreshCw, Plus } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
-import { walletApi } from '../lib/api';
+import { walletApi, adminApi } from '../lib/api';
 import { NotificationBell } from './NotificationBell';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
@@ -25,11 +25,21 @@ function EBirrIcon({ size = 20 }: { size?: number }) {
 
 export function WalletBar({ onNavigate }: Props) {
   const { t } = useTranslation();
+  const user = useStore((s) => s.user);
   const wallet = useStore((s) => s.wallet);
   const setWallet = useStore((s) => s.setWallet);
   const isSocketConnected = useStore((s) => s.isSocketConnected);
 
-  const balance = wallet?.availableMinor ?? 0;
+  // Admins have no personal wallet of their own to manage — this bar shows the
+  // shared Master Wallet instead (the one account every admin tops up and
+  // distributes ETB from, see AdminService.getOrCreateMasterWalletUserId), never
+  // the player-style `wallet` store slot, which App.tsx deliberately never
+  // fetches for an admin. Showing that unrelated, always-empty personal balance
+  // here is exactly the two-wallets confusion this was built to remove.
+  const isAdmin = user?.roles?.includes('admin') ?? false;
+  const [masterWalletBalance, setMasterWalletBalance] = useState(0);
+
+  const balance = isAdmin ? masterWalletBalance : (wallet?.availableMinor ?? 0);
   const formatted = new Intl.NumberFormat().format(balance);
 
   const prevBalanceRef = useRef(balance);
@@ -44,24 +54,40 @@ export function WalletBar({ onNavigate }: Props) {
     return () => clearTimeout(t);
   }, [balance]);
 
+  // No live socket push for the Master Wallet (it isn't any admin's own
+  // connected session, so wallet.updated events never target it) — load it once
+  // on mount and rely on the refresh button / navigating to ETB Management for
+  // anything newer, same as the admin panel's own Master Wallet view already does.
+  useEffect(() => {
+    if (!isAdmin) return;
+    adminApi.getHouseWallet().then((w) => setMasterWalletBalance(w.availableMinor)).catch(() => {});
+  }, [isAdmin]);
+
   const refreshWallet = useCallback(async () => {
     if (spinning) return;
     setSpinning(true);
     try {
-      const updated = await walletApi.getWallet();
-      setWallet(updated);
+      if (isAdmin) {
+        const house = await adminApi.getHouseWallet();
+        setMasterWalletBalance(house.availableMinor);
+      } else {
+        const updated = await walletApi.getWallet();
+        setWallet(updated);
+      }
     } catch { /* ignore */ } finally {
       setSpinning(false);
     }
-  }, [spinning, setWallet]);
+  }, [spinning, setWallet, isAdmin]);
+
+  const handleNavigate = () => onNavigate(isAdmin ? 'admin' : 'wallet');
 
   return (
     <div className="wallet-bar" style={{ cursor: 'default' }}>
       <div
         role="button"
         tabIndex={0}
-        onClick={() => onNavigate('wallet')}
-        onKeyDown={(e) => e.key === 'Enter' && onNavigate('wallet')}
+        onClick={handleNavigate}
+        onKeyDown={(e) => e.key === 'Enter' && handleNavigate()}
         style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer', minWidth: 0 }}
       >
         <div
@@ -78,7 +104,7 @@ export function WalletBar({ onNavigate }: Props) {
       <button
         className="wallet-bar-add"
         type="button"
-        onClick={(e) => { e.stopPropagation(); onNavigate('wallet'); }}
+        onClick={(e) => { e.stopPropagation(); handleNavigate(); }}
       >
         <Plus size={11} />
         {t('wallet.topUp')}

@@ -283,11 +283,19 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0; /* let grid children shrink below content size instead of overflowing */
 }
-.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-.stat-card strong { font-size: 14px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display); }
+.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-card strong { font-size: 14px; font-weight: 700; color: var(--text-primary); font-family: var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-@media (max-width: 520px) { .stats-grid { grid-template-columns: 1fr; } }
+/* Stay 3-column even on narrow phones — just tighten spacing instead of
+   stacking into three full-width rows (which reads as excessively tall). */
+@media (max-width: 380px) {
+  .stats-grid { gap: 6px; }
+  .stat-card { padding: 8px 6px; gap: 2px; }
+  .stat-label { font-size: 9px; letter-spacing: 0.3px; }
+  .stat-card strong { font-size: 12px; }
+}
 
 /* ── Hero sub-panel ───────────────────────────────────────── */
 .hero-subpanel { background: linear-gradient(135deg, #1a1d2e 0%, var(--surface) 100%); }
@@ -915,6 +923,20 @@
 
 /* Desktop: nav becomes a fixed left rail */
 @media (min-width: 900px) {
+  /* .adm-root sits inside .main-content, which is ALREADY the page's own
+     scroll container — but .main-content's visible height is `100vh` minus
+     WalletBar (a sibling rendered above it, see App.tsx), a height that isn't
+     a fixed/known number in CSS. A `calc(100vh - <header px>)` max-height on
+     the sidebar (the previous approach) therefore always overestimated by
+     WalletBar's height, silently clipping the bottom of the tab list with no
+     way to scroll to it. Bounding .adm-root to fill .main-content's box
+     exactly and letting the sidebar/content stretch to match it sidesteps the
+     unknown-WalletBar-height problem entirely — no magic numbers needed.
+     Each pane then scrolls independently within that fixed box. */
+  .adm-root {
+    height: 100%;
+    overflow: hidden;
+  }
   .adm-tab-bar {
     flex-direction: column;
     overflow-x: visible;
@@ -924,13 +946,24 @@
     border-right: 1px solid var(--border);
     padding: 12px 10px;
     gap: 3px;
-    position: sticky;
-    top: 53px;
-    align-self: flex-start;
-    max-height: calc(100vh - 53px);
+    /* The base rule hides this scrollbar (::-webkit-scrollbar / scrollbar-width:
+       none below) — fine for the mobile horizontal swipe-strip, but on desktop
+       that left zero visual cue the vertical list scrolls at all, so a cut-off
+       tab looked identical to a clipping bug. Show a thin, theme-matched
+       scrollbar instead. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
   }
+  .adm-tab-bar::-webkit-scrollbar { display: block; width: 6px; }
+  .adm-tab-bar::-webkit-scrollbar-track { background: transparent; }
+  .adm-tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .adm-tab-bar::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
   .adm-tab { width: 100%; }
-  .adm-content { padding: 22px 26px; }
+  .adm-content {
+    padding: 22px 26px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .adm-section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }

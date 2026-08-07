@@ -11,6 +11,10 @@ export type BingoPrizeTier =
   | '4th'
   | '5th';
 export type BingoWinMode = 'line' | 'pattern' | 'prefilled';
+export type BingoBotIdentity = {
+  displayName: string;
+  phoneSuffix: string;
+};
 
 export class BingoPrizeConfig {
   oneLineMinor: number;
@@ -55,12 +59,16 @@ export class BingoRoom {
 
   /**
    * When the buy-window countdown ends and drawing begins. NULL means the room
-   * is IDLE — created but not yet started. It is stamped (now + countdown) only
+   * is IDLE - created but not yet started. It is stamped (now + countdown) only
    * when the FIRST ticket is sold, so an unplayed room never draws or completes.
    */
   @Column({ type: 'timestamp', nullable: true })
   @Index()
   scheduledStartAt: Date | null;
+
+  /** Seconds before scheduledStartAt when cartela changes lock for this room. */
+  @Column({ type: 'int', default: 3 })
+  cartelaChangeLockSeconds: number;
 
   @Column({ type: 'json' })
   drawnNumbers: number[];
@@ -77,7 +85,7 @@ export class BingoRoom {
   @Column({ type: 'json', nullable: true })
   settlementSummary?: Record<string, unknown>;
 
-  /** 'line' = 90-ball 3×9, 'pattern' = 5×5 pattern card, 'prefilled' = numbered grid lottery. */
+  /** 'line' = 90-ball 3x9, 'pattern' = 5x5 pattern card, 'prefilled' = numbered grid lottery. */
   @Column({ type: 'varchar', length: 10, default: 'prefilled' })
   winMode: BingoWinMode;
 
@@ -85,15 +93,19 @@ export class BingoRoom {
   @Column({ type: 'int', default: 90 })
   numberRange: number;
 
-  /** Grid size for prefilled mode — total cartela cards available (e.g. 75). */
+  /** Grid size for prefilled mode - total cartela cards available (e.g. 75). */
   @Column({ type: 'int', default: 75 })
   gridSize: number;
 
-  /** Active patterns and their prizes — only relevant when winMode === 'pattern'. */
+  /** Active patterns and their prizes - only relevant when winMode === 'pattern'. */
   @Column({ type: 'json', default: '[]' })
   patternPrizes: BingoPatternPrize[];
 
-  /** House edge % at time of room creation — winner receives (100 - houseEdgePct)% of pot. */
+  /** Room-scoped bot aliases + masked phone suffixes for Bingo display. */
+  @Column({ type: 'json', nullable: true })
+  botIdentityMap?: Record<string, BingoBotIdentity>;
+
+  /** House edge % at time of room creation - winner receives (100 - houseEdgePct)% of pot. */
   @Column({ type: 'int', default: 20 })
   houseEdgePct: number;
 
@@ -109,8 +121,8 @@ export class BingoRoom {
    * DB-level "one active game at a time" guard. Set to 1 while the room is open
    * or running, and NULL once it completes or is cancelled. The UNIQUE index
    * lets MySQL hold at most one non-NULL row (multiple NULLs are allowed), so
-   * two concurrent creators — even across separate backend instances or when
-   * the Redis lock is unavailable — cannot both open an active room; the second
+   * two concurrent creators - even across separate backend instances or when
+   * the Redis lock is unavailable - cannot both open an active room; the second
    * INSERT fails with a duplicate-key error.
    */
   @Column({ type: 'tinyint', nullable: true })
@@ -126,9 +138,54 @@ export class BingoRoom {
   @Index()
   ownerAgentId?: string | null;
 
+  /**
+   * True only for rooms an admin created directly via POST /admin/bingo/rooms
+   * (see BingoService.createRoom). In per-agent mode, ensureAgentRooms()
+   * reconciles down to exactly one active room per owner (one per agent + one
+   * house room) — without this flag, a manually created extra room shares the
+   * house's NULL owner slot and gets treated as a stale duplicate and
+   * cancelled within the next scheduler tick. Admin-created rooms are excluded
+   * from that reconciliation and from the per-owner "one running game" gate in
+   * findAgentRoomsToStart, so they run fully independently and don't
+   * auto-recreate once they complete (that's ensureAgentRooms's job, not theirs).
+   */
+  @Column({ type: 'tinyint', default: 0 })
+  isAdminCreated: boolean;
+
+  /**
+   * Cosmetic-only lobby card styling (see the BingoLobby grid in Bingo.tsx) —
+   * a preset gradient id (BINGO_CARD_PALETTES in bingo-card-palette.util.ts)
+   * and a decorative ball number. Assigned ONCE at creation (by the admin, or
+   * randomly if left unset) and then stable for the room's whole lifetime, so
+   * every player sees the same card regardless of device — never re-rolled
+   * per view. Purely visual: no gameplay meaning.
+   */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  cardPaletteId?: string | null;
+
+  @Column({ type: 'int', nullable: true })
+  cardBallNumber?: number | null;
+
+  /**
+   * Links a room to the persistent BingoCustomRoomSlot it was recreated from
+   * (see BingoService.ensureCustomRoomSlots / createRoomFromCustomSlot). NULL
+   * for every room NOT spawned from a custom slot (one-off admin rooms, House,
+   * agent rooms). Lets the reconciler find "does this slot already have a live
+   * room" without relying on name matching.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  @Index()
+  customSlotId?: string | null;
+
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;
 
-  @UpdateDateColumn({ type: 'timestamp' })
+  // Millisecond precision: findRunningRoomIdsDue() gates the next draw on
+  // `updatedAt <= NOW() - INTERVAL drawIntervalSeconds SECOND`. A whole-second
+  // TIMESTAMP truncates the commit time to the floor second, which alone was
+  // worth up to ~1s of jitter in the gap between draws - read by players as
+  // calls landing unevenly fast/slow. See ensureBingoRoomUpdatedAtPrecision()
+  // in ensure-schema.ts for the one-off ALTER that upgrades an existing column.
+  @UpdateDateColumn({ type: 'timestamp', precision: 3 })
   updatedAt: Date;
 }

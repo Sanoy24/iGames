@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -10,31 +10,6 @@ export class UpdateSystemConfigDto {
   @IsInt()
   @Min(0)
   welcomeBonusMinor?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  withdrawalServiceChargePct?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  withdrawalCommissionPct?: number;
-
-  /** % of a credited deposit paid as commission to the receiving agent. */
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(100)
-  depositCommissionPct?: number;
-
-  /** User id of the super-admin whose wallet receives service fees (null = none). */
-  @IsOptional()
-  @ValidateIf((_, value) => value !== null)
-  @IsString()
-  superAdminUserId?: string | null;
 
   /** Minimum accepted Telebirr deposit (minor units). 0 = no minimum. */
   @IsOptional()
@@ -63,9 +38,16 @@ export class UpdateSystemConfigDto {
   agentRoomsEnabled?: boolean;
 
   /** % of a room's real-player GGR paid to the owning agent on completion. */
+  /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(100)
-  agentRoomCommissionPct?: number;
+  referralCommissionPct?: number;
+
+  /** Minimum hours between an agent's own self-service settlement requests. 0 = no cooldown. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  agentSettlementCooldownHours?: number;
 }

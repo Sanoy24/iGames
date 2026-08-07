@@ -1,19 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, Matches } from 'class-validator';
+import { IsOptional, IsString, MinLength } from 'class-validator';
+import { PreviewTelebirrReceiptDto } from './preview-telebirr-receipt.dto';
 
-export class SubmitTelebirrReceiptDto {
+export class SubmitTelebirrReceiptDto extends PreviewTelebirrReceiptDto {
   @ApiPropertyOptional({
-    description: 'Telebirr receipt number from SMS.'
+    description: 'Relative path (from POST /payments/receipts/upload) to the uploaded receipt photo/PDF. Optional — the receipt number/URL alone is enough to verify and credit the deposit.'
   })
   @IsOptional()
   @IsString()
-  @Matches(/^[A-Za-z0-9_-]{4,80}$/)
-  receiptNo?: string;
-
-  @ApiPropertyOptional({
-    description: 'Full Telebirr receipt URL. The backend extracts the receipt number.'
-  })
-  @IsOptional()
-  @IsString()
-  receiptUrl?: string;
+  @MinLength(1)
+  receiptFileUrl?: string;
 }

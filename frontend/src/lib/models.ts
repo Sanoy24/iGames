@@ -7,6 +7,8 @@ export type User = {
   status?: string;
   /** Server-computed — true when the user has a live socket connection right now. */
   online?: boolean;
+  /** Server-computed — true when this account is a house bot (productMetadata.botPolicy set). */
+  isBot?: boolean;
   lastLoginAt?: string;
   workStartHour?: number;
   workStartMinute?: number;
@@ -25,6 +27,18 @@ export type User = {
   /** Attributed play area, picked at registration. Null = "Other" / house. */
   locationId?: string | null;
   locationSource?: 'telegram_geo' | 'self_selected' | 'other' | null;
+  /**
+   * An agent's own shared GPS pin (agent bot's mandatory location step).
+   * Informational only — area access comes from admin-assigned agent_locations,
+   * never from this pin. Shown to admins as an assignment hint.
+   */
+  sharedLatitude?: number | null;
+  sharedLongitude?: number | null;
+  sharedLocationAt?: string | null;
+  /** An agent's shareable referral code (players never have one). */
+  referralCode?: string | null;
+  /** This agent's referral-commission % override. Null = use the global default. */
+  referralCommissionPct?: number | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -159,6 +173,25 @@ export type BingoPatternPrize = {
   prizeMinor: number;
 };
 
+/** A 'running' room whose draw has stopped making progress — see
+ * BingoService.findStalledRunningRooms on the backend for what this means. */
+export type BingoStalledRoom = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  stalledSeconds: number;
+};
+
+export type BingoOperationalAlertKind = 'pattern_resolution_failed';
+
+export type BingoOperationalAlert = {
+  id: string;
+  kind: BingoOperationalAlertKind;
+  roomId?: string | null;
+  message: string;
+  createdAt: string;
+};
+
 export type BingoRoom = {
   id: string;
   name: string;
@@ -172,14 +205,61 @@ export type BingoRoom = {
   gridSize: number;
   patternPrizes: BingoPatternPrize[];
   scheduledStartAt: string;
+  createdAt: string;
   drawnNumbers: number[];
   settledTiers: string[];
   winnersByTier: Record<string, string[]>;
   settlementSummary: Record<string, unknown>;
   houseEdgePct: number;
   prizeMinor: number;
+  botIdentityMap?: Record<string, { displayName: string; phoneSuffix: string }>;
   takenSpots?: number[];
+  cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
+  isAdminCreated?: boolean;
+  ownerAgentId?: string | null;
+  cardPaletteId?: string | null;
+  cardBallNumber?: number | null;
+};
+
+/**
+ * A House-or-agent Bingo room "slot" (see BingoService.ensureAgentRooms) with
+ * its PERSISTENT label/palette/ball — survives every auto-recreation of that
+ * slot's room, unlike a one-off room rename (BingoRoom.name via updateRoomDisplay).
+ */
+export type BingoRoomSlot = {
+  ownerId: string;
+  ownerName: string;
+  label: string | null;
+  cardPaletteId: string | null;
+  cardBallNumber: number | null;
+  ticketPriceMinor: number | null;
+  currentRoomId: string | null;
+  currentRoomName: string | null;
+  currentRoomStatus: string | null;
+};
+
+/**
+ * A persistent, independently-named admin room (see BingoService.
+ * ensureCustomRoomSlots) — unlike a one-off room from adminBingoApi.createRoom,
+ * this keeps recreating itself with the same settings after every round.
+ */
+export type BingoCustomRoomSlot = {
+  id: string;
+  name: string;
+  ticketPriceMinor: number;
+  maxTickets: number;
+  winMode: 'line' | 'pattern' | 'prefilled';
+  numberRange: number | null;
+  gridSize: number | null;
+  prizes: Record<string, number>;
+  patternPrizes: BingoPatternPrize[];
+  cardPaletteId: string | null;
+  cardBallNumber: number | null;
+  isActive: boolean;
+  currentRoomId: string | null;
+  currentRoomName: string | null;
+  currentRoomStatus: string | null;
 };
 
 export type BingoTicket = {
@@ -215,6 +295,7 @@ export type BingoConfig = {
   defaultFullHouseMinor: number;
   drawIntervalSeconds: number;
   salesWindowSeconds?: number;
+  cartelaChangeLockSeconds?: number;
   resultDisplaySeconds?: number;
   defaultWinMode?: string;
   defaultNumberRange?: number;
@@ -223,10 +304,23 @@ export type BingoConfig = {
   minTicketsToStart?: number;
   houseEdgePct?: number;
   globalBingoBotWinInterval?: number;
-  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  botCartelaPolicyEnabled?: boolean;
+  botCartelaPolicyMode?: 'mirror' | 'fixed_cap';
+  botMaxCartelasPerBotPerRoom?: number;
+  botBelowThresholdEnabled?: boolean;
+  botBelowThresholdRealPlayers?: number;
+  botAboveThresholdEnabled?: boolean;
+  botAboveThresholdRealPlayers?: number;
+  /** Legacy below-threshold setting kept for compatibility. */
   botMaxRealPlayers?: number;
   /** How bots steer a below-threshold room. */
-  botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid';
+  botWinMode?: 'off' | 'statistical' | 'guaranteed' | 'hybrid' | 'cartel-dual';
+  botBonusWinEnabled?: boolean;
+  botBonusWinMode?: 'interval' | 'random';
+  botBonusWinEveryNRounds?: number;
+  botBonusWinChancePct?: number;
+  /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
+  botWinnerCooldownRooms?: number;
   prefilledRankingMode?: 'race' | 'leaderboard';
   prefilledFirstPlacePct?: number;
   prefilledSecondPlaceEnabled?: boolean;
@@ -243,6 +337,8 @@ export type BingoConfig = {
   prefilledThirdPatternId?: string | null;
   prefilledFourthPatternId?: string | null;
   prefilledFifthPatternId?: string | null;
+  /** JSON array of alias names for the reserved cartel. Null = use bot displayName. */
+  botAliasPool?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -299,19 +395,27 @@ export type CrashBet = {
 export type Withdrawal = {
   id: string;
   userId: string;
+  user?: User;
   amountMinor: number;
-  status: 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
+  status: 'pending' | 'claimed' | 'processing' | 'awaiting_verification' | 'completed' | 'rejected';
   destinationAccount: string;
   agentId?: string;
   agent?: User;
   claimedAt?: string;
+  /** The flat withdrawal fee, 100% credited to the agent — no platform split. */
   serviceChargeMinor?: number;
-  serviceFeeMinor?: number;
-  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
+  /** Agent-uploaded photo/PDF of the payout receipt, relative to /uploads/. */
+  receiptFileUrl?: string | null;
+  /** When the agent says they actually transferred the money — agent-entered. */
+  transferCompletedAt?: string | null;
   adminNotes?: string;
+  /** Who/when the agent submitted completion proof (or, on the admin-bypass path, who/when admin settled it directly). */
   processedBy?: string;
   processedAt?: string;
+  /** Admin sign-off on the agent's submitted proof — set only via the new verification gate. */
+  verifiedBy?: string | null;
+  verifiedAt?: string | null;
   createdAt: string;
 };

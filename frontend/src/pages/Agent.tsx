@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, ChevronDown, ChevronUp, Clock, LifeBuoy, MapPin, RefreshCw, Send, Undo2, Users, Wallet as WalletIcon, X } from 'lucide-react';
-import { agentApi, walletApi, type AgentSelfPerformance } from '../lib/api';
+import { agentApi, walletApi, type AgentSelfPerformance, type AgentDashboardSummary } from '../lib/api';
 import { SupportConsole } from '../components/SupportConsole';
-import { AreaPlayerList, PlayerDrillDown } from '../components/AgentAreaViews';
+import { AreaPlayerList, PlayerDrillDown, ReferralCard } from '../components/AgentAreaViews';
+import { AgentSettlementsView } from '../components/AgentSettlementsView';
 import type { Wallet, Withdrawal, LedgerEntry } from '../lib/models';
 import { formatCreditsFull, formatDateTime, getErrorMessage } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
@@ -12,6 +13,7 @@ import { formatCredits, useStore } from '../store/useStore';
 const STATUS_BADGE: Record<string, string> = {
   pending: 'badge-gold',
   claimed: 'badge-violet',
+  awaiting_verification: 'badge-indigo',
   completed: 'badge-green',
   rejected: 'badge-red',
 };
@@ -41,9 +43,10 @@ export function Agent() {
 
   const [available, setAvailable] = useState<Withdrawal[]>([]);
   const [mine, setMine] = useState<Withdrawal[]>([]);
-  const [config, setConfig] = useState<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number } | null>(null);
+  const [config, setConfig] = useState<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> } | null>(null);
   const [agentWallet, setAgentWallet] = useState<Wallet | null>(null);
   const [perf, setPerf] = useState<AgentSelfPerformance | null>(null);
+  const [dashboard, setDashboard] = useState<AgentDashboardSummary | null>(null);
   const [_ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [_withdrawalHistory, setWithdrawalHistory] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,16 +54,19 @@ export function Agent() {
   const [refInputs, setRefInputs] = useState<Record<string, string>>({});
   // Per-withdrawal payout rail the agent used; defaults to Telebirr.
   const [proofProvider, setProofProvider] = useState<Record<string, 'telebirr' | 'mpesa'>>({});
+  const [receiptFiles, setReceiptFiles] = useState<Record<string, File>>({});
+  const [transferCompletedAtInputs, setTransferCompletedAtInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [rejectRemarks, setRejectRemarks] = useState<Record<string, string>>({});
   const [showRejectForm, setShowRejectForm] = useState<string | null>(null);
   const [showPool, setShowPool] = useState(false);
-  const [view, setView] = useState<'withdrawals' | 'area' | 'support'>('withdrawals');
+  const [view, setView] = useState<'withdrawals' | 'area' | 'settlements' | 'support'>('withdrawals');
   const [selectedAreaPlayer, setSelectedAreaPlayer] = useState<string | null>(null);
 
   const [transferPhone, setTransferPhone] = useState('');
   const [transferAmount, setTransferAmount] = useState('');
   const [submittingTransfer, setSubmittingTransfer] = useState(false);
+  const [requestingSettlement, setRequestingSettlement] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +81,7 @@ export function Agent() {
       setConfig(cfg);
       setAgentWallet(wallet);
       agentApi.getPerformance().then(setPerf).catch(() => undefined);
+      agentApi.getDashboard().then(setDashboard).catch(() => undefined);
       const tx = await agentApi.getTransactions();
       setLedger(tx.ledger);
       setWithdrawalHistory(tx.withdrawals);
@@ -101,6 +108,19 @@ export function Agent() {
       addToast('error', getErrorMessage(err));
     } finally {
       setSubmittingTransfer(false);
+    }
+  };
+
+  const handleRequestSettlement = async () => {
+    setRequestingSettlement(true);
+    try {
+      await agentApi.requestSettlement();
+      addToast('success', t('agent.settlementRequested', { defaultValue: 'Settlement requested — an admin will review it shortly.' }));
+      agentApi.getDashboard().then(setDashboard).catch(() => undefined);
+    } catch (err) {
+      addToast('error', getErrorMessage(err));
+    } finally {
+      setRequestingSettlement(false);
     }
   };
 
@@ -152,6 +172,12 @@ export function Agent() {
     }
   };
 
+  const nowLocalInputValue = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const handleComplete = async (w: Withdrawal) => {
     const provider = proofProvider[w.id] ?? 'telebirr';
     const proof = (refInputs[w.id] ?? '').trim();
@@ -162,11 +188,18 @@ export function Agent() {
         : 'Enter the Telebirr receipt number or link.');
       return;
     }
+    const receiptFile = receiptFiles[w.id];
+    if (!receiptFile) {
+      addToast('info', 'Attach a photo or PDF of the payout receipt.');
+      return;
+    }
+    const transferCompletedAtLocal = transferCompletedAtInputs[w.id] || nowLocalInputValue();
     setBusyFor(w.id, true);
     try {
-      await agentApi.completeWithdrawal(w.id, provider, proof);
+      const { fileUrl } = await agentApi.uploadWithdrawalReceipt(receiptFile);
+      await agentApi.completeWithdrawal(w.id, provider, proof, fileUrl, new Date(transferCompletedAtLocal).toISOString());
       await load();
-      addToast('success', 'Withdrawal verified and completed.');
+      addToast('success', 'Payout proof submitted — awaiting admin verification.');
     } catch (err) {
       addToast('error', getErrorMessage(err));
     } finally {
@@ -174,11 +207,14 @@ export function Agent() {
     }
   };
 
-  const serviceFeePct = config?.withdrawalServiceChargePct ?? 0;
-  const commissionPct = config?.withdrawalCommissionPct ?? 0;
-  const feeOf = (gross: number) => Math.floor((gross * serviceFeePct) / 100);
-  const commissionOf = (gross: number) => Math.floor((gross * commissionPct) / 100);
-  const netAmount = (gross: number) => gross - feeOf(gross) - commissionOf(gross);
+  // The agent keeps 100% of the flat fee — no platform split.
+  const feeOf = (gross: number): number => {
+    const match = config?.withdrawalFeeRanges.find(
+      (r) => gross >= r.minAmountMinor && (r.maxAmountMinor === null || gross <= r.maxAmountMinor),
+    );
+    return match ? match.feeMinor : 0;
+  };
+  const netAmount = (gross: number) => gross - feeOf(gross);
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -193,6 +229,9 @@ export function Agent() {
         <button className={`btn btn-sm ${view === 'area' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('area')}>
           <MapPin size={14} /> {t('agent.areaTab', { defaultValue: 'My Area' })}
         </button>
+        <button className={`btn btn-sm ${view === 'settlements' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('settlements')}>
+          <Clock size={14} /> {t('agent.settlementsTab', { defaultValue: 'Settlements' })}
+        </button>
         <button className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1 }} onClick={() => setView('support')}>
           <LifeBuoy size={14} /> {t('agent.supportTab')}
         </button>
@@ -200,10 +239,12 @@ export function Agent() {
 
       {view === 'support' && <SupportConsole />}
 
+      {view === 'settlements' && <AgentSettlementsView />}
+
       {view === 'area' && (
         selectedAreaPlayer
           ? <PlayerDrillDown userId={selectedAreaPlayer} onBack={() => setSelectedAreaPlayer(null)} />
-          : <AreaPlayerList onSelectPlayer={setSelectedAreaPlayer} />
+          : <><ReferralCard /><AreaPlayerList onSelectPlayer={setSelectedAreaPlayer} /></>
       )}
 
       {view === 'withdrawals' && (<>
@@ -216,7 +257,7 @@ export function Agent() {
       }}>
         {[
           { key: 'balance', label: t('agent.balance'), value: formatCredits(agentWallet?.availableMinor ?? 0), accent: true },
-          { key: 'feeComm', label: t('agent.feeComm'), value: `${serviceFeePct}/${commissionPct}%` },
+          { key: 'feeComm', label: t('agent.feeComm'), value: `${config?.withdrawalFeeRanges.length ?? 0} tiers` },
           { key: 'pool', label: t('agent.pool'), value: String(available.length) },
           { key: 'active', label: t('agent.active'), value: String(mine.length) },
         ].map(({ key, label, value, accent }) => (
@@ -233,8 +274,102 @@ export function Agent() {
         ))}
       </div>
 
-      {/* My Bingo performance (Approach B) — shows once there's activity */}
-      {perf && (perf.tickets > 0 || perf.customersBrought > 0 || perf.commissionEarnedMinor > 0) && (
+      {/* Agent Dashboard — earnings by source and time window, player/withdrawal counts */}
+      {dashboard && (
+        <div style={{
+          background: 'var(--card-bg)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: 14, marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
+            {t('agent.dashboard', { defaultValue: 'Dashboard' })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+            {[
+              { label: t('agent.referredPlayers', { defaultValue: 'Referred' }), value: String(dashboard.totalReferredPlayers) },
+              { label: t('agent.activePlayers', { defaultValue: 'Active (30d)' }), value: String(dashboard.activePlayers) },
+              { label: t('agent.totalEarnings', { defaultValue: 'Total Earnings' }), value: formatCredits(dashboard.totalEarningsMinor), accent: true },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text-primary)' }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.gameCommission', { defaultValue: 'Game Commission' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.gameCommission.totalMinor)}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 2 }}>
+                {t('agent.commissionCount', { count: dashboard.gameCommission.count, defaultValue: `${dashboard.gameCommission.count} commissions` })}
+              </div>
+            </div>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.withdrawalFees', { defaultValue: 'Withdrawal Fees' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.withdrawalFeesEarnedMinor)}</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 12 }}>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.totalSettled', { defaultValue: 'Total Settled' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{formatCredits(dashboard.totalSettledMinor)}</div>
+            </div>
+            <div style={{ background: 'var(--surface)', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                {t('agent.remaining', { defaultValue: 'Remaining' })}
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>{formatCredits(dashboard.remainingMinor)}</div>
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ width: '100%' }}
+              disabled={!dashboard.canRequestSettlement || requestingSettlement}
+              onClick={handleRequestSettlement}
+            >
+              {requestingSettlement
+                ? t('agent.requestingSettlement', { defaultValue: 'Requesting…' })
+                : t('agent.requestSettlement', { defaultValue: 'Request Settlement' })}
+            </button>
+            {!dashboard.canRequestSettlement && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+                {dashboard.settlementBlockReason === 'pending_exists' &&
+                  t('agent.settlementPendingReview', { defaultValue: 'You already have a settlement request awaiting review.' })}
+                {dashboard.settlementBlockReason === 'cooldown' && dashboard.settlementCooldownEndsAt &&
+                  t('agent.settlementCooldown', {
+                    time: formatDateTime(dashboard.settlementCooldownEndsAt),
+                    defaultValue: `You can request again at ${formatDateTime(dashboard.settlementCooldownEndsAt)}.`,
+                  })}
+                {dashboard.settlementBlockReason === 'nothing_to_settle' &&
+                  t('agent.settlementNothingToSettle', { defaultValue: 'No new earnings to settle yet.' })}
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{t('agent.pendingRequests', { defaultValue: 'Pending Requests' })}</div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{dashboard.pendingWithdrawalRequests}</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{t('agent.completedRequests', { defaultValue: 'Completed Requests' })}</div>
+              <div style={{ fontWeight: 800, fontSize: 14 }}>{dashboard.completedWithdrawalRequests}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* My Bingo Room activity (Approach B) — traffic in the room I own, shows
+          once there's activity. Commission isn't shown here: there's no
+          room-owner commission — commission is earned on REFERRED players,
+          a different population than this room's own traffic. */}
+      {perf && (perf.tickets > 0 || perf.customersBrought > 0) && (
         <div style={{
           background: 'var(--card-bg)', border: '1px solid var(--border)',
           borderRadius: 12, padding: 14, marginBottom: 16,
@@ -242,16 +377,15 @@ export function Agent() {
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>
             {t('agent.myBingo', { defaultValue: 'My Bingo Room' })}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
             {[
               { label: t('agent.customers', { defaultValue: 'Customers' }), value: String(perf.customersBrought) },
               { label: t('agent.players', { defaultValue: 'Players' }), value: String(perf.players) },
               { label: t('agent.staked', { defaultValue: 'Staked' }), value: formatCredits(perf.stakedMinor) },
-              { label: t('agent.commission', { defaultValue: 'Commission' }), value: formatCredits(perf.commissionEarnedMinor), accent: true },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{s.label}</div>
-                <div style={{ fontWeight: 800, fontSize: 14, color: s.accent ? 'var(--accent)' : 'var(--text-primary)' }}>{s.value}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: 'var(--text-primary)' }}>{s.value}</div>
               </div>
             ))}
           </div>
@@ -353,8 +487,7 @@ export function Agent() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {mine.map((w) => {
               const net = netAmount(w.amountMinor);
-              const serviceFee = feeOf(w.amountMinor);
-              const commission = commissionOf(w.amountMinor);
+              const fee = feeOf(w.amountMinor);
               const isBusy = busy[w.id] ?? false;
               return (
                 <motion.article
@@ -401,22 +534,30 @@ export function Agent() {
                       flexDirection: 'column',
                       gap: 6,
                     }}>
+                      {w.user && (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Player</span>
+                            <span>{w.user.displayName}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Player Phone</span>
+                            <span>{w.user.phoneNumber ?? '—'}</span>
+                          </div>
+                        </>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>To (Telebirr)</span>
+                        <span style={{ color: 'var(--text-muted)' }}>Recipient Phone</span>
                         <strong style={{ fontSize: 14 }}>{w.destinationAccount}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span style={{ color: 'var(--text-muted)' }}>Gross</span>
                         <span>{formatCredits(w.amountMinor)} ETB</span>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Service fee ({serviceFeePct}%)</span>
-                        <span>−{formatCredits(serviceFee)} ETB</span>
-                      </div>
-                      {commissionPct > 0 && (
+                      {fee > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Your commission ({commissionPct}%)</span>
-                          <span style={{ color: 'var(--accent)' }}>+{formatCredits(commission)} ETB</span>
+                          <span style={{ color: 'var(--text-muted)' }}>Your withdrawal fee</span>
+                          <span style={{ color: 'var(--accent)' }}>+{formatCredits(fee)} ETB</span>
                         </div>
                       )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 2 }}>
@@ -425,6 +566,14 @@ export function Agent() {
                       </div>
                     </div>
 
+                    {w.status !== 'claimed' ? (
+                      <div style={{
+                        background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)',
+                        borderRadius: 10, padding: '10px 12px', fontSize: 12, color: 'var(--text-secondary)',
+                      }}>
+                        Payout proof submitted — waiting on an admin to verify the FT number and receipt.
+                      </div>
+                    ) : (<>
                     {/* Payout proof — provider toggle + proof, verified server-side */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -460,13 +609,45 @@ export function Agent() {
                         disabled={isBusy}
                         style={{ width: '100%', resize: 'vertical' }}
                       />
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                          Payout receipt (photo/PDF) <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                          disabled={isBusy}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            setReceiptFiles((prev) => {
+                              const next = { ...prev };
+                              if (file) next[w.id] = file; else delete next[w.id];
+                              return next;
+                            });
+                          }}
+                          style={{ width: '100%', fontSize: 12 }}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+                          Transfer completed at <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        <input
+                          type="datetime-local"
+                          className="input"
+                          disabled={isBusy}
+                          value={transferCompletedAtInputs[w.id] ?? nowLocalInputValue()}
+                          onChange={(e) => setTransferCompletedAtInputs((prev) => ({ ...prev, [w.id]: e.target.value }))}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
                       <button
                         className="btn btn-primary btn-full"
-                        disabled={isBusy || !(refInputs[w.id] ?? '').trim()}
+                        disabled={isBusy || !(refInputs[w.id] ?? '').trim() || !receiptFiles[w.id]}
                         onClick={() => void handleComplete(w)}
                       >
                         <CheckCircle size={14} />
-                        {isBusy ? 'Verifying…' : 'Verify & Complete'}
+                        {isBusy ? 'Submitting…' : 'Submit Payout Proof'}
                       </button>
                     </div>
 
@@ -525,6 +706,7 @@ export function Agent() {
                         </motion.div>
                       )}
                     </AnimatePresence>
+                    </>)}
                   </div>
                 </motion.article>
               );

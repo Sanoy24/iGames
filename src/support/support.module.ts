@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { AdminModule } from '../admin/admin.module';
 import { Withdrawal } from '../wallet/entities/withdrawal.entity';
 import { TelebirrDeposit } from '../payments/entities/telebirr-deposit.entity';
 import { User } from '../users/entities/user.entity';
@@ -20,6 +21,7 @@ import { SupportAgentController } from './support-agent.controller';
     JwtModule.register({}),
     TypeOrmModule.forFeature([SupportTicket, SupportMessage, Withdrawal, TelebirrDeposit, User]),
     WalletModule,
+    AdminModule,
     NotificationsModule,
   ],
   controllers: [SupportController, SupportAgentController],

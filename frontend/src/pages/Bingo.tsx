@@ -12,6 +12,7 @@ import {
     RefreshCw,
 } from 'lucide-react';
 import { bingoApi, walletApi, type BingoLobbyRoom } from '../lib/api';
+import { getBingoCardPalette } from '../lib/bingoCardPalette';
 import type { BingoRoomState, BingoTicket } from '../lib/models';
 import {
     createIdempotencyKey,
@@ -40,13 +41,25 @@ const RESULT_DISPLAY_MS = 10_000;
 const POLL_INTERVAL_MS = 5_000;
 
 // Paced reveal cadence. One ball is revealed every REVEAL_BASE_MS so each gets a
-// full, unhurried moment on the caller, the board and the cards. We only shorten
-// to REVEAL_MIN_MS when the client has fallen far behind (e.g. it was a
-// background tab and a poll delivered a big batch), and never below the ball
-// animation's own duration — so reveals always stay smooth, never a rushed burst.
+// full, unhurried moment on the caller, the board and the cards.
+// REVEAL_BASE_MS is only the fallback used before the first `bingo.number.drawn`
+// event of a session arrives — once a draw event lands, its `intervalMs` (the
+// server's actual configured cadence) takes over as the steady-state delay. This
+// was previously a hardcoded 1500ms, faster than the server's own 2000ms default,
+// so the client routinely caught up and stalled waiting on the socket — visible
+// as uneven/laggy calling ("it seems the bot is calculating").
 const REVEAL_BASE_MS = 1_500;
-const REVEAL_MIN_MS = 650;
+
+// If the client falls more than this many balls behind (backgrounded tab,
+// dropped socket, a big poll catch-up — see the visibility/focus resync
+// effect below), we do NOT animate through the backlog at a sped-up pace —
+// that reads as suspicious ("is this rigged?") rather than as a resync. We
+// jump straight to CATCHUP_TAIL balls short of live and resume the normal
+// calm cadence from there, showing a brief "Catching up…" badge so the jump
+// is legible instead of either a suspicious speed-run or a silent teleport.
 const REVEAL_CATCHUP_BACKLOG = 10;
+const CATCHUP_TAIL = 3;
+const CATCHUP_BADGE_MS = 2_500;
 
 // Reveal cascade: a called number shows in "now calling" FIRST, then marks on the
 // board a beat later, then on the tickets a beat after that. Never the reverse.
@@ -426,6 +439,7 @@ const CartelaGrid = memo(
         mySet,
         pendingSet,
         salesOpen,
+        returnLocked,
         onTap,
     }: {
         gridSize: number;
@@ -433,6 +447,7 @@ const CartelaGrid = memo(
         mySet: Set<number>;
         pendingSet: Set<number>;
         salesOpen: boolean;
+        returnLocked: boolean;
         onTap: (n: number) => void;
     }) => {
         const cols = 10;
@@ -479,7 +494,9 @@ const CartelaGrid = memo(
                         textStyle = { color: '#f5f5f5', fontWeight: 900 };
                     }
 
-                    const canTap = salesOpen && !takenByOther && !pending;
+                    const canBuy = salesOpen && !takenByOther && !pending && !returnLocked;
+                    const canRefund = mine && salesOpen && !pending && !returnLocked;
+                    const canTap = canBuy || canRefund;
 
                     return (
                         <motion.button
@@ -491,7 +508,7 @@ const CartelaGrid = memo(
                             style={{
                                 ...cellStyle,
                                 ...textStyle,
-                                cursor: canTap ? 'pointer' : 'default',
+                                cursor: canTap ? 'pointer' : mine && returnLocked ? 'not-allowed' : 'default',
                                 minWidth: 0,
                                 opacity: pending ? 0.45 : 1,
                             }}
@@ -598,12 +615,16 @@ function CurrentBallDisplay({
     status,
     count,
     max,
+    catchingUp,
+    catchupKind,
 }: {
     drawnNumbers: number[];
     isPatternMode: boolean;
     status: string;
     count: number;
     max: number;
+    catchingUp?: boolean;
+    catchupKind?: 'live' | 'completed';
 }) {
     const { t } = useTranslation();
     // `drawnNumbers` is the parent's already-paced "revealed" list, so the last
@@ -619,11 +640,17 @@ function CurrentBallDisplay({
             : '';
 
     if (status === 'completed') {
+        // While the paced reveal is still catching the card up to the round's
+        // actual final state, say so explicitly instead of declaring "complete"
+        // over a board that's visibly still filling in.
+        const replaying = catchingUp && catchupKind === 'completed';
         return (
             <div className='flex flex-col items-center gap-1.5 py-2'>
                 <Trophy size={24} className='text-amber-400' />
-                <span className='text-[10px] font-black text-amber-500 uppercase tracking-widest'>
-                    {t('bingo.drawComplete')}
+                <span
+                    className={`text-[10px] font-black uppercase tracking-widest ${replaying ? 'text-amber-400' : 'text-amber-500'}`}
+                >
+                    {replaying ? t('bingo.replayingResult') : t('bingo.drawComplete')}
                 </span>
                 <span className='text-[9px] font-mono text-slate-500'>
                     {t('bingo.numbersCalled', { count, max })}
@@ -649,8 +676,10 @@ function CurrentBallDisplay({
 
     return (
         <div className='flex flex-col items-center gap-1 py-1'>
-            <span className='text-[8px] font-black uppercase tracking-widest text-slate-500'>
-                {t('bingo.nowCalling')}
+            <span
+                className={`text-[8px] font-black uppercase tracking-widest ${catchingUp ? 'text-amber-400' : 'text-slate-500'}`}
+            >
+                {catchingUp ? t('bingo.catchingUp') : t('bingo.nowCalling')}
             </span>
             {/* `mode="wait"` guarantees the previous ball fully exits before the next
           enters — one unhurried ball at a time, never two mid-flight overlapping
@@ -951,11 +980,18 @@ function WinnerBingoCard({
     grid,
     drawnNumbers,
     markedNumbers,
+    winCells,
     lastCalled,
 }: {
     grid: Array<Array<number | null>>;
     drawnNumbers: number[];
     markedNumbers?: number[];
+    /** The exact cells that satisfied the awarded pattern (server-computed).
+     * When present, ONLY these render as the win — a card can legitimately
+     * have extra lines complete by chance, and those must not be shown as if
+     * they were required to win. Falls back to auto-detecting any complete
+     * line when absent (older rooms settled before this field existed). */
+    winCells?: Array<{ row: number; col: number }>;
     lastCalled: number | null;
 }) {
     // Prefer the server's authoritative marked set (the exact cells the win was
@@ -971,21 +1007,27 @@ function WinnerBingoCard({
         row.map((cell) => cell === null || hitSet.has(cell)),
     );
     const win = grid.map((row) => row.map(() => false));
-    for (let r = 0; r < rows; r++)
-        if (marked[r].every(Boolean))
-            for (let c = 0; c < cols; c++) win[r][c] = true;
-    for (let c = 0; c < cols; c++)
-        if (marked.every((row) => row[c]))
-            for (let r = 0; r < rows; r++) win[r][c] = true;
-    if (rows === 5 && cols === 5) {
-        if ([0, 1, 2, 3, 4].every((i) => marked[i][i]))
-            [0, 1, 2, 3, 4].forEach((i) => {
-                win[i][i] = true;
-            });
-        if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i]))
-            [0, 1, 2, 3, 4].forEach((i) => {
-                win[i][4 - i] = true;
-            });
+    if (winCells && winCells.length > 0) {
+        for (const { row, col } of winCells) {
+            if (win[row]) win[row][col] = true;
+        }
+    } else {
+        for (let r = 0; r < rows; r++)
+            if (marked[r].every(Boolean))
+                for (let c = 0; c < cols; c++) win[r][c] = true;
+        for (let c = 0; c < cols; c++)
+            if (marked.every((row) => row[c]))
+                for (let r = 0; r < rows; r++) win[r][c] = true;
+        if (rows === 5 && cols === 5) {
+            if ([0, 1, 2, 3, 4].every((i) => marked[i][i]))
+                [0, 1, 2, 3, 4].forEach((i) => {
+                    win[i][i] = true;
+                });
+            if ([0, 1, 2, 3, 4].every((i) => marked[i][4 - i]))
+                [0, 1, 2, 3, 4].forEach((i) => {
+                    win[i][4 - i] = true;
+                });
+        }
     }
 
     return (
@@ -1083,6 +1125,133 @@ export type LivePlaceWin = {
     entry: Record<string, unknown>;
 };
 
+function BingoLiveWinCard({
+    place,
+    entry,
+    drawnNumbers,
+}: {
+    place: PrefilledPlaceKey;
+    entry: Record<string, unknown>;
+    drawnNumbers: number[];
+}) {
+    const { t } = useTranslation();
+    const grid = entry.winnerGrid as Array<Array<number | null>>;
+    const marked =
+        (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
+    const winCells =
+        (entry.winPatternCells as Array<{ row: number; col: number }> | undefined) ?? undefined;
+    const name =
+        (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
+    const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
+    const prize = (entry.prizeMinor as number | undefined) ?? 0;
+    const cartela = entry.winnerCartelaNumber as number | undefined;
+    const disqualified = !!entry.disqualified;
+    const lastCalled =
+        drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+
+    return (
+        <motion.div
+            initial={{ scale: 0.82, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 21 }}
+            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5'
+            style={{
+                background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
+                border: '2px solid rgba(167,139,250,0.7)',
+                boxShadow: '0 0 34px rgba(167,139,250,0.45)',
+            }}
+        >
+            <div
+                className='rounded-xl py-2.5 px-4 text-center'
+                style={{ background: 'rgba(20,60,60,0.55)' }}
+            >
+                <div
+                    className='text-2xl font-black tracking-[0.12em] mb-1'
+                    style={{
+                        color: '#fff',
+                        textShadow: '0 0 22px rgba(52,211,153,0.7)',
+                    }}
+                >
+                    {t('bingo.bingoExclaim')}
+                </div>
+                <div className='text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1'>
+                    {PLACE_MEDAL[place]}{' '}
+                    {t('bingo.placeOrdinal', { place: PLACE_LABEL[place] })}
+                </div>
+                <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
+                    <span
+                        className='rounded-lg px-3 py-1 font-black text-white'
+                        style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
+                    >
+                        {name}
+                        {last4 ? ` ( *${last4} )` : ''}
+                    </span>
+                    <span>
+                        {disqualified
+                            ? t('bingo.disqualifiedHouseWins')
+                            : t('bingo.winsThisPlace')}
+                    </span>
+                </p>
+                {disqualified && (
+                    <div className='mt-1.5 inline-block rounded-md bg-red-500/20 border border-red-400/40 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-300'>
+                        {t('bingo.disqualified')}
+                    </div>
+                )}
+            </div>
+
+            {grid ? (
+                <div
+                    className='rounded-xl p-1.5'
+                    style={{
+                        background: 'rgba(20,60,60,0.4)',
+                        border: '2px solid rgba(167,139,250,0.6)',
+                    }}
+                >
+                    <div
+                        className='rounded-lg p-1.5'
+                        style={{
+                            border: '2px solid rgba(245,158,11,0.85)',
+                        }}
+                    >
+                        <WinnerBingoCard
+                            grid={grid}
+                            drawnNumbers={drawnNumbers}
+                            markedNumbers={marked}
+                            winCells={winCells}
+                            lastCalled={lastCalled}
+                        />
+                        <div className='flex items-center justify-between px-1 pt-1.5'>
+                            {disqualified ? (
+                                <span className='text-[13px] font-black flex items-center gap-1'>
+                                    <span className='line-through text-slate-400'>
+                                        {formatCreditsFull(prize)}
+                                    </span>
+                                    <span className='text-red-300 text-[10px] uppercase tracking-wide'>
+                                        {t('bingo.toHouse')}
+                                    </span>
+                                </span>
+                            ) : (
+                                <span
+                                    className='text-[13px] font-black'
+                                    style={{ color: '#34d399' }}
+                                >
+                                    {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
+                                </span>
+                            )}
+                            {cartela != null && (
+                                <span className='text-[13px] font-black text-slate-100'>
+                                    {t('bingo.cardHash', { n: cartela })}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+        </motion.div>
+    );
+}
+
 // ─── Live per-place win window ────────────────────────────────────────────────
 // Pops the MOMENT a place is won during the draw (not at the end): the winner's
 // 5×5 card + name + last-4 phone + place + prize. Auto-dismisses so the draw
@@ -1102,9 +1271,23 @@ function LivePlaceWinPopup({
         return () => clearTimeout(id);
     }, [win, onDone]);
 
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className='fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-none'
+        >
+            <BingoLiveWinCard
+                place={win.place}
+                entry={win.entry}
+                drawnNumbers={drawnNumbers}
+            />
+        </motion.div>
+    );
+
     const { place, entry } = win;
-    const grid =
-        (entry.winnerGrid as Array<Array<number | null>> | undefined) ?? null;
+    const grid = entry.winnerGrid as Array<Array<number | null>>;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
     const name = (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
@@ -1417,7 +1600,7 @@ function RoomResultOverlay({
                                             <span className='text-sm leading-none'>
                                                 {PLACE_MEDAL[place]}
                                             </span>
-                                            <span className='text-[11px] font-black text-white truncate'>
+                                            <span className='text-[11px] font-black truncate text-white'>
                                                 {(entry.winnerDisplayName as
                                                     | string
                                                     | undefined) ?? tr('bingo.player')}
@@ -1697,6 +1880,62 @@ function RoomResultOverlay({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 // ─── Per-agent room lobby ─────────────────────────────────────────────────────
+function BingoLobbyCard({
+    room,
+    onPick,
+}: {
+    room: BingoLobbyRoom;
+    onPick: (roomId: string) => void;
+}) {
+    const { t } = useTranslation();
+    const palette = getBingoCardPalette(room.cardPaletteId);
+    const ballNumber = room.cardBallNumber ?? 1;
+    return (
+        <button
+            type='button'
+            onClick={() => onPick(room.id)}
+            className='relative w-full rounded-2xl p-3.5 text-left overflow-hidden active:scale-[0.98] transition-transform shadow-lg'
+            style={{ background: palette.gradient, minHeight: 132 }}
+        >
+            {/* Decorative bingo ball — half-cut off in the corner, purely visual */}
+            <div
+                className='absolute -right-3 -bottom-3 w-16 h-16 rounded-full flex items-center justify-center border-4 border-white/25 shadow-lg'
+                style={{ background: palette.ballGradient }}
+            >
+                <span className='text-lg font-black text-black/70 drop-shadow-sm'>{ballNumber}</span>
+            </div>
+
+            <span
+                className={`absolute top-2.5 right-2.5 text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
+                    room.status === 'running' ? 'bg-black/30 text-red-100' : 'bg-black/20 text-white/90'
+                }`}
+            >
+                {room.status === 'running'
+                    ? t('bingo.live', { defaultValue: 'LIVE' })
+                    : t('bingo.open', { defaultValue: 'OPEN' })}
+            </span>
+
+            <div className='relative z-[1] flex flex-col gap-1'>
+                <span className='text-sm font-black text-white truncate max-w-[85%] drop-shadow-sm'>
+                    {room.name}
+                </span>
+                <span className='text-xl font-black text-white drop-shadow-sm'>
+                    {formatCredits(room.ticketPriceMinor)} <span className='text-[11px] font-bold opacity-80'>ETB</span>
+                </span>
+                <span className='text-[9px] font-bold text-white/75 mt-0.5'>
+                    {t('bingo.playersCount', { count: room.players, defaultValue: `${room.players} players` })}
+                    {' · '}
+                    {t('bingo.statDerash', { defaultValue: 'Pot' })} {formatCredits(room.potMinor)}
+                </span>
+            </div>
+
+            <span className='relative z-[1] inline-block mt-3 text-[11px] font-black text-white bg-black/25 rounded-lg px-3 py-1.5'>
+                {t('bingo.playNow', { defaultValue: 'Play now' })}
+            </span>
+        </button>
+    );
+}
+
 function BingoLobby({
     rooms,
     onPick,
@@ -1723,50 +1962,15 @@ function BingoLobby({
             </div>
             <p className='text-[11px] text-slate-500'>
                 {t('bingo.chooseRoomHint', {
-                    defaultValue: "Each agent hosts their own room — pick one to play.",
+                    defaultValue: "Pick a room and stake to play.",
                 })}
             </p>
-            <div className='space-y-2'>
+            <div className='grid grid-cols-2 gap-3'>
                 {rooms.map((r) => (
-                    <button
-                        key={r.id}
-                        type='button'
-                        onClick={() => onPick(r.id)}
-                        className='w-full card p-3 flex items-center justify-between text-left active:scale-[0.99] transition-transform'
-                    >
-                        <div className='min-w-0'>
-                            <div className='flex items-center gap-2'>
-                                <span className='text-sm font-black truncate'>{r.ownerName}</span>
-                                <span
-                                    className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
-                                        r.status === 'running'
-                                            ? 'bg-red-500/10 text-red-400'
-                                            : 'bg-emerald-500/10 text-emerald-400'
-                                    }`}
-                                >
-                                    {r.status === 'running'
-                                        ? t('bingo.live', { defaultValue: 'LIVE' })
-                                        : t('bingo.open', { defaultValue: 'OPEN' })}
-                                </span>
-                            </div>
-                            <div className='text-[10px] text-slate-500 mt-0.5'>
-                                {t('bingo.playersCount', { count: r.players, defaultValue: `${r.players} players` })}
-                                {' · '}
-                                {t('bingo.stakeEtb', { amount: formatCredits(r.ticketPriceMinor) })}
-                            </div>
-                        </div>
-                        <div className='text-right flex-shrink-0'>
-                            <div className='text-[8px] uppercase tracking-wider text-slate-600'>
-                                {t('bingo.statDerash', { defaultValue: 'Pot' })}
-                            </div>
-                            <div className='text-sm font-black text-amber-400'>
-                                {formatCredits(r.potMinor)}
-                            </div>
-                        </div>
-                    </button>
+                    <BingoLobbyCard key={r.id} room={r} onPick={onPick} />
                 ))}
                 {rooms.length === 0 && (
-                    <div className='card p-6 text-center text-slate-500 text-sm'>
+                    <div className='col-span-2 card p-6 text-center text-slate-500 text-sm'>
                         {t('bingo.noRooms', { defaultValue: 'No rooms available right now.' })}
                     </div>
                 )}
@@ -1774,21 +1978,6 @@ function BingoLobby({
         </div>
     );
 }
-
-// The live "N playing" pill subscribes to liveCounts on its own. liveCounts ticks
-// constantly over the socket, so keeping that subscription out of the big Bingo
-// component below means a tick re-renders only this tiny pill, not the whole board.
-const BingoOnlinePill = memo(function BingoOnlinePill() {
-    const { t } = useTranslation();
-    const bingoOnline = useStore((s) => s.liveCounts?.bingoOnline ?? 0);
-    if (bingoOnline <= 0) return null;
-    return (
-        <span className='live-badge-pulse'>
-            <span className='pulse-dot' />
-            {t('home.playing', { count: bingoOnline })}
-        </span>
-    );
-});
 
 export function Bingo({ onBack }: BingoProps) {
     const { t } = useTranslation();
@@ -1815,6 +2004,8 @@ export function Bingo({ onBack }: BingoProps) {
     );
     const [localTickets, setLocalTickets] = useState<BingoTicket[]>([]);
     const [autoMode, setAutoMode] = useState(true);
+    const autoPreferenceRoomRef = useRef<string | null>(null);
+    const autoPreferenceInitializedRef = useRef(false);
     const [claimingId, setClaimingId] = useState<string | null>(null);
     const localRoomIdRef = useRef<string | null>(null);
     const [showChat, setShowChat] = useState(false);
@@ -1837,6 +2028,9 @@ export function Bingo({ onBack }: BingoProps) {
     const roomIdRef = useRef<string | null>(null);
     const holdingResultRef = useRef(false);
     const victoryRoomRef = useRef<string | null>(null);
+    const completedRoomRef = useRef<string | null>(null);
+    const cancelledRoomRef = useRef<string | null>(null);
+    const cancelHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
         null,
     );
@@ -1931,14 +2125,105 @@ export function Bingo({ onBack }: BingoProps) {
         try {
             // In per-agent mode, once the customer picks a room from the lobby we
             // stay in that specific room; otherwise use the single current room.
-            const next = pinnedRoomId
+            let next = pinnedRoomId
                 ? await bingoApi.getRoomState(pinnedRoomId)
                 : await bingoApi.getCurrentRoom();
+
+            const loadReplacementForSameSlot = async (
+                current: BingoRoomState,
+            ): Promise<BingoRoomState | null> => {
+                const ownerAgentId = current.ownerAgentId ?? null;
+                const freshLobby = await bingoApi.getLobby().catch(() => null);
+                if (freshLobby) setLobby(freshLobby);
+                const replacement = freshLobby?.rooms.find(
+                    (candidate) =>
+                        candidate.ownerAgentId === ownerAgentId &&
+                        (candidate.status === 'open' ||
+                            candidate.status === 'running') &&
+                        candidate.id !== current.id,
+                );
+                if (replacement) {
+                    setPinnedRoomId(replacement.id);
+                    return bingoApi.getRoomState(replacement.id);
+                }
+
+                const fallback = await bingoApi.getCurrentRoom().catch(() => null);
+                if (
+                    fallback &&
+                    fallback.id !== current.id &&
+                    fallback.status !== 'completed' &&
+                    fallback.status !== 'cancelled' &&
+                    (ownerAgentId == null ||
+                        fallback.ownerAgentId === ownerAgentId)
+                ) {
+                    if (pinnedRoomId) setPinnedRoomId(fallback.id);
+                    return fallback;
+                }
+
+                return null;
+            };
+
+            if (pinnedRoomId && next?.status === 'cancelled') {
+                const replacement = await loadReplacementForSameSlot(next);
+                if (replacement) {
+                    next = replacement;
+                } else {
+                    setLoading(false);
+                    return;
+                }
+            }
+            if (
+                next?.status === 'completed' &&
+                completedRoomRef.current === next.id &&
+                !holdingResultRef.current
+            ) {
+                const replacement = await loadReplacementForSameSlot(next);
+                if (replacement) {
+                    next = replacement;
+                } else {
+                    setRoom((prev) => (prev?.id === next?.id ? null : prev));
+                    roomIdRef.current = null;
+                    setLoading(false);
+                    return;
+                }
+            }
+            const nextIsLive = !!next && (next.status === 'open' || next.status === 'running');
+            if (
+                room?.status === 'cancelled' &&
+                cancelledRoomRef.current === room.id &&
+                next?.id !== room.id
+            ) {
+                if (nextIsLive) {
+                    cancelledRoomRef.current = null;
+                    if (cancelHoldTimerRef.current) {
+                        clearTimeout(cancelHoldTimerRef.current);
+                        cancelHoldTimerRef.current = null;
+                    }
+                } else {
+                    setLoading(false);
+                    return;
+                }
+            }
             setRoom((prev) => {
                 // During result hold, don't switch to a different (newer) room —
                 // only allow updating the same room (e.g. to pick up settlement data).
                 if (holdingResultRef.current && next?.id !== prev?.id)
                     return prev;
+                if (
+                    prev?.status === 'cancelled' &&
+                    cancelledRoomRef.current === prev.id &&
+                    next?.id !== prev?.id
+                ) {
+                    if (nextIsLive) {
+                        cancelledRoomRef.current = null;
+                        if (cancelHoldTimerRef.current) {
+                            clearTimeout(cancelHoldTimerRef.current);
+                            cancelHoldTimerRef.current = null;
+                        }
+                    } else {
+                        return prev;
+                    }
+                }
                 return next;
             });
             if (!holdingResultRef.current) {
@@ -1953,7 +2238,7 @@ export function Bingo({ onBack }: BingoProps) {
         } finally {
             setLoading(false);
         }
-    }, [addToast, pinnedRoomId]);
+    }, [addToast, pinnedRoomId, room?.id, room?.status]);
 
     // Lobby (per-agent mode): keep the room list fresh so players/pots update.
     useEffect(() => {
@@ -1979,6 +2264,25 @@ export function Bingo({ onBack }: BingoProps) {
         }, POLL_INTERVAL_MS);
         return () => clearInterval(id);
     }, [loadCurrent, showLobby]);
+
+    // Resync the instant the tab/app comes back to the foreground, rather than
+    // waiting up to POLL_INTERVAL_MS (or for the next live draw event) to notice
+    // a backgrounded tab fell behind. This is what lets the reveal-pacing effect
+    // above catch a large backlog immediately and snap forward instead of the
+    // player watching a stale board for a few seconds first.
+    useEffect(() => {
+        const resync = () => {
+            if (holdingResultRef.current) return;
+            void loadCurrent();
+        };
+        const onVisible = () => { if (document.visibilityState === 'visible') resync(); };
+        window.addEventListener('focus', resync);
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.removeEventListener('focus', resync);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, [loadCurrent]);
 
     // ── Socket: presence ─────────────────────────────────────────────────────────
     useEffect(() => {
@@ -2008,9 +2312,15 @@ export function Bingo({ onBack }: BingoProps) {
             number?: number;
             winnersByTier?: Record<string, string[]>;
             settlementSummary?: Record<string, unknown>;
+            intervalMs?: number;
         }) => {
             if (p.roomId !== roomIdRef.current || p.number === undefined)
                 return;
+            // Track the server's real cadence so the reveal pacer below can match it
+            // instead of racing ahead on a hardcoded guess.
+            if (typeof p.intervalMs === 'number' && p.intervalMs > 0) {
+                serverIntervalMsRef.current = p.intervalMs;
+            }
             // The reveal sound is played by CurrentBallDisplay in sync with the queued
             // ball animation, so we don't pop here (that fired in a fast burst).
             const drawn = p.number;
@@ -2070,6 +2380,7 @@ export function Bingo({ onBack }: BingoProps) {
             // Lock onto the result view SYNCHRONOUSLY so no poll/loadCurrent can swap
             // us to the next (already-opened) room before the overlay renders.
             holdingResultRef.current = true;
+            completedRoomRef.current = completedId;
             // Apply the completion payload immediately — it carries the winner name
             // (settlementSummary) so the overlay can render right away.
             setRoom((prev) => {
@@ -2129,12 +2440,43 @@ export function Bingo({ onBack }: BingoProps) {
     // ── Result hold ──────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!room) return;
-        const done = room.status === 'completed' || room.status === 'cancelled';
+        if (room.status === 'cancelled') {
+            holdingResultRef.current = false;
+            setHoldingResult(false);
+            if (completedRoomRef.current === room.id) {
+                completedRoomRef.current = null;
+            }
+            cancelledRoomRef.current = room.id;
+            if (cancelHoldTimerRef.current) {
+                clearTimeout(cancelHoldTimerRef.current);
+            }
+            cancelHoldTimerRef.current = setTimeout(() => {
+                if (cancelledRoomRef.current === room.id) {
+                    cancelledRoomRef.current = null;
+                    cancelHoldTimerRef.current = null;
+                    void loadCurrent();
+                }
+            }, 1800);
+            return;
+        }
+        if (cancelHoldTimerRef.current) {
+            clearTimeout(cancelHoldTimerRef.current);
+            cancelHoldTimerRef.current = null;
+        }
+        cancelledRoomRef.current = null;
+        if (room.status !== 'completed') {
+            completedRoomRef.current = null;
+        }
+        const done = room.status === 'completed';
         if (!done) {
             holdingResultRef.current = false;
             setHoldingResult(false);
             return;
         }
+        if (completedRoomRef.current === room.id && !holdingResultRef.current) {
+            return;
+        }
+        completedRoomRef.current = room.id;
         // Empty round — nobody bought a ticket (a stray/legacy room that finished with
         // no players). There is no result to celebrate, so DON'T show the "No players —
         // no win this round" overlay; quietly advance to the next (idle) room.
@@ -2256,6 +2598,8 @@ export function Bingo({ onBack }: BingoProps) {
         ? 'loading'
         : holdingResult
           ? 'result'
+          : room.status === 'cancelled' && room.winMode === 'prefilled'
+            ? 'buy'
           : room.status === 'open'
             ? 'buy'
             : room.status === 'running'
@@ -2301,20 +2645,65 @@ export function Bingo({ onBack }: BingoProps) {
         ? Math.max(0, room.maxTickets - room.soldTickets)
         : 0;
     const salesOpen = room?.status === 'open';
+    const cartelaChangeLockSeconds = Math.max(0, room?.cartelaChangeLockSeconds ?? 3);
+    const cartelaChangesLocked =
+        phase === 'buy' &&
+        room?.status === 'open' &&
+        cartelaChangeLockSeconds > 0 &&
+        room.scheduledStartAt !== undefined &&
+        room.scheduledStartAt !== null &&
+        timeRemainingSecs !== null &&
+        timeRemainingSecs <= cartelaChangeLockSeconds;
+    const cartelaReturnsLocked = cartelaChangesLocked;
 
     // ── Paced reveal ─────────────────────────────────────────────────────────────
     // One shared cursor drives "now calling", the board and every card so they all
     // advance TOGETHER, one ball at a time at a readable pace — even when a poll
-    // delivers several numbers at once. Snap to full on room switch (no history
-    // replay) and on completion (show the final state immediately).
+    // delivers several numbers at once. Snap instantly to full only on room switch
+    // (no history replay) or cancellation. On completion, reveal keeps pacing
+    // through (see the effect below) so the card never jumps to "done" ahead of
+    // the round actually resolving.
     const [revealedCount, setRevealedCount] = useState(0);
+    const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Server's actual draw cadence, learned from the most recent draw event.
+    // Falls back to REVEAL_BASE_MS until the first event of the session arrives.
+    const serverIntervalMsRef = useRef<number>(REVEAL_BASE_MS);
+    // True briefly right after a large-backlog snap, so the UI can show "Catching
+    // up…" instead of letting the jump look like an unexplained teleport.
+    const [isCatchingUp, setIsCatchingUp] = useState(false);
+    // Distinguishes "you fell behind a still-live game" from "you're seeing the
+    // recap of a round that already ended" — same jump-forward mechanics, but the
+    // second one must never read as if it just happened live.
+    const [catchupKind, setCatchupKind] = useState<'live' | 'completed'>('live');
+    const catchupBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Mirrors isCatchingUp/catchupKind for processNextReveal (a stable useCallback)
+    // to read without needing them in its dependency list.
+    const replayingCompletedRef = useRef(false);
+    useEffect(() => {
+        replayingCompletedRef.current = isCatchingUp && catchupKind === 'completed';
+    }, [isCatchingUp, catchupKind]);
+
+    const processNextReveal = useCallback(() => {
+        revealTimerRef.current = null;
+        setRevealedCount((c) => c + 1);
+        // A tick playing out during a "replaying an already-decided round" catch-up
+        // is narrating balls drawn seconds/minutes ago — keep the visual marking
+        // (honest, unchanged) but skip the "live call" sound cue for it.
+        if (!replayingCompletedRef.current) soundEngine.pop();
+    }, []);
+
     useEffect(() => {
         setRevealedCount(room?.drawnNumbers?.length ?? 0);
     }, [room?.id]);
+
     useEffect(() => {
         const total = drawnNumbers.length;
-        // Snap to the final state on completion/cancel (no replay) and clamp any overshoot.
-        if (room?.status === 'completed' || room?.status === 'cancelled') {
+        // Cancelled rooms have no result to narrate — snap immediately, nothing lost.
+        if (room?.status === 'cancelled') {
+            if (revealTimerRef.current) {
+                clearTimeout(revealTimerRef.current);
+                revealTimerRef.current = null;
+            }
             setRevealedCount(total);
             return;
         }
@@ -2323,18 +2712,46 @@ export function Bingo({ onBack }: BingoProps) {
             return;
         }
         if (revealedCount >= total) return;
-        // One steady, calm cadence for every ball. Only shorten (still gently) when
-        // the client is far behind — never a fast 250ms burst that outruns the
-        // animation and reads as "rushed".
+
+        // If a timer is already running, let it finish. It will increment the count
+        // and this effect will re-run to schedule the next one, completely decoupled
+        // from the fast socket arrivals.
+        if (revealTimerRef.current) return;
+
+        // A completed room falls through to the SAME backlog/steady-cadence logic
+        // below as a still-running one — no special instant snap. A card that was
+        // already keeping up finishes marking at the same pace it ran all round
+        // (landing "fully marked" around when the first win popup arms, never
+        // before); a card that had fallen behind (backgrounded tab, dropped
+        // socket) correctly falls into the catch-up branch instead of silently
+        // jumping to the final state with no explanation.
         const backlog = total - revealedCount;
-        const delay =
-            backlog > REVEAL_CATCHUP_BACKLOG ? REVEAL_MIN_MS : REVEAL_BASE_MS;
-        const id = setTimeout(() => {
-            setRevealedCount((c) => Math.min(c + 1, total));
-            soundEngine.pop();
-        }, delay);
-        return () => clearTimeout(id);
-    }, [revealedCount, drawnNumbers.length, room?.status]);
+        if (backlog > REVEAL_CATCHUP_BACKLOG) {
+            // Fell far behind — jump straight to near-live instead of animating
+            // through the gap at a sped-up pace (see CATCHUP_TAIL/BADGE comment
+            // above). The effect re-runs on the new revealedCount and falls
+            // through to the normal branch below for the remaining tail.
+            const target = Math.max(0, total - CATCHUP_TAIL);
+            setRevealedCount(target);
+            setIsCatchingUp(true);
+            setCatchupKind(room?.status === 'completed' ? 'completed' : 'live');
+            if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
+            catchupBadgeTimerRef.current = setTimeout(() => setIsCatchingUp(false), CATCHUP_BADGE_MS);
+            return;
+        }
+
+        // One steady, calm cadence for every ball, matched to the server's actual
+        // draw interval.
+        revealTimerRef.current = setTimeout(processNextReveal, serverIntervalMsRef.current);
+    }, [revealedCount, drawnNumbers.length, room?.status, processNextReveal]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+            if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
+        };
+    }, []);
     const revealedNumbers = useMemo(
         () => drawnNumbers.slice(0, revealedCount),
         [drawnNumbers, revealedCount],
@@ -2379,14 +2796,25 @@ export function Bingo({ onBack }: BingoProps) {
         [drawnNumbers, ticketCount],
     );
 
-    // When a place is won, a card completed its pattern on numbers the server has
-    // already drawn. Snap the paced reveal up to the full drawn set so the winner
-    // card's marked cells all read as genuinely CALLED — otherwise the board's slow
-    // reveal lags behind and the win card looks like it marked uncalled numbers.
+    // True for the whole stretch between a round ending and its last place's win
+    // popup closing — including the silent gaps before a popup arms and between
+    // successive popups, which neither LivePlaceWinPopup nor RoomResultOverlay
+    // covers on their own. Keyed off the same signal RoomResultOverlay already
+    // gates on (livePlaceQueue.length === 0) so the two stay in sync without a
+    // second independent timer. Always-mounted while true — never itself a source
+    // of a gap — so the player never sees a fully-marked card with nothing
+    // acknowledging the round is being resolved.
+    const resultsRevealing = room?.status === 'completed' && livePlaceQueue.length > 0;
+
+    // When a place is won, the server already knows the winner.
+    // We intentionally do NOT snap the paced reveal here to keep the drawing uniform.
+    // The UI will show the winner popups while the board catches up.
+    /* 
     useEffect(() => {
         if (livePlaceQueue.length > 0)
             setRevealedCount(room?.drawnNumbers?.length ?? 0);
     }, [livePlaceQueue.length, room?.drawnNumbers?.length]);
+    */
 
     const myTickets = useMemo(() => {
         const apiTickets = room?.tickets ?? [];
@@ -2397,23 +2825,29 @@ export function Bingo({ onBack }: BingoProps) {
 
     const alreadyBought = myTickets.length > 0;
 
-    // Keep the Auto switch in sync with the server (source of truth). A card in
-    // manual mode reports autoClaim === false, so if any of my cards is manual the
-    // switch shows OFF. Re-derives on every poll so a refresh never desyncs it —
-    // except while a toggle is in flight, so an older poll can't flip it back
-    // (which would hide the BINGO buttons for a beat).
+    // Initialize the player's Auto/Manual preference once when a room's cards first
+    // arrive. Do not re-derive it on every draw/status update: a winning or
+    // disqualified card changing state must never move the player's toggle while
+    // they are watching the Now Calling board.
     const autoBusyRef = useRef(false);
     useEffect(() => {
-        if (autoBusyRef.current) return;
-        const tix = room?.tickets ?? [];
-        if (tix.length > 0)
-            setAutoMode(tix.every((t) => t.autoClaim !== false));
-    }, [room?.tickets]);
+        if (autoPreferenceRoomRef.current !== room?.id) {
+            autoPreferenceRoomRef.current = room?.id ?? null;
+            autoPreferenceInitializedRef.current = false;
+        }
+        if (autoBusyRef.current || autoPreferenceInitializedRef.current) return;
+        const activeTickets = (room?.tickets ?? []).filter((t) => t.status === 'active');
+        if (activeTickets.length > 0) {
+            setAutoMode(activeTickets.every((t) => t.autoClaim !== false));
+            autoPreferenceInitializedRef.current = true;
+        }
+    }, [room?.id, room?.tickets]);
 
     const toggleAuto = async () => {
         if (!room) return;
         const next = !autoMode;
         autoBusyRef.current = true;
+        autoPreferenceInitializedRef.current = true;
         setAutoMode(next); // optimistic
         try {
             await bingoApi.setAuto(room.id, next);
@@ -2466,7 +2900,7 @@ export function Bingo({ onBack }: BingoProps) {
 
     // ── Buy ──────────────────────────────────────────────────────────────────────
     const buyTickets = async () => {
-        if (!room || !salesOpen || alreadyBought) return;
+        if (!room || !salesOpen || alreadyBought || cartelaChangesLocked) return;
         setBuying(true);
         try {
             const bought = await bingoApi.purchaseTickets(
@@ -2490,11 +2924,88 @@ export function Bingo({ onBack }: BingoProps) {
         }
     };
 
-    // Instant buy-or-refund on a single tap. Tapping an available cartela buys it
-    // immediately; tapping one you already own (while sales are open) refunds it.
-    // A per-cartela pending guard prevents a double-tap from firing twice.
+    // Shared toast classification for a purchase/refund failure — pulled out so
+    // both the immediate refund path and the batched buy path (see
+    // flushPendingBuys below) show the same specific messages.
+    const toastCartelaError = useCallback(
+        (err: unknown) => {
+            const msg = getErrorMessage(err);
+            if (msg.toLowerCase().includes('taken'))
+                addToast('error', t('bingo.toastCartelaTaken'));
+            else if (
+                msg.toLowerCase().includes('balance') ||
+                msg.toLowerCase().includes('insufficient') ||
+                msg.toLowerCase().includes('enough')
+            )
+                addToast('error', t('bingo.toastInsufficientBalance'));
+            else if (msg.toLowerCase().includes('closed'))
+                addToast('error', t('bingo.toastSalesClosed'));
+            else if (msg.toLowerCase().includes('limit'))
+                addToast('error', t('bingo.cartelaLimit', { count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10) }));
+            else addToast('error', msg);
+        },
+        [addToast, t],
+    );
+
+    // Rapid taps queue their cartela number here instead of firing one HTTP
+    // request each — each request takes a pessimistic write lock on the room,
+    // so many concurrent single-cartela buys were serializing on that lock and
+    // occasionally surfacing as a generic "service error" under load. A short
+    // trailing debounce coalesces everything tapped in the same burst into one
+    // purchaseCartelas([...]) call.
+    const pendingBuyQueueRef = useRef<number[]>([]);
+    const pendingBuyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingBuyRoomIdRef = useRef<string | null>(null);
+    const pendingBuyIdempotencyKeyRef = useRef<string | null>(null);
+
+    const flushPendingBuys = useCallback(async () => {
+        pendingBuyTimerRef.current = null;
+        const numbers = pendingBuyQueueRef.current;
+        pendingBuyQueueRef.current = [];
+        const roomId = pendingBuyRoomIdRef.current;
+        const idempotencyKey = pendingBuyIdempotencyKeyRef.current;
+        pendingBuyRoomIdRef.current = null;
+        pendingBuyIdempotencyKeyRef.current = null;
+        if (numbers.length === 0 || !roomId || !idempotencyKey) return;
+
+        try {
+            const bought = await bingoApi.purchaseCartelas(roomId, numbers, idempotencyKey);
+            localRoomIdRef.current = roomId;
+            setLocalTickets((prev) => [...prev, ...bought]);
+            soundEngine.cashout();
+            if (numbers.length === 1) {
+                addToast('success', t('bingo.toastCartelaPurchased', { n: numbers[0] }));
+            } else {
+                addToast(
+                    'success',
+                    t('bingo.toastCartelasPurchased', {
+                        count: numbers.length,
+                        defaultValue: `${numbers.length} cartelas purchased`,
+                    }),
+                );
+            }
+            const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
+            setWallet(nextWallet);
+        } catch (err) {
+            toastCartelaError(err);
+            void loadCurrent();
+        } finally {
+            setPendingCartelas((prev) => {
+                const next = new Set(prev);
+                for (const n of numbers) next.delete(n);
+                return next;
+            });
+        }
+    }, [addToast, loadCurrent, setWallet, t, toastCartelaError]);
+
+    // Instant buy-or-refund on a single tap. Tapping an available cartela queues
+    // it for purchase (batched with any other cartelas tapped in the same short
+    // window — see flushPendingBuys); tapping one you already own (while sales
+    // are open) refunds it immediately. The final freeze window blocks both
+    // directions, and a per-cartela pending guard prevents a double-tap from
+    // firing twice.
     const handleCartelaTap = useCallback(
-        async (n: number) => {
+        (n: number) => {
             if (!room || room.status !== 'open') return;
             if (!currentUser) {
                 addToast('error', t('bingo.toastLoginToBuy'));
@@ -2503,55 +3014,59 @@ export function Bingo({ onBack }: BingoProps) {
             if (pendingCartelas.has(n)) return;
 
             const owned = myCartelaSet.has(n);
+            if (owned && cartelaReturnsLocked) return;
+            if (!owned && cartelaChangesLocked) return;
             if (!owned && takenSet.has(n)) return; // taken by someone else — locked
 
             setPendingCartelas((prev) => new Set(prev).add(n));
-            try {
-                if (owned) {
-                    await bingoApi.releaseCartela(room.id, n);
-                    setLocalTickets((prev) =>
-                        prev.filter((t) => t.cartelaNumber !== n),
-                    );
-                    addToast('info', t('bingo.toastCartelaRefunded', { n }));
-                } else {
-                    const bought = await bingoApi.purchaseCartelas(
-                        room.id,
-                        [n],
-                        createIdempotencyKey('bingo-cartela'),
-                    );
-                    localRoomIdRef.current = room.id;
-                    setLocalTickets((prev) => [...prev, ...bought]);
-                    soundEngine.cashout();
-                    addToast('success', t('bingo.toastCartelaPurchased', { n }));
-                }
-                const [nextWallet] = await Promise.all([
-                    walletApi.getWallet(),
-                    loadCurrent(),
-                ]);
-                setWallet(nextWallet);
-            } catch (err) {
-                const msg = getErrorMessage(err);
-                if (msg.toLowerCase().includes('taken'))
-                    addToast('error', t('bingo.toastCartelaTaken'));
-                else if (
-                    msg.toLowerCase().includes('balance') ||
-                    msg.toLowerCase().includes('insufficient') ||
-                    msg.toLowerCase().includes('enough')
-                )
-                    addToast('error', t('bingo.toastInsufficientBalance'));
-                else if (msg.toLowerCase().includes('closed'))
-                    addToast('error', t('bingo.toastSalesClosed'));
-                else if (msg.toLowerCase().includes('limit'))
-                    addToast('error', t('bingo.cartelaLimit', { count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10) }));
-                else addToast('error', msg);
-                void loadCurrent();
-            } finally {
-                setPendingCartelas((prev) => {
-                    const next = new Set(prev);
-                    next.delete(n);
-                    return next;
-                });
+
+            if (owned) {
+                void (async () => {
+                    try {
+                        const refund = await bingoApi.releaseCartela(room.id, n);
+                        setLocalTickets((prev) =>
+                            prev.filter((t) => t.cartelaNumber !== n),
+                        );
+                        addToast('info', t('bingo.toastCartelaRefunded', { n }));
+                        if (refund.roomCancelled) {
+                            cancelledRoomRef.current = room.id;
+                            const cancelledRoom = await bingoApi.getRoomState(room.id);
+                            setRoom(cancelledRoom);
+                            roomIdRef.current = cancelledRoom.id;
+                            localRoomIdRef.current = cancelledRoom.id;
+                            setWallet(await walletApi.getWallet());
+                            return;
+                        }
+                        const [nextWallet] = await Promise.all([
+                            walletApi.getWallet(),
+                            loadCurrent(),
+                        ]);
+                        setWallet(nextWallet);
+                    } catch (err) {
+                        toastCartelaError(err);
+                        void loadCurrent();
+                    } finally {
+                        setPendingCartelas((prev) => {
+                            const next = new Set(prev);
+                            next.delete(n);
+                            return next;
+                        });
+                    }
+                })();
+                return;
             }
+
+            // Buy path: enqueue and (re)start the short debounce window so several
+            // rapid taps land as a single batched purchase request.
+            pendingBuyQueueRef.current.push(n);
+            pendingBuyRoomIdRef.current = room.id;
+            if (!pendingBuyIdempotencyKeyRef.current) {
+                pendingBuyIdempotencyKeyRef.current = createIdempotencyKey('bingo-cartela');
+            }
+            if (pendingBuyTimerRef.current) clearTimeout(pendingBuyTimerRef.current);
+            pendingBuyTimerRef.current = setTimeout(() => {
+                void flushPendingBuys();
+            }, 250);
         },
         [
             room,
@@ -2559,10 +3074,13 @@ export function Bingo({ onBack }: BingoProps) {
             pendingCartelas,
             myCartelaSet,
             takenSet,
+            cartelaReturnsLocked,
             addToast,
             loadCurrent,
             setWallet,
             t,
+            toastCartelaError,
+            flushPendingBuys,
         ],
     );
 
@@ -2628,6 +3146,7 @@ export function Bingo({ onBack }: BingoProps) {
                                 holdingResultRef.current = false;
                                 setHoldingResult(false);
                                 roomIdRef.current = null;
+                                completedRoomRef.current = room.id;
                                 void loadCurrent();
                             }}
                         />
@@ -2658,7 +3177,6 @@ export function Bingo({ onBack }: BingoProps) {
                     <ArrowLeft size={14} /> {t('nav.home')}
                 </button>
                 <div className='flex items-center gap-2'>
-                    <BingoOnlinePill />
                     <button
                         onClick={() => setSoundMuted(!soundMuted)}
                         className='btn btn-ghost btn-sm icon-btn'
@@ -2823,12 +3341,12 @@ export function Bingo({ onBack }: BingoProps) {
                                                         onClick={() =>
                                                             handleCartelaTap(n)
                                                         }
-                                                        disabled={busy}
+                                                        disabled={busy || cartelaChangesLocked}
                                                         title={t(
                                                             'bingo.tapToRefund',
                                                         )}
                                                         className={`group flex items-center gap-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono font-black text-[11px] pl-2 pr-1.5 py-0.5 border border-emerald-400/30 transition ${
-                                                            busy
+                                                            busy || cartelaChangesLocked
                                                                 ? 'opacity-50'
                                                                 : 'hover:bg-red-500/20 hover:text-red-300 hover:border-red-400/40'
                                                         }`}
@@ -2848,6 +3366,7 @@ export function Bingo({ onBack }: BingoProps) {
                                     mySet={myCartelaSet}
                                     pendingSet={pendingCartelas}
                                     salesOpen={salesOpen}
+                                    returnLocked={cartelaReturnsLocked}
                                     onTap={handleCartelaTap}
                                 />
                             </div>
@@ -2900,7 +3419,18 @@ export function Bingo({ onBack }: BingoProps) {
                                         status={room.status}
                                         count={revealedNumbers.length}
                                         max={ballCount}
+                                        catchingUp={isCatchingUp}
+                                        catchupKind={catchupKind}
                                     />
+                                    {/* Always-mounted (no arm/disarm timer of its own) so it
+                                  bridges the real gaps before/between win popups — the round
+                                  ending must never look like nothing is happening. */}
+                                    {resultsRevealing && (
+                                        <div className='flex items-center gap-1.5 text-[8px] font-black uppercase tracking-wide text-emerald-400'>
+                                            <span className='w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse' />
+                                            {t('bingo.resultsRevealing')}
+                                        </div>
+                                    )}
                                     {phase === 'buy' &&
                                         (timeRemainingSecs !== null ? (
                                             <div className='mt-1 text-center'>
@@ -2921,6 +3451,11 @@ export function Bingo({ onBack }: BingoProps) {
                                                         timeRemainingSecs % 60,
                                                     ).padStart(2, '0')}
                                                 </span>
+                                                {cartelaReturnsLocked && (
+                                                    <div className='mt-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-red-400'>
+                                                        Cartela changes locked
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (
                                             <div className='mt-1 text-center'>
@@ -3090,13 +3625,19 @@ export function Bingo({ onBack }: BingoProps) {
                             </div>
                             <motion.button
                                 whileHover={
-                                    !buying && remainingTickets > 0
+                                    !buying &&
+                                    remainingTickets > 0 &&
+                                    !cartelaChangesLocked
                                         ? { scale: 1.02, y: -2 }
                                         : {}
                                 }
                                 whileTap={{ scale: 0.97 }}
                                 onClick={buyTickets}
-                                disabled={buying || remainingTickets <= 0}
+                                disabled={
+                                    buying ||
+                                    remainingTickets <= 0 ||
+                                    cartelaChangesLocked
+                                }
                                 className='btn btn-primary btn-full py-3.5 text-base font-black'
                             >
                                 {buying ? (

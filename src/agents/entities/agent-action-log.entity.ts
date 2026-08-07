@@ -14,7 +14,10 @@ export type AgentActionType =
   | 'withdrawal_rejected'
   | 'withdrawal_completed'
   | 'telebirr_deposit_receipt'
-  | 'mpesa_deposit_receipt';
+  | 'mpesa_deposit_receipt'
+  | 'settlement_recorded'
+  | 'settlement_updated'
+  | 'settlement_requested';
 
 @Entity({ name: 'agent_action_logs', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 @Index(['agentId', 'createdAt'])
@@ -54,6 +57,9 @@ export class AgentActionLog {
       'withdrawal_completed',
       'telebirr_deposit_receipt',
       'mpesa_deposit_receipt',
+      'settlement_recorded',
+      'settlement_updated',
+      'settlement_requested',
     ],
   })
   actionType: AgentActionType;

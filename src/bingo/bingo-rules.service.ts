@@ -469,6 +469,244 @@ export class BingoRulesService {
     return { markedNumbers, completedPatternIds };
   }
 
+  /**
+   * The MINIMAL, specific set of cells that satisfies `pattern` on this marked
+   * grid — exactly one line for `any_line`, exactly the two lines used for
+   * `any_two_lines`, exactly the fixed mask's cells, etc. Never "every line
+   * that happens to also be complete" — a card can legitimately have more
+   * marked lines than the pattern required (pure chance), and highlighting
+   * all of them makes a 1-line win look like it needed 2+. Used to render the
+   * win truthfully. Returns null if the pattern isn't actually completed.
+   * Picks deterministically (rows, then columns, then diagonals, in index
+   * order) when more than one line qualifies.
+   */
+  explainPatternCompletion(
+    grid: (number | null)[][],
+    drawnNumbers: number[],
+    pattern: Pick<BingoPattern, 'patternType' | 'mask'>,
+  ): Array<{ row: number; col: number }> | null {
+    const drawn = new Set(drawnNumbers);
+    const marked: boolean[][] = grid.map((row) => row.map((cell) => cell === null || drawn.has(cell)));
+    const ROWS = marked.length;
+    const COLS = marked[0]?.length ?? 0;
+
+    const rowCells = (r: number) => Array.from({ length: COLS }, (_, c) => ({ row: r, col: c }));
+    const colCells = (c: number) => Array.from({ length: ROWS }, (_, r) => ({ row: r, col: c }));
+    const diagCells = (which: 0 | 1) =>
+      [0, 1, 2, 3, 4].map((i) => (which === 0 ? { row: i, col: i } : { row: i, col: 4 - i }));
+    const isComplete = (line: Array<{ row: number; col: number }>) =>
+      line.every(({ row, col }) => marked[row]?.[col]);
+
+    const completedRows = Array.from({ length: ROWS }, (_, r) => rowCells(r)).filter(isComplete);
+    const completedCols = Array.from({ length: COLS }, (_, c) => colCells(c)).filter(isComplete);
+    const completedDiags =
+      ROWS === 5 && COLS === 5 ? [diagCells(0), diagCells(1)].filter(isComplete) : [];
+    const completedLines = [...completedRows, ...completedCols, ...completedDiags];
+
+    const union = (lines: Array<Array<{ row: number; col: number }>>) => {
+      const byKey = new Map<string, { row: number; col: number }>();
+      for (const line of lines) for (const cell of line) byKey.set(`${cell.row}:${cell.col}`, cell);
+      return [...byKey.values()];
+    };
+
+    switch (pattern.patternType as PatternType) {
+      case 'any_row':
+        return completedRows[0] ?? null;
+      case 'any_col':
+        return completedCols[0] ?? null;
+      case 'any_diagonal':
+        return completedDiags[0] ?? null;
+      case 'any_line':
+        return completedLines[0] ?? null;
+      case 'any_two_lines':
+        return completedLines.length >= 2 ? union(completedLines.slice(0, 2)) : null;
+      case 'any_three_lines':
+        return completedLines.length >= 3 ? union(completedLines.slice(0, 3)) : null;
+      case 'fixed': {
+        if (!pattern.mask) return null;
+        const required: Array<{ row: number; col: number }> = [];
+        pattern.mask.forEach((maskRow, row) =>
+          maskRow.forEach((need, col) => {
+            if (need) required.push({ row, col });
+          }),
+        );
+        return required.length > 0 && isComplete(required) ? required : null;
+      }
+      case 'coverall': {
+        const required: Array<{ row: number; col: number }> = [];
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) required.push({ row, col });
+        }
+        return isComplete(required) ? required : null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  // ── Bot win-steering ───────────────────────────────────────────────────────
+
+  /**
+   * Build a fresh, legitimate 5×5 card that already completes `pattern` using
+   * only numbers in `drawnNumbers` — this is how a "cartel-dual" house bot is
+   * given an instant, mathematically valid win instead of waiting for its own
+   * card to complete naturally (which the ball draw itself must never be
+   * biased toward, since it runs through the audited RNG). The card is a
+   * brand-new random layout — never a copy of another player's card — so two
+   * winning cards never look suspiciously identical.
+   *
+   * Tries several ways to satisfy the pattern (which line(s)/cells) in random
+   * order and returns the first one the current draw actually supports (i.e.
+   * every required cell's column already has enough drawn numbers). Returns
+   * null if none are supported yet — the caller should hold and retry once
+   * more numbers are drawn.
+   */
+  generateWinningPatternCard(
+    pattern: BingoPattern,
+    drawnNumbers: number[],
+    numberRange: number,
+  ): (number | null)[][] | null {
+    const drawnSet = new Set(drawnNumbers);
+    for (const cells of this.winningCellCandidates(pattern)) {
+      const grid = this.buildCardForRequiredCells(cells, drawnSet, numberRange);
+      if (grid) return grid;
+    }
+    return null;
+  }
+
+  /** Candidate cell-sets (shuffled) that would each satisfy `pattern` if marked. */
+  private winningCellCandidates(pattern: BingoPattern): Array<Array<{ row: number; col: number }>> {
+    const isFree = (row: number, col: number) => row === 2 && col === 2;
+    const rowCells = (row: number) =>
+      [0, 1, 2, 3, 4].filter((col) => !isFree(row, col)).map((col) => ({ row, col }));
+    const colCells = (col: number) =>
+      [0, 1, 2, 3, 4].filter((row) => !isFree(row, col)).map((row) => ({ row, col }));
+    const diagCells = (which: 0 | 1) =>
+      [0, 1, 2, 3, 4]
+        .map((i) => (which === 0 ? { row: i, col: i } : { row: i, col: 4 - i }))
+        .filter((cell) => !isFree(cell.row, cell.col));
+
+    const rows = [0, 1, 2, 3, 4].map(rowCells);
+    const cols = [0, 1, 2, 3, 4].map(colCells);
+    const diagonals = [diagCells(0), diagCells(1)];
+    const allLines = [...rows, ...cols, ...diagonals];
+
+    const unionOf = (lineSets: Array<Array<{ row: number; col: number }>>) => {
+      const byKey = new Map<string, { row: number; col: number }>();
+      for (const lines of lineSets) for (const cell of lines) byKey.set(`${cell.row}:${cell.col}`, cell);
+      return [...byKey.values()];
+    };
+
+    switch (pattern.patternType as PatternType) {
+      case 'any_row':
+        return this.shuffleList(rows);
+      case 'any_col':
+        return this.shuffleList(cols);
+      case 'any_diagonal':
+        return this.shuffleList(diagonals);
+      case 'any_line':
+        return this.shuffleList(allLines);
+      case 'any_two_lines':
+        return this.shuffleList(this.combinations(allLines, 2)).map(unionOf);
+      case 'any_three_lines':
+        return this.shuffleList(this.combinations(allLines, 3)).map(unionOf);
+      case 'fixed': {
+        if (!pattern.mask) return [];
+        const cells: Array<{ row: number; col: number }> = [];
+        pattern.mask.forEach((maskRow, row) =>
+          maskRow.forEach((required, col) => {
+            if (required && !isFree(row, col)) cells.push({ row, col });
+          }),
+        );
+        return [cells];
+      }
+      case 'coverall': {
+        const cells: Array<{ row: number; col: number }> = [];
+        for (let row = 0; row < 5; row++) {
+          for (let col = 0; col < 5; col++) {
+            if (!isFree(row, col)) cells.push({ row, col });
+          }
+        }
+        return [cells];
+      }
+      default:
+        return [];
+    }
+  }
+
+  /** All k-element combinations of `items`, order-preserving within each combo. */
+  private combinations<T>(items: T[], k: number): T[][] {
+    if (k === 0) return [[]];
+    if (items.length < k) return [];
+    const [first, ...rest] = items;
+    const withFirst = this.combinations(rest, k - 1).map((combo) => [first, ...combo]);
+    return [...withFirst, ...this.combinations(rest, k)];
+  }
+
+  private shuffleList<T>(items: T[]): T[] {
+    const shuffled = [...items];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = randomInt(0, i + 1);
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  /**
+   * Fill a 5×5 card so that exactly `requiredCells` (plus, incidentally, maybe
+   * more) end up marked: required cells get a number already in `drawnSet`,
+   * every other cell gets any other unused number in its column's range
+   * (preferring one NOT in `drawnSet`, purely so the card doesn't look
+   * implausibly close to full). Returns null if a column doesn't have enough
+   * numbers available (required or otherwise) to fill it — i.e. this specific
+   * line/cell choice isn't buildable from the numbers drawn so far.
+   */
+  private buildCardForRequiredCells(
+    requiredCells: Array<{ row: number; col: number }>,
+    drawnSet: Set<number>,
+    numberRange: number,
+  ): (number | null)[][] | null {
+    const ROWS = 5;
+    const COLS = 5;
+    const colWidth = Math.floor(numberRange / COLS);
+    const grid: (number | null)[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+
+    for (let col = 0; col < COLS; col += 1) {
+      const min = col * colWidth + 1;
+      const max = col === COLS - 1 ? numberRange : (col + 1) * colWidth;
+      const isCenterCol = col === 2;
+      const neededTotal = isCenterCol ? ROWS - 1 : ROWS;
+      if (max - min + 1 < neededTotal) return null;
+
+      const requiredRows = new Set(
+        requiredCells.filter((cell) => cell.col === col).map((cell) => cell.row),
+      );
+
+      const drawnPool: number[] = [];
+      const otherPool: number[] = [];
+      for (let n = min; n <= max; n += 1) (drawnSet.has(n) ? drawnPool : otherPool).push(n);
+      if (drawnPool.length < requiredRows.size) return null;
+
+      const shuffledDrawn = this.shuffleList(drawnPool);
+      const shuffledOther = this.shuffleList(otherPool);
+      let drawnIdx = 0;
+      let otherIdx = 0;
+
+      for (let row = 0; row < ROWS; row += 1) {
+        if (isCenterCol && row === 2) continue; // FREE space
+        if (requiredRows.has(row)) {
+          grid[row][col] = shuffledDrawn[drawnIdx];
+          drawnIdx += 1;
+          continue;
+        }
+        const filler = otherIdx < shuffledOther.length ? shuffledOther[otherIdx++] : shuffledDrawn[drawnIdx++];
+        if (filler === undefined) return null;
+        grid[row][col] = filler;
+      }
+    }
+    return grid;
+  }
+
   // ── Shared prize splitting ─────────────────────────────────────────────────
 
   splitPrizeMinor(prizeMinor: number, winnerCount: number): number[] {

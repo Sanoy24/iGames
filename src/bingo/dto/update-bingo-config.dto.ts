@@ -33,6 +33,9 @@ export class UpdateBingoConfigDto {
   salesWindowSeconds?: number;
 
   @IsOptional() @IsInt() @Min(0)
+  cartelaChangeLockSeconds?: number;
+
+  @IsOptional() @IsInt() @Min(0)
   resultDisplaySeconds?: number;
 
   @IsOptional() @IsIn(['line', 'pattern', 'prefilled'])
@@ -56,13 +59,52 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0)
   globalBingoBotWinInterval?: number;
 
-  /** Below this many real players in a room, bots join to fill/steer it. 0 = never. */
+  @IsOptional() @IsBoolean()
+  botCartelaPolicyEnabled?: boolean;
+
+  @IsOptional() @IsIn(['mirror', 'fixed_cap'])
+  botCartelaPolicyMode?: 'mirror' | 'fixed_cap';
+
+  @IsOptional() @IsInt() @Min(1)
+  botMaxCartelasPerBotPerRoom?: number;
+
+  /** Bots join when the real-player count falls below this threshold. */
+  @IsOptional() @IsBoolean()
+  botBelowThresholdEnabled?: boolean;
+
+  @IsOptional() @IsInt() @Min(0)
+  botBelowThresholdRealPlayers?: number;
+
+  /** Bots join when the real-player count rises above this threshold. */
+  @IsOptional() @IsBoolean()
+  botAboveThresholdEnabled?: boolean;
+
+  @IsOptional() @IsInt() @Min(0)
+  botAboveThresholdRealPlayers?: number;
+
+  /** Legacy below-threshold setting kept for compatibility. */
   @IsOptional() @IsInt() @Min(0)
   botMaxRealPlayers?: number;
 
   /** How bots steer a below-threshold room. */
-  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid'])
+  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid', 'cartel-dual'])
   botWinMode?: string;
+
+  @IsOptional() @IsBoolean()
+  botBonusWinEnabled?: boolean;
+
+  @IsOptional() @IsIn(['interval', 'random'])
+  botBonusWinMode?: 'interval' | 'random';
+
+  @IsOptional() @IsInt() @Min(0)
+  botBonusWinEveryNRounds?: number;
+
+  @IsOptional() @IsInt() @Min(0) @Max(100)
+  botBonusWinChancePct?: number;
+
+  /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
+  @IsOptional() @IsInt() @Min(0)
+  botWinnerCooldownRooms?: number;
 
   @IsOptional() @IsIn(['race', 'leaderboard'])
   prefilledRankingMode?: 'race' | 'leaderboard';
@@ -113,4 +155,8 @@ export class UpdateBingoConfigDto {
 
   @IsOptional() @IsString()
   prefilledFifthPatternId?: string | null;
+
+  /** JSON array of alias names for the reserved cartel (e.g. '["Abrsh","Yonas"]'). Null = use bot displayName. */
+  @IsOptional() @IsString()
+  botAliasPool?: string | null;
 }

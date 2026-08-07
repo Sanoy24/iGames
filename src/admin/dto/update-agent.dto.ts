@@ -1,4 +1,4 @@
-import { IsString, Matches, MinLength, IsOptional, IsNumber, Min, Max, IsObject, IsArray } from 'class-validator';
+import { IsString, Matches, MinLength, IsOptional, IsNumber, Min, Max, IsObject, IsArray, ValidateIf } from 'class-validator';
 
 export class UpdateAgentDto {
   @IsOptional()
@@ -58,4 +58,12 @@ export class UpdateAgentDto {
   @IsOptional()
   @IsString()
   status?: 'active' | 'suspended' | 'closed';
+
+  /** This agent's referral-commission % override. Pass null to clear (use the global default). */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  referralCommissionPct?: number | null;
 }

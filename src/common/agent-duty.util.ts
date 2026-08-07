@@ -31,6 +31,34 @@ export function ethiopiaWallClock(at: Date = new Date()): { dayOfWeek: number; m
 }
 
 /**
+ * Calendar-aligned window starts for agent earnings dashboards, in Ethiopia
+ * local time — "today" since local midnight, "this week" since the most
+ * recent Monday, "this month" since the 1st. Returned as real UTC `Date`
+ * instants (safe to compare against DB `createdAt` columns directly), using
+ * the same shift-then-read-UTC-fields trick as `ethiopiaWallClock` above.
+ */
+export function getEarningsWindowStarts(now: Date = new Date()): {
+  todayStart: Date;
+  weekStart: Date;
+  monthStart: Date;
+} {
+  const shifted = new Date(now.getTime() + ETHIOPIA_UTC_OFFSET_MIN * 60_000);
+  const offsetMs = ETHIOPIA_UTC_OFFSET_MIN * 60_000;
+
+  const localMidnight = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+  const todayStart = new Date(localMidnight - offsetMs);
+
+  const dayOfWeek = shifted.getUTCDay(); // 0=Sun..6=Sat
+  const daysSinceMonday = (dayOfWeek + 6) % 7; // Mon->0, Sun->6
+  const weekStart = new Date(localMidnight - daysSinceMonday * 86_400_000 - offsetMs);
+
+  const localMonthStart = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), 1);
+  const monthStart = new Date(localMonthStart - offsetMs);
+
+  return { todayStart, weekStart, monthStart };
+}
+
+/**
  * Is `at` inside the agent's configured working window (Ethiopia time)?
  * - Empty/absent `workDaysOfWeek` = every day.
  * - Absent start/end hours = available all day (on the allowed days).

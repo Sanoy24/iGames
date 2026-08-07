@@ -1,4 +1,4 @@
-# iGames — Agent Guide
+<!-- # iGames — Agent Guide
 
 Practical working reference for AI coding agents. Read alongside `CLAUDE.md` (domain rules).
 
@@ -183,4 +183,4 @@ All flows return `{ accessToken, refreshToken, tokenType, expiresIn, user }`. Re
 - No `Math.random()` for game outcomes — use `RngService`
 - No direct `wallet` row writes — always use `WalletService`
 - No changes to Keno draw size (20 from 1–80) or Bingo grid spec (3×9, 15 numbers, 1–90)
-- No Telegram imports in game/wallet/ledger/rng modules
+- No Telegram imports in game/wallet/ledger/rng modules -->

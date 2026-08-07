@@ -47,6 +47,10 @@ export class BingoConfig {
   @Column({ type: 'int', default: 40 })
   salesWindowSeconds: number;
 
+  /** Seconds before the scheduled draw when cartela buys/refunds are frozen. */
+  @Column({ type: 'int', default: 3 })
+  cartelaChangeLockSeconds: number;
+
   /** Seconds the completed-room result is shown before advancing to the next room. */
   @Column({ type: 'int', default: 10 })
   resultDisplaySeconds: number;
@@ -154,10 +158,41 @@ export class BingoConfig {
   @Column({ type: 'int', default: 0 })
   globalBingoBotWinInterval: number;
 
+  /** Enable or disable Bingo bot cartela allocation controls. */
+  @Column({ type: 'boolean', default: true })
+  botCartelaPolicyEnabled: boolean;
+
+  /** How bot cartelas are assigned when the policy is enabled. */
+  @Column({ type: 'varchar', length: 20, default: 'mirror' })
+  botCartelaPolicyMode: 'mirror' | 'fixed_cap';
+
+  /** Maximum cartelas a single bot may hold in a room. */
+  @Column({ type: 'int', default: 5 })
+  botMaxCartelasPerBotPerRoom: number;
+
   /**
-   * Bot liquidity threshold. While a room has FEWER than this many REAL (non-bot)
-   * players, bots join to fill/steer the room. At or above it, bots stay out and
-   * real players compete on a fair draw. 0 = bots never auto-join.
+   * Bot participation threshold below this many REAL (non-bot) players.
+   * When enabled and the room drops below this count, bots join the room.
+   */
+  @Column({ type: 'boolean', default: true })
+  botBelowThresholdEnabled: boolean;
+
+  @Column({ type: 'int', default: 10 })
+  botBelowThresholdRealPlayers: number;
+
+  /**
+   * Bot participation threshold above this many REAL (non-bot) players.
+   * When enabled and the room rises above this count, bots join the room.
+   */
+  @Column({ type: 'boolean', default: true })
+  botAboveThresholdEnabled: boolean;
+
+  @Column({ type: 'int', default: 50 })
+  botAboveThresholdRealPlayers: number;
+
+  /**
+   * Legacy Bingo bot threshold retained for backward compatibility. New logic
+   * prefers the explicit below/above threshold controls above.
    */
   @Column({ type: 'int', default: 10 })
   botMaxRealPlayers: number;
@@ -172,8 +207,58 @@ export class BingoConfig {
    *                    (deterministic house retention; overrides a fair result).
    *  - `hybrid`      — statistical flooding PLUS the real-user→bot win redirect.
    */
-  @Column({ type: 'varchar', length: 16, default: 'statistical' })
+  @Column({ type: 'varchar', length: 20, default: 'statistical' })
   botWinMode: string;
+
+  /** Enable or disable explicit Bingo bot bonus-win controls. */
+  @Column({ type: 'boolean', default: true })
+  botBonusWinEnabled: boolean;
+
+  /** How explicit bot bonus wins are awarded. */
+  @Column({ type: 'varchar', length: 10, default: 'interval' })
+  botBonusWinMode: 'interval' | 'random';
+
+  /** Every N completed Bingo rooms a bot receives a bonus win. 0 = disabled. */
+  @Column({ type: 'int', default: 0 })
+  botBonusWinEveryNRounds: number;
+
+  /** Random bonus-win chance per completed room when random mode is enabled. */
+  @Column({ type: 'int', default: 0 })
+  botBonusWinChancePct: number;
+
+  /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
+  @Column({ type: 'int', default: 25 })
+  botWinnerCooldownRooms: number;
+
+  /**
+   * JSON-encoded array of alias names the reserved cartel rotates through.
+   * e.g. `["Abrsh","Derash","Yonas","Tigist","Hailu"]`.
+   * Null = use the bot's own displayName for every game.
+   */
+  @Column({ type: 'text', nullable: true })
+  botAliasPool: string | null;
+
+  /**
+   * PERSISTENT label for the House room slot (the auto-managed room with
+   * ownerAgentId NULL — see BingoService.ensureAgentRooms). Null = default
+   * "Bingo <time>" name. This is the House-slot counterpart of
+   * User.bingoRoomLabel; it lives here because the house slot has no user row
+   * to attach a label to. Managed from the admin Bingo tab's "Room Slots" panel.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  houseRoomLabel?: string | null;
+
+  /** PERSISTENT lobby card palette for the House room slot. Null = random each recreation. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  houseCardPaletteId?: string | null;
+
+  /** PERSISTENT decorative ball number for the House room slot. Null = random each recreation. */
+  @Column({ type: 'int', nullable: true })
+  houseCardBallNumber?: number | null;
+
+  /** PERSISTENT ticket price for the House room slot. Null = use defaultTicketPriceMinor each recreation. */
+  @Column({ type: 'int', nullable: true })
+  houseTicketPriceMinor?: number | null;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

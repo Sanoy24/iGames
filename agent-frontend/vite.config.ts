@@ -1,10 +1,30 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vite.dev/config/
 export default defineConfig({
-    plugins: [react(), tailwindcss()],
+    plugins: [
+        react(),
+        tailwindcss(),
+        // Service worker whose ONLY job is substituting our own branded
+        // "check your connection" page for the browser's native (domain-leaking)
+        // error page when a navigation fails offline — see src/sw.ts for the
+        // full rationale and why this deliberately does NOT cache the app itself.
+        VitePWA({
+            strategies: 'injectManifest',
+            srcDir: 'src',
+            filename: 'sw.ts',
+            injectRegister: 'auto',
+            registerType: 'autoUpdate',
+            manifest: false, // we already ship our own public/site.webmanifest + <link> tags
+            injectManifest: {
+                globPatterns: ['offline.html'],
+            },
+            devOptions: { enabled: false },
+        }),
+    ],
     build: {
         rollupOptions: {
             output: {

@@ -6,7 +6,20 @@ import { User } from './entities/user.entity';
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
+import { generateReferralCode, normalizeReferralCode } from '../common/referral-code.util';
 import { AgentDutyMode, isAgentEffectivelyOnDuty, isWithinWorkingWindow } from '../common/agent-duty.util';
+import { findNearestLocation, GeoCandidate } from '../locations/location-geo';
+
+/** Default max distance for GPS-based player→agent matching, in metres.
+ * Mirrors Location.radiusMeters's own default. Not yet admin-configurable —
+ * a natural follow-up if 5km proves wrong in practice. */
+const AGENT_MATCH_RADIUS_METERS = 5000;
+
+export type AssignedAgentResult = {
+  assignedAgentId: string | null;
+  assignedAgentName: string | null;
+  assignedAgentSource: 'gps_match' | 'manual_pick' | 'other';
+};
 
 export type TelegramIdentityInput = {
   telegramUserId: string;
@@ -58,23 +71,33 @@ export class UsersService {
     const existingIdentity = await authRepo.findOneBy({ provider, providerUserId });
 
     if (existingIdentity) {
-      existingIdentity.providerUsername = input.username?.toLowerCase();
-      existingIdentity.profileSnapshot = this.toTelegramSnapshot(input);
-      existingIdentity.lastAuthAt = now;
-      await authRepo.save(existingIdentity);
-
       const existingUser = await userRepo.findOneBy({ id: existingIdentity.userId });
       if (!existingUser) {
         throw new NotFoundException('User not found');
       }
-      existingUser.lastLoginAt = now;
-      await userRepo.save(existingUser);
 
-      return {
-        user: existingUser,
-        identity: existingIdentity,
-        created: false
-      };
+      if (!this.isPlayerUser(existingUser)) {
+        await this.moveTelegramIdentityToRoleScope(
+          existingIdentity,
+          existingUser,
+          providerUserId,
+          authRepo,
+        );
+      } else {
+        existingIdentity.providerUsername = input.username?.toLowerCase();
+        existingIdentity.profileSnapshot = this.toTelegramSnapshot(input);
+        existingIdentity.lastAuthAt = now;
+        await authRepo.save(existingIdentity);
+
+        existingUser.lastLoginAt = now;
+        await userRepo.save(existingUser);
+
+        return {
+          user: existingUser,
+          identity: existingIdentity,
+          created: false
+        };
+      }
     }
 
     const newUser = userRepo.create({
@@ -107,99 +130,44 @@ export class UsersService {
     };
   }
 
-  /**
-   * Persist a Telegram user's shared phone number. Ensures the internal user +
-   * identity exist first (the contact is usually shared on /start, BEFORE the
-   * Mini App has ever opened, so the user row may not exist yet), then stores
-   * the normalized `+2519XXXXXXXX` phone. Returns the normalized phone, or null
-   * when the shared number is not a valid Ethiopian mobile number.
-   */
-  async setTelegramPhone(input: TelegramIdentityInput & { phoneNumber: string }): Promise<string | null> {
-    const normalized = normalizeEthiopianPhone(input.phoneNumber);
-    if (!normalized) return null;
-
-    const { user } = await this.findOrCreateTelegramUser(input);
-    await this.userRepository.update(user.id, { phoneNumber: normalized });
-    return normalized;
+  private isPlayerUser(user: User): boolean {
+    return Array.isArray(user.roles) && user.roles.includes('player' as any);
   }
 
-  /**
-   * Resolve the internal user behind a Telegram account, or null if they have
-   * never been linked. Lets bot handlers act on the internal user id without
-   * creating an account as a side effect.
-   */
-  async findByTelegramUserId(telegramUserId: string): Promise<User | null> {
-    const identity = await this.authIdentityRepository.findOneBy({
+  private getPrimaryScopedRole(user: User): string {
+    if (Array.isArray(user.roles)) {
+      const role = user.roles.find((r) => r !== 'player');
+      if (role) return role;
+    }
+    return 'user';
+  }
+
+  private async moveTelegramIdentityToRoleScope(
+    identity: AuthIdentity,
+    user: User,
+    telegramUserId: string,
+    authRepo: Repository<AuthIdentity>,
+  ): Promise<void> {
+    const scopedProviderUserId = this.buildTelegramProviderUserId(
+      telegramUserId,
+      this.getPrimaryScopedRole(user),
+    );
+
+    if (identity.providerUserId === scopedProviderUserId) return;
+
+    const existingScoped = await authRepo.findOneBy({
       provider: 'telegram',
-      providerUserId: telegramUserId,
+      providerUserId: scopedProviderUserId,
     });
-    if (!identity) return null;
-    return this.userRepository.findOneBy({ id: identity.userId });
-  }
-
-  async listUsers(page: number, limit: number, role?: string, search?: string) {
-    const skip = (page - 1) * limit;
-    const queryBuilder = this.userRepository.createQueryBuilder('user')
-      .leftJoinAndSelect('user.wallets', 'wallet')
-      .orderBy('user.createdAt', 'DESC')
-      .skip(skip)
-      .take(limit);
-
-    if (role) {
-      queryBuilder.andWhere('JSON_CONTAINS(user.roles, :role)', { role: `"${role}"` });
+    if (existingScoped) {
+      if (existingScoped.userId === identity.userId) {
+        await authRepo.remove(identity);
+      }
+      return;
     }
 
-    if (search) {
-      queryBuilder.andWhere(
-        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
-        { search: `%${search}%` }
-      );
-    }
-
-    const [data, total] = await queryBuilder.getManyAndCount();
-
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit)
-    };
-  }
-
-  /**
-   * Players whose locationId is in the given set — the "area visibility" an
-   * agent needs (via their assigned locations, see LocationsService), not
-   * scoped to any one agent's own referrals. Mirrors listUsers's query shape.
-   */
-  async listPlayersByLocationIds(
-    locationIds: string[],
-    opts: { search?: string; page?: number; limit?: number } = {},
-  ) {
-    const page = Math.max(opts.page ?? 1, 1);
-    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
-
-    if (locationIds.length === 0) {
-      return { data: [] as User[], total: 0, page, limit, totalPages: 0 };
-    }
-
-    const queryBuilder = this.userRepository.createQueryBuilder('user')
-      .leftJoinAndSelect('user.wallets', 'wallet')
-      .where('user.locationId IN (:...locationIds)', { locationIds })
-      .andWhere("JSON_CONTAINS(user.roles, '\"player\"')")
-      .orderBy('user.createdAt', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit);
-
-    if (opts.search) {
-      queryBuilder.andWhere(
-        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
-        { search: `%${opts.search}%` },
-      );
-    }
-
-    const [data, total] = await queryBuilder.getManyAndCount();
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    identity.providerUserId = scopedProviderUserId;
+    await authRepo.save(identity);
   }
 
   /**
@@ -208,15 +176,12 @@ export class UsersService {
    * base id can now back more than one account as long as each is a
    * DIFFERENT role (e.g. one admin + one agent sharing a phone; or one
    * player + one agent sharing the same Telegram account) — see
-   * createAgentUser/ensureAdminAccount/linkTelegramIdentityToUser. The first
-   * account for a base id keeps the plain id as its providerUserId
-   * (unchanged from before, so all existing rows keep working as-is); a
-   * SECOND, different-role account sharing that base id is stored as
-   * `${baseId}#${role}` so it doesn't collide with the existing unique index
-   * on (provider, providerUserId) — the phone/Telegram id itself stays the
-   * one thing that identifies the person; findBackofficeUserByCredentials and
-   * linkTelegramIdentityToUser match every form for that base id and
-   * disambiguate by password/role respectively.
+   * createAgentUser/ensureAdminAccount/linkTelegramIdentityToUser. Password
+   * identities keep the first account on the plain id; Telegram keeps the plain
+   * id for the player Mini App and stores non-player links as `${baseId}#${role}`
+   * so the game bot never resolves to an agent/admin account. The base id itself
+   * stays the one thing that identifies the person; lookup helpers match every
+   * form for that base id and disambiguate by password/role respectively.
    *
    * Self-healing: if an identity's userId points at a User row that no longer
    * exists (e.g. someone deleted the user directly in the database, bypassing
@@ -282,6 +247,166 @@ export class UsersService {
     return existingForBaseId.length === 0 ? baseId : `${baseId}#${role}`;
   }
 
+  /**
+   * Telegram's player Mini App auth intentionally looks up the plain Telegram
+   * user id. Agent/admin Telegram links must therefore be role-scoped even when
+   * they are the first link for that Telegram account, otherwise the player bot
+   * can log into the agent account and render the Agent tab on the game domain.
+   */
+  private buildTelegramProviderUserId(baseId: string, role: string): string {
+    return role === 'player' ? baseId : `${baseId}#${role}`;
+  }
+
+  /**
+   * Persist a Telegram user's shared phone number. Ensures the internal user +
+   * identity exist first (the contact is usually shared on /start, BEFORE the
+   * Mini App has ever opened, so the user row may not exist yet), then stores
+   * the normalized `+2519XXXXXXXX` phone. Returns the normalized phone, or null
+   * when the shared number is not a valid Ethiopian mobile number.
+   */
+  async setTelegramPhone(
+    input: TelegramIdentityInput & { phoneNumber: string },
+  ): Promise<{ phoneNumber: string; userId: string } | null> {
+    const normalized = normalizeEthiopianPhone(input.phoneNumber);
+    if (!normalized) return null;
+
+    const { user } = await this.findOrCreateTelegramUser(input);
+    await this.userRepository.update(user.id, { phoneNumber: normalized });
+    return { phoneNumber: normalized, userId: user.id };
+  }
+
+  /**
+   * Resolve the internal user behind a Telegram account, or null if they have
+   * never been linked. Lets bot handlers act on the internal user id without
+   * creating an account as a side effect.
+   */
+  async findByTelegramUserId(telegramUserId: string): Promise<User | null> {
+    const identity = await this.authIdentityRepository.findOneBy({
+      provider: 'telegram',
+      providerUserId: telegramUserId,
+    });
+    if (!identity) return null;
+    return this.userRepository.findOneBy({ id: identity.userId });
+  }
+
+  async listUsers(
+    page: number,
+    limit: number,
+    role?: string,
+    search?: string,
+    filters: {
+      isBot?: boolean;
+      status?: 'active' | 'suspended' | 'closed';
+      /** Pre-resolved by the caller (online state is in-memory via the socket
+       * gateway, not a DB column) — undefined means "don't filter on this". */
+      onlineUserIds?: string[];
+      online?: boolean;
+      hasPhone?: boolean;
+      minBalanceMinor?: number;
+      maxBalanceMinor?: number;
+    } = {},
+  ) {
+    const skip = (page - 1) * limit;
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .orderBy('user.createdAt', 'DESC')
+      .skip(skip)
+      .take(limit);
+
+    if (role) {
+      queryBuilder.andWhere('JSON_CONTAINS(user.roles, :role)', { role: `"${role}"` });
+    }
+
+    if (search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${search}%` }
+      );
+    }
+
+    // Every bot account has productMetadata.botPolicy set (see BotsService);
+    // real accounts never do. Same JSON_EXTRACT check used there.
+    if (filters.isBot === true) {
+      queryBuilder.andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL");
+    } else if (filters.isBot === false) {
+      queryBuilder.andWhere("JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NULL");
+    }
+
+    if (filters.status) {
+      queryBuilder.andWhere('user.status = :status', { status: filters.status });
+    }
+
+    if (filters.hasPhone === true) {
+      queryBuilder.andWhere('user.phoneNumber IS NOT NULL');
+    } else if (filters.hasPhone === false) {
+      queryBuilder.andWhere('user.phoneNumber IS NULL');
+    }
+
+    if (filters.minBalanceMinor !== undefined) {
+      queryBuilder.andWhere('wallet.availableMinor >= :minBalance', { minBalance: filters.minBalanceMinor });
+    }
+    if (filters.maxBalanceMinor !== undefined) {
+      queryBuilder.andWhere('wallet.availableMinor <= :maxBalance', { maxBalance: filters.maxBalanceMinor });
+    }
+
+    // Online/offline is resolved by the controller from the live socket gateway
+    // (not a DB column) and passed down as a concrete id list, so pagination and
+    // totals stay correct at the DB level instead of filtering after the fact.
+    if (filters.online === true) {
+      const ids = filters.onlineUserIds ?? [];
+      if (ids.length === 0) return { data: [], total: 0, page, limit, totalPages: 0 };
+      queryBuilder.andWhere('user.id IN (:...onlineIds)', { onlineIds: ids });
+    } else if (filters.online === false && filters.onlineUserIds && filters.onlineUserIds.length > 0) {
+      queryBuilder.andWhere('user.id NOT IN (:...onlineIds)', { onlineIds: filters.onlineUserIds });
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    };
+  }
+
+  /**
+   * Players whose locationId is in the given set — the "area visibility" an
+   * agent needs (via their assigned locations, see LocationsService), not
+   * scoped to any one agent's own referrals. Mirrors listUsers's query shape.
+   */
+  async listPlayersByLocationIds(
+    locationIds: string[],
+    opts: { search?: string; page?: number; limit?: number } = {},
+  ) {
+    const page = Math.max(opts.page ?? 1, 1);
+    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+
+    if (locationIds.length === 0) {
+      return { data: [] as User[], total: 0, page, limit, totalPages: 0 };
+    }
+
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .where('user.locationId IN (:...locationIds)', { locationIds })
+      .andWhere("JSON_CONTAINS(user.roles, '\"player\"')")
+      .orderBy('user.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${opts.search}%` },
+      );
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+
   async createAgentUser(input: {
     phoneNumber: string;
     displayName: string;
@@ -313,6 +438,7 @@ export class UsersService {
         phoneNumber: normalizedPhone,
         roles: ['agent'],
         status: 'active',
+        referralCode: await this.allocateReferralCode(manager),
         workStartHour: input.workStartHour,
         workStartMinute: input.workStartMinute,
         workEndHour: input.workEndHour,
@@ -418,6 +544,7 @@ export class UsersService {
       workDaysOfWeek?: number[];
       agentPermissions?: { deposit: boolean; withdraw: boolean };
       status?: 'active' | 'suspended' | 'closed';
+      referralCommissionPct?: number | null;
     }
   ): Promise<User> {
     const user = await this.userRepository.findOneBy({ id: agentId });
@@ -449,6 +576,7 @@ export class UsersService {
     user.workEndMinute = update.workEndMinute;
     if (update.workDaysOfWeek !== undefined) user.workDaysOfWeek = update.workDaysOfWeek;
     if (update.agentPermissions !== undefined) user.agentPermissions = update.agentPermissions;
+    if (update.referralCommissionPct !== undefined) user.referralCommissionPct = update.referralCommissionPct;
 
     await this.userRepository.save(user);
     return user;
@@ -542,6 +670,250 @@ export class UsersService {
       if (sa !== sb) return sa - sb;
       return a.createdAt.getTime() - b.createdAt.getTime();
     });
+  }
+
+  // ── Direct player→agent GPS matching ────────────────────────────────
+  // Replaces the old Location-catalog onboarding step: a player is matched to
+  // the nearest currently on-duty agent by proximity to that agent's own
+  // shared pin, with no admin-curated area catalog involved.
+
+  /** Player-facing fallback list — on-duty agents by name only. */
+  async listOnDutyAgentsForMatching(): Promise<Array<{ id: string; name: string }>> {
+    const agents = await this.findOnDutyAgents();
+    return agents.map((a) => ({ id: a.id, name: a.displayName }));
+  }
+
+  /**
+   * Pure/read-only: map a shared GPS pin onto the nearest on-duty agent's own
+   * last-shared pin, within AGENT_MATCH_RADIUS_METERS. Does NOT persist —
+   * callers follow up with setAssignedAgent. Returns null when no on-duty
+   * agent has a pin in range (including agents who never shared one).
+   */
+  async matchAgentFromCoords(
+    latitude: number,
+    longitude: number,
+  ): Promise<{ id: string; name: string; distanceMeters: number } | null> {
+    const onDuty = await this.findOnDutyAgents();
+    const candidates: GeoCandidate[] = onDuty.map((a) => ({
+      id: a.id,
+      name: a.displayName,
+      latitude: a.sharedLatitude ?? null,
+      longitude: a.sharedLongitude ?? null,
+      radiusMeters: AGENT_MATCH_RADIUS_METERS,
+    }));
+    return findNearestLocation(candidates, latitude, longitude);
+  }
+
+  /**
+   * Record the player's agent assignment. Exactly one of {agentId, other}.
+   * `other` always forces source 'other' regardless of the `source` arg —
+   * mirrors LocationsService.setUserLocation's wantsOther branch. A supplied
+   * agentId must currently be on duty, so a stale/spoofed client can't pin a
+   * player to an unavailable or nonexistent agent. Reassignable — a player who
+   * re-shares location gets rematched to whichever on-duty agent is nearest
+   * now (unlike `referredByAgentId`, which is set once and never moves).
+   */
+  async setAssignedAgent(
+    userId: string,
+    dto: { agentId?: string; other?: boolean },
+    source: 'gps_match' | 'manual_pick' = 'manual_pick',
+  ): Promise<AssignedAgentResult> {
+    const wantsOther = dto.other === true;
+
+    if (wantsOther && dto.agentId) {
+      throw new BadRequestException('Send either agentId or other, not both');
+    }
+    if (!wantsOther && !dto.agentId) {
+      throw new BadRequestException('Send an agentId, or other: true to skip attribution');
+    }
+
+    const user = await this.findById(userId);
+
+    if (wantsOther) {
+      user.assignedAgentId = null;
+      user.assignedAgentSource = 'other';
+      user.assignedAgentAt = new Date();
+      await this.userRepository.save(user);
+      return { assignedAgentId: null, assignedAgentName: null, assignedAgentSource: 'other' };
+    }
+
+    const onDuty = await this.findOnDutyAgents();
+    const agent = onDuty.find((a) => a.id === dto.agentId);
+    if (!agent) throw new NotFoundException('That agent is not currently available');
+
+    user.assignedAgentId = agent.id;
+    user.assignedAgentSource = source;
+    user.assignedAgentAt = new Date();
+    await this.userRepository.save(user);
+
+    return { assignedAgentId: agent.id, assignedAgentName: agent.displayName, assignedAgentSource: source };
+  }
+
+  /** The player's current agent assignment, or null when never asked. */
+  async getAssignedAgent(userId: string): Promise<AssignedAgentResult | null> {
+    const user = await this.findById(userId);
+    if (!user.assignedAgentSource) return null;
+
+    let assignedAgentName: string | null = null;
+    if (user.assignedAgentId) {
+      const agent = await this.userRepository.findOneBy({ id: user.assignedAgentId });
+      assignedAgentName = agent?.displayName ?? null;
+    }
+
+    return {
+      assignedAgentId: user.assignedAgentId ?? null,
+      assignedAgentName,
+      assignedAgentSource: user.assignedAgentSource,
+    };
+  }
+
+  /**
+   * Players directly assigned to this agent — the replacement for
+   * listPlayersByLocationIds under direct agent-attribution. Same shape.
+   */
+  async listPlayersByAssignedAgentId(
+    agentId: string,
+    opts: { search?: string; page?: number; limit?: number } = {},
+  ) {
+    const page = Math.max(opts.page ?? 1, 1);
+    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+
+    const queryBuilder = this.userRepository.createQueryBuilder('user')
+      .leftJoinAndSelect('user.wallets', 'wallet')
+      .where('user.assignedAgentId = :agentId', { agentId })
+      .andWhere("JSON_CONTAINS(user.roles, '\"player\"')")
+      .orderBy('user.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (opts.search) {
+      queryBuilder.andWhere(
+        '(user.displayName LIKE :search OR user.phoneNumber LIKE :search OR user.username LIKE :search)',
+        { search: `%${opts.search}%` },
+      );
+    }
+
+    const [data, total] = await queryBuilder.getManyAndCount();
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // ── Agent referral codes ───────────────────────────────────────────
+  // Attribution only: a code sets the player's `referredByAgentId`, which drives
+  // "customers brought" stats and lobby highlighting. It deliberately does NOT
+  // introduce a payout path — agent commission stays per-deposit and per-room.
+
+  /**
+   * A referral code not already taken. Retries on collision rather than trusting
+   * randomness: the unique index on `users.referralCode` is the real guarantee,
+   * and 30^6 keeps collisions vanishingly rare, so a handful of tries is plenty.
+   */
+  private async allocateReferralCode(manager?: EntityManager): Promise<string> {
+    const userRepo = manager ? manager.getRepository(User) : this.userRepository;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const code = generateReferralCode();
+      const taken = await userRepo.findOne({ where: { referralCode: code }, select: ['id'] });
+      if (!taken) return code;
+    }
+    throw new ConflictException('Could not allocate a referral code — please try again');
+  }
+
+  /**
+   * The agent's referral code, generating one on first access. Lazy generation is
+   * what backfills agents created BEFORE referral codes existed, so no one-off
+   * migration script is needed.
+   */
+  async ensureAgentReferralCode(agentId: string): Promise<string> {
+    const user = await this.userRepository.findOneBy({ id: agentId });
+    if (!user || !Array.isArray(user.roles) || !user.roles.includes('agent' as any)) {
+      throw new NotFoundException('Agent not found');
+    }
+    if (user.referralCode) return user.referralCode;
+
+    const code = await this.allocateReferralCode();
+    // Guarded update: if a concurrent request allocated one first, keep theirs
+    // instead of overwriting a code that may already be in circulation.
+    await this.userRepository
+      .createQueryBuilder()
+      .update(User)
+      .set({ referralCode: code })
+      .where('id = :agentId AND referralCode IS NULL', { agentId })
+      .execute();
+
+    const refreshed = await this.userRepository.findOneBy({ id: agentId });
+    return refreshed?.referralCode ?? code;
+  }
+
+  /** How many players this agent has been credited with bringing in. */
+  async countReferredPlayers(agentId: string): Promise<number> {
+    return this.userRepository.count({ where: { referredByAgentId: agentId } });
+  }
+
+  /**
+   * Referred players who placed at least one Bingo or Keno ticket since
+   * `sinceDate` — the agent dashboard's "Active Players" metric.
+   */
+  async countActiveReferredPlayers(agentId: string, sinceDate: Date): Promise<number> {
+    const [row] = await this.userRepository.query(
+      `SELECT COUNT(DISTINCT u.id) c FROM users u
+        WHERE u.referredByAgentId = ?
+          AND (EXISTS (SELECT 1 FROM bingo_tickets bt WHERE bt.userId = u.id AND bt.createdAt >= ?)
+            OR EXISTS (SELECT 1 FROM keno_tickets kt WHERE kt.userId = u.id AND kt.createdAt >= ?))`,
+      [agentId, sinceDate, sinceDate],
+    );
+    return Number(row?.c ?? 0);
+  }
+
+  /**
+   * Attribute a player to the agent owning `code`. Returns the agent's display
+   * name on success, or null when the code is unknown, the agent is not an
+   * active agent, the player is the agent themselves, or the player is ALREADY
+   * attributed — the `IS NULL` guard means first attribution wins and is never
+   * reassigned, matching the deposit-linking path in PaymentsService.
+   */
+  async attributeReferral(userId: string, rawCode: string): Promise<string | null> {
+    const code = normalizeReferralCode(rawCode);
+    if (!code) return null;
+
+    const agent = await this.userRepository.findOneBy({ referralCode: code });
+    if (!agent || agent.status !== 'active') return null;
+    if (!Array.isArray(agent.roles) || !agent.roles.includes('agent' as any)) return null;
+    if (agent.id === userId) return null; // an agent can't refer themselves
+
+    const result = await this.userRepository
+      .createQueryBuilder()
+      .update(User)
+      .set({ referredByAgentId: agent.id })
+      .where('id = :userId AND referredByAgentId IS NULL', { userId })
+      .execute();
+
+    return (result.affected ?? 0) > 0 ? agent.displayName : null;
+  }
+
+  /**
+   * Record an agent's shared GPS pin. INFORMATIONAL ONLY — this never touches
+   * `agent_locations`, so it cannot change which players the agent is allowed to
+   * see (that stays admin-managed). See the column docs on `User.sharedLatitude`.
+   */
+  async setAgentSharedLocation(
+    agentId: string,
+    latitude: number,
+    longitude: number,
+  ): Promise<void> {
+    await this.userRepository.update(agentId, {
+      sharedLatitude: latitude,
+      sharedLongitude: longitude,
+      sharedLocationAt: new Date(),
+    });
+  }
+
+  /** Whether this agent has completed the mandatory location-share step. */
+  async hasSharedLocation(agentId: string): Promise<boolean> {
+    const agent = await this.userRepository.findOne({
+      where: { id: agentId },
+      select: ['id', 'sharedLatitude', 'sharedLongitude'],
+    });
+    return !!agent && agent.sharedLatitude != null && agent.sharedLongitude != null;
   }
 
   async findBackofficeUserByCredentials(
@@ -638,10 +1010,18 @@ export class UsersService {
   async linkTelegramIdentityToUser(userId: string, input: TelegramIdentityInput, role: string): Promise<AuthIdentity> {
     const now = new Date();
     const existingForTelegramId = await this.findLiveTelegramIdentities(input.telegramUserId);
+    const providerUserId = this.buildTelegramProviderUserId(input.telegramUserId, role);
 
-    const own = existingForTelegramId.find(({ user }) => user.id === userId);
+    const own = existingForTelegramId.find(({ user, identity }) =>
+      user.id === userId &&
+      (
+        identity.providerUserId === providerUserId ||
+        (Array.isArray(user.roles) && user.roles.includes(role as any))
+      ),
+    );
     if (own) {
       const identity = own.identity;
+      identity.providerUserId = providerUserId;
       identity.providerUsername = input.username?.toLowerCase();
       identity.profileSnapshot = this.toTelegramSnapshot(input);
       identity.lastAuthAt = now;
@@ -655,7 +1035,6 @@ export class UsersService {
       throw new ConflictException('This Telegram account is already linked to a different account');
     }
 
-    const providerUserId = this.buildScopedProviderUserId(input.telegramUserId, role, existingForTelegramId);
     const identity = this.authIdentityRepository.create({
       userId,
       provider: 'telegram',
@@ -747,6 +1126,25 @@ export class UsersService {
     if (update.phoneNumber?.trim()) {
       const normalizedPhone = normalizeEthiopianPhone(update.phoneNumber);
       if (!normalizedPhone) throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
+
+      // Self-service edit, unlike agent/admin creation (which deliberately allows one
+      // phone to back accounts of DIFFERENT roles, see findLiveIdentities): this endpoint
+      // has no @Roles guard, so without this check any account could silently claim a
+      // phone number an active PLAYER already uses — no verification of any kind that
+      // they actually own it. Scoped to 'player' so it never collides with that
+      // intentional agent/admin phone-sharing design.
+      if (normalizedPhone !== user.phoneNumber) {
+        const conflict = await this.userRepository
+          .createQueryBuilder('u')
+          .where('u.phoneNumber = :phone', { phone: normalizedPhone })
+          .andWhere('u.id != :userId', { userId })
+          .andWhere('u.status = :status', { status: 'active' })
+          .andWhere(`JSON_CONTAINS(u.roles, '"player"')`)
+          .getOne();
+        if (conflict) {
+          throw new ConflictException('This phone number is already registered to a different account');
+        }
+      }
       user.phoneNumber = normalizedPhone;
     }
     await this.userRepository.save(user);

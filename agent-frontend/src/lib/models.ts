@@ -25,6 +25,16 @@ export type User = {
   /** Attributed play area, picked at registration. Null = "Other" / house. */
   locationId?: string | null;
   locationSource?: 'telegram_geo' | 'self_selected' | 'other' | null;
+  /**
+   * An agent's own shared GPS pin (agent bot's mandatory location step).
+   * Informational only — area access comes from admin-assigned agent_locations,
+   * never from this pin. Shown to admins as an assignment hint.
+   */
+  sharedLatitude?: number | null;
+  sharedLongitude?: number | null;
+  sharedLocationAt?: string | null;
+  /** An agent's shareable referral code (players never have one). */
+  referralCode?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -299,19 +309,25 @@ export type CrashBet = {
 export type Withdrawal = {
   id: string;
   userId: string;
+  user?: User;
   amountMinor: number;
-  status: 'pending' | 'claimed' | 'processing' | 'completed' | 'rejected';
+  status: 'pending' | 'claimed' | 'processing' | 'awaiting_verification' | 'completed' | 'rejected';
   destinationAccount: string;
   agentId?: string;
   agent?: User;
   claimedAt?: string;
+  /** The flat withdrawal fee, 100% credited to the agent — no platform split. */
   serviceChargeMinor?: number;
-  serviceFeeMinor?: number;
-  commissionMinor?: number;
   netAmountMinor?: number;
   telebirrReference?: string;
+  /** Agent-uploaded photo/PDF of the payout receipt, relative to /uploads/. */
+  receiptFileUrl?: string | null;
+  /** When the agent says they actually transferred the money — agent-entered. */
+  transferCompletedAt?: string | null;
   adminNotes?: string;
   processedBy?: string;
   processedAt?: string;
+  verifiedBy?: string | null;
+  verifiedAt?: string | null;
   createdAt: string;
 };

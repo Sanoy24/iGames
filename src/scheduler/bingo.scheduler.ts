@@ -1,5 +1,4 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { BingoService } from '../bingo/bingo.service';
 import { BotsService } from '../bots/bots.service';
 import { GamesService } from '../games/games.service';
@@ -10,11 +9,20 @@ import { TelegramBotService } from '../telegram/telegram-bot.service';
 const BINGO_DRAW_LOCK_KEY = 'igames:bingo:draw-lock';
 const BINGO_DRAW_LOCK_TTL_MS = 120_000;
 
+// Standard `cron` (what @nestjs/schedule's @Cron runs on) only resolves to whole
+// seconds, so a draw that becomes due at e.g. +2.1s doesn't fire until the next
+// 1s boundary — up to ~1s of jitter on top of the configured drawIntervalSeconds,
+// which read to players as calls landing "fast" then "slow". A self-rescheduling
+// setTimeout loop instead ticks at sub-second resolution and reschedules only
+// after each run finishes (not fixed-rate), so slow ticks can't pile up.
+const SCHEDULER_TICK_MS = 250;
+
 @Injectable()
 export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(BingoScheduler.name);
   private isRunning = false;
   private shuttingDown = false;
+  private tickTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly bingoService: BingoService,
@@ -45,22 +53,39 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
         error instanceof Error ? error.stack : error
       );
     }
+
+    this.scheduleNextTick();
   }
 
   onApplicationShutdown() {
     this.shuttingDown = true;
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+      this.tickTimer = null;
+    }
+  }
+
+  private scheduleNextTick(): void {
+    if (this.shuttingDown) return;
+    this.tickTimer = setTimeout(() => {
+      this.drawNextNumbers()
+        .catch((error) =>
+          this.logger.error('Bingo scheduler tick failed', error instanceof Error ? error.stack : error),
+        )
+        .finally(() => this.scheduleNextTick());
+    }, SCHEDULER_TICK_MS);
   }
 
   /**
-   * Runs every second. Draws the next number only for running rooms whose last
-   * draw is older than the configured drawIntervalSeconds, so draw cadence is
-   * config-driven (default ~1 ball every couple of seconds) instead of a fixed
-   * slow 5s. The room status and drawnNumbers array act as the database-level
-   * guard against duplicate draws across instances.
+   * Ticks at SCHEDULER_TICK_MS resolution (self-rescheduled, not fixed-rate).
+   * Draws the next number only for running rooms whose last draw is older than
+   * the configured drawIntervalSeconds, so draw cadence is config-driven
+   * (default ~1 ball every couple of seconds) instead of a fixed slow 5s. The
+   * room status and drawnNumbers array act as the database-level guard against
+   * duplicate draws across instances.
    *
    * After each completed room, auto-creates the next room using config defaults.
    */
-  @Cron(CronExpression.EVERY_SECOND)
   async drawNextNumbers(): Promise<void> {
     if (this.isRunning || this.shuttingDown) {
       return;
@@ -93,40 +118,47 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       }
 
       const intervalSeconds = Math.max(1, cfg.drawIntervalSeconds ?? 2);
+      const intervalMs = intervalSeconds * 1000;
       const dueRoomIds = await this.bingoService.findRunningRoomIdsDue(intervalSeconds);
 
-      for (const roomId of dueRoomIds) {
-        if (this.shuttingDown) break;
+      // Draw+emit for due rooms concurrently rather than one-at-a-time: each
+      // room draws under its own row-level transaction lock, so they don't
+      // contend with each other, but sequential awaiting here was letting one
+      // room's DB/RNG-audit latency delay the emit for every other due room in
+      // the same tick — a direct source of the uneven call cadence players saw.
+      await Promise.all(dueRoomIds.map(async (roomId) => {
+        if (this.shuttingDown) return;
         try {
           const updated = await this.bingoService.drawNextNumber(roomId);
-          this.gameEventsGateway.emitBingoNumberDrawn(updated);
+          this.gameEventsGateway.emitBingoNumberDrawn(updated, intervalMs);
 
           if (updated.status === 'completed') {
-            this.logger.log(`Bingo room ${updated.id} completed`);
-            this.gameEventsGateway.emitBingoRoomCompleted(updated);
-            // Per-agent mode: pay the room owner their commission (no-op otherwise).
-            await this.bingoService.settleAgentRoomCommission(updated.id).catch((err) =>
-              this.logger.error('Agent room commission failed', err instanceof Error ? err.stack : err),
-            );
-            try {
-              await this.botsService.handleBingoBotWinInterval(updated.id, cfg.globalBingoBotWinInterval ?? 0);
-            } catch (err) {
-              this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
-            }
-            // Fire-and-forget Telegram win notifications
-            this.bingoService.getRoomWinners(updated.id).then((winners) => {
-              for (const w of winners) {
-                this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
-              }
-            }).catch(() => {});
-            // Persist in-app win notifications (survive leaving the game screen)
-            void this.bingoService.notifyRoomWinners(updated.id).catch(() => {});
+            await this.handleRoomCompleted(updated, cfg);
           }
         } catch (error) {
           this.logger.error(
             `Error drawing next number for room ${roomId}`,
             error instanceof Error ? error.stack : error
           );
+        }
+      }));
+
+      // Progressively top up bot cartela purchases for rooms mid-countdown (or
+      // just-expired but not yet picked up below), so the displayed player count
+      // and pot climb through the buy window instead of jumping once at the end.
+      if (!this.shuttingDown && bingoPlayable) {
+        try {
+          const openRooms = await this.bingoService.findOpenRoomsWithCountdown();
+          for (const room of openRooms) {
+            if (this.shuttingDown) break;
+            const changed = await this.botsService.topUpBotsForOpenRoom(room.id);
+            if (changed) {
+              const updated = await this.bingoService.getRoomState({ roomId: room.id });
+              this.gameEventsGateway.emitBingoRoomUpdated(updated);
+            }
+          }
+        } catch (error) {
+          this.logger.error('Bingo bot top-up failed', error instanceof Error ? error.stack : error);
         }
       }
 
@@ -140,12 +172,21 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       for (const room of roomsToStart) {
         if (this.shuttingDown) break;
         try {
-          // Have bots buy last-minute tickets before the first draw (idempotent)
-          await this.botsService.buyTicketsForBingoRoom(room.id);
+          // Final top-off: the periodic top-up above already brings bots to ~100%
+          // of target by scheduledStartAt (fraction saturates at 1), this just
+          // catches any room whose countdown expired between ticks.
+          await this.botsService.topUpBotsForOpenRoom(room.id);
           this.logger.log(`Auto-starting Bingo room ${room.id}`);
           const updated = await this.bingoService.drawNextNumber(room.id);
           this.gameEventsGateway.emitBingoRoomUpdated(updated);
-          this.gameEventsGateway.emitBingoNumberDrawn(updated);
+          this.gameEventsGateway.emitBingoNumberDrawn(updated, intervalMs);
+          // A degenerate config (e.g. minDrawsBeforeWin/maxNumber of 1) could in
+          // theory complete a room on its very first draw — handle it here too so
+          // completion side effects (referral commission etc.) are never tied to
+          // which loop happened to trigger the finishing draw.
+          if (updated.status === 'completed') {
+            await this.handleRoomCompleted(updated, cfg);
+          }
         } catch (error) {
           this.logger.error(
             `Error auto-starting room ${room.id}`,
@@ -182,6 +223,17 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
             error instanceof Error ? error.stack : error
           );
         }
+
+        // Persistent admin-defined custom rooms (see BingoCustomRoomSlot) — run
+        // independent of shared-vs-per-agent mode, so reconcile them either way.
+        try {
+          await this.bingoService.ensureCustomRoomSlots(cfg);
+        } catch (error) {
+          this.logger.error(
+            'Error ensuring custom Bingo room slots',
+            error instanceof Error ? error.stack : error
+          );
+        }
       }
     } catch (error) {
       this.logger.error('Bingo scheduler error', error instanceof Error ? error.stack : error);
@@ -189,5 +241,43 @@ export class BingoScheduler implements OnApplicationBootstrap, OnApplicationShut
       await this.lockService.releaseLock(lock);
       this.isRunning = false;
     }
+  }
+
+  /**
+   * Shared "a room just completed" side effects — referral commission, bot
+   * bonus-win rolls, and win notifications. Called from every scheduler path
+   * that can be the one whose draw finishes a room, so completion handling
+   * never depends on which loop happened to trigger the finishing draw.
+   */
+  private async handleRoomCompleted(
+    updated: Awaited<ReturnType<BingoService['drawNextNumber']>>,
+    cfg: Awaited<ReturnType<BingoService['getBingoConfig']>>,
+  ): Promise<void> {
+    this.logger.log(`Bingo room ${updated.id} completed`);
+    this.gameEventsGateway.emitBingoRoomCompleted(updated);
+    // Pay each referring agent their commission — a % of the service fee
+    // (house edge cut) their own referred players generated in this room,
+    // independent of who owns the room itself.
+    await this.bingoService.settleReferralCommission(updated.id).catch((err) =>
+      this.logger.error('Referral commission failed', err instanceof Error ? err.stack : err),
+    );
+    try {
+      await this.botsService.handleBingoBotWinInterval(updated.id, {
+        enabled: cfg.botBonusWinEnabled ?? true,
+        mode: cfg.botBonusWinMode ?? 'interval',
+        everyNRounds: cfg.botBonusWinEveryNRounds ?? cfg.globalBingoBotWinInterval ?? 0,
+        chancePct: cfg.botBonusWinChancePct ?? 0,
+      });
+    } catch (err) {
+      this.logger.error('Bot win interval check failed', err instanceof Error ? err.stack : err);
+    }
+    // Fire-and-forget Telegram win notifications
+    this.bingoService.getRoomWinners(updated.id).then((winners) => {
+      for (const w of winners) {
+        this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Bingo').catch(() => {});
+      }
+    }).catch(() => {});
+    // Persist in-app win notifications (survive leaving the game screen)
+    void this.bingoService.notifyRoomWinners(updated.id).catch(() => {});
   }
 }

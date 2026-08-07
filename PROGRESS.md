@@ -1,4 +1,4 @@
-# iGames — Session Progress
+﻿# iGames â€” Session Progress
 
 > Single source of truth for where the project stands. Read this at the start of every session. Update it before closing.
 
@@ -6,65 +6,381 @@
 
 ## Current Verified State
 
-**Date**: 2026-07-08  
+**Date**: 2026-08-04
 **Branch**: `migration/mysql` (this session's work is **uncommitted** in the working tree)  
-**DB**: MySQL 8 + TypeORM (entities declare `InnoDB ROW_FORMAT=DYNAMIC`; ALTER still needed on pre-existing production tables). This session added **columns only** (all additive, auto-created via `synchronize`): `users.onDutyMode`/`workDaysOfWeek`, `bingo_config.prefilledRankingMode` + 4th/5th place + `prefilledFirst..FifthPatternId`, `bingo_rooms.rankingMode`, `system_configs.withdrawalCommissionPct`/`superAdminUserId`, `withdrawals.serviceFeeMinor`/`commissionMinor`.  
-**Backend build**: `npx tsc --noEmit` — clean  
-**Frontend build**: `npm run build` in `frontend/` — ✓ clean  
-**Tests**: `npx jest` — **171/171 pass**  
+**DB**: MySQL 8 + TypeORM, schema applied by the idempotent `src/scripts/ensure-schema.ts` (add-only; never drops columns â€” see `[[igames-schema-and-conventions]]` memory). This session added: `system_configs.referralCommissionPct`, `users.referralCommissionPct`, new tables `withdrawal_fee_ranges` and `config_change_logs`. It also **removed from the entities** (columns stay in the live DB, just unused going forward) `system_configs.withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` and `withdrawals.serviceFeeMinor`/`commissionMinor` â€” see the 2026-08-01 session record below; the withdrawal-fee line item two sessions below (2026-07-07â†’08) describing a %-split model is now superseded.  
+**Backend build**: `npx tsc -p tsconfig.build.json --noEmit` — clean
+**Frontend build**: `cd frontend && npx tsc --noEmit && npm run build` — clean
+**Tests**: `npm run test:unit` — **250/250 pass**; `npx jest src/bingo/bingo.service.spec.ts src/bots/bots.service.spec.ts --forceExit --no-coverage` — **57/57 pass**
 **Deployment**: Backend on PM2 (or cPanel Node), frontend static build on server. New deploy needs: `npm install` (adds `@types/multer`) + a writable, gitignored `uploads/` dir.
 
 ### What Is Working (verified this session)
 
-| Area | Status |
-| --- | --- |
-| Backend — all modules (auth, wallet, ledger, keno, bingo, crash, rng, payments, telegram, admin, events) | Passing |
-| Keno — pay-first-then-pick flow, PATCH /keno/tickets/:id/numbers, win/lose modal | Passing |
-| Bingo — win modes line / pattern / prefilled(derash), cartela cards, DB-backed patterns, 75-card grid | Passing |
-| Bingo — phase machine (buy/playing/result), auto-join, no lobby, self-healing stuck rooms | Passing |
-| Bingo — one-active-game DB guard (`UQ_bingo_active_game`) prevents concurrent rooms | Passing |
-| Bingo — paced ball reveal (calm ~1.5s cadence, breathing caller, current-ball ring on board) | Passing |
-| Bingo — derash win dialog renders the winner's 5×5 for all players (settlementSummary.winnerGrid + fallbacks) | Passing |
-| Bingo — logged-in player's own cartelas restore after tab switch/reload (OptionalJwtAuthGuard on read endpoints) | Passing |
-| Bingo — derash **up to 5 places, each with its own pattern** (`prefilledFirst..FifthPatternId`); sequential winner reveal + final standings | Passing |
-| Bingo — derash **rankingMode: race \| leaderboard** (leaderboard resolves ranks at round end by final achievement, promotion by queue position) | Passing |
-| Bingo — `any_two_lines` / `any_three_lines` built-in patterns | Passing |
-| Bingo — **instant-buy cartelas + tap-to-refund** (DELETE release endpoint, refund ledger, frees pool card); Pay bar removed; black-tile grid | Passing |
-| Bingo — **staged reveal**: now-calling → board → ticket cascade, held 5×5 win popup, result countdown waits for live-win queue | Passing |
-| Withdrawals — **service fee → super-admin wallet, commission → agent** (two cuts from gross; DB-config %) | Passing |
-| Agents — **admin-controlled on-duty + Ethiopia-time working schedule** (`onDutyMode`, `workDaysOfWeek`); deposit routing + withdrawal gate; fixes "No agent on duty" timezone bug | Passing |
-| Crash — JWT guards, stale round abandonment on bootstrap, RNG fix (min:1), bet/cashout hardening | Passing |
-| Admin panel — sidebar layout, KPI icons + donut, Account tab, Bingo config, bot top-up/delete | Passing |
-| Admin — Telegram Broadcast tab (text/image/buttons, send-now/once/recurring, live TG preview, delivery progress) | Passing |
-| Notifications — durable per-user bell (withdrawal/deposit/adjustment + bingo/keno wins), server-backed, socket push | Passing |
-| Payments — Telebirr receipt preview | Passing |
-| Socket.IO — live counts heartbeat every 10s + on-demand request.counts; `user_{id}` room for wallet + notifications | Passing |
+| Area                                                                                                                                                                                                                    | Status  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Backend â€” all modules (auth, wallet, ledger, keno, bingo, crash, rng, payments, telegram, admin, events)                                                                                                              | Passing |
+| Keno â€” pay-first-then-pick flow, PATCH /keno/tickets/:id/numbers, win/lose modal                                                                                                                                      | Passing |
+| Bingo â€” win modes line / pattern / prefilled(derash), cartela cards, DB-backed patterns, 75-card grid                                                                                                                 | Passing |
+| Bingo â€” phase machine (buy/playing/result), auto-join, no lobby, self-healing stuck rooms                                                                                                                             | Passing |
+| Bingo â€” one-active-game DB guard (`UQ_bingo_active_game`) prevents concurrent rooms                                                                                                                                   | Passing |
+| Bingo â€” paced ball reveal (calm ~1.5s cadence, breathing caller, current-ball ring on board)                                                                                                                          | Passing |
+| Bingo â€” derash win dialog renders the winner's 5Ã—5 for all players (settlementSummary.winnerGrid + fallbacks)                                                                                                        | Passing |
+| Bingo â€” logged-in player's own cartelas restore after tab switch/reload (OptionalJwtAuthGuard on read endpoints)                                                                                                      | Passing |
+| Bingo â€” derash **up to 5 places, each with its own pattern** (`prefilledFirst..FifthPatternId`); sequential winner reveal + final standings                                                                           | Passing |
+| Bingo â€” derash **rankingMode: race \| leaderboard** (leaderboard resolves ranks at round end by final achievement, promotion by queue position)                                                                       | Passing |
+| Bingo â€” `any_two_lines` / `any_three_lines` built-in patterns                                                                                                                                                         | Passing |
+| Bingo â€” **instant-buy cartelas + tap-to-refund** (DELETE release endpoint, refund ledger, frees pool card); Pay bar removed; black-tile grid                                                                          | Passing |
+| Bingo â€” purchase-phase guard: configurable cartela-change freeze, auto-cancel when the last real player leaves, bot-only rooms refunded/reset before draw                                                             | Passing |
+| Bingo â€” bot cartela demand now mirrors live human buys/refunds, and bot win summaries use the same display shape as human wins                                                                                        | Passing |
+| Bingo â€” Auto/Manual toggle stays tied to ACTIVE cards only; a disqualified cartela no longer pins the switch OFF                                                                                                      | Passing |
+| Bingo â€” configurable freeze blocks both cartela buys and refunds, and bot reconcile stands down in the same window                                                                                                    | Passing |
+| Bingo â€” **staged reveal**: now-calling â†’ board â†’ ticket cascade, held 5Ã—5 win popup, result countdown waits for live-win queue                                                                                   | Passing |
+| Bots â€” centralized per-game policy: one Admin Bots hub controls global bot state plus Keno/Bingo/Crash participation independently                                                                                    | Passing |
+| Withdrawals â€” **flat fee, by admin-configured amount range, 100% to the completing agent** (no platform cut) â€” replaces the earlier %-split model                                                                   | Passing |
+| Agents â€” **referral commission**: agent earns a % (per-agent override, else global default) of GGR generated by players they referred (`referredByAgentId`), any room, additive to the existing owned-room commission | Passing |
+| Agents â€” **admin-controlled on-duty + Ethiopia-time working schedule** (`onDutyMode`, `workDaysOfWeek`); deposit routing + withdrawal gate; fixes "No agent on duty" timezone bug                                     | Passing |
+| Crash â€” JWT guards, stale round abandonment on bootstrap, RNG fix (min:1), bet/cashout hardening                                                                                                                      | Passing |
+| Admin panel â€” sidebar layout, KPI icons + donut, Account tab, Bingo config, bot top-up/delete                                                                                                                         | Passing |
+| Admin â€” Telegram Broadcast tab (text/image/buttons, send-now/once/recurring, live TG preview, delivery progress)                                                                                                      | Passing |
+| Notifications â€” durable per-user bell (withdrawal/deposit/adjustment + bingo/keno wins), server-backed, socket push                                                                                                   | Passing |
+| Payments â€” Telebirr receipt preview                                                                                                                                                                                   | Passing |
+| Socket.IO â€” live counts heartbeat every 10s + on-demand request.counts; `user_{id}` room for wallet + notifications                                                                                                   | Passing |
 
 ### Known Issues / Pending
 
-| Issue | Status | Notes |
-| --- | --- | --- |
-| MySQL ROW_FORMAT=DYNAMIC on existing prod tables | Pending | Entities fixed for fresh schemas; run 25 ALTER TABLE on pre-existing DB |
-| Admin per-tab bespoke layouts | Not started | FE-09 in feature_list.json |
-| Profile page stats/history | Not started | FE-10 in feature_list.json |
+| Issue                                            | Status      | Notes                                                                   |
+| ------------------------------------------------ | ----------- | ----------------------------------------------------------------------- |
+| MySQL ROW_FORMAT=DYNAMIC on existing prod tables | Pending     | Entities fixed for fresh schemas; run 25 ALTER TABLE on pre-existing DB |
+| Admin per-tab bespoke layouts                    | In progress | FE-09 in feature_list.json                                              |
+| Profile page stats/history                       | Not started | FE-10 in feature_list.json                                              |
 
 ---
 
 ## Session Record
 
-### Session: 2026-07-07 → 2026-07-08 (derash overhaul + agent duty + fee split)
+### Session note: 2026-08-04 (Bingo bot duplicate fix build repair)
+
+**Goal**: Fix the broken backend build and make the same-bot 1st/2nd-place prevention durable enough for production.
+
+**Completed**:
+
+- **Build repair** - fixed `src/admin/admin.service.ts` user-history totals by explicitly computing Telebirr deposit totals and admin top-up totals before combining them.
+- **Race settlement repair** - fixed the Derash candidate-list path so it returns a shuffled list, closes its retry loop correctly, and retries the same prize place with another candidate when a bot duplicate is refused.
+- **Leaderboard settlement repair** - fixed stale `winner` references and made leaderboard mode retry the same rank with the next eligible candidate.
+- **Stronger duplicate guard** - `awardDerashPlace()` now refuses duplicate visible places by already-awarded ticket id, cartela number, underlying bot user id, and visible bot identity (`winnerDisplayName` + `winnerPhoneLast4`) from the room summary.
+- **Regression coverage** - added coverage for the same ticket trying to win twice, a duplicate ticket row reusing the same cartela number, and a different bot account trying to reuse the same visible Bingo bot identity in the same room.
+
+**Verified**: `cmd /c "npm run build"` clean; `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **57/57** pass; `cmd /c "npm run test:unit"` **250/250** pass; `cmd /c "cd frontend && npx tsc --noEmit && npm run build"` clean.
+
+### Session note: 2026-08-04 (Bingo duplicate bot award hard stop)
+
+**Goal**: Fix live Bingo rounds where the same bot identity could still appear as both 1st and 2nd place even though the Bingo name pool has multiple active names.
+
+**Completed**:
+
+- **Award-time duplicate guard** - `awardDerashPlace()` now refuses to write or pay a Derash place if the winning ticket belongs to a bot user that already has a visible prize in the same room.
+- **Caller result handling** - race settlement, leaderboard settlement, and manual claim handling now respect the boolean award result, so a refused duplicate is not treated as a successful win.
+- **Different-bot allowance preserved** - the guard blocks only the same bot user; a separate Bingo-enabled bot can still take another visible place.
+- **Regression coverage** - added tests for refusing the same bot's second visible place and allowing a different Bingo bot to win the next place.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **52/52** pass; `cmd /c "npm run test:unit"` **245/245** pass.
+
+### Session note: 2026-08-04 (Bingo live/final bot winner consistency)
+
+**Goal**: Make the live winning-card popup and final standings use the same Bingo name-pool identity, and prevent master/global bot accounts from winning Bingo places.
+
+**Completed**:
+
+- **Bingo-eligible bot split** - settlement now distinguishes all bot accounts from bots explicitly enabled for Bingo. Master/global bots without `games.bingo.active === true` are excluded from Derash winner selection.
+- **Redirect pool tightened** - bot win redirects can only choose from explicitly Bingo-enabled bot IDs, while same-room and consecutive-room exclusions still apply.
+- **Live payload repair** - `drawNextNumber()` refreshes bot winner display names before returning the room response used by socket emissions, so live win cards and final standings share the same corrected summary.
+- **Regression coverage** - added tests for master-bot ineligibility and draw-response summary refresh before emission.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **50/50** pass; `cmd /c "npm run test:unit"` **243/243** pass.
+
+### Session note: 2026-08-04 (stale Bingo bot names self-heal)
+
+**Goal**: Stop completed/current Bingo results from showing stale bot account names such as `Abrsh` when that name is not in the active Bingo name pool.
+
+**Completed**:
+
+- **Stale identity rejection** - room bot identity hydration now validates requested Bingo bot identities against the active `bot_names` pool. If an existing room identity uses a name that is no longer active, it is discarded and reassigned from the active pool.
+- **Result-summary repair** - `getRoomState()` and admin room details now refresh bot winner display fields in `settlementSummary` before responding, so already-stamped stale names are corrected for Mini App/socket consumers instead of staying visible until a new room.
+- **Display resolver hardening** - bot display resolution always goes through the validating room identity hydrator, preventing fallback to the bot account display name while active Bingo names exist.
+- **Regression coverage** - added a test proving a completed room with stale `Abrsh` winner summary is returned with an active name-pool identity instead.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **46/46** pass; `cmd /c "npm run test:unit"` **239/239** pass.
+
+### Session note: 2026-08-04 (Bingo bot winner rotation)
+
+**Goal**: Randomize Bingo bot winners while preventing the same bot from winning multiple prize places in one room or winning consecutive rooms.
+
+**Completed**:
+
+- **Random eligible winner selection** - Derash race settlement now chooses from the shuffled eligible winner pool instead of always taking the earliest matching ticket.
+- **Same-room repeat guard** - bot users that already won a visible prize place in the current room remain blocked from later bot prize places.
+- **Consecutive-room guard** - settlement reads the most recent completed Bingo room and skips its bot winner IDs in the next room's bot winner/redirect selection.
+- **Leaderboard parity** - leaderboard settlement also skips same-room and previous-room bot winners when assigning visible prize places.
+- **Regression coverage** - added unit tests proving a previous-room bot winner is skipped in favor of another eligible bot, and that the only eligible previous winner cannot win consecutively.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **48/48** pass; `cmd /c "npm run test:unit"` **241/241** pass.
+
+### Session note: 2026-08-03 (Bingo bot pool + unique bot winners)
+
+**Goal**: Stop the same Bingo bot identity from repeatedly winning visible prize positions and make Bingo use only the explicitly enabled Bingo bot pool.
+
+**Completed**:
+
+- **Strict Bingo bot pool** - Bingo runtime selection now requires `botPolicy.games.bingo.active === true`, so globally active/master bots without an explicit Bingo flag no longer buy Bingo cartelas or receive Bingo bot bonuses.
+- **Room identity source preserved** - bot win steering no longer overrides the room-scoped bot identity with the separate `botAliasPool`; winners display through the same `botIdentityMap` name/suffix assigned when bots joined the room.
+- **Duplicate bot winner guard** - derash race and leaderboard settlement skip bot users that already won a prize position in the same room, preventing final standings like `Abrsh` in both 1st and 2nd place unless the code is intentionally changed later.
+- **Randomized redirect choice** - bot win redirects shuffle eligible bot tickets before selection instead of always taking the first matching bot ticket in repository order.
+- **Regression coverage** - added tests for strict Bingo-active pool selection and avoiding repeat bot redirect winners.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **44/44** pass; `cmd /c "npm run test:unit"` **237/237** pass.
+
+### Session note: 2026-08-03 (Bingo winner display uses room bot identity)
+
+**Goal**: Fix the final standings still showing the bot account name (`Abrsh`) instead of the active Bingo name-pool identity.
+
+**Completed**:
+
+- **Root cause fixed** - winner settlement user lookups now include `id`, so `resolveDisplayedNameForUser()` can match the bot to `room.botIdentityMap` instead of falling back to `user.displayName`.
+- **Direct room identity lookup** - if a room already has a bot identity for the winner, the display resolver uses it immediately before attempting any name-pool hydration.
+- **Regression coverage** - added a settlement test where the bot account is named `Abrsh`, the room identity is `Hana`, and final standings record `Hana` with the room suffix.
+
+**Verified**: `cmd /c "npx tsc -p tsconfig.build.json --noEmit"` clean; `cmd /c "npx jest src\bingo\bingo.service.spec.ts src\bots\bots.service.spec.ts --forceExit --no-coverage"` **45/45** pass; `cmd /c "npm run test:unit"` **238/238** pass.
+
+### Session: 2026-08-03 (Bingo bot cartela policy, thresholds, and bonus-win controls)
+
+**Goal**: Centralize Bingo bot behavior behind admin-controlled policy knobs so cartela buying is randomized, per-bot caps are enforced, below/above real-player thresholds are configurable, and bot bonus-win cadence is explicit.
+
+**Completed**:
+
+- **Cartela policy controls** - added admin-configurable Bingo bot cartela policy flags and mode selection (`mirror` vs `fixed_cap`), plus a per-bot room cap.
+- **Randomized bot buys** - bot cartela reconciliation now shuffles the available cartela pool before assignment, so bot purchases do not walk upward through the room one-by-one.
+- **Threshold-based participation** - Bingo bots now honor separate below-threshold and above-threshold toggles/values, with the legacy below-threshold fallback kept for existing configs.
+- **Bot bonus-win cadence** - completed-room bonus wins now support explicit interval or random mode via Bingo config instead of a single hidden interval knob.
+- **Admin UI** - the Bingo config panel now exposes the new cartela policy, threshold, bonus-win, and house-edge controls in one place with clearer copy.
+- **Regression coverage** - added unit tests for randomized cartela assignment, per-bot cap enforcement, threshold toggles, and bonus-win interval crediting.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit` clean; `cd frontend && npm run build` clean; `npm run test:unit` **234/234** pass; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` **11/11** pass.
+
+**Next best actions**:
+
+1. Commit the batch.
+2. If you want the below/above threshold bot behavior to be even more tuned, the next pass can add per-room overrides or separate UI guidance for busy vs quiet rooms.
+
+### Session note: 2026-08-03 (refund-to-zero Bingo cancellation hardening)
+
+**Goal**: Make sure a Bingo room never proceeds into a bot-only game if the last real player refunds all cartelas during the purchase phase.
+
+**Completed**:
+
+- **Zero-real-player refund guard** - when the final real cartela is refunded, the room now cancels immediately, refunds any pending bot cartelas in the same transaction, and skips the follow-up bot-reconcile pass so there is no chance of a stale bot-only start.
+- **Regression coverage** - tightened the cartela lifecycle test to assert the room ends cancelled, the bot cartela is also cancelled/settled, and the settlement summary records the no-real-player cancellation reason.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **234/234** pass.
+
+### Session note: 2026-08-03 (cancelled Bingo room stays on cartela page)
+
+**Goal**: Prevent the Bingo UI from jumping to a now-calling/next-room view when the last real player refunds all cartelas and the room cancels.
+
+**Completed**:
+
+- **Cancelled-room UI lock** - the Bingo page now keeps a cancelled prefilled room on the cartela view instead of auto-switching to the next current room, even if a poll response arrives after the cancellation.
+- **Refund response signal** - the cartela refund endpoint now tells the client when the refund cancelled the room, so the page can stay on the same room and render the cancelled state without a room swap.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npm run test:unit` **234/234** pass.
+
+### Session note: 2026-08-03 (Bingo cancel handoff + bot admin rename/balance guard)
+
+**Goal**: Make the Bingo cancel state recover cleanly into the next room without a reload, and let admins rename bots while preventing create-time failures when the requested starting balance is higher than the Master Wallet.
+
+**Completed**:
+
+- **Bingo cancel handoff** - cancelled rooms now use a short-lived hold that clears automatically, so a fresh room can take over as soon as it exists instead of leaving the player stranded on the old cancelled state.
+- **Bot rename support** - Admin -> Bots now lets the display name be edited inline for an existing bot.
+- **Create-time balance guard** - new bot creation now checks the Master Wallet balance first and shows a clear error if the requested starting balance is too high, instead of surfacing a vague system error.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npm run test:unit` **234/234** pass.
+
+### Session note: 2026-08-03 (bot cartela release on cancelled Bingo rooms)
+
+**Goal**: Fix the stuck cartela grid after the last real player refunds every cartela in a bot-assisted room.
+
+**Completed**:
+
+- **Room-wide card release** - cancellation now clears all assigned Bingo card rows in the same transaction that refunds/cancels tickets, so bot cartelas do not remain visually taken after `soldTickets` returns to 0.
+- **Pinned-room recovery** - if a player entered through the Rooms flow, a cancelled pinned room is unpinned automatically so the client can resume the normal current-room flow without a manual Mini App refresh.
+- **Regression coverage** - the last-real-player refund test now asserts the room-wide Bingo card release happens when the room cancels.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npx jest src/bingo/bingo.service.spec.ts --forceExit --no-coverage --runInBand` **27/27** pass; `npm run test:unit -- --runInBand` **234/234** pass.
+
+### Session note: 2026-08-03 (refund-to-zero keeps selected Bingo cartela room)
+
+**Goal**: After a player refunds every cartela and the room cancels, keep the Mini App on the selected cartela page and advance to that same room slot's new round instead of returning to the Rooms list.
+
+**Completed**:
+
+- **Same-slot cancel handoff** - `loadCurrent()` now finds the next open/running room with the same `ownerAgentId` before switching away from a cancelled pinned room, so per-agent room selection stays anchored.
+- **No forced lobby reset on full refund** - the cartela refund handler no longer clears `pinnedRoomId` when the server reports `roomCancelled`; the page holds the selected slot and lets polling move it to the fresh room.
+- **Shared result/cancel replacement path** - completed-room dismissal and cancelled-room recovery now use the same same-slot replacement lookup, reducing the chance of one flow drifting into the lobby while the other works.
+
+**Verified**: `cd frontend && npx tsc --noEmit && npm run build` clean.
+
+### Session note: 2026-08-03 (completed Bingo room no longer sticks after bot win)
+
+**Goal**: Stop the Mini App from staying on the completed now-calling board after a bot win dialog closes.
+
+**Completed**:
+
+- **Time-boxed completed rooms** - `GET /bingo/current` now returns a completed room only during the configured result-display window. After that, completed rooms are history, so the client will not keep repainting an old completed board.
+- **Dismissed-result guard** - once the frontend has dismissed a completed room, it ignores that same completed room if the API briefly returns it again during timing overlap.
+- **Selected-room handoff** - room state responses now expose `ownerAgentId`, and the Mini App uses it to move from a completed selected room to the newly-open room for the same house/agent slot instead of showing "No Bingo game running".
+- **Regression coverage** - added a `getCurrentRoom` test proving old completed rooms return `null` instead of sticking as current.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `cd frontend && npx tsc --noEmit && npm run build` clean; `npx jest src/bingo/bingo.service.spec.ts --forceExit --no-coverage --runInBand` **28/28** pass; `npm run test:unit -- --runInBand` **235/235** pass.
+
+### Session: 2026-08-02 (Bingo room list pagination + newest-first admin polish)
+
+**Goal**: Make the Bingo admin room list read like a proper paged table, with newest rooms first and clean next/previous navigation.
+
+**Completed**:
+
+- **Shared paged Bingo room contract** - `GET /bingo/rooms` now accepts `page` and `limit`, returns `{ data, total, page, limit, totalPages }`, and still sorts rooms by `createdAt DESC` so the newest rooms always appear first.
+- **Admin Bingo list UI** - the Admin -> Bingo panel now consumes the paged contract, shows a compact room header, adds a page summary, and renders Previous/Next controls instead of dumping the whole list at once.
+- **Stable refresh behavior** - the Bingo section refresh button now reloads both the config and the current rooms page, and room cancel/create flows refresh the current page without breaking the pagination state.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **231/231** pass; `cd frontend && npm run build` clean.
+
+**Next best actions**:
+
+1. Continue FE-09 with the next bespoke admin tab, or further refine the Bingo row styling if you want it even closer to the screenshot.
+
+### Session: 2026-08-01 (centralized per-game bot management)
+
+**Goal**: Centralize bot controls so each game can opt bots in/out independently from one Admin Bots hub.
+
+**Completed**:
+
+- **Per-game bot policy** - `botPolicy.games` now carries independent Keno/Bingo/Crash participation flags, with Keno ticket settings nested under `games.keno` and mirrored to the legacy top-level fields for backward compatibility.
+- **Runtime routing by game** - Keno bot tickets, Bingo cartela reconciliation/win interval, Crash bot bets, Bingo active-bot queries, and live bot presence counts now respect the relevant per-game flag while keeping `botPolicy.active` as the global master switch.
+- **Centralized admin surface** - Admin -> Bots now shows per-game counts, create/edit per-game checkboxes, and quick Keno/Bingo/Crash row toggles. Bingo bot-name CRUD remains under `BotsService`; the duplicate name-admin methods were removed from `BingoService`, which now only consumes the shared pool for room identities.
+- **Bot audit trail** - bot create/top-up/delete and runtime game actions now write to `bot_action_logs`, and the Admin Bots hub can page through recent bot actions per bot/game.
+- **Bot humanization + visual parity** - per-game timing/hesitation/variance knobs now shape bot pacing in Keno, Bingo, and Crash, and the Bingo live win popup now routes through a shared card component so bot and human wins share the same visible surface.
+- **Bot accounting/reporting safety** - admin Bingo history now classifies any `botPolicy` account as a bot even if globally paused, so paused bots do not get counted as real-player activity.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **231/231** pass; `npx jest src/bots/bots.service.spec.ts --forceExit --no-coverage` **10/10** pass; `cd frontend && npx tsc --noEmit && npm run build` clean.
+
+**Next best actions**:
+
+1. Commit the batch.
+2. In a live/staging admin pass, pause one bot for Bingo only and confirm it still participates in Keno/Crash but no longer buys Bingo cartelas.
+
+### Session: 2026-08-01 (Telegram webhook timeout fix)
+
+**Goal**: Stop Telegram webhook updates from hitting grammY's 10-second timeout by keeping only the durable state writes on the critical path.
+
+**Completed**:
+
+- **Deferred reply-heavy onboarding work** - the player bot now defers referral capture and follow-up prompts, and the agent bot defers its link/location/update prompts, so webhook replies can return quickly instead of burning the full timeout budget.
+- **Removed an extra Telegram lookup from the player contact flow** - `UsersService.setTelegramPhone()` now returns the resolved internal user id together with the normalized phone number, so the bot can cache the linked account without an immediate second DB query.
+- **Opportunistic Telegram caches** - Telegram user ids are cached in-memory after the first successful lookup to avoid repeated round-trips on the same worker during the same process lifetime.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **228/228** pass.
+
+**Next best actions**:
+
+1. If webhook latency still shows up in production, add timing logs around the deferred task helpers so the slowest reply path is obvious in the logs.
+2. Consider applying the same deferred-follow-up pattern to `AgentBotService` if it ever starts approaching the webhook timeout under real traffic.
+
+### Session: 2026-08-01 (Bingo bot identities + admin-managed name pool)
+
+**Goal**: Give Bingo bots a realistic, non-repeating identity per game and expose the bot-name pool to admins.
+
+**Completed**:
+
+- **Admin bot-name pool** — new `bot_names` entity + CRUD/import endpoints under `GET/POST/PATCH/DELETE /admin/bots/names` and `POST /admin/bots/names/import`. Admin dashboard gained a dedicated Bots subtab for managing the pool.
+- **Per-room bot identity randomization** — `BingoRoom.botIdentityMap` persists a room-scoped mapping from bot user id to `{ displayName, phoneSuffix }`. Every game shuffles active bot names, keeps names unique within the room, generates a stable 4-digit suffix per bot, and avoids suffix collisions within the room whenever possible.
+- **Winner visibility** — Bingo settlement summaries and wallet recent-wins now carry the bot alias that players saw in-game, so the same identity shows up across admin views and recent-wins display.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **225/225** pass; `cd frontend && npx tsc --noEmit && npm run build` clean.
+
+**Next best actions**:
+
+1. Commit the batch.
+2. If desired, seed the bot-name pool with more entries so admins have a larger rotation set before the next Bingo games.
+3. Consider whether FE-09 should fold this new name-pool subtab into a more bespoke Bots layout later.
+
+### Session: 2026-08-01 (Bingo bot demand sync + win UI parity)
+
+**Goal**: Make Bingo bots behave like normal players during the cartela phase and make bot wins render with the same result payload shape as human wins.
+
+**Completed**:
+
+- **Demand-synced bot participation** — Bingo room reconciliation now treats the human cartela count as the target for active bots, so when a player buys or returns cartelas the bot side mirrors that live change instead of following the old time-fraction top-up burst pattern.
+- **Bot-only room guard stays intact** — rooms with zero real players still cancel/reset instead of progressing into a bot-vs-bot draw.
+- **Human-style bot winner payloads** — bot winner display names now keep the base alias separate from the masked 4-digit suffix, so `LivePlaceWinPopup` and `RoomResultOverlay` render bot wins with the same name + suffix shape used for human winners.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **228/228** pass.
+
+**Next best actions**:
+
+1. Commit the batch.
+2. If the live room still looks too bot-heavy in certain configurations, tune the Bingo bot max-real threshold and bot policy settings in Admin.
+
+### Session: 2026-08-01 (Bingo final-change freeze)
+
+**Goal**: Close the last-second race where a room could be on the cusp of starting while a player was still changing cartelas.
+
+**Completed**:
+
+- **Shared cartela freeze** — Bingo now snapshots a configurable cartela-change freeze duration on each room (default 3 seconds). That window blocks both buys and refunds, the Bingo screen mirrors the same lock in the tap state, and bot reconciliation respects the same rule so the room cannot flip to bot-only on the boundary tick.
+- **Regression coverage** — added unit tests for the final-window buy rejection and bot-reconcile freeze, alongside the existing refund lock and zero-real-player cancellation tests.
+
+**Verified**: `npx tsc -p tsconfig.build.json --noEmit` clean; `npm run test:unit` **230/230** pass.
+
+**Next best actions**:
+
+1. Commit the batch.
+2. If a future product decision wants to alter the window behavior per room type, keep the shared lock helper as the single gate and only change the configured duration/source.
+
+### Session: 2026-08-01 (referral commission + tiered withdrawal fees)
+
+**Goal**: Make agent commission and withdrawal fees fully admin-configurable â€” a new referral-commission payout (didn't exist before; `referredByAgentId` was attribution-only) and a replacement of the in-flight %-split withdrawal fee model with flat-ETB fee ranges paid 100% to the agent.
+
+**Completed** (all **uncommitted** in the working tree):
+
+- **Referral commission** â€” `SystemConfig.referralCommissionPct` (global default) + `User.referralCommissionPct` (nullable per-agent override; null = use default). New `BingoService.settleReferralCommission(roomId)` (`src/bingo/bingo.service.ts`), modeled on the existing `settleAgentRoomCommission`, groups a completed room's real (non-bot) tickets by `referredByAgentId`, computes each referring agent's GGR, credits `agent_receipt`/`bingo_referral_commission` per agent â€” additive to, not a replacement for, the existing owned-room commission. Wired into `BingoScheduler` alongside the existing call. Scoped to Bingo only (Keno has no rake/agent-attribution concept yet).
+- **Withdrawal fee ranges (replaces the %-split model)** â€” new `WithdrawalFeeRange` entity (`src/wallet/entities/withdrawal-fee-range.entity.ts`: `minAmountMinor`, `maxAmountMinor` nullable/open-ended, `feeMinor`, `active`) + pure validation utils (`src/wallet/withdrawal-fee-range.util.ts`: `rangesOverlap`, `assertNoOverlap`, `resolveWithdrawalFeeMinor` â€” throws on a coverage gap rather than silently charging 0, `computeCoverageGaps` â€” informational only). `AgentsService.completeWithdrawal` / `WalletService.completeWithdrawalByAgent` collapsed from a two-part `serviceFeePct`+`commissionPct`+`superAdminUserId` split to one `feeMinor`, 100% credited to the completing agent (`agent-withdrawal-fee:{id}`); the old platform service-fee credit block is gone entirely. Removed `withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId` from `SystemConfig`, and `serviceFeeMinor`/`commissionMinor` from `Withdrawal` (its `serviceChargeMinor` field is reused to mean "the flat fee charged").
+- **Config change audit trail** â€” new `ConfigChangeLog` entity + `AdminService.logConfigChange`, written at three mutation points (global referral % update, per-agent override update, withdrawal-fee-range CRUD) with real before/after values â€” distinct from the existing `AdminAuditLog`, which only logs the raw request body. New `GET /admin/config-history`.
+- **Admin endpoints**: `GET/POST/PATCH/DELETE /admin/withdrawal-fee-ranges`, `GET /admin/config-history`; `PATCH /admin/agents/:id` now routes through `AdminService.updateAgentWithAudit` for the diff/log.
+- **Frontend**: `Admin.tsx` `ConfigAdmin` panel gained a "Referral Commission" field and lost the old service-fee/commission/tiers fields; new `WithdrawalFeeRangesAdmin` (table CRUD + coverage-gap warning banner) and `ConfigHistoryAdmin` (read-only log table) components; per-agent commission override field added to the agent edit form. `Wallet.tsx`/`Agent.tsx` (both `frontend` and standalone `agent-frontend`) fee-estimate logic switched from a pct calculation to a range lookup.
+
+**Verified**: `npx tsc --noEmit` (backend) clean; `npm run test:unit` **210/210** pass (added `referral-commission.util.spec.ts`, `withdrawal-fee-range.util.spec.ts`, 3 new `agents.service.spec.ts` cases for the flat-fee `completeWithdrawal` flow); `frontend` and `agent-frontend` `tsc -b && vite build` both clean.
+
+**Next best actions**:
+
+1. **Commit** the batch.
+2. Live pass (needs a running MySQL/Redis dev environment, not exercised this session): configure a global referral % + one agent override, have a referred test player generate Bingo GGR, confirm the referring agent's ledger shows the credit at the right %; configure 2-3 withdrawal fee ranges (including a deliberate gap to see the warning banner), complete a withdrawal in each range as an agent, confirm 100% of the flat fee lands on the agent with no platform-fee credit anywhere.
+3. The now-unused `withdrawalServiceChargePct`/`withdrawalCommissionPct`/`withdrawalFeeTiers`/`superAdminUserId`/`serviceFeeMinor`/`commissionMinor` DB columns are harmless dead columns (no migrations in this repo â€” see `[[igames-schema-and-conventions]]`); fine to leave, or drop manually in a future DB cleanup pass.
+
+---
+
+### Session: 2026-07-07 â†’ 2026-07-08 (derash overhaul + agent duty + fee split)
 
 **Goal**: New winning patterns, 5-place per-place-pattern derash + a leaderboard ranking mode, instant-buy/tap-refund cartelas, a withdrawal service-fee/commission split, an admin-controlled agent on-duty + working-hours system, and a staged end-of-round reveal.
 
 **Completed** (all **uncommitted** in the working tree):
 
-- **New patterns** `any_two_lines` / `any_three_lines` — `countCompletedLines` helper in `bingo-rules.service.ts`, seeded built-ins (auto-seed by name on boot), DTO + `PatternType` widened. (BE-18)
-- **Derash 5 places, per-place patterns** — `BingoConfig` gained 4th/5th enable+pct and `prefilledFirst..FifthPatternId`; `BingoPrizeTier` +`4th`/`5th`; settlement resolves each place's own pattern (`resolvePrefilledPlacePattern`). (BE-19)
-- **Instant-buy + tap-refund** — `DELETE /bingo/rooms/:id/cartelas/:n` → `releaseCartela` (refund ledger `bingo-cartela-refund:{ticketId}`, frees pool card, `open`-only). Frontend taps buy/refund a single cartela (per-cartela pending guard); Pay bar removed; available cells → black tile + muted number (`#8f9db0`). (BE-20, FE-16)
-- **Withdrawal fee split** — `WalletService.completeWithdrawalByAgent` now takes `serviceFeePct` + `commissionPct` + `superAdminUserId`: service fee → super-admin wallet (`platform-service-fee:{id}`), commission → agent (`agent-commission:{id}`), net → agent custody. `system_configs.withdrawalCommissionPct`/`superAdminUserId`; `withdrawals.serviceFeeMinor`/`commissionMinor`. Admin config UI + Agent net breakdown. (BE-21, FE-18, D-19)
-- **Agent on-duty + working schedule** — `User.onDutyMode` (`auto`/`on`/`off`) + `workDaysOfWeek`; new `src/common/agent-duty.util.ts` (Ethiopia +180 wall clock, working-window + effective-on-duty). `getActiveAgentDepositInfo` + `verifyAgentWorkingHoursAndPermission` now use effective-on-duty; `PATCH /admin/agents/:id/on-duty`. Admin Agents UI: mode selector + coverage banner + Working-Days picker. `AgentShift`/`workStartHour` left dormant. (BE-22, FE-18, D-21)
-- **Derash leaderboard mode** — `rankingMode: race|leaderboard` (config + room snapshot); `progressDerashLeaderboard` (end on 1st-place pattern / pool exhaustion) + `settleDerashLeaderboard` (queue by hardest tier→earliest, ranks by position, reuses `awardDerashPlace`+`reconcileDerashPool`); `claimBingo` no-op in leaderboard mode. Admin Ranking Mode dropdown. (BE-23, FE-18, D-18)
-- **Staged reveal** — `boardCount`/`ticketCount` trailing cursors (now-calling → board → ticket); `popupArmed` holds the 5×5 win popup behind `NOW_CALLING_HOLD_MS`; result-display countdown starts only after the live-win queue drains. (FE-17, D-22)
+- **New patterns** `any_two_lines` / `any_three_lines` â€” `countCompletedLines` helper in `bingo-rules.service.ts`, seeded built-ins (auto-seed by name on boot), DTO + `PatternType` widened. (BE-18)
+- **Derash 5 places, per-place patterns** â€” `BingoConfig` gained 4th/5th enable+pct and `prefilledFirst..FifthPatternId`; `BingoPrizeTier` +`4th`/`5th`; settlement resolves each place's own pattern (`resolvePrefilledPlacePattern`). (BE-19)
+- **Instant-buy + tap-refund** â€” `DELETE /bingo/rooms/:id/cartelas/:n` â†’ `releaseCartela` (refund ledger `bingo-cartela-refund:{ticketId}`, frees pool card, `open`-only). Frontend taps buy/refund a single cartela (per-cartela pending guard); Pay bar removed; available cells â†’ black tile + muted number (`#8f9db0`). (BE-20, FE-16)
+- **Withdrawal fee split** â€” `WalletService.completeWithdrawalByAgent` now takes `serviceFeePct` + `commissionPct` + `superAdminUserId`: service fee â†’ super-admin wallet (`platform-service-fee:{id}`), commission â†’ agent (`agent-commission:{id}`), net â†’ agent custody. `system_configs.withdrawalCommissionPct`/`superAdminUserId`; `withdrawals.serviceFeeMinor`/`commissionMinor`. Admin config UI + Agent net breakdown. (BE-21, FE-18, D-19)
+- **Agent on-duty + working schedule** â€” `User.onDutyMode` (`auto`/`on`/`off`) + `workDaysOfWeek`; new `src/common/agent-duty.util.ts` (Ethiopia +180 wall clock, working-window + effective-on-duty). `getActiveAgentDepositInfo` + `verifyAgentWorkingHoursAndPermission` now use effective-on-duty; `PATCH /admin/agents/:id/on-duty`. Admin Agents UI: mode selector + coverage banner + Working-Days picker. `AgentShift`/`workStartHour` left dormant. (BE-22, FE-18, D-21)
+- **Derash leaderboard mode** â€” `rankingMode: race|leaderboard` (config + room snapshot); `progressDerashLeaderboard` (end on 1st-place pattern / pool exhaustion) + `settleDerashLeaderboard` (queue by hardest tierâ†’earliest, ranks by position, reuses `awardDerashPlace`+`reconcileDerashPool`); `claimBingo` no-op in leaderboard mode. Admin Ranking Mode dropdown. (BE-23, FE-18, D-18)
+- **Staged reveal** â€” `boardCount`/`ticketCount` trailing cursors (now-calling â†’ board â†’ ticket); `popupArmed` holds the 5Ã—5 win popup behind `NOW_CALLING_HOLD_MS`; result-display countdown starts only after the live-win queue drains. (FE-17, D-22)
 
 **Concurrent (other-agent) work merged cleanly**: `maxCartelasPerUser`, manual `claimBingo`/auto-claim, `finalizeDerashIfDone`, `reconcileDerashPool` (unfilled-place redistribution), `awardDerashPlace`.
 
@@ -78,25 +394,25 @@
 
 ---
 
-### Session: 2026-07-04 → 2026-07-05 (broadcast, notifications, bingo polish + fixes)
+### Session: 2026-07-04 â†’ 2026-07-05 (broadcast, notifications, bingo polish + fixes)
 
 **Goal**: Ship an admin Telegram broadcast tool, a durable notification system, and fix the reported Bingo/Wallet UX bugs.
 
 **Completed**:
 
-- **Admin Telegram Broadcast** (`src/broadcast/`, commits 19baa9b, 2848de1): new `broadcast_messages` entity + service + controller + `BroadcastScheduler`. Admin composes text + optional uploaded image + inline URL buttons and sends to **all Telegram-linked users** — now / once (scheduled) / recurring (daily|weekly, Ethiopia +3). Multer upload to `uploads/broadcasts/` served at `/uploads/**`; `TelegramBotService.sendBroadcastMessage` throttles ~25 msg/s, honours 429, **reuses the photo `file_id`** after the first send. Scheduler claims due rows with an atomic `scheduled→sending` status guard (exactly-once, multi-instance safe) + 45-min stale recovery. Frontend: new **Broadcast** admin tab with a live Telegram-style preview + delivery progress. See D-16.
-- **Durable notifications / bell** (`src/notifications/`, commits 405d50f, 3c49b64): `notifications` table + service + controller; `GameEventsGateway.emitUserNotification` → `notification.new` on `user_{id}`. Wired post-commit, best-effort to withdrawal settle (all 3 paths), deposit credit (new credits only), admin adjustment, and **server-side bingo/keno win** emit at settlement (`notifyRoomWinners`/`notifyDrawWinners`, aggregated per user, bots skipped). Frontend bell is now **server-backed**: loads on login, socket-live, persists read state, per-type icons; the client-side win `addNotification` was removed to avoid a duplicate. See D-15.
-- **OptionalJwtAuthGuard** (commit 2272c8b): fixes a logged-in player's purchased cartelas disappearing on tab switch/reload — `GET /bingo/current` (+ `/state`, `/sync`) had no guard so the server never returned the caller's tickets. New reusable guard populates `request.user` when a token is present, allows anonymous otherwise. Guard spec added (4 cases). See D-14.
+- **Admin Telegram Broadcast** (`src/broadcast/`, commits 19baa9b, 2848de1): new `broadcast_messages` entity + service + controller + `BroadcastScheduler`. Admin composes text + optional uploaded image + inline URL buttons and sends to **all Telegram-linked users** â€” now / once (scheduled) / recurring (daily|weekly, Ethiopia +3). Multer upload to `uploads/broadcasts/` served at `/uploads/**`; `TelegramBotService.sendBroadcastMessage` throttles ~25 msg/s, honours 429, **reuses the photo `file_id`** after the first send. Scheduler claims due rows with an atomic `scheduledâ†’sending` status guard (exactly-once, multi-instance safe) + 45-min stale recovery. Frontend: new **Broadcast** admin tab with a live Telegram-style preview + delivery progress. See D-16.
+- **Durable notifications / bell** (`src/notifications/`, commits 405d50f, 3c49b64): `notifications` table + service + controller; `GameEventsGateway.emitUserNotification` â†’ `notification.new` on `user_{id}`. Wired post-commit, best-effort to withdrawal settle (all 3 paths), deposit credit (new credits only), admin adjustment, and **server-side bingo/keno win** emit at settlement (`notifyRoomWinners`/`notifyDrawWinners`, aggregated per user, bots skipped). Frontend bell is now **server-backed**: loads on login, socket-live, persists read state, per-type icons; the client-side win `addNotification` was removed to avoid a duplicate. See D-15.
+- **OptionalJwtAuthGuard** (commit 2272c8b): fixes a logged-in player's purchased cartelas disappearing on tab switch/reload â€” `GET /bingo/current` (+ `/state`, `/sync`) had no guard so the server never returned the caller's tickets. New reusable guard populates `request.user` when a token is present, allows anonymous otherwise. Guard spec added (4 cases). See D-14.
 - **Bingo live-draw polish** (commits f79a386, 6ea4123): calm constant ~1.5s reveal cadence (no more 250ms bursts), "now calling" uses `mode="wait"` + breathing glow, recent-calls strip keyed by number (stable) with enter animation, current ball ringed on the board. Kept iGames' own visual identity (not the reference app's look).
-- **Bingo derash win dialog**: renders the winner's 5×5 card for **all** players via `settlementSummary.winnerGrid` with robust fallbacks + authoritative `winnerMarkedNumbers`.
-- **CartelaGrid font** (commits a0cc833, 9d3fa4d): 7px → 11px, `font-black`, tight leading/tracking — bigger/bolder without changing the fixed 10-col grid layout.
-- **Wallet transaction filter fix**: filters (Wins/Purchases/Deposits) and labels used non-existent `entryType` values (`ticket_win`/`ticket_purchase`); corrected to the real enum (`win`/`stake`/`deposit`/…). Home Bingo card copy → "Next Bingo starts soon! Buy your card".
+- **Bingo derash win dialog**: renders the winner's 5Ã—5 card for **all** players via `settlementSummary.winnerGrid` with robust fallbacks + authoritative `winnerMarkedNumbers`.
+- **CartelaGrid font** (commits a0cc833, 9d3fa4d): 7px â†’ 11px, `font-black`, tight leading/tracking â€” bigger/bolder without changing the fixed 10-col grid layout.
+- **Wallet transaction filter fix**: filters (Wins/Purchases/Deposits) and labels used non-existent `entryType` values (`ticket_win`/`ticket_purchase`); corrected to the real enum (`win`/`stake`/`deposit`/â€¦). Home Bingo card copy â†’ "Next Bingo starts soon! Buy your card".
 
-**Verified**: `npx nest build` clean; `npx jest` 158/158 (updated wallet/bingo/keno specs for new constructor args); `frontend` `tsc` + `vite build` clean. Live end-to-end (real socket round / withdrawal approval) not exercised — needs DB+Redis.
+**Verified**: `npx nest build` clean; `npx jest` 158/158 (updated wallet/bingo/keno specs for new constructor args); `frontend` `tsc` + `vite build` clean. Live end-to-end (real socket round / withdrawal approval) not exercised â€” needs DB+Redis.
 
 **Next best actions**:
 
-1. **Crash win notifications** — the one game not yet wired; `crash.bet.cashedout` already emits to `user_{id}`, so add a `win` notification there (~2 lines).
+1. **Crash win notifications** â€” the one game not yet wired; `crash.bet.cashedout` already emits to `user_{id}`, so add a `win` notification there (~2 lines).
 2. Deploy: ensure `uploads/` is writable on the server and run `npm install` (new `@types/multer`).
 3. Still pending from before: ROW_FORMAT=DYNAMIC ALTER on pre-existing prod tables; FE-09 admin per-tab layouts; FE-10 profile stats.
 
@@ -108,17 +424,17 @@
 
 **Completed**:
 
-- **Bingo derash double-fee fix**: `evaluateAndSettleDerash` applied `houseEdgePct` (pool) AND `prefilledFirstPlacePct` (default 80%) — a second 20% cut. Winner was paid `pool*0.8` (e.g. pot 40 → 25 instead of 32). Place percentages are now **weights normalised across enabled places**, so a single 1st place takes the full pool. Extracted pure `computePrefilledPrizeMinor()` + added 4 regression tests (bingo unit suite 34 → 38).
-- **Flat 1:1 currency model**: removed all ×100/÷100 currency conversions. Backend: `telebirrCreditMinorPerBirr` default 100→1 (SystemConfig entity + admin.service + verifier fallback); crash-config defaults minBet 100→1, maxBet 500_000→5_000, botBet 500→5; crash min/max messages "credits"→"ETB". Frontend: Crash stake `*100`/`÷100` removed (kept multiplier `X100`), QUICK_STAKES → whole ETB; Admin bot/wallet/agent top-ups `*100` removed; Keno autoplay `*100` removed; Wallet dev top-up `÷100` removed.
-- **Currency label → "ETB"** everywhere; fixed corrupted strings `ETBedits`/`Bonus ETBedit`/`Transfer ETBedits`, the `e‑Birr` wallet label, and `E-Money`/`Credits`/`Cr` unit labels across Admin, Wallet, Agent, Leaderboard, Crash.
+- **Bingo derash double-fee fix**: `evaluateAndSettleDerash` applied `houseEdgePct` (pool) AND `prefilledFirstPlacePct` (default 80%) â€” a second 20% cut. Winner was paid `pool*0.8` (e.g. pot 40 â†’ 25 instead of 32). Place percentages are now **weights normalised across enabled places**, so a single 1st place takes the full pool. Extracted pure `computePrefilledPrizeMinor()` + added 4 regression tests (bingo unit suite 34 â†’ 38).
+- **Flat 1:1 currency model**: removed all Ã—100/Ã·100 currency conversions. Backend: `telebirrCreditMinorPerBirr` default 100â†’1 (SystemConfig entity + admin.service + verifier fallback); crash-config defaults minBet 100â†’1, maxBet 500_000â†’5_000, botBet 500â†’5; crash min/max messages "credits"â†’"ETB". Frontend: Crash stake `*100`/`Ã·100` removed (kept multiplier `X100`), QUICK_STAKES â†’ whole ETB; Admin bot/wallet/agent top-ups `*100` removed; Keno autoplay `*100` removed; Wallet dev top-up `Ã·100` removed.
+- **Currency label â†’ "ETB"** everywhere; fixed corrupted strings `ETBedits`/`Bonus ETBedit`/`Transfer ETBedits`, the `eâ€‘Birr` wallet label, and `E-Money`/`Credits`/`Cr` unit labels across Admin, Wallet, Agent, Leaderboard, Crash.
 
 **Verified**: `npx tsc --noEmit` clean (backend + frontend); `npm run test:unit` 151/151 pass; `frontend npm run build` clean.
 
-**⚠ Follow-up (production data)**: entity defaults only apply to NEW config rows. Existing `system_configs` and `crash_config` rows still hold ×100 values — run the one-time UPDATEs (see handoff) or deposits keep crediting ×100 and Crash rejects sane bets.
+**âš  Follow-up (production data)**: entity defaults only apply to NEW config rows. Existing `system_configs` and `crash_config` rows still hold Ã—100 values â€” run the one-time UPDATEs (see handoff) or deposits keep crediting Ã—100 and Crash rejects sane bets.
 
 ---
 
-### Session: 2026-06-30 → 2026-07-03
+### Session: 2026-06-30 â†’ 2026-07-03
 
 **Goal**: Introduce prefilled/derash Bingo, harden concurrency, and polish the live draw presentation.
 
@@ -126,7 +442,7 @@
 
 - Bingo win modes: added `prefilled` (default) alongside `line` and `pattern`. `winMode`, `numberRange`, `gridSize`, `houseEdgePct` on `BingoRoom`
 - Bingo derash: cartela-number purchases (`cartelaNumbers[]` DTO, `BingoTicket.cartelaNumber`), DB-backed winning patterns via `npm run seed:bingo-patterns`, pot split by `houseEdgePct`, winner last-4 phone digits in settlement summary
-- Bingo card pool: `BingoCard` entity — pre-generated cartela cards, grid size 75
+- Bingo card pool: `BingoCard` entity â€” pre-generated cartela cards, grid size 75
 - Concurrency: one-active-game guard `activeGuard` under UNIQUE index `UQ_bingo_active_game`; `findRunningRoomIdsDue` uses DB `NOW()`; auto-create guarded against concurrent rooms
 - Bingo reveal: paced reveal with a single `revealedCount` cursor (~1.5s/ball, min 0.65s catch-up); caller, board and cards advance in lockstep; snap on room switch/completion; sound synced to cursor
 - Entities: switched to `InnoDB ROW_FORMAT=DYNAMIC` engine declaration (fixes fresh-schema row size)
@@ -141,7 +457,7 @@
 
 1. Deploy: `git pull && npm run build && pm2 restart igames-backend` + rebuild frontend; run `seed:bingo-patterns` on target DB
 2. Run MySQL ROW_FORMAT=DYNAMIC ALTER TABLE statements on any pre-existing production tables
-3. Admin per-tab bespoke layouts (FE-09) — Players table, Keno draw timeline, etc.
+3. Admin per-tab bespoke layouts (FE-09) â€” Players table, Keno draw timeline, etc.
 
 > Note: `.harness/topics/game-lifecycle.md` Bingo section still describes the original
 > 90-ball `line` flow. See `.harness/topics/bingo-reveal.md` for the current win modes.
@@ -154,17 +470,17 @@
 
 **Completed**:
 
-- CrashModule: Added `JwtModule.register({})`, `JwtAuthGuard`, `RolesGuard` to providers → backend starts
+- CrashModule: Added `JwtModule.register({})`, `JwtAuthGuard`, `RolesGuard` to providers â†’ backend starts
 - MySQL: Provided 25 `ALTER TABLE ... ROW_FORMAT=DYNAMIC` statements
 - Bingo scheduler: Self-healing guard replaces ConflictException; rooms complete instead of loop
 - Crash RNG: Fixed `min: 1` (was 0); formula `(result.numbers[0] - 1) / 1_000_000`
 - Crash bootstrap: `abandonStaleRounds()` refunds active bets and crashes stale non-crashed rounds
-- Bingo: 40s sales window, 2s draw interval, 10s result display — all configurable via admin
+- Bingo: 40s sales window, 2s draw interval, 10s result display â€” all configurable via admin
 - Bingo: Phase machine (buy/playing/result), GET /bingo/current, no room lobby
 - Keno: Pay-first grid lock, PATCH /keno/tickets/:id/numbers (600ms debounce), win/lose modal, tabbed draws/tickets
 - Socket.IO: 10s heartbeat + request.counts on-demand event
-- Admin: Sidebar layout, adm-* CSS overhaul, Donut SVG chart, Account tab, Bingo config fields
-- Frontend build: Clean ✓
+- Admin: Sidebar layout, adm-\* CSS overhaul, Donut SVG chart, Account tab, Bingo config fields
+- Frontend build: Clean âœ“
 
 **Blockers hit**: None outstanding.
 
@@ -172,7 +488,7 @@
 
 1. Deploy: `git pull && npm run build && pm2 restart igames-backend` + rebuild frontend on server
 2. Run MySQL ROW_FORMAT=DYNAMIC ALTER TABLE statements on production
-3. Admin per-tab bespoke layouts (FE-09) — Players table, Keno draw timeline, etc.
+3. Admin per-tab bespoke layouts (FE-09) â€” Players table, Keno draw timeline, etc.
 
 ---
 

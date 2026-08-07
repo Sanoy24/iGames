@@ -5,6 +5,7 @@ import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { AgentMatchController } from './agent-match.controller';
 import { AdminBootstrapService } from './admin-bootstrap.service';
 import { KenoModule } from '../keno/keno.module';
 import { BingoModule } from '../bingo/bingo.module';
@@ -20,7 +21,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
     forwardRef(() => KenoModule),
     forwardRef(() => BingoModule)
   ],
-  controllers: [UsersController],
+  controllers: [UsersController, AgentMatchController],
   providers: [UsersService, JwtAuthGuard, RolesGuard, AdminBootstrapService],
   exports: [UsersService, TypeOrmModule]
 })

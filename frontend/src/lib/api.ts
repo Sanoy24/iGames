@@ -2,9 +2,13 @@ import axios from 'axios';
 import type {
   AuthTokenResponse,
   BingoConfig,
+  BingoOperationalAlert,
   BingoPattern,
   BingoRoom,
+  BingoRoomSlot,
+  BingoCustomRoomSlot,
   BingoRoomState,
+  BingoStalledRoom,
   BingoTicket,
   CrashBet,
   CrashConfig,
@@ -139,6 +143,8 @@ export const walletApi = {
   requestWithdrawal: (amountMinor: number, destinationAccount: string) =>
     api.post<Withdrawal>('/wallet/withdraw', { amountMinor, destinationAccount }).then((r) => r.data),
   getWithdrawals: () => api.get<Withdrawal[]>('/wallet/withdrawals').then((r) => r.data),
+  getWithdrawalFeeConfig: () =>
+    api.get<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> }>('/wallet/withdrawal-fee-config').then((r) => r.data),
 };
 
 // ── Payments ──────────────────────────────────────────────────────
@@ -185,16 +191,41 @@ export const paymentsApi = {
   previewTelebirrReceipt: (rawText: string) =>
     api.post<TelebirrPreview>('/payments/telebirr/preview', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
 
-  submitTelebirrReceipt: (rawText: string) =>
-    api.post('/payments/telebirr/receipts', extractTelebirrReceiptBody(rawText), { timeout: 45000 }).then((r) => r.data),
+  submitTelebirrReceipt: (rawText: string, receiptFileUrl?: string) =>
+    api.post('/payments/telebirr/receipts', { ...extractTelebirrReceiptBody(rawText), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+
+  /** Same submit endpoint, given an already-known receipt number (e.g. from
+   * the screenshot/OCR flow) instead of raw SMS text to re-parse. */
+  submitTelebirrReceiptByNo: (receiptNo: string, receiptFileUrl?: string) =>
+    api.post('/payments/telebirr/receipts', { receiptNo, receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+
+  /** Upload a screenshot of the Telebirr app's "Successful" screen — OCR reads
+   * the transaction number server-side, then verifies it the same way the
+   * text-paste flow does. The screenshot is stored and its path returned as
+   * `fileUrl`, so it doubles as the receipt photo (no separate upload needed). */
+  previewTelebirrScreenshot: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api
+      .post<TelebirrPreview & { receiptNo: string; fileUrl: string }>('/payments/telebirr/preview-screenshot', form, { timeout: 45000 })
+      .then((r) => r.data);
+  },
 
   // M-Pesa is verified from the pasted confirmation SMS (optionally cross-checked
   // against a portal server-side), so it can also exceed the default — give it 45s.
   previewMpesaSms: (sms: string) =>
     api.post<MpesaPreview>('/payments/mpesa/preview', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
 
-  submitMpesaSms: (sms: string) =>
-    api.post('/payments/mpesa/receipts', { sms: sms.trim() }, { timeout: 45000 }).then((r) => r.data),
+  submitMpesaSms: (sms: string, receiptFileUrl?: string) =>
+    api.post('/payments/mpesa/receipts', { sms: sms.trim(), receiptFileUrl }, { timeout: 45000 }).then((r) => r.data),
+
+  /** Upload a photo/PDF of the physical receipt before submitting — returns a
+   * relative path (e.g. "deposit-receipts/<uuid>.jpg") to pass as receiptFileUrl. */
+  uploadReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/payments/receipts/upload', form).then((r) => r.data);
+  },
 
   getActiveAgent: () =>
     api.get<ActiveAgent | null>('/payments/active-agent').then((r) => r.data),
@@ -232,10 +263,21 @@ export type BingoLobbyRoom = {
   players: number;
   potMinor: number;
   scheduledStartAt: string | null;
+  cardPaletteId: string | null;
+  cardBallNumber: number | null;
+};
+
+export type BingoRoomListResponse = {
+  data: BingoRoom[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 };
 
 export const bingoApi = {
-  listRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
+  listRooms: (page = 1, limit = 10) =>
+    api.get<BingoRoomListResponse>(`/bingo/rooms?page=${page}&limit=${limit}`).then((r) => r.data),
   getCurrentRoom: () => api.get<BingoRoomState | null>('/bingo/current').then((r) => r.data),
   getLobby: () => api.get<{ enabled: boolean; rooms: BingoLobbyRoom[] }>('/bingo/lobby').then((r) => r.data),
   getRoomState: (roomId: string) => api.get<BingoRoomState>(`/bingo/rooms/${roomId}/state`).then((r) => r.data),
@@ -259,7 +301,7 @@ export const bingoApi = {
   releaseCartela: (roomId: string, cartelaNumber: number) =>
     api
       .delete(`/bingo/rooms/${roomId}/cartelas/${cartelaNumber}`)
-      .then((r) => r.data as { cartelaNumber: number; refundedMinor: number }),
+      .then((r) => r.data as { cartelaNumber: number; refundedMinor: number; roomCancelled?: boolean }),
   setAuto: (roomId: string, auto: boolean) =>
     api
       .post(`/bingo/rooms/${roomId}/auto`, { auto })
@@ -295,12 +337,31 @@ export const userApi = {
 };
 
 // ── Locations (player-facing) ─────────────────────────────────────
+// Retired for onboarding — kept only for anything still reading the admin
+// Location catalog. New player→agent attribution uses agentMatchApi below.
 export const locationsApi = {
   list: () => api.get<PublicLocation[]>('/locations').then((r) => r.data),
   /** Null when the player has never answered — the Mini App uses this to prompt. */
   getMine: () => api.get<UserLocation | null>('/locations/me').then((r) => r.data),
   setMine: (dto: { locationId?: string; other?: boolean }) =>
     api.patch<UserLocation>('/locations/me', dto).then((r) => r.data),
+};
+
+// ── Direct player→agent GPS matching (replaces Location-based onboarding) ──
+export type OnDutyAgentOption = { id: string; name: string };
+export type AssignedAgentResult = {
+  assignedAgentId: string | null;
+  assignedAgentName: string | null;
+  assignedAgentSource: 'gps_match' | 'manual_pick' | 'other';
+};
+
+export const agentMatchApi = {
+  listAgents: () => api.get<OnDutyAgentOption[]>('/agent-match/agents').then((r) => r.data),
+  getMine: () => api.get<AssignedAgentResult | null>('/agent-match/me').then((r) => r.data),
+  setMine: (dto: { agentId?: string; other?: boolean }) =>
+    api.patch<AssignedAgentResult>('/agent-match/me', dto).then((r) => r.data),
+  attempt: (latitude: number, longitude: number) =>
+    api.post<AssignedAgentResult | null>('/agent-match/attempt', { latitude, longitude }).then((r) => r.data),
 };
 
 // ── Admin: Overview + Config ──────────────────────────────────────
@@ -310,25 +371,47 @@ export type PlatformStats = {
   totalPayoutsMinor: number;
   totalRefundsMinor: number;
   totalLiabilitiesMinor: number;
+  /** Slice of totalPayoutsMinor that went to bot-controlled accounts — real, spendable money. */
+  totalBotWinningsMinor: number;
   breakdown: Record<string, number>;
 };
 
 export type SystemConfig = {
   telebirrCreditMinorPerBirr: number;
   welcomeBonusMinor: number;
-  withdrawalServiceChargePct: number;
-  withdrawalCommissionPct: number;
-  /** % of a credited deposit paid as commission to the receiving agent. */
-  depositCommissionPct?: number;
-  superAdminUserId?: string | null;
   minDepositMinor: number;
   withdrawalMinAmountMinor: number;
   withdrawalMaxAmountMinor: number;
   maxPendingWithdrawalsPerUser: number;
   /** Approach B: per-agent Bingo rooms on/off. */
   agentRoomsEnabled?: boolean;
-  /** % of a room's real-player GGR paid to the owning agent on completion. */
-  agentRoomCommissionPct?: number;
+  /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
+  referralCommissionPct?: number;
+  /** Minimum hours between an agent's own self-service settlement requests. 0 = no cooldown. */
+  agentSettlementCooldownHours?: number;
+};
+
+export type WithdrawalFeeRange = {
+  id: string;
+  minAmountMinor: number;
+  /** Null = open-ended ("and above"). */
+  maxAmountMinor: number | null;
+  feeMinor: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CoverageGap = { fromMinor: number; toMinor: number | null };
+
+export type ConfigChangeLog = {
+  id: string;
+  configType: 'global_referral_commission' | 'agent_referral_commission' | 'withdrawal_fee_range';
+  entityId: string | null;
+  previousValue: string | null;
+  newValue: string | null;
+  changedByAdminId: string;
+  createdAt: string;
 };
 
 export type AgentPerformance = {
@@ -341,9 +424,17 @@ export type AgentPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  commissionEarnedCount: number;
+  withdrawalFeesEarnedMinor: number;
   depositCount: number;
   depositVolumeMinor: number;
   depositCommissionEarnedMinor: number;
+  /** Referral commission + withdrawal fees — matches what settlements are computed from. */
+  totalEarningsMinor: number;
+  /** Sum of settlements actually paid out (status = 'paid'). */
+  totalSettledMinor: number;
+  /** totalEarningsMinor minus everything already claimed (paid, pending, or approved). */
+  remainingMinor: number;
 };
 
 export type AgentSelfPerformance = {
@@ -354,15 +445,69 @@ export type AgentSelfPerformance = {
   payoutMinor: number;
   ggrMinor: number;
   commissionEarnedMinor: number;
+  withdrawalFeesEarnedMinor: number;
   depositCount: number;
   depositVolumeMinor: number;
   depositCommissionEarnedMinor: number;
+};
+
+export type SettlementBlockReason = 'pending_exists' | 'cooldown' | 'nothing_to_settle' | null;
+
+export type AgentDashboardSummary = {
+  totalReferredPlayers: number;
+  activePlayers: number;
+  gameCommission: { totalMinor: number; count: number };
+  withdrawalFeesEarnedMinor: number;
+  totalEarningsMinor: number;
+  totalSettledMinor: number;
+  remainingMinor: number;
+  canRequestSettlement: boolean;
+  settlementBlockReason: SettlementBlockReason;
+  settlementCooldownEndsAt: string | null;
+  pendingWithdrawalRequests: number;
+  completedWithdrawalRequests: number;
+};
+
+export type AgentSettlementStatus = 'pending' | 'approved' | 'paid' | 'rejected';
+export type AgentSettlementPaymentMethod = 'bank_transfer' | 'cash' | 'mobile_money' | 'other';
+
+export type AgentSettlement = {
+  id: string;
+  agentId: string;
+  agent?: User;
+  periodStart: string;
+  periodEnd: string;
+  gameCommissionMinor: number;
+  withdrawalFeesMinor: number;
+  totalEarnedMinor: number;
+  amountPaidMinor: number;
+  outstandingBalanceMinor: number;
+  status: AgentSettlementStatus;
+  paymentMethod?: AgentSettlementPaymentMethod | null;
+  ftNumber?: string | null;
+  receiptFileUrl?: string | null;
+  paidAt?: string | null;
+  paidByAdminId?: string | null;
+  notes?: string | null;
+  requestedByAgent: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export const adminApi = {
   getOverview: () => api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
   getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
   updateConfig: (dto: Partial<SystemConfig>) => api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),
+  getConfigHistory: (params?: { configType?: ConfigChangeLog['configType']; entityId?: string; page?: number; limit?: number }) =>
+    api.get<{ data: ConfigChangeLog[]; total: number; page: number; limit: number }>('/admin/config-history', { params }).then((r) => r.data),
+  listWithdrawalFeeRanges: () =>
+    api.get<{ ranges: WithdrawalFeeRange[]; coverageGaps: CoverageGap[] }>('/admin/withdrawal-fee-ranges').then((r) => r.data),
+  createWithdrawalFeeRange: (dto: { minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number; active?: boolean }) =>
+    api.post<WithdrawalFeeRange>('/admin/withdrawal-fee-ranges', dto).then((r) => r.data),
+  updateWithdrawalFeeRange: (id: string, dto: Partial<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number; active: boolean }>) =>
+    api.patch<WithdrawalFeeRange>(`/admin/withdrawal-fee-ranges/${id}`, dto).then((r) => r.data),
+  deleteWithdrawalFeeRange: (id: string) =>
+    api.delete<void>(`/admin/withdrawal-fee-ranges/${id}`).then((r) => r.data),
   getAgentPerformance: () => api.get<AgentPerformance[]>('/admin/agents/performance').then((r) => r.data),
   /** The Master Wallet — the ONE shared system wallet every admin account operates on (see backend AdminService). */
   getHouseWallet: () => api.get<Wallet>('/admin/wallet/house').then((r) => r.data),
@@ -476,6 +621,8 @@ export type BingoRoundTicket = {
   userName: string;
   phoneLast4: string;
   isBot: boolean;
+  identitySource?: 'bingo_bot_name_pool' | 'player_profile';
+  maskedPhone?: string;
   cartelaNumber: number | null;
   status: string;
   settlementStatus: string;
@@ -489,7 +636,7 @@ export type BingoRoundTicket = {
 };
 
 export type BingoRoundDetails = {
-  room: BingoRoom & { rankingMode?: string; rngAuditLogIds?: string[]; createdAt?: string };
+  room: BingoRoom & { rankingMode?: string; rngAuditLogIds?: string[]; botIdentityMap?: Record<string, { displayName: string; phoneSuffix: string }>; createdAt?: string };
   totals: {
     soldTickets: number;
     totalPotMinor: number;
@@ -506,7 +653,8 @@ export const adminBingoApi = {
     api.get<BingoRoundDetails>(`/admin/bingo/rooms/${roomId}/details`).then((r) => r.data),
   updateConfig: (dto: Partial<BingoConfig>) =>
     api.post<BingoConfig>('/admin/bingo/config', dto).then((r) => r.data),
-  listAllRooms: () => api.get<BingoRoom[]>('/bingo/rooms').then((r) => r.data),
+  listAllRooms: (page = 1, limit = 10) =>
+    api.get<BingoRoomListResponse>(`/bingo/rooms?page=${page}&limit=${limit}`).then((r) => r.data),
   createRoom: (dto: {
     name: string;
     ticketPriceMinor: number;
@@ -516,7 +664,53 @@ export const adminBingoApi = {
     winMode?: string;
     numberRange?: number;
     patternPrizes?: Array<{ patternId: string; name: string; prizeMinor: number }>;
+    /** Lobby card gradient — omit for a random one. */
+    cardPaletteId?: string;
+    /** Decorative ball number — omit for a random one. */
+    cardBallNumber?: number;
   }) => api.post<BingoRoom>('/admin/bingo/rooms', dto).then((r) => r.data),
+  /** Cosmetic-only: rename and/or restyle a room's lobby card. Any room, any
+   * status. Pass cardPaletteId/cardBallNumber as null to re-roll them at random. */
+  updateRoomDisplay: (roomId: string, dto: { name?: string; cardPaletteId?: string | null; cardBallNumber?: number | null }) =>
+    api.patch<BingoRoom>(`/admin/bingo/rooms/${roomId}/display`, dto).then((r) => r.data),
+  /** House + every agent room slot with its PERSISTENT label/palette/ball —
+   * survives every auto-recreation, unlike updateRoomDisplay above. */
+  listRoomSlots: () => api.get<BingoRoomSlot[]>('/admin/bingo/room-slots').then((r) => r.data),
+  updateRoomSlot: (
+    ownerId: string,
+    dto: { label?: string | null; cardPaletteId?: string | null; cardBallNumber?: number | null; ticketPriceMinor?: number | null },
+  ) => api.patch<BingoRoomSlot[]>(`/admin/bingo/room-slots/${encodeURIComponent(ownerId)}`, dto).then((r) => r.data),
+  /** Persistent, independently-named custom rooms — each keeps recreating
+   * itself with the same name/price/prizes/style after every round. */
+  listCustomRoomSlots: () => api.get<BingoCustomRoomSlot[]>('/admin/bingo/room-slots/custom').then((r) => r.data),
+  createCustomRoomSlot: (dto: {
+    name: string;
+    ticketPriceMinor: number;
+    maxTickets: number;
+    prizes: Record<string, number>;
+    winMode?: string;
+    numberRange?: number;
+    patternPrizes?: Array<{ patternId: string; name: string; prizeMinor: number }>;
+    cardPaletteId?: string;
+    cardBallNumber?: number;
+  }) => api.post<BingoCustomRoomSlot>('/admin/bingo/room-slots/custom', dto).then((r) => r.data),
+  updateCustomRoomSlot: (
+    id: string,
+    dto: Partial<{
+      name: string;
+      ticketPriceMinor: number;
+      maxTickets: number;
+      prizes: Record<string, number>;
+      winMode: string;
+      numberRange: number;
+      patternPrizes: Array<{ patternId: string; name: string; prizeMinor: number }>;
+      cardPaletteId: string | null;
+      cardBallNumber: number | null;
+      isActive: boolean;
+    }>,
+  ) => api.patch<BingoCustomRoomSlot[]>(`/admin/bingo/room-slots/custom/${encodeURIComponent(id)}`, dto).then((r) => r.data),
+  deleteCustomRoomSlot: (id: string) =>
+    api.delete<BingoCustomRoomSlot[]>(`/admin/bingo/room-slots/custom/${encodeURIComponent(id)}`).then((r) => r.data),
   drawNext: (roomId: string) =>
     api.post<BingoRoom>(`/admin/bingo/rooms/${roomId}/draw-next`).then((r) => r.data),
   cancelRoom: (roomId: string) =>
@@ -530,6 +724,12 @@ export const adminBingoApi = {
     api.delete(`/admin/bingo/patterns/${id}`).then((r) => r.data),
   seedPatterns: () =>
     api.post<BingoPattern[]>('/admin/bingo/patterns/seed').then((r) => r.data),
+  /** Running rooms whose draw has stopped making progress. */
+  listStalledRooms: () =>
+    api.get<BingoStalledRoom[]>('/admin/bingo/rooms/stalled').then((r) => r.data),
+  /** Recent operational alerts (misconfig/failure traces), most-recent-first. */
+  listAlerts: () =>
+    api.get<BingoOperationalAlert[]>('/admin/bingo/alerts').then((r) => r.data),
 };
 
 // ── Admin: Bots ───────────────────────────────────────────────────
@@ -542,19 +742,175 @@ export type BotUser = {
     spotCount: number;
     drawParticipationCount: number;
     active: boolean;
+    games?: {
+      keno?: {
+        active: boolean;
+        strategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+        participationRatePct: number;
+        actionDelayMinMs: number;
+        actionDelayMaxMs: number;
+        hesitationChancePct: number;
+        variancePct: number;
+        minBalanceMinor: number;
+        maxStakeMinorPerDay: number;
+        maxLossMinorPerDay: number;
+        maxWinMinorPerDay: number;
+        ticketsPerRound: number;
+        spotCount: number;
+        drawParticipationCount: number;
+      };
+      bingo?: {
+        active: boolean;
+        strategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+        participationRatePct: number;
+        actionDelayMinMs: number;
+        actionDelayMaxMs: number;
+        hesitationChancePct: number;
+        variancePct: number;
+        minBalanceMinor: number;
+        maxStakeMinorPerDay: number;
+        maxLossMinorPerDay: number;
+        maxWinMinorPerDay: number;
+        maxCartelasPerRoom: number;
+      };
+      crash?: {
+        active: boolean;
+        strategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+        participationRatePct: number;
+        actionDelayMinMs: number;
+        actionDelayMaxMs: number;
+        hesitationChancePct: number;
+        variancePct: number;
+        minBalanceMinor: number;
+        maxStakeMinorPerDay: number;
+        maxLossMinorPerDay: number;
+        maxWinMinorPerDay: number;
+        minCashoutX100: number;
+        maxCashoutX100: number;
+      };
+    };
   };
+};
+
+export type BotActionLogRecord = {
+  id: string;
+  botId: string | null;
+  game: 'keno' | 'bingo' | 'crash' | 'admin';
+  action: string;
+  sourceId: string | null;
+  amountMinor: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type BotNameRecord = {
+  id: string;
+  displayName: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export const adminBotsApi = {
   listBots: () => api.get<BotUser[]>('/admin/bots').then((r) => r.data),
-  createBot: (dto: { displayName: string; initialBalanceMinor: number; ticketsPerRound: number; spotCount: number }) =>
+  createBot: (dto: {
+    displayName: string;
+    initialBalanceMinor: number;
+    ticketsPerRound: number;
+    spotCount: number;
+    kenoActive?: boolean;
+    bingoActive?: boolean;
+    crashActive?: boolean;
+    kenoStrategy?: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    bingoStrategy?: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    crashStrategy?: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    kenoParticipationRatePct?: number;
+    kenoActionDelayMinMs?: number;
+    kenoActionDelayMaxMs?: number;
+    kenoHesitationChancePct?: number;
+    kenoVariancePct?: number;
+    bingoParticipationRatePct?: number;
+    bingoActionDelayMinMs?: number;
+    bingoActionDelayMaxMs?: number;
+    bingoHesitationChancePct?: number;
+    bingoVariancePct?: number;
+    crashParticipationRatePct?: number;
+    crashActionDelayMinMs?: number;
+    crashActionDelayMaxMs?: number;
+    crashHesitationChancePct?: number;
+    crashVariancePct?: number;
+    kenoMinBalanceMinor?: number;
+    bingoMinBalanceMinor?: number;
+    crashMinBalanceMinor?: number;
+    kenoMaxStakeMinorPerDay?: number;
+    bingoMaxStakeMinorPerDay?: number;
+    crashMaxStakeMinorPerDay?: number;
+    bingoMaxCartelasPerRoom?: number;
+    crashMinCashoutX100?: number;
+    crashMaxCashoutX100?: number;
+  }) =>
     api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
-  updateBot: (id: string, dto: Partial<{ active: boolean; ticketsPerRound: number; spotCount: number }>) =>
+  updateBot: (id: string, dto: Partial<{
+    displayName: string;
+    active: boolean;
+    ticketsPerRound: number;
+    spotCount: number;
+    kenoActive: boolean;
+    bingoActive: boolean;
+    crashActive: boolean;
+    kenoStrategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    bingoStrategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    crashStrategy: 'conservative' | 'normal' | 'aggressive' | 'mirror-human';
+    kenoParticipationRatePct: number;
+    kenoActionDelayMinMs: number;
+    kenoActionDelayMaxMs: number;
+    kenoHesitationChancePct: number;
+    kenoVariancePct: number;
+    bingoParticipationRatePct: number;
+    bingoActionDelayMinMs: number;
+    bingoActionDelayMaxMs: number;
+    bingoHesitationChancePct: number;
+    bingoVariancePct: number;
+    crashParticipationRatePct: number;
+    crashActionDelayMinMs: number;
+    crashActionDelayMaxMs: number;
+    crashHesitationChancePct: number;
+    crashVariancePct: number;
+    kenoMinBalanceMinor: number;
+    bingoMinBalanceMinor: number;
+    crashMinBalanceMinor: number;
+    kenoMaxStakeMinorPerDay: number;
+    bingoMaxStakeMinorPerDay: number;
+    crashMaxStakeMinorPerDay: number;
+    bingoMaxCartelasPerRoom: number;
+    crashMinCashoutX100: number;
+    crashMaxCashoutX100: number;
+  }>) =>
     api.patch<BotUser>(`/admin/bots/${id}`, dto).then((r) => r.data),
   topupBot: (id: string, amountMinor: number) =>
     api.post<BotUser>(`/admin/bots/${id}/topup`, { amountMinor }).then((r) => r.data),
   deleteBot: (id: string) =>
     api.delete(`/admin/bots/${id}`).then((r) => r.data),
+  listBotActions: (params?: { botId?: string; game?: 'keno' | 'bingo' | 'crash' | 'admin'; page?: number; limit?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.botId) search.set('botId', params.botId);
+    if (params?.game) search.set('game', params.game);
+    if (params?.page) search.set('page', String(params.page));
+    if (params?.limit) search.set('limit', String(params.limit));
+    const suffix = search.toString();
+    return api.get<{ data: BotActionLogRecord[]; total: number; page: number; limit: number; totalPages: number }>(
+      `/admin/bots/actions${suffix ? `?${suffix}` : ''}`,
+    ).then((r) => r.data);
+  },
+  listBotNames: () => api.get<BotNameRecord[]>('/admin/bots/names').then((r) => r.data),
+  createBotName: (dto: { displayName: string; active?: boolean }) =>
+    api.post<BotNameRecord>('/admin/bots/names', dto).then((r) => r.data),
+  importBotNames: (dto: { names: string[] }) =>
+    api.post<BotNameRecord[]>('/admin/bots/names/import', dto).then((r) => r.data),
+  updateBotName: (id: string, dto: Partial<{ displayName: string; active: boolean }>) =>
+    api.patch<BotNameRecord>(`/admin/bots/names/${id}`, dto).then((r) => r.data),
+  deleteBotName: (id: string) =>
+    api.delete(`/admin/bots/names/${id}`).then((r) => r.data),
 };
 
 // ── Admin: Agents ─────────────────────────────────────────────────
@@ -666,17 +1022,29 @@ export type AdminUserGameStats = {
   totalWinMinor: number;
 };
 
+export type AdminUserAdjustment = {
+  id: string;
+  createdAt: string;
+  amountMinor: number;
+  direction: 'credit' | 'debit';
+  reason: string | null;
+  performedByAdminId: string | null;
+  performedByAdminName: string | null;
+};
+
 export type AdminUserActivity = {
   user: User;
   ledger: LedgerEntry[];
   withdrawals: Withdrawal[];
   deposits: AdminUserDeposit[];
   gameStats: AdminUserGameStats;
+  adminAdjustments: AdminUserAdjustment[];
   totals: {
     walletAvailableMinor: number;
     walletReservedMinor: number;
     depositMinor: number;
     completedWithdrawalMinor: number;
+    adminTopupMinor: number;
   };
 };
 
@@ -735,20 +1103,71 @@ export const adminWithdrawalsApi = {
   listWithdrawals: () => api.get<Withdrawal[]>('/admin/withdrawals').then((r) => r.data),
   processWithdrawal: (id: string, action: 'approve' | 'reject', adminNotes?: string) =>
     api.post<Withdrawal>(`/admin/withdrawals/${id}/process`, { action, adminNotes }).then((r) => r.data),
+  /** Admin sign-off on an agent-submitted withdrawal (status 'awaiting_verification') —
+   * approve is what actually releases the fund-hold and credits the agent. */
+  verifyWithdrawal: (id: string, decision: 'approve' | 'reject', notes?: string) =>
+    api.post<Withdrawal>(`/admin/withdrawals/${id}/verify`, { decision, notes }).then((r) => r.data),
+  /** Admin-direct completion — records agent/fee/reference/receipt and completes
+   * in one step (fee is always resolved server-side, never sent from here). */
+  completeWithAgent: (id: string, dto: { agentId: string; telebirrReference: string; receiptFileUrl: string; transferCompletedAt?: string }) =>
+    api.post<Withdrawal>(`/admin/withdrawals/${id}/complete-with-agent`, dto).then((r) => r.data),
+  /** Upload a photo/PDF of the payout receipt for the above. */
+  uploadReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/admin/withdrawals/receipts/upload', form).then((r) => r.data);
+  },
+};
+
+// ── Admin: Agent Settlements ────────────────────────────────────────
+export const adminSettlementsApi = {
+  listAll: (page = 1, limit = 50) =>
+    api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>('/admin/settlements', { params: { page, limit } }).then((r) => r.data),
+  listForAgent: (agentId: string, page = 1, limit = 50) =>
+    api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>(`/admin/agents/${agentId}/settlements`, { params: { page, limit } }).then((r) => r.data),
+  create: (agentId: string, periodStart: string, periodEnd: string, notes?: string) =>
+    api.post<AgentSettlement>(`/admin/agents/${agentId}/settlements`, { periodStart, periodEnd, notes }).then((r) => r.data),
+  update: (id: string, dto: Partial<{
+    status: AgentSettlementStatus;
+    paymentMethod: AgentSettlementPaymentMethod | null;
+    ftNumber: string | null;
+    receiptFileUrl: string | null;
+    paidAt: string | null;
+    amountPaidMinor: number;
+    notes: string | null;
+  }>) => api.patch<AgentSettlement>(`/admin/settlements/${id}`, dto).then((r) => r.data),
+  /** Upload a photo/PDF of the payment receipt — returns a relative path to pass as receiptFileUrl. */
+  uploadReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/admin/settlements/receipts/upload', form).then((r) => r.data);
+  },
 };
 
 // ── Agent: Withdrawals ─────────────────────────────────────────────
 export const agentApi = {
-  getConfig: () => api.get<{ withdrawalServiceChargePct: number; withdrawalCommissionPct: number }>('/agent/config').then((r) => r.data),
+  getConfig: () => api.get<{ withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }> }>('/agent/config').then((r) => r.data),
   getPerformance: () => api.get<AgentSelfPerformance>('/agent/performance').then((r) => r.data),
+  getDashboard: () => api.get<AgentDashboardSummary>('/agent/dashboard').then((r) => r.data),
+  getSettlements: (page = 1, limit = 50) =>
+    api.get<{ data: AgentSettlement[]; total: number; page: number; limit: number }>('/agent/settlements', { params: { page, limit } }).then((r) => r.data),
+  requestSettlement: () => api.post<AgentSettlement>('/agent/settlements/request').then((r) => r.data),
+  getReferral: () => api.get<AgentReferral>('/agent/referral').then((r) => r.data),
   getAvailableWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals').then((r) => r.data),
   getMyWithdrawals: () => api.get<Withdrawal[]>('/agent/withdrawals/my').then((r) => r.data),
   getTransactions: () => api.get<{ ledger: LedgerEntry[]; withdrawals: Withdrawal[] }>('/agent/transactions').then((r) => r.data),
   claimWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/claim`).then((r) => r.data),
   releaseWithdrawal: (id: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/release`).then((r) => r.data),
   rejectWithdrawal: (id: string, remarks: string) => api.post<Withdrawal>(`/agent/withdrawals/${id}/reject`, { remarks }).then((r) => r.data),
-  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string) =>
-    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof }, { timeout: 45000 }).then((r) => r.data),
+  completeWithdrawal: (id: string, provider: 'telebirr' | 'mpesa', proof: string, receiptFileUrl: string, transferCompletedAt: string) =>
+    api.post<Withdrawal>(`/agent/withdrawals/${id}/complete`, { provider, proof, receiptFileUrl, transferCompletedAt }, { timeout: 45000 }).then((r) => r.data),
+  /** Upload a photo/PDF of the payout receipt before completing — returns a
+   * relative path (e.g. "withdrawal-receipts/<uuid>.jpg") to pass as receiptFileUrl. */
+  uploadWithdrawalReceipt: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post<{ fileUrl: string }>('/agent/withdrawals/receipts/upload', form).then((r) => r.data);
+  },
   transferToUser: (phoneNumber: string, amountMinor: number, idempotencyKey?: string) =>
     api.post<{ agentWallet: Wallet; userWallet: Wallet }>('/agent/wallet/transfer-to-user', { phoneNumber, amountMinor, idempotencyKey }).then((r) => r.data),
 
@@ -762,12 +1181,17 @@ export const agentApi = {
     api.get<AreaPlayerActivity>(`/agent/area/players/${userId}/activity`).then((r) => r.data),
 };
 
+export type AgentReferral = {
+  code: string;
+  /** Ready-made t.me deep link, or null when TELEGRAM_BOT_USERNAME is unset server-side. */
+  link: string | null;
+  referredPlayers: number;
+};
+
 export type AreaPlayer = {
   id: string;
   displayName: string;
   phoneNumber: string | null;
-  locationId: string | null;
-  locationName: string | null;
   walletBalanceMinor: number;
   status: string;
   isMyReferral: boolean;
@@ -805,10 +1229,29 @@ export type AreaPlayerActivity = {
 
 // ── Admin: Users ───────────────────────────────────────────────────
 export const adminUsersApi = {
-  listUsers: (page = 1, limit = 50, role?: string, search?: string) => {
+  listUsers: (
+    page = 1,
+    limit = 50,
+    role?: string,
+    search?: string,
+    filters?: {
+      isBot?: boolean;
+      status?: 'active' | 'suspended' | 'closed';
+      online?: boolean;
+      hasPhone?: boolean;
+      minBalanceMinor?: number;
+      maxBalanceMinor?: number;
+    },
+  ) => {
     let url = `/admin/users?page=${page}&limit=${limit}`;
     if (role) url += `&role=${role}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
+    if (filters?.isBot !== undefined) url += `&isBot=${filters.isBot}`;
+    if (filters?.status) url += `&status=${filters.status}`;
+    if (filters?.online !== undefined) url += `&online=${filters.online}`;
+    if (filters?.hasPhone !== undefined) url += `&hasPhone=${filters.hasPhone}`;
+    if (filters?.minBalanceMinor !== undefined) url += `&minBalanceMinor=${filters.minBalanceMinor}`;
+    if (filters?.maxBalanceMinor !== undefined) url += `&maxBalanceMinor=${filters.maxBalanceMinor}`;
     return api.get<{ data: User[]; total: number; page: number; limit: number }>(url).then((r) => r.data);
   },
   updateUserStatus: (id: string, status: 'active' | 'suspended' | 'closed') =>
@@ -1008,3 +1451,15 @@ export const adminPoolApi = {
 
 export default api;
 
+  
+export const adminGameTransactionsApi = {
+  getGameTransactions: (page?: number, limit?: number) =>
+    api.get<{ data: any[], total: number, totalBotWinMinor: number }>('/admin/game-transactions', { params: { page, limit } }).then((r) => r.data)
+};
+
+export const adminDepositsApi = {
+  getDeposits: (provider: 'telebirr' | 'mpesa', page?: number, limit?: number, status?: 'credited' | 'rejected') =>
+    api.get<{ data: any[], total: number }>('/admin/deposits', { params: { provider, page, limit, status } }).then((r) => r.data),
+  verifyDeposit: (provider: 'telebirr' | 'mpesa', id: string, verificationStatus: 'verified' | 'flagged') =>
+    api.patch(`/admin/deposits/${id}/verify`, { provider, verificationStatus }).then((r) => r.data),
+};

@@ -15,30 +15,6 @@ export class SystemConfig {
   @Column({ type: 'int', default: 0 })
   welcomeBonusMinor: number;
 
-  /** Service fee % of a withdrawal that goes to the platform super-admin. */
-  @Column({ type: 'int', default: 0 })
-  withdrawalServiceChargePct: number;
-
-  /** Commission % of a withdrawal earned by the agent who processed it. */
-  @Column({ type: 'int', default: 0 })
-  withdrawalCommissionPct: number;
-
-  /**
-   * Commission % of a credited DEPOSIT earned by the agent whose Telebirr/M-PESA
-   * account received it. Credited to the agent's wallet in the same transaction as
-   * the player credit. 0 = no deposit commission (deposits still attribute the
-   * agent, just without a payout).
-   */
-  @Column({ type: 'int', default: 0 })
-  depositCommissionPct: number;
-
-  /**
-   * User id of the designated super-admin whose wallet receives withdrawal
-   * service fees. Null = fees are only tracked in platform_stats (no wallet credit).
-   */
-  @Column({ type: 'varchar', length: 36, nullable: true })
-  superAdminUserId?: string | null;
-
   /**
    * Internal user id of the Master Wallet — a dedicated system account (no
    * login, no Telegram/password identity, roles: []) that is NOT any individual
@@ -74,11 +50,21 @@ export class SystemConfig {
   agentRoomsEnabled: boolean;
 
   /**
-   * % of a room's real-player GGR (staked − paid out, bots excluded) credited to
-   * the room-owning agent when the game completes. 0 = no commission (stats only).
+   * Global default % of a referred player's Bingo GGR credited to the referring
+   * agent (see User.referredByAgentId), independent of room ownership. An
+   * agent's own `User.referralCommissionPct` overrides this when set. 0 = no
+   * referral commission paid unless an agent has an explicit override.
    */
   @Column({ type: 'int', default: 0 })
-  agentRoomCommissionPct: number;
+  referralCommissionPct: number;
+
+  /**
+   * Minimum hours an agent must wait between their own self-service settlement
+   * requests (see AgentsService.requestSettlement). 0 = no cooldown. Does not
+   * apply to settlements an admin creates directly.
+   */
+  @Column({ type: 'int', default: 0 })
+  agentSettlementCooldownHours: number;
 
   @CreateDateColumn({ type: 'timestamp' })
   createdAt: Date;

@@ -150,6 +150,60 @@
 **Why**: Previously every surface read one cursor, so numbers lit up on the board/cards at the same instant they entered "now calling" — and the caller's entrance animation made it look last. The user wanted a clear now-calling → grid → ticket → window order.
 **Constraint**: Each trailing cursor **snaps backwards instantly** (room switch/reset) but lags going forward. Don't collapse the board/ticket back onto `revealedNumbers`. All three delays sit comfortably inside the `REVEAL_BASE_MS` (1.5s) per-ball cadence.
 
+### D-23: Bingo bot identity pool is admin-managed and room-scoped
+**Decided**: 2026-08-01
+**Decision**: Bingo bot display names come from an admin-managed `bot_names` pool, while each `BingoRoom` persists its own `botIdentityMap` of `{ displayName, phoneSuffix }` per bot user id for that specific game.
+**Why**: A shared room-scoped map keeps every bot identity stable throughout the round without making the same visible bot name repeat across games. Admin control lets the pool be expanded, edited, activated, deactivated, or trimmed without code changes.
+**Constraints**: Within one room, bot names must be unique and phone suffixes should be unique whenever possible. Bot aliases used in settlement summaries and wallet recent-wins must match what players saw in-game, so write the alias into settlement metadata instead of re-deriving it later.
+
+### D-24: Bingo purchase-phase cartela changes freeze near the draw, and bot-only rooms self-cancel
+**Decided**: 2026-08-01  
+**Decision**: Cartela changes stay enabled during the Bingo buy window until the configured freeze window near the scheduled draw, where buys and refunds are locked both server-side and in the client UI. If the last real player leaves and only bot cartelas remain, the room is cancelled/reset and the bot cartelas are refunded before any draw can start.
+**Why**: Freezing cartela changes removes the last-second race where a room could otherwise flip from a valid buy window into a bot-only start at the same instant. Auto-cancelling bot-only rooms keeps the game from ever resolving a bot-vs-bot or empty round.
+**Constraints**: The default freeze is 3 seconds, but the active room snapshots the configured duration so Admin can tune it. Final draw validation must still check `realPlayers >= 1` even if the scheduler or client misses a cancellation tick.
+
+### D-25: Telegram webhook handlers must return fast and defer noncritical follow-ups
+**Decided**: 2026-08-01
+**Decision**: Telegram webhook handlers keep the durable state mutations synchronous, but move referral attribution and reply-heavy follow-up messaging into deferred tasks via `setImmediate`.
+**Why**: grammY's webhook mode times out after 10 seconds if the update handler is still busy. The onboarding flow was spending that budget on extra DB lookups plus multiple Telegram replies, which is exactly the kind of work that should happen after the webhook has been acknowledged.
+**Constraints**: Any new Telegram onboarding step must be split into a critical path (state write / validation) and a deferred path (optional prompts, markup edits, follow-up replies). Keep `ctx.answerCallbackQuery()` and other user-spinner responses as quick as possible; do not reintroduce long reply chains into the webhook critical path.
+
+### D-26: Bingo bots reconcile to live human cartela demand, not a timer fraction
+**Decided**: 2026-08-01  
+**Decision**: For prefilled Bingo rooms, bot participation now reconciles from the current human cartela count whenever a player buys or returns cartelas, and the scheduler delegates to the same reconciliation path. Bot winners keep the base alias and masked 4-digit suffix in separate fields so the live win popup and final result overlay can reuse the exact same rendering path as human winners.
+**Why**: The old time-fraction top-up pattern made bot buying look bursty and suspicious. Mirroring the current human cartela count makes bot activity look like another player on the room, while the shared result payload shape removes the last visible bot-vs-human UI split.
+**Constraints**: Keep the zero-real-player guard intact so bot-only rooms still cancel/reset. Bot win payloads must continue to carry `winnerDisplayName` and `winnerPhoneLast4` separately so the frontend can render them with the same components as human wins.
+
+### D-27: Bingo cartela changes freeze together in the configured final window
+**Decided**: 2026-08-01  
+**Decision**: Once a Bingo room enters its configured freeze window before the scheduled start, both cartela buys and cartela refunds are rejected, and bot reconciliation also stands down. The room then either starts with the remaining real players or cancels/reset if none remain.
+**Why**: Locking only refunds still leaves a boundary race where a human can leave at the exact start tick while bots are being topped up. Freezing buys, refunds, and bot reconcile under the same rule removes that last-second split-brain behavior.
+**Constraints**: The freeze duration is configured in Bingo settings with a 3-second default. Any new cartela-change path must use the same shared lock helper so the scheduler, purchase endpoint, refund endpoint, and bot reconcile cannot diverge.
+
+### D-28: Bingo Auto/Manual toggle ignores disqualified cards
+**Decided**: 2026-08-01
+**Decision**: The Bingo Auto/Manual switch is derived from ACTIVE tickets only. A disqualified cartela stays disqualified, but it must not force the player's remaining live cartelas into Manual mode. The backend still updates only `status: 'active'` tickets when the player toggles Auto on/off.
+**Why**: Manual-vs-auto is a preference for live cards, not a punishment state for one ticket. If a disqualified card could pin the switch OFF, a player with multiple cartelas would lose automatic play on the cards that are still eligible to win.
+**Constraints**: Any future Bingo UI sync must filter `room.tickets` by `status === 'active'` before deciding the switch state. Disqualified cards remain excluded from validation and settlement as before.
+
+### D-29: Bots use one global master switch plus per-game policy
+**Decided**: 2026-08-01
+**Decision**: Bot management is centralized in `BotsService` and Admin -> Bots. `botPolicy.active` remains the global master switch, while `botPolicy.games.keno.active`, `botPolicy.games.bingo.active`, and `botPolicy.games.crash.active` decide whether the bot participates in each game. Keno-specific settings live under `games.keno` and are mirrored to the legacy top-level fields.
+**Why**: A single global toggle is too blunt once the same funded bot accounts participate in Keno, Bingo, and Crash. Per-game flags let admins pause suspicious or unbalanced behavior in one game without removing liquidity from the others.
+**Constraints**: Missing nested game flags default to enabled for backward compatibility with existing bots. Runtime entry points must request active bots for the specific game (`keno`, `bingo`, or `crash`) rather than using a generic active-bot list. Bingo bot-name CRUD belongs to `BotsService`; `BingoService` only consumes the shared name pool when assigning room-scoped identities.
+
+### D-30: Bot pacing is intentionally humanized, and Bingo win surfaces share one card component
+**Decided**: 2026-08-01  
+**Decision**: Bot policy now includes per-game action-delay, hesitation-chance, and variance settings. The scheduler/runtime uses those knobs to add staggered delays and small action-size drift so Keno, Bingo, and Crash bots do not fire in a rigid pattern. Bingo win popups use a shared card component so player-facing bot wins and human wins share the same visible layout.
+**Why**: The request was to make bots feel less mechanical and to eliminate any visible bot-only win styling. A shared component prevents the human and bot victory surfaces from drifting apart over time.
+**Constraints**: Timing defaults must stay conservative so bots look natural without stalling the games. Any future bot win surface should reuse the shared Bingo card rather than reintroducing a second layout.
+
+### D-31: Bingo room lists use one shared paged endpoint
+**Decided**: 2026-08-02  
+**Decision**: The shared `/bingo/rooms` endpoint now returns a paged response `{ data, total, page, limit, totalPages }` ordered by `createdAt DESC`, and the admin Bingo panel consumes that same contract instead of having a separate admin-only room list.
+**Why**: A single source of truth keeps the newest-first sort consistent for every consumer and avoids duplicating the room-list query logic in parallel admin/public code paths.
+**Constraints**: UI consumers must treat the Bingo room list as paginated data rather than assuming an always-complete array. Future room-list screens should reuse the shared endpoint and its `page/limit` contract.
+
 ---
 
 ## Wallet / Agents (continued)

@@ -7,6 +7,7 @@ import {
   Headers,
   Param,
   Post,
+  Query,
   Req,
   UseGuards
 } from '@nestjs/common';
@@ -32,14 +33,20 @@ export class BingoController {
   ) {}
 
   @Get('rooms')
-  listRooms() {
-    return this.bingoService.listRooms();
+  listRooms(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
+    return this.bingoService.listRooms({
+      page: parseInt(page, 10) || 1,
+      limit: Math.min(parseInt(limit, 10) || 10, 50),
+    });
   }
 
   @Get('current')
   @ApiBearerAuth()
   @UseGuards(OptionalJwtAuthGuard)
-  @ApiOkResponse({ description: 'The single active room (running → open → last completed) with the callers tickets' })
+  @ApiOkResponse({ description: 'The single current room (running → recent completed result window → open) with the caller tickets' })
   getCurrentRoom(@Req() request: Request) {
     const maybeUser = (request as Partial<AuthenticatedRequest>).user;
     return this.bingoService.getCurrentRoom(maybeUser?.id);

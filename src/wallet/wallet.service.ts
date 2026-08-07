@@ -15,7 +15,11 @@ import { AgentActionLog, AgentActionType } from '../agents/entities/agent-action
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal, WithdrawalStatus } from './entities/withdrawal.entity';
+import { WithdrawalFeeRange } from './entities/withdrawal-fee-range.entity';
+import { resolveWithdrawalFeeMinor } from './withdrawal-fee-range.util';
 import { User } from '../users/entities/user.entity';
+import { SystemConfig } from '../admin/entities/system-config.entity';
+import { normalizeEthiopianPhone } from '../common/phone.util';
 
 export type WalletSummary = {
   id: string;
@@ -68,6 +72,10 @@ export class WalletService {
     private readonly wagerLimitRepository: Repository<WagerLimit>,
     @InjectRepository(Withdrawal)
     private readonly withdrawalRepository: Repository<Withdrawal>,
+    @InjectRepository(SystemConfig)
+    private readonly systemConfigRepository: Repository<SystemConfig>,
+    @InjectRepository(WithdrawalFeeRange)
+    private readonly withdrawalFeeRangeRepository: Repository<WithdrawalFeeRange>,
     private readonly ledgerService: LedgerService,
     private readonly gameEventsGateway: GameEventsGateway,
     private readonly notificationsService: NotificationsService
@@ -153,7 +161,7 @@ export class WalletService {
       .createQueryBuilder('le')
       .innerJoin('le.user', 'u')
       .select([
-        'u.displayName AS displayName',
+        'COALESCE(JSON_UNQUOTE(JSON_EXTRACT(le.metadata, "$.displayName")), u.displayName) AS displayName',
         'le.amountMinor AS amountMinor',
         'le.sourceType AS sourceType',
         'le.createdAt AS createdAt',
@@ -493,6 +501,24 @@ export class WalletService {
     return JSON.stringify(value);
   }
 
+  /** Player-facing withdrawal fee config, so the withdraw form can show a fee
+   * estimate before submission without requiring the agent role. */
+  async getWithdrawalFeeConfig(): Promise<{
+    withdrawalFeeRanges: Array<{ minAmountMinor: number; maxAmountMinor: number | null; feeMinor: number }>;
+  }> {
+    const ranges = await this.withdrawalFeeRangeRepository.find({
+      where: { active: true },
+      order: { minAmountMinor: 'ASC' },
+    });
+    return {
+      withdrawalFeeRanges: ranges.map((r) => ({
+        minAmountMinor: r.minAmountMinor,
+        maxAmountMinor: r.maxAmountMinor,
+        feeMinor: r.feeMinor,
+      })),
+    };
+  }
+
   async requestWithdrawal(
     userId: string,
     amountMinor: number,
@@ -732,7 +758,7 @@ export class WalletService {
 
   async getAllWithdrawals(): Promise<Withdrawal[]> {
     return this.withdrawalRepository.find({
-      relations: ['user'],
+      relations: ['user', 'agent'],
       order: { createdAt: 'DESC' }
     });
   }
@@ -747,7 +773,9 @@ export class WalletService {
 
   async getAgentWithdrawals(agentId: string): Promise<Withdrawal[]> {
     return this.withdrawalRepository.find({
-      where: { agentId, status: In(['claimed', 'processing']) },
+      // Include awaiting_verification so a submitted-but-not-yet-verified payout
+      // stays visible to the agent (status badge only — no action left for them).
+      where: { agentId, status: In(['claimed', 'processing', 'awaiting_verification']) },
       relations: ['user'],
       order: { claimedAt: 'DESC' }
     });
@@ -764,6 +792,18 @@ export class WalletService {
       throw new ConflictException('Withdrawal not found or not assigned to you');
     }
     return withdrawal;
+  }
+
+  /** Withdrawals assigned to this agent not yet fully completed — dashboard "Pending" count. */
+  async countPendingAgentWithdrawals(agentId: string): Promise<number> {
+    return this.withdrawalRepository.count({
+      where: { agentId, status: In(['claimed', 'processing', 'awaiting_verification']) },
+    });
+  }
+
+  /** Withdrawals this agent has fully completed — dashboard "Completed" count. */
+  async countCompletedAgentWithdrawals(agentId: string): Promise<number> {
+    return this.withdrawalRepository.count({ where: { agentId, status: 'completed' } });
   }
 
   async getAgentWithdrawalHistory(agentId: string): Promise<Withdrawal[]> {
@@ -817,170 +857,339 @@ export class WalletService {
     return saved;
   }
 
-  async completeWithdrawalByAgent(input: {
+  /**
+   * Step A of the agent withdrawal flow — the agent submits payout proof (FT
+   * number + receipt file). This does NOT move any money: no fund-hold release,
+   * no agent credit. It just records the proof and parks the withdrawal at
+   * `awaiting_verification` for an admin to review. See `verifyAgentWithdrawal`
+   * for the step that actually moves money.
+   */
+  async recordAgentWithdrawalProof(input: {
     withdrawalId: string;
     agentId: string;
     telebirrReference: string;
     paymentProvider?: 'telebirr' | 'mpesa';
     payoutVerification?: Record<string, unknown>;
-    serviceFeePct: number;
-    commissionPct: number;
-    superAdminUserId?: string | null;
+    receiptFileUrl: string;
+    transferCompletedAt: Date;
+    feeMinor: number;
   }): Promise<Withdrawal> {
-    const settled = await this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction(async (manager) => {
       const withdrawalRepo = manager.getRepository(Withdrawal);
-      const walletRepo = manager.getRepository(Wallet);
 
       const withdrawal = await withdrawalRepo.findOneBy({
         id: input.withdrawalId,
         status: 'claimed',
-        agentId: input.agentId
+        agentId: input.agentId,
       });
 
       if (!withdrawal) {
         throw new ConflictException('Withdrawal not found or not assigned to you');
       }
 
-      // Dedupe the payout proof: the same receipt/confirmation code must not settle
-      // two withdrawals. Checked inside the transaction so two concurrent completes
-      // can't both slip through.
+      // Dedupe the payout proof: the same receipt/confirmation code must not be
+      // used for two withdrawals, whether the other one is still awaiting
+      // verification or already completed. Checked inside the transaction so two
+      // concurrent submissions can't both slip through.
       const reference = input.telebirrReference.trim();
       const reused = await withdrawalRepo.findOne({
-        where: { telebirrReference: reference, status: 'completed' },
+        where: { telebirrReference: reference, status: In(['awaiting_verification', 'completed']) },
         select: { id: true },
       });
       if (reused && reused.id !== withdrawal.id) {
         throw new ConflictException('This payment proof has already been used for another withdrawal');
       }
 
-      // Two cuts from the gross: a platform service fee (to the super-admin) and
-      // an agent commission (to the processing agent). The user nets the rest.
-      const serviceFeeMinor = Math.floor(withdrawal.amountMinor * input.serviceFeePct / 100);
-      const commissionMinor = Math.floor(withdrawal.amountMinor * input.commissionPct / 100);
-      const totalChargeMinor = serviceFeeMinor + commissionMinor;
-      const netAmountMinor = withdrawal.amountMinor - totalChargeMinor;
-
+      // A single flat fee (from the matched WithdrawalFeeRange), 100% to the
+      // processing agent — no platform split. Resolved and persisted NOW so a
+      // fee-range edit between submission and admin verification can't change
+      // what's owed later.
+      const feeMinor = Math.max(0, Math.floor(input.feeMinor));
+      const netAmountMinor = withdrawal.amountMinor - feeMinor;
       if (netAmountMinor <= 0) {
-        throw new BadRequestException('Service fee and commission would consume the entire withdrawal amount');
+        throw new BadRequestException('The withdrawal fee would consume the entire withdrawal amount');
       }
 
-      // Settle the user's reservation
+      withdrawal.status = 'awaiting_verification';
+      withdrawal.serviceChargeMinor = feeMinor;
+      withdrawal.netAmountMinor = netAmountMinor;
+      withdrawal.telebirrReference = reference;
+      withdrawal.paymentProvider = input.paymentProvider ?? null;
+      withdrawal.payoutVerification = input.payoutVerification ?? null;
+      withdrawal.receiptFileUrl = input.receiptFileUrl;
+      withdrawal.transferCompletedAt = input.transferCompletedAt;
+      withdrawal.processedAt = new Date();
+      withdrawal.processedBy = input.agentId;
+      return withdrawalRepo.save(withdrawal);
+    });
+  }
+
+  /**
+   * Credits the processing agent (payout custody) and the fee to whichever
+   * account is entitled to it, then records the agent action / platform fee
+   * stat. Shared by the two paths that can mark a withdrawal completed with an
+   * agent attached: the normal agent-submits → admin-verifies flow
+   * (`verifyAgentWithdrawal`, fee → the agent, unchanged) and an admin
+   * completing it directly (`adminCompleteWithdrawal`, fee → the Master
+   * Wallet — the admin is the one recording/authorizing the payout, not the
+   * agent's own self-service submission, so the house keeps the cut instead).
+   * The agent is credited the net payout custody either way — they still
+   * physically paid the player — only the FEE recipient differs.
+   */
+  private async settleWithdrawalPayout(
+    manager: EntityManager,
+    withdrawal: Withdrawal,
+    feeMinor: number,
+    netAmountMinor: number,
+    feeRecipientUserId: string,
+  ): Promise<void> {
+    await this.ensureDefaultWallet(withdrawal.agentId!, manager);
+    await this.creditInSession(
+      {
+        userId: withdrawal.agentId!,
+        amountMinor: netAmountMinor,
+        entryType: 'agent_receipt',
+        sourceType: 'withdrawal',
+        sourceId: withdrawal.id,
+        idempotencyKey: `agent-receipt:${withdrawal.id}`,
+        metadata: {
+          withdrawalId: withdrawal.id,
+          userId: withdrawal.userId,
+          grossAmountMinor: withdrawal.amountMinor,
+          feeMinor,
+          kind: 'payout_custody',
+        },
+      },
+      manager,
+    );
+
+    if (feeMinor > 0) {
+      const feeToAgent = feeRecipientUserId === withdrawal.agentId;
+      await this.ensureDefaultWallet(feeRecipientUserId, manager);
+      await this.creditInSession(
+        {
+          userId: feeRecipientUserId,
+          amountMinor: feeMinor,
+          // Master Wallet credits use 'adjustment' (matches every other
+          // Master-Wallet-facing ledger entry, e.g. AdminService.creditFromMasterWallet)
+          // so its history reads as house revenue, not a phantom agent payout.
+          entryType: feeToAgent ? 'agent_receipt' : 'adjustment',
+          sourceType: 'withdrawal',
+          sourceId: withdrawal.id,
+          idempotencyKey: `agent-withdrawal-fee:${withdrawal.id}`,
+          metadata: {
+            withdrawalId: withdrawal.id,
+            userId: withdrawal.userId,
+            grossAmountMinor: withdrawal.amountMinor,
+            kind: 'withdrawal_fee',
+            feeRecipient: feeToAgent ? 'agent' : 'house',
+          },
+        },
+        manager,
+      );
+    }
+
+    await this.recordAgentAction(
+      {
+        agentId: withdrawal.agentId!,
+        userId: withdrawal.userId,
+        withdrawalId: withdrawal.id,
+        amountMinor: withdrawal.amountMinor,
+        ledgerEntryId: `agent-receipt:${withdrawal.id}`,
+        actionType: 'withdrawal_completed',
+        metadata: {
+          destinationAccount: withdrawal.destinationAccount,
+          netAmountMinor,
+          feeMinor,
+          telebirrReference: withdrawal.telebirrReference,
+        },
+      },
+      manager,
+    );
+
+    if (feeMinor > 0) {
+      await manager.query(`
+        INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
+        VALUES ('global', ?)
+        ON DUPLICATE KEY UPDATE totalServiceChargesMinor = totalServiceChargesMinor + ?
+      `, [feeMinor, feeMinor]);
+    }
+  }
+
+  /**
+   * Step B — an admin reviews the agent-submitted FT number + receipt. THIS is
+   * where money actually moves: approving releases the player's fund-hold and
+   * credits the agent (custody + fee), using the amounts already resolved and
+   * stored in Step A. Rejecting refunds the reservation back to the player's
+   * available balance — a dispute-resolution call, since the agent may have
+   * already paid the player in cash; any real-world discrepancy is resolved
+   * with the agent manually, outside this flow.
+   */
+  async verifyAgentWithdrawal(
+    withdrawalId: string,
+    decision: 'approve' | 'reject',
+    adminUserId: string,
+    notes?: string,
+  ): Promise<Withdrawal> {
+    if (decision === 'reject' && (notes?.trim().length ?? 0) < 15) {
+      throw new BadRequestException('Rejection notes must be at least 15 characters');
+    }
+
+    const settled = await this.dataSource.transaction(async (manager) => {
+      const withdrawalRepo = manager.getRepository(Withdrawal);
+      const walletRepo = manager.getRepository(Wallet);
+
+      const withdrawal = await withdrawalRepo.findOneBy({ id: withdrawalId, status: 'awaiting_verification' });
+      if (!withdrawal) {
+        throw new ConflictException('Withdrawal not found or not awaiting verification');
+      }
+
       const wallet = await walletRepo.findOne({
         where: { userId: withdrawal.userId, currencyCode: 'CREDIT' },
-        lock: { mode: 'pessimistic_write' }
+        lock: { mode: 'pessimistic_write' },
       });
-
-      if (!wallet || wallet.reservedMinor < withdrawal.amountMinor) {
+      if (!wallet) throw new NotFoundException('Wallet not found');
+      if (wallet.reservedMinor < withdrawal.amountMinor) {
         throw new ConflictException('Insufficient reserved balance on user wallet');
+      }
+
+      if (decision === 'approve') {
+        wallet.reservedMinor -= withdrawal.amountMinor;
+        await walletRepo.save(wallet);
+
+        const feeMinor = withdrawal.serviceChargeMinor;
+        const netAmountMinor = withdrawal.netAmountMinor ?? withdrawal.amountMinor - feeMinor;
+
+        withdrawal.status = 'completed';
+        withdrawal.verifiedBy = adminUserId;
+        withdrawal.verifiedAt = new Date();
+        await withdrawalRepo.save(withdrawal);
+
+        // Agent's own self-service submission — fee stays with the agent, unchanged.
+        await this.settleWithdrawalPayout(manager, withdrawal, feeMinor, netAmountMinor, withdrawal.agentId!);
+      } else {
+        wallet.reservedMinor -= withdrawal.amountMinor;
+        wallet.availableMinor += withdrawal.amountMinor;
+        await walletRepo.save(wallet);
+
+        withdrawal.status = 'rejected';
+        withdrawal.adminNotes = notes?.trim();
+        withdrawal.verifiedBy = adminUserId;
+        withdrawal.verifiedAt = new Date();
+        await withdrawalRepo.save(withdrawal);
+
+        await this.ledgerService.createEntry(
+          {
+            userId: withdrawal.userId,
+            walletId: wallet.id,
+            currencyCode: 'CREDIT',
+            amountMinor: withdrawal.amountMinor,
+            direction: 'credit',
+            entryType: 'refund',
+            sourceType: 'withdrawal',
+            sourceId: withdrawal.id,
+            balanceAfterMinor: wallet.availableMinor,
+            metadata: { action: 'reject_agent_verification', reason: notes?.trim() || 'Admin rejected agent verification' },
+          },
+          manager,
+        );
+
+        await manager.query(`
+          INSERT INTO platform_stats (\`key\`, totalRefundsMinor)
+          VALUES ('global', ?)
+          ON DUPLICATE KEY UPDATE totalRefundsMinor = totalRefundsMinor + ?
+        `, [withdrawal.amountMinor, withdrawal.amountMinor]);
+      }
+
+      this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));
+      return withdrawal;
+    });
+
+    await this.notifyWithdrawalSettled(settled, notes);
+    return settled;
+  }
+
+  /**
+   * Admin-direct completion: collapses the normal two-step agent flow (agent
+   * submits proof → admin verifies) into one action, for when an admin is
+   * recording a payout an agent already made outside the self-service claim
+   * flow (e.g. relayed by phone) rather than leaving it as a bare "approve"
+   * with no agent/fee/reference recorded at all. The fee is ALWAYS resolved
+   * server-side from the active WithdrawalFeeRange table — never trusted from
+   * the caller — so this can never silently diverge from the agent-submitted
+   * path's accounting.
+   *
+   * Unlike the agent's own self-service submission, the fee here goes to the
+   * Master Wallet, not the agent — an admin is recording/authorizing this
+   * payout rather than the agent submitting it themselves, so the house keeps
+   * the cut. The agent is still credited the net payout custody either way.
+   */
+  async adminCompleteWithdrawal(input: {
+    withdrawalId: string;
+    agentId: string;
+    telebirrReference: string;
+    receiptFileUrl: string;
+    adminUserId: string;
+    /** Resolved by the caller via AdminService.getOrCreateMasterWalletUserId(). */
+    houseWalletUserId: string;
+    transferCompletedAt?: Date;
+  }): Promise<Withdrawal> {
+    const settled = await this.dataSource.transaction(async (manager) => {
+      const withdrawalRepo = manager.getRepository(Withdrawal);
+      const walletRepo = manager.getRepository(Wallet);
+
+      const withdrawal = await withdrawalRepo.findOneBy({ id: input.withdrawalId });
+      if (!withdrawal) {
+        throw new NotFoundException('Withdrawal request not found');
+      }
+      if (!(['pending', 'processing'] as WithdrawalStatus[]).includes(withdrawal.status)) {
+        throw new ConflictException(`Withdrawal is already in '${withdrawal.status}' status`);
+      }
+
+      // Same dedupe as the agent's own proof submission: one reference can't
+      // fund two withdrawals.
+      const reference = input.telebirrReference.trim();
+      const reused = await withdrawalRepo.findOne({
+        where: { telebirrReference: reference, status: In(['awaiting_verification', 'completed']) },
+        select: { id: true },
+      });
+      if (reused && reused.id !== withdrawal.id) {
+        throw new ConflictException('This payment reference has already been used for another withdrawal');
+      }
+
+      const wallet = await walletRepo.findOne({
+        where: { userId: withdrawal.userId, currencyCode: 'CREDIT' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!wallet) throw new NotFoundException('Wallet not found');
+      if (wallet.reservedMinor < withdrawal.amountMinor) {
+        throw new ConflictException('Insufficient reserved balance in wallet');
+      }
+
+      const activeRanges = await this.withdrawalFeeRangeRepository.find({ where: { active: true } });
+      const feeMinor = resolveWithdrawalFeeMinor(withdrawal.amountMinor, activeRanges);
+      const netAmountMinor = withdrawal.amountMinor - feeMinor;
+      if (netAmountMinor <= 0) {
+        throw new BadRequestException('The withdrawal fee would consume the entire withdrawal amount');
       }
 
       wallet.reservedMinor -= withdrawal.amountMinor;
       await walletRepo.save(wallet);
 
-      // Credit the agent's wallet: the payout-custody amount the user receives
-      // (reconciles the cash the agent paid out) plus their earned commission.
-      await this.ensureDefaultWallet(input.agentId, manager);
-      await this.creditInSession(
-        {
-          userId: input.agentId,
-          amountMinor: netAmountMinor,
-          entryType: 'agent_receipt',
-          sourceType: 'withdrawal',
-          sourceId: withdrawal.id,
-          idempotencyKey: `agent-receipt:${withdrawal.id}`,
-          metadata: {
-            withdrawalId: withdrawal.id,
-            userId: withdrawal.userId,
-            grossAmountMinor: withdrawal.amountMinor,
-            serviceFeeMinor,
-            commissionMinor,
-            kind: 'payout_custody',
-          },
-        },
-        manager,
-      );
-
-      if (commissionMinor > 0) {
-        await this.creditInSession(
-          {
-            userId: input.agentId,
-            amountMinor: commissionMinor,
-            entryType: 'agent_receipt',
-            sourceType: 'withdrawal',
-            sourceId: withdrawal.id,
-            idempotencyKey: `agent-commission:${withdrawal.id}`,
-            metadata: {
-              withdrawalId: withdrawal.id,
-              userId: withdrawal.userId,
-              grossAmountMinor: withdrawal.amountMinor,
-              kind: 'commission',
-            },
-          },
-          manager,
-        );
-      }
-
-      // Credit the designated super-admin's wallet with the service fee.
-      if (serviceFeeMinor > 0 && input.superAdminUserId && input.superAdminUserId !== input.agentId) {
-        await this.ensureDefaultWallet(input.superAdminUserId, manager);
-        await this.creditInSession(
-          {
-            userId: input.superAdminUserId,
-            amountMinor: serviceFeeMinor,
-            entryType: 'adjustment',
-            sourceType: 'withdrawal',
-            sourceId: withdrawal.id,
-            idempotencyKey: `platform-service-fee:${withdrawal.id}`,
-            metadata: {
-              withdrawalId: withdrawal.id,
-              userId: withdrawal.userId,
-              agentId: input.agentId,
-              grossAmountMinor: withdrawal.amountMinor,
-              kind: 'service_fee',
-            },
-          },
-          manager,
-        );
-      }
-
-      withdrawal.status = 'completed';
-      withdrawal.serviceChargeMinor = totalChargeMinor;
-      withdrawal.serviceFeeMinor = serviceFeeMinor;
-      withdrawal.commissionMinor = commissionMinor;
-      withdrawal.netAmountMinor = netAmountMinor;
+      withdrawal.agentId = input.agentId;
       withdrawal.telebirrReference = reference;
-      withdrawal.paymentProvider = input.paymentProvider ?? null;
-      withdrawal.payoutVerification = input.payoutVerification ?? null;
+      withdrawal.receiptFileUrl = input.receiptFileUrl;
+      withdrawal.serviceChargeMinor = feeMinor;
+      withdrawal.netAmountMinor = netAmountMinor;
+      withdrawal.transferCompletedAt = input.transferCompletedAt ?? new Date();
       withdrawal.processedAt = new Date();
-      withdrawal.processedBy = input.agentId;
+      withdrawal.processedBy = input.adminUserId;
+      withdrawal.verifiedBy = input.adminUserId;
+      withdrawal.verifiedAt = new Date();
+      withdrawal.status = 'completed';
       await withdrawalRepo.save(withdrawal);
 
-      await this.recordAgentAction(
-        {
-          agentId: input.agentId,
-          userId: withdrawal.userId,
-          withdrawalId: withdrawal.id,
-          amountMinor: withdrawal.amountMinor,
-          ledgerEntryId: `agent-receipt:${withdrawal.id}`,
-          actionType: 'withdrawal_completed',
-          metadata: {
-            destinationAccount: withdrawal.destinationAccount,
-            netAmountMinor,
-            serviceFeeMinor,
-            commissionMinor,
-            telebirrReference: withdrawal.telebirrReference,
-          },
-        },
-        manager,
-      );
-
-      if (serviceFeeMinor > 0) {
-        await manager.query(`
-          INSERT INTO platform_stats (\`key\`, totalServiceChargesMinor)
-          VALUES ('global', ?)
-          ON DUPLICATE KEY UPDATE totalServiceChargesMinor = totalServiceChargesMinor + ?
-        `, [serviceFeeMinor, serviceFeeMinor]);
-      }
+      await this.settleWithdrawalPayout(manager, withdrawal, feeMinor, netAmountMinor, input.houseWalletUserId);
 
       this.gameEventsGateway.emitWalletUpdated(withdrawal.userId, this.toWalletSummary(wallet));
       return withdrawal;
@@ -1167,11 +1376,19 @@ export class WalletService {
     amountMinor: number,
     idempotencyKey?: string
   ): Promise<{ agentWallet: WalletSummary; userWallet: WalletSummary }> {
-    const key = idempotencyKey || `agent-to-user:${agentUserId}:${userPhone}:${Date.now()}`;
+    // users.phoneNumber is always stored normalized (+2519XXXXXXXX/+2517XXXXXXXX —
+    // every write path runs it through normalizeEthiopianPhone), so an
+    // unnormalized "09…"/"07…" input here would silently never match a real row.
+    const normalizedPhone = normalizeEthiopianPhone(userPhone);
+    if (!normalizedPhone) {
+      throw new BadRequestException('Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)');
+    }
+
+    const key = idempotencyKey || `agent-to-user:${agentUserId}:${normalizedPhone}:${Date.now()}`;
     return this.dataSource.transaction(async (manager) => {
       // Find user by phone number
       const userRepo = manager.getRepository(User);
-      const user = await userRepo.findOneBy({ phoneNumber: userPhone });
+      const user = await userRepo.findOneBy({ phoneNumber: normalizedPhone });
       if (!user) {
         throw new NotFoundException(`User with phone number ${userPhone} not found`);
       }
@@ -1231,7 +1448,62 @@ export class WalletService {
     });
   }
 
-  private async recordAgentAction(
+  /**
+   * Session-scoped sibling of `transferAgentToUser` — same agent-debit/user-credit
+   * shape, but takes the CALLER's own `manager` instead of opening a new
+   * transaction, so it can be composed inside an already-open transaction (e.g.
+   * deposit crediting in `PaymentsService`), the same way `AdminService.
+   * creditFromMasterWallet` is manager-scoped for the same reason. The credit
+   * side uses the caller's `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/
+   * `metadata` unchanged, so the receiving wallet's ledger history reads
+   * identically regardless of which wallet actually funded it. Throws (and lets
+   * the caller decide what to do) if the agent's wallet can't cover the amount —
+   * `debitInSession` already throws `ConflictException` for that.
+   */
+  async fundUserCreditFromAgent(
+    input: {
+      agentId: string;
+      targetUserId: string;
+      amountMinor: number;
+      entryType: LedgerEntryType;
+      sourceType: string;
+      sourceId: string;
+      idempotencyKey: string;
+      metadata?: Record<string, unknown>;
+    },
+    manager: EntityManager,
+  ): Promise<WalletMutationResult> {
+    await this.ensureDefaultWallet(input.agentId, manager);
+    await this.ensureDefaultWallet(input.targetUserId, manager);
+
+    await this.debitInSession(
+      {
+        userId: input.agentId,
+        amountMinor: input.amountMinor,
+        entryType: 'adjustment',
+        sourceType: 'agent_deposit_funding',
+        sourceId: input.sourceId,
+        idempotencyKey: `${input.idempotencyKey}:agent-debit`,
+        metadata: { ...input.metadata, targetUserId: input.targetUserId, fundedSourceType: input.sourceType },
+      },
+      manager,
+    );
+
+    return this.creditInSession(
+      {
+        userId: input.targetUserId,
+        amountMinor: input.amountMinor,
+        entryType: input.entryType,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        idempotencyKey: input.idempotencyKey,
+        metadata: input.metadata,
+      },
+      manager,
+    );
+  }
+
+  async recordAgentAction(
     input: {
       agentId: string;
       userId?: string;

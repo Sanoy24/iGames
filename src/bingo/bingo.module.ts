@@ -15,9 +15,13 @@ import { BingoRulesService } from './bingo-rules.service';
 import { BingoService } from './bingo.service';
 import { BingoCard } from './entities/bingo-card.entity';
 import { BingoConfig } from './entities/bingo-config.entity';
+import { BingoCustomRoomSlot } from './entities/bingo-custom-room-slot.entity';
+import { CommissionSettlementError } from './entities/commission-settlement-error.entity';
+import { BingoOperationalAlert } from './entities/bingo-operational-alert.entity';
 import { BingoPattern } from './entities/bingo-pattern.entity';
 import { BingoRoom } from './entities/bingo-room.entity';
 import { BingoTicket } from './entities/bingo-ticket.entity';
+import { BotName } from '../bots/entities/bot-name.entity';
 
 @Module({
   imports: [
@@ -27,7 +31,7 @@ import { BingoTicket } from './entities/bingo-ticket.entity';
     WalletModule,
     GameEventsModule,
     NotificationsModule,
-    TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoPattern])
+    TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoCustomRoomSlot, CommissionSettlementError, BingoOperationalAlert, BingoPattern, BotName])
   ],
   controllers: [BingoController, BingoAdminController],
   providers: [BingoService, BingoRulesService, JwtAuthGuard, OptionalJwtAuthGuard, RolesGuard],

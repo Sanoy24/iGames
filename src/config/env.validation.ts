@@ -17,6 +17,8 @@ type EnvConfig = {
   TELEGRAM_AUTH_MAX_AGE_SECONDS: number;
   TELEGRAM_MINIAPP_URL: string;
   TELEGRAM_WEBHOOK_URL?: string;
+  /** Player bot's @username, used to build agent referral deep links. */
+  TELEGRAM_BOT_USERNAME: string;
   /** Separate, standalone bot for agents (yaho_agent_bot) — phone-link + Mini App entry only. */
   TELEGRAM_AGENT_BOT_TOKEN: string;
   TELEGRAM_AGENT_BOT_WEBHOOK_URL: string;
@@ -62,6 +64,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
     TELEGRAM_AUTH_MAX_AGE_SECONDS: readNumber(raw, 'TELEGRAM_AUTH_MAX_AGE_SECONDS', 86400),
     TELEGRAM_MINIAPP_URL: readString(raw, 'TELEGRAM_MINIAPP_URL', ''),
     TELEGRAM_WEBHOOK_URL: readString(raw, 'TELEGRAM_WEBHOOK_URL', ''),
+    TELEGRAM_BOT_USERNAME: readString(raw, 'TELEGRAM_BOT_USERNAME', ''),
     TELEGRAM_AGENT_BOT_TOKEN: readString(raw, 'TELEGRAM_AGENT_BOT_TOKEN', ''),
     TELEGRAM_AGENT_BOT_WEBHOOK_URL: readString(raw, 'TELEGRAM_AGENT_BOT_WEBHOOK_URL', ''),
     TELEGRAM_AGENT_MINIAPP_URL: readString(raw, 'TELEGRAM_AGENT_MINIAPP_URL', ''),

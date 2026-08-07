@@ -1,12 +1,13 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, MinLength } from 'class-validator';
+import { PreviewMpesaSmsDto } from './preview-mpesa-sms.dto';
 
-export class SubmitMpesaSmsDto {
-  @ApiProperty({
-    description: 'The full M-PESA confirmation SMS text, pasted by the player.',
+export class SubmitMpesaSmsDto extends PreviewMpesaSmsDto {
+  @ApiPropertyOptional({
+    description: 'Relative path (from POST /payments/receipts/upload) to the uploaded receipt photo/PDF. Optional — the pasted SMS text alone is enough to verify and credit the deposit.'
   })
+  @IsOptional()
   @IsString()
-  @MinLength(20)
-  @MaxLength(1000)
-  sms: string;
+  @MinLength(1)
+  receiptFileUrl?: string;
 }

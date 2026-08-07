@@ -272,4 +272,130 @@ describe('BingoRulesService', () => {
       expect(completes(row0, 'any_line')).toBe(true);
     });
   });
+
+  // ─── generateWinningPatternCard ──────────────────────────────────────────
+  describe('generateWinningPatternCard', () => {
+    const pattern = (patternType: string, mask?: boolean[][]) =>
+      ({ id: 'p1', patternType, mask }) as any;
+
+    // 75-ball, 5 columns of 15: B[1-15] I[16-30] N[31-45] G[46-60] O[61-75].
+    const numberRange = 75;
+
+    it('returns a card that actually completes an any_line pattern using only drawn numbers', () => {
+      const drawnNumbers = [3, 20, 35, 50, 65, 7, 22, 37, 52, 67];
+      const grid = service.generateWinningPatternCard(pattern('any_line'), drawnNumbers, numberRange);
+      expect(grid).not.toBeNull();
+      const { completedPatternIds } = service.evaluatePatternTicket(grid!, drawnNumbers, [pattern('any_line', undefined) as any]);
+      expect(completedPatternIds).toContain('p1');
+    });
+
+    it('every number on the synthesized card is unique and within its column range', () => {
+      const drawnNumbers = Array.from({ length: 40 }, (_, i) => i + 1);
+      const grid = service.generateWinningPatternCard(pattern('any_two_lines'), drawnNumbers, numberRange);
+      expect(grid).not.toBeNull();
+      const numbers = grid!.flat().filter((v): v is number => v !== null);
+      expect(new Set(numbers).size).toBe(numbers.length);
+      grid!.forEach((row, r) =>
+        row.forEach((value, c) => {
+          if (r === 2 && c === 2) {
+            expect(value).toBeNull();
+            return;
+          }
+          expect(value).not.toBeNull();
+          expect(value as number).toBeGreaterThanOrEqual(c * 15 + 1);
+          expect(value as number).toBeLessThanOrEqual(c === 4 ? 75 : (c + 1) * 15);
+        }),
+      );
+    });
+
+    it('never produces a card identical to another card built from the same draw', () => {
+      const drawnNumbers = Array.from({ length: 30 }, (_, i) => i * 2 + 1);
+      const gridA = service.generateWinningPatternCard(pattern('any_line'), drawnNumbers, numberRange);
+      const gridB = service.generateWinningPatternCard(pattern('any_line'), drawnNumbers, numberRange);
+      expect(gridA).not.toBeNull();
+      expect(gridB).not.toBeNull();
+      expect(service.canonicalCardHash(gridA!)).not.toBe(service.canonicalCardHash(gridB!));
+    });
+
+    it('returns null when too few numbers have been drawn to complete any line', () => {
+      const grid = service.generateWinningPatternCard(pattern('any_line'), [1, 2], numberRange);
+      expect(grid).toBeNull();
+    });
+
+    it('satisfies a fixed-mask pattern (Corners) using only drawn numbers', () => {
+      const corners = [
+        [true, false, false, false, true],
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [true, false, false, false, true],
+      ];
+      // Corners needs 2 marks in col 0 (rows 0 & 4) and 2 in col 4 (rows 0 & 4).
+      const drawnNumbers = [5, 10, 65, 70];
+      const grid = service.generateWinningPatternCard(pattern('fixed', corners), drawnNumbers, numberRange);
+      expect(grid).not.toBeNull();
+      const { completedPatternIds } = service.evaluatePatternTicket(grid!, drawnNumbers, [
+        pattern('fixed', corners) as any,
+      ]);
+      expect(completedPatternIds).toContain('p1');
+    });
+  });
+
+  // ─── explainPatternCompletion ────────────────────────────────────────────
+  describe('explainPatternCompletion', () => {
+    const pattern = (patternType: string, mask?: boolean[][]) =>
+      ({ id: 'p1', patternType, mask }) as any;
+    const cellSet = (cells: Array<{ row: number; col: number }>) =>
+      new Set(cells.map((c) => `${c.row}:${c.col}`));
+
+    // Row 0 complete, row 1 ALSO complete by coincidence (extra numbers drawn
+    // beyond what row 0 needed) — the exact scenario that must not render as
+    // "won by two lines" for an any_line (single-line) pattern.
+    const grid: (number | null)[][] = [
+      [1, 2, 3, 4, 5],
+      [6, 7, 8, 9, 10],
+      [11, 12, null, 13, 14],
+      [15, 16, 17, 18, 19],
+      [20, 21, 22, 23, 24],
+    ];
+    const bothRowsDrawn = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    it('any_line returns exactly one line, not every complete line on the card', () => {
+      const cells = service.explainPatternCompletion(grid, bothRowsDrawn, pattern('any_line'));
+      expect(cells).not.toBeNull();
+      expect(cells).toHaveLength(5);
+      // Every returned cell belongs to a single row (0 or 1), never a mix of both.
+      const rows = new Set(cells!.map((c) => c.row));
+      expect(rows.size).toBe(1);
+    });
+
+    it('any_two_lines returns exactly two lines even if a third happens to be complete', () => {
+      const allRowsDrawn = grid.flat().filter((v): v is number => v !== null);
+      const cells = service.explainPatternCompletion(grid, allRowsDrawn, pattern('any_two_lines'));
+      expect(cells).not.toBeNull();
+      const rows = new Set(cells!.map((c) => c.row));
+      // 2 lines of 5 cells each, minus no overlap (distinct rows) = 2 distinct rows.
+      expect(rows.size).toBe(2);
+    });
+
+    it('returns null when the pattern is not actually completed', () => {
+      const cells = service.explainPatternCompletion(grid, [1, 2, 3], pattern('any_line'));
+      expect(cells).toBeNull();
+    });
+
+    it('fixed mask returns exactly the mask cells', () => {
+      const corners: boolean[][] = [
+        [true, false, false, false, true],
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [true, false, false, false, true],
+      ];
+      const cells = service.explainPatternCompletion(grid, [1, 5, 20, 24], pattern('fixed', corners));
+      expect(cells).not.toBeNull();
+      expect(cellSet(cells!)).toEqual(cellSet([
+        { row: 0, col: 0 }, { row: 0, col: 4 }, { row: 4, col: 0 }, { row: 4, col: 4 },
+      ]));
+    });
+  });
 });

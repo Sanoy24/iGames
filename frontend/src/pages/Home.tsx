@@ -10,6 +10,7 @@ import type { AppTab } from '../lib/navigation';
 import { soundEngine } from '../lib/audio';
 import { getSocket } from '../hooks/useSocketConnection';
 import { ETHIOPIA_TZ } from '../lib/utils';
+import { requestOpenDeposit } from '../lib/walletIntent';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
@@ -396,7 +397,7 @@ export function Home({ onNavigate }: Props) {
           </div>
           <motion.button
             className="btn btn-primary btn-glow btn-sm"
-            onClick={() => { soundEngine.click(); onNavigate('wallet'); }}
+            onClick={() => { soundEngine.click(); requestOpenDeposit(); onNavigate('wallet'); }}
             whileHover={{ scale: 1.06 }}
             whileTap={{ scale: 0.94 }}
             style={{ marginTop: 8, flexShrink: 0 }}

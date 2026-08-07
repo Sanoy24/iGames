@@ -3,14 +3,16 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { WalletService } from './wallet.service';
 
 @ApiTags('wallet')
 @ApiBearerAuth()
 @SkipThrottle({ default: true })
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('wallet')
 export class WalletController {
   constructor(private readonly walletService: WalletService) {}
@@ -62,6 +64,31 @@ export class WalletController {
     });
   }
 
+  // Only players hold a play-balance wallet that withdrawals draw down — admins
+  // manage the shared Master Wallet via /admin/wallet/*, and agents receive
+  // their working capital via admin transfer, never a self-service withdrawal
+  // here. Without this, any authenticated JWT (including an admin's) could
+  // request a withdrawal against their own always-dormant personal wallet.
+  // Player-scoped fee preview — deliberately separate from GET /agent/config
+  // (which is @Roles('agent')-gated) so a plain player token doesn't 403 when
+  // the withdraw form fetches the fee tiers to display before submission.
+  @Roles('player')
+  @Get('withdrawal-fee-config')
+  @ApiOkResponse({
+    schema: {
+      example: {
+        withdrawalFeeRanges: [
+          { minAmountMinor: 100, maxAmountMinor: 50000, feeMinor: 1000 },
+          { minAmountMinor: 50001, maxAmountMinor: null, feeMinor: 10000 },
+        ]
+      }
+    }
+  })
+  getWithdrawalFeeConfig() {
+    return this.walletService.getWithdrawalFeeConfig();
+  }
+
+  @Roles('player')
   @Post('withdraw')
   @ApiOkResponse({
     schema: {

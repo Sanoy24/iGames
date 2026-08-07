@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
+import { BINGO_CARD_PALETTE_IDS } from '../bingo-card-palette.util';
 
 export class BingoPatternPrizeDto {
   @IsString()
@@ -66,4 +67,15 @@ export class CreateBingoRoomDto {
   @ValidateNested({ each: true })
   @Type(() => BingoPatternPrizeDto)
   patternPrizes?: BingoPatternPrizeDto[];
+
+  /** Lobby card gradient — leave unset to assign one at random. */
+  @IsOptional()
+  @IsIn(BINGO_CARD_PALETTE_IDS)
+  cardPaletteId?: string;
+
+  /** Decorative ball number shown on the lobby card — leave unset for random. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  cardBallNumber?: number;
 }

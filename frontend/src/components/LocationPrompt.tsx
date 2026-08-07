@@ -1,32 +1,33 @@
 import { useEffect, useState } from 'react';
 import { MapPin } from 'lucide-react';
-import { locationsApi } from '../lib/api';
-import type { PublicLocation } from '../lib/models';
+import { agentMatchApi } from '../lib/api';
+import type { OnDutyAgentOption } from '../lib/api';
 import { useStore } from '../store/useStore';
 import { getErrorMessage } from '../lib/utils';
 
 /**
- * One-time, SKIPPABLE area prompt. Shown only to players who have never answered
- * (the Telegram bot usually captures this at registration, so this is the Mini
- * App backfill for accounts created before the feature, or web/standalone
- * logins). Choosing "Other" or dismissing both count as answered-for-the-house
- * and the prompt never returns.
+ * One-time, SKIPPABLE agent-connect prompt. Shown only to players who have
+ * never answered (the Telegram bot usually captures this at registration, so
+ * this is the Mini App backfill for accounts created before the feature, or
+ * web/standalone logins). Choosing "Other" or dismissing both count as
+ * answered-for-the-house and the prompt never returns.
  *
  * We remember a per-user dismissal in localStorage so a player who taps "Skip"
- * isn't nagged on every launch, while still letting the backend be the source of
- * truth for a real selection.
+ * isn't nagged on every launch, while still letting the backend be the source
+ * of truth for a real selection.
  */
 export function LocationPrompt() {
   const user = useStore((s) => s.user);
   const addToast = useStore((s) => s.addToast);
 
-  const [locations, setLocations] = useState<PublicLocation[]>([]);
+  const [agents, setAgents] = useState<OnDutyAgentOption[]>([]);
   const [visible, setVisible] = useState(false);
   const [selected, setSelected] = useState<string>('');
   const [saving, setSaving] = useState(false);
+  const [locating, setLocating] = useState(false);
 
   const isPlayer = !!user && !user.roles.includes('admin') && !user.roles.includes('agent');
-  const dismissKey = user ? `locationPromptDismissed:${user.id}` : null;
+  const dismissKey = user ? `agentMatchPromptDismissed:${user.id}` : null;
 
   useEffect(() => {
     if (!isPlayer || !dismissKey) return;
@@ -35,18 +36,18 @@ export function LocationPrompt() {
     let cancelled = false;
     (async () => {
       try {
-        const mine = await locationsApi.getMine();
+        const mine = await agentMatchApi.getMine();
         if (cancelled) return;
         // Already answered — nothing to ask.
-        if (mine && mine.locationSource) {
+        if (mine && mine.assignedAgentSource) {
           localStorage.setItem(dismissKey, '1');
           return;
         }
-        const list = await locationsApi.list();
+        const list = await agentMatchApi.listAgents();
         if (cancelled) return;
-        // No configured areas → nothing to pick; don't show an "Other"-only modal.
+        // No on-duty agents → nothing to pick; don't show an "Other"-only modal.
         if (list.length === 0) return;
-        setLocations(list);
+        setAgents(list);
         setVisible(true);
       } catch {
         // Non-critical: if the check fails, just don't prompt.
@@ -66,9 +67,9 @@ export function LocationPrompt() {
     if (!selected) return;
     setSaving(true);
     try {
-      await locationsApi.setMine({ locationId: selected });
+      await agentMatchApi.setMine({ agentId: selected });
       dismiss();
-      addToast('success', 'Thanks — your area has been saved.');
+      addToast('success', 'Thanks — you\'re connected with an agent.');
     } catch (e) {
       addToast('error', getErrorMessage(e));
     } finally {
@@ -79,13 +80,42 @@ export function LocationPrompt() {
   const chooseOther = async () => {
     setSaving(true);
     try {
-      await locationsApi.setMine({ other: true });
+      await agentMatchApi.setMine({ other: true });
     } catch {
       // Even if the write fails, honour the dismissal locally so we don't nag.
     } finally {
       setSaving(false);
       dismiss();
     }
+  };
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) {
+      addToast('error', 'Location is not available on this device — pick from the list instead.');
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const match = await agentMatchApi.attempt(pos.coords.latitude, pos.coords.longitude);
+          if (match) {
+            dismiss();
+            addToast('success', `Connected with ${match.assignedAgentName ?? 'an agent'} nearby.`);
+          } else {
+            addToast('error', 'No on-duty agent nearby — pick one from the list instead.');
+          }
+        } catch (e) {
+          addToast('error', getErrorMessage(e));
+        } finally {
+          setLocating(false);
+        }
+      },
+      () => {
+        setLocating(false);
+        addToast('error', 'Could not read your location — pick from the list instead.');
+      },
+    );
   };
 
   return (
@@ -110,11 +140,20 @@ export function LocationPrompt() {
           <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--bg-2, #222)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <MapPin size={20} style={{ color: 'var(--accent, #f0a500)' }} />
           </div>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Which area are you in?</h2>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800 }}>Connect with an agent</h2>
         </div>
         <p style={{ color: 'var(--text-muted, #999)', fontSize: 13, lineHeight: 1.5, margin: '0 0 16px' }}>
-          This helps us connect you with the right local agent. It's optional — you can skip it.
+          It is optional, but connecting with a nearby agent makes deposits and withdrawals faster.
         </p>
+
+        <button
+          className="btn btn-primary"
+          style={{ width: '100%', marginBottom: 10 }}
+          disabled={saving || locating}
+          onClick={useMyLocation}
+        >
+          {locating ? 'Finding nearby agent…' : '📍 Use my location'}
+        </button>
 
         <select
           className="input"
@@ -122,18 +161,18 @@ export function LocationPrompt() {
           onChange={(e) => setSelected(e.target.value)}
           style={{ width: '100%', background: 'var(--bg-2, #222)', color: 'var(--text-primary, #fff)', marginBottom: 16 }}
         >
-          <option value="">— Select your area —</option>
-          {locations.map((loc) => (
-            <option key={loc.id} value={loc.id}>
-              {loc.region ? `${loc.name} (${loc.region})` : loc.name}
+          <option value="">— Or pick an agent —</option>
+          {agents.map((agent) => (
+            <option key={agent.id} value={agent.id}>
+              {agent.name}
             </option>
           ))}
         </select>
 
         <button
-          className="btn btn-primary"
+          className="btn btn-secondary"
           style={{ width: '100%', marginBottom: 10 }}
-          disabled={!selected || saving}
+          disabled={!selected || saving || locating}
           onClick={saveSelection}
         >
           {saving ? 'Saving…' : 'Save'}
@@ -142,14 +181,14 @@ export function LocationPrompt() {
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', fontSize: 13 }}>
           <button
             onClick={chooseOther}
-            disabled={saving}
+            disabled={saving || locating}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted, #999)', cursor: 'pointer', textDecoration: 'underline' }}
           >
-            My area isn't listed
+            Not listed
           </button>
           <button
             onClick={dismiss}
-            disabled={saving}
+            disabled={saving || locating}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted, #999)', cursor: 'pointer' }}
           >
             Skip

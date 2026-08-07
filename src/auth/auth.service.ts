@@ -106,8 +106,12 @@ export class AuthService {
         const config = await this.adminService.getSystemConfig();
         if (config.welcomeBonusMinor > 0) {
           try {
-            await this.walletService.creditInSession({
-              userId: user.id,
+            // Funded from the Master Wallet like every other credit. The
+            // surrounding try/catch already covers a shortfall there too — a
+            // welcome bonus is a nice-to-have, never something that should block
+            // a new player from finishing login.
+            await this.adminService.creditFromMasterWallet({
+              targetUserId: user.id,
               amountMinor: config.welcomeBonusMinor,
               entryType: 'bonus',
               sourceType: 'welcome_bonus',
@@ -116,10 +120,11 @@ export class AuthService {
               metadata: { reason: 'welcome_bonus' }
             }, manager);
           } catch {
-            // Never let a welcome-bonus hiccup block login. The credit is
-            // idempotency-keyed, so a legacy user who already received it (before
-            // this flag existed, possibly at a different configured amount) is
-            // simply not re-credited — we still mark it done below.
+            // Never let a welcome-bonus hiccup (including the Master Wallet
+            // running low) block login. The credit is idempotency-keyed, so a
+            // legacy user who already received it (before this flag existed,
+            // possibly at a different configured amount) is simply not
+            // re-credited — we still mark it done below.
           }
         }
         user.productMetadata = { ...(user.productMetadata ?? {}), welcomeBonusGranted: true };

@@ -7,8 +7,8 @@ export class UpdateSettlementDto {
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
-  @IsIn(['bank_transfer', 'cash', 'mobile_money', 'other'])
-  paymentMethod?: 'bank_transfer' | 'cash' | 'mobile_money' | 'other' | null;
+  @IsIn(['bank_transfer', 'cash', 'mobile_money', 'bank_branch', 'other'])
+  paymentMethod?: 'bank_transfer' | 'cash' | 'mobile_money' | 'bank_branch' | 'other' | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

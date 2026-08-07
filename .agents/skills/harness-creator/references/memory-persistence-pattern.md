@@ -15,12 +15,13 @@ Without persistent memory, an agent loses all user preferences, project context,
 ### Two-step save invariant
 
 Every memory write is a two-step operation:
+
 1. Write the full content to a dedicated topic file
 2. Append a one-line pointer to the index
 
-If the process crashes between steps, the worst outcome is an orphaned topic file — the index remains consistent.
+If the process crashes between steps, the worst outcome is an orphaned topic file the index remains consistent.
 
-### Local overrides win — always
+### Local overrides win always
 
 When the same topic is addressed at multiple scopes, the most-local instruction takes priority:
 
@@ -44,12 +45,12 @@ Organization-wide → User-level → Project-level → Local override
 
 ## Tradeoffs
 
-| Decision | Benefit | Cost |
-|---|---|---|
-| Layered memory | Each scope can be shared, audited, overridden independently | More files to discover at startup |
-| Local-wins priority | Users can override without touching shared files | Global rule can be silently overridden |
-| Bounded index with on-demand topics | Constant context cost regardless of memory volume | Agent must perform extra retrieval step |
-| Background extraction | No latency added to user responses | Race window between extraction and next turn |
+| Decision                            | Benefit                                                     | Cost                                         |
+| ----------------------------------- | ----------------------------------------------------------- | -------------------------------------------- |
+| Layered memory                      | Each scope can be shared, audited, overridden independently | More files to discover at startup            |
+| Local-wins priority                 | Users can override without touching shared files            | Global rule can be silently overridden       |
+| Bounded index with on-demand topics | Constant context cost regardless of memory volume           | Agent must perform extra retrieval step      |
+| Background extraction               | No latency added to user responses                          | Race window between extraction and next turn |
 
 ## Implementation Patterns
 
@@ -62,16 +63,16 @@ Organization-wide → User-level → Project-level → Local override
 
 ## Gotchas
 
-1. **Index truncation is silent until it fires** — keep entries short
-2. **Priority ordering is counterintuitive** — local beats project beats user beats org
-3. **Extraction timing creates a race window** — user can start next turn before extraction completes
-4. **Derivable content doesn't belong in memory** — architecture and code patterns are re-derivable from the codebase
-5. **Orphaned topic files accumulate** — periodic cleanup recommended
+1. **Index truncation is silent until it fires** keep entries short
+2. **Priority ordering is counterintuitive** local beats project beats user beats org
+3. **Extraction timing creates a race window** user can start next turn before extraction completes
+4. **Derivable content doesn't belong in memory** architecture and code patterns are re-derivable from the codebase
+5. **Orphaned topic files accumulate** periodic cleanup recommended
 
 ## Related Patterns
 
-- [Context Engineering](context-engineering-pattern.md) — How to manage context budget across layers
-- [Lifecycle & Bootstrap](lifecycle-bootstrap-pattern.md) — How initialization loads memory
+- [Context Engineering](context-engineering-pattern.md) How to manage context budget across layers
+- [Lifecycle & Bootstrap](lifecycle-bootstrap-pattern.md) How initialization loads memory
 
 ## Template: Progress Log Structure
 
@@ -84,18 +85,22 @@ Organization-wide → User-level → Project-level → Local override
 **Status:** In Progress (60% complete)
 
 ### What's Done
+
 - [x] Document chunking pipeline
 - [x] Index data structure
 - [ ] Q&A handler (in progress)
 
 ### What's In Progress
+
 - Implementing Q&A IPC handler
 - Need to decide: streaming vs batch response
 
 ### Blockers
+
 - Waiting on decision: citation format (footnotes vs inline)
 
 ### Next Session Should
+
 1. Complete Q&A handler
 2. Add citation formatting
 3. Test end-to-end flow
@@ -104,6 +109,7 @@ Organization-wide → User-level → Project-level → Local override
 ## Evidence
 
 This pattern is grounded in production agent runtimes including Claude Code's memory system, which implements:
+
 - Four-level instruction hierarchy (org/user/project/local)
 - Four-type auto-memory taxonomy (user/feedback/project/reference)
 - Background session extraction with mutual exclusion

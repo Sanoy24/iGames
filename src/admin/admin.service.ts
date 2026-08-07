@@ -69,7 +69,7 @@ export class AdminService implements OnApplicationBootstrap {
         private readonly notificationsService: NotificationsService,
     ) {}
 
-    /** Create the Master Wallet at boot, not lazily on first use — see below. */
+    /** Create the Master Wallet at boot, not lazily on first use  see below. */
     async onApplicationBootstrap(): Promise<void> {
         try {
             await this.getOrCreateMasterWalletUserId();
@@ -87,7 +87,7 @@ export class AdminService implements OnApplicationBootstrap {
         if (!config) {
             config = this.systemConfigRepository.create({
                 key: 'global',
-                telebirrCreditMinorPerBirr: 1, // flat 1:1 — 1 Birr deposited = 1 ETB credited
+                telebirrCreditMinorPerBirr: 1, // flat 1:1  1 Birr deposited = 1 ETB credited
                 welcomeBonusMinor: 0,
             });
             await this.systemConfigRepository.save(config);
@@ -333,24 +333,24 @@ export class AdminService implements OnApplicationBootstrap {
     // ── Master Wallet (shared across every admin account) ───────────────
     //
     // With 2+ admin accounts, each admin's OWN wallet would otherwise be a
-    // separate float — whoever tops up sees a different balance than everyone
+    // separate float  whoever tops up sees a different balance than everyone
     // else. Every ETB top-up/transfer-to-agent instead operates on ONE Master
     // Wallet: a dedicated internal "system" account (roles: ['system'], no
-    // login/password/Telegram identity of its own — NOT any individual admin's
+    // login/password/Telegram identity of its own  NOT any individual admin's
     // personal account). Created at boot (onApplicationBootstrap above), not
     // lazily on first use, and remembered via system_configs.masterWalletUserId;
     // every admin manages the same one from day one, with no setup step
     // required.
     //
     // It is also the ONLY place e-money is created (`adminTopup`, no receipt
-    // required — the house directly injecting supply). Every OTHER credit
-    // anywhere in the system — player Telebirr/M-Pesa deposits, agent deposit
-    // commissions, admin "Adjust Wallet", the welcome bonus — routes through
+    // required  the house directly injecting supply). Every OTHER credit
+    // anywhere in the system  player Telebirr/M-Pesa deposits, agent deposit
+    // commissions, admin "Adjust Wallet", the welcome bonus  routes through
     // `creditFromMasterWallet` below instead of minting independently, so the
     // Master Wallet balance always represents the real ETB still available to
     // back new credits. `debitToMasterWallet` is the reverse, for money being
     // reclaimed FROM a wallet rather than paid out elsewhere (e.g. a downward
-    // admin adjustment) — it returns to the Master Wallet rather than vanishing,
+    // admin adjustment)  it returns to the Master Wallet rather than vanishing,
     // so total system supply is always conserved.
 
     /** Returns the Master Wallet's owning user id, creating it if it somehow doesn't exist yet. */
@@ -366,7 +366,7 @@ export class AdminService implements OnApplicationBootstrap {
         return masterUser.id;
     }
 
-    /** The Master Wallet's balance — what every admin's ETB Management tab should show. */
+    /** The Master Wallet's balance  what every admin's ETB Management tab should show. */
     async getHouseWallet() {
         const ownerId = await this.getOrCreateMasterWalletUserId();
         return this.walletService.getDefaultWalletSummary(ownerId);
@@ -409,18 +409,18 @@ export class AdminService implements OnApplicationBootstrap {
      * same `manager` the caller is already using, so this never opens a nested
      * transaction). `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/`metadata`
      * describe the CREDIT side exactly as callers already recorded it before this
-     * existed (e.g. entryType:'deposit', sourceType:'telebirr_receipt') — ledger
+     * existed (e.g. entryType:'deposit', sourceType:'telebirr_receipt')  ledger
      * history for the receiving wallet is unchanged. The Master Wallet's own debit
      * side is always recorded as entryType:'adjustment', sourceType:
      * 'master_wallet_funding', so its own ledger stays legible as "who was this
      * funding."
      *
-     * Throws — rolling back the caller's whole transaction — if the Master Wallet
+     * Throws  rolling back the caller's whole transaction  if the Master Wallet
      * can't cover it. This is deliberate: every credit anywhere must be backed by
      * real ETB the admin has already put into the Master Wallet via adminTopup, so
      * a shortfall blocks the credit rather than letting it happen for free. The
      * underlying "insufficient wallet balance" error is deliberately NOT surfaced
-     * verbatim — callers (players, agents) should never see the words "Master
+     * verbatim  callers (players, agents) should never see the words "Master
      * Wallet"; they get a generic "try again / contact support" message instead.
      */
     async creditFromMasterWallet(
@@ -461,7 +461,7 @@ export class AdminService implements OnApplicationBootstrap {
             );
         } catch {
             throw new ConflictException(
-                'Unable to process this right now — please try again shortly or contact support.',
+                'Unable to process this right now  please try again shortly or contact support.',
             );
         }
 
@@ -483,7 +483,7 @@ export class AdminService implements OnApplicationBootstrap {
      * The reverse of `creditFromMasterWallet`: debits `sourceUserId` and returns the
      * amount to the Master Wallet, atomically, within the caller's own transaction.
      * Used when e-money is being reclaimed/removed from a wallet rather than paid
-     * out elsewhere (e.g. a downward admin wallet adjustment) — keeps the Master
+     * out elsewhere (e.g. a downward admin wallet adjustment)  keeps the Master
      * Wallet meaning "real ETB currently backing something in the system" instead
      * of letting reclaimed money simply vanish from the ledger.
      */
@@ -547,8 +547,10 @@ export class AdminService implements OnApplicationBootstrap {
                 skip,
                 take: limit,
             }),
-            this.dataSource.getRepository(BingoRoom).count({ where: { status: 'completed' } }),
-            // Lifetime total — across every completed room, not just this page —
+            this.dataSource
+                .getRepository(BingoRoom)
+                .count({ where: { status: 'completed' } }),
+            // Lifetime total  across every completed room, not just this page
             // so "real money bot win" is visible as a single figure, not something
             // an admin has to page through and sum by hand.
             this.dataSource.query(
@@ -623,13 +625,19 @@ export class AdminService implements OnApplicationBootstrap {
             }),
         );
 
-        return { data: transactions, total, page, limit, totalBotWinMinor: Number(botWinRow?.totalBotWin ?? 0) };
+        return {
+            data: transactions,
+            total,
+            page,
+            limit,
+            totalBotWinMinor: Number(botWinRow?.totalBotWin ?? 0),
+        };
     }
 
     /**
      * Paginated deposit history for one provider at a time (Telebirr or M-PESA),
      * covering credited AND rejected rows so admins can see exactly which agent
-     * or the Master Wallet funded a deposit, or why it was rejected — the
+     * or the Master Wallet funded a deposit, or why it was rejected  the
      * `fundedBy`/`fundingFallbackReason` columns and `verification.error` are
      * the traceability trail for this. Kept as two separately-paginated,
      * per-provider queries (rather than a merged UNION feed) since the two
@@ -664,7 +672,7 @@ export class AdminService implements OnApplicationBootstrap {
     }
 
     /**
-     * Admin sign-off on a deposit, independent of crediting — the deposit is
+     * Admin sign-off on a deposit, independent of crediting  the deposit is
      * already credited (or rejected) by the time this runs, and this never
      * touches the wallet/ledger. Purely a manual audit record layered on top.
      */
@@ -822,7 +830,7 @@ export class AdminService implements OnApplicationBootstrap {
         const liveCounts = this.gameEventsGateway.getLiveCounts();
 
         // Real money paid out to bot-controlled accounts (win-steering payouts,
-        // e.g. Bingo cartel-dual redirects) — a slice of totalPayoutsMinor above,
+        // e.g. Bingo cartel-dual redirects)  a slice of totalPayoutsMinor above,
         // broken out so it's visible that this liability is real, not cosmetic.
         const [botWinRow] = await this.dataSource.query(
             `SELECT COALESCE(SUM(le.amountMinor), 0) totalBotWin
@@ -876,7 +884,7 @@ export class AdminService implements OnApplicationBootstrap {
 
                 // Both directions are backed by the Master Wallet: a credit is funded FROM
                 // it (see creditFromMasterWallet); a debit RETURNS the reclaimed amount to
-                // it (see debitToMasterWallet) rather than letting it vanish — keeps total
+                // it (see debitToMasterWallet) rather than letting it vanish  keeps total
                 // system supply conserved either way.
                 if (direction === 'credit') {
                     return await this.creditFromMasterWallet(
@@ -986,7 +994,7 @@ export class AdminService implements OnApplicationBootstrap {
                 take: safeLimit,
             }),
             this.getUserGameStats(userId),
-            // Admin "Adjust Wallet Balance" entries — fetched separately (not just
+            // Admin "Adjust Wallet Balance" entries  fetched separately (not just
             // sliced out of `ledger` above) since that feed is capped at safeLimit
             // across ALL activity and could crowd out older adjustments.
             this.dataSource.getRepository(LedgerEntry).find({
@@ -999,7 +1007,7 @@ export class AdminService implements OnApplicationBootstrap {
                 take: safeLimit,
             }),
             // All-time sum (not capped) so the KPI is accurate even when the display
-            // list above is truncated. Credit-only — "topped up" means money added;
+            // list above is truncated. Credit-only  "topped up" means money added;
             // debits still show in the list but don't count toward this total.
             this.dataSource.getRepository(LedgerEntry).query(
                 `SELECT COALESCE(SUM(amountMinor),0) AS total FROM ledger_entries
@@ -1009,7 +1017,7 @@ export class AdminService implements OnApplicationBootstrap {
         ]);
 
         // Resolve which admin performed each adjustment. actingAdminId only exists
-        // on entries created after this feature shipped — older ones have no
+        // on entries created after this feature shipped  older ones have no
         // recoverable attribution and resolve to null ("Unknown" in the UI).
         const adminIds = [
             ...new Set(
@@ -1061,7 +1069,7 @@ export class AdminService implements OnApplicationBootstrap {
                 walletAvailableMinor: user.wallets?.[0]?.availableMinor ?? 0,
                 walletReservedMinor: user.wallets?.[0]?.reservedMinor ?? 0,
                 // "Deposits (Credited)" = all money that entered the wallet from
-                // outside the player — agent-credited Telebirr receipts AND admin
+                // outside the player  agent-credited Telebirr receipts AND admin
                 // top-ups. adminTopupMinor is also returned on its own below so the
                 // dedicated Admin Top-ups card can show that portion by itself.
                 depositMinor: telebirrDepositMinor + adminTopupMinor,
@@ -1136,7 +1144,7 @@ export class AdminService implements OnApplicationBootstrap {
 
     /**
      * Per-agent Bingo performance (Approach B): for each agent, the customers they
-     * brought (first-deposit link) and the play in their rooms — tickets, distinct
+     * brought (first-deposit link) and the play in their rooms  tickets, distinct
      * players, total staked, total paid out, and GGR (house take = staked − payout).
      * Ranked by staked. Money is integer minor units. Bingo tickets carry the room
      * owner's agentId snapshot, so this is a straight group-by.
@@ -1162,13 +1170,13 @@ export class AdminService implements OnApplicationBootstrap {
             remainingMinor: number;
         }>
     > {
-        // Bots are excluded from tickets/players/GGR — bot stakes aren't real revenue.
-        // "Game commission" is the referral commission (bingo_referral_commission —
+        // Bots are excluded from tickets/players/GGR  bot stakes aren't real revenue.
+        // "Game commission" is the referral commission (bingo_referral_commission
         // % of referred players' service fee). There is no room-owner commission
         // (removed); any pre-existing bingo_room_commission rows are historical and
         // still folded into the amount total below so past real earnings aren't
         // dropped from the lifetime figure, but they don't grow going forward.
-        // Withdrawal fees are tracked separately — payout_custody is deliberately
+        // Withdrawal fees are tracked separately  payout_custody is deliberately
         // excluded everywhere below, it reimburses cash already paid out, not earnings.
         const rows: Array<{
             id: string;
@@ -1265,12 +1273,13 @@ export class AdminService implements OnApplicationBootstrap {
             const stakedMinor = Number(r.staked ?? 0);
             const payoutMinor = Number(r.payout ?? 0);
             // Total earnings here matches AgentsService.computeAgentEarnings exactly
-            // (referral commission + withdrawal fees) — NOT the legacy-inclusive
-            // `commission` field above — so it lines up with what settlements
+            // (referral commission + withdrawal fees)  NOT the legacy-inclusive
+            // `commission` field above  so it lines up with what settlements
             // (agent_settlements, computed from that same source) actually claim
             // against. Using the broader figure would make "remaining" look wrong.
             const withdrawalFeesEarnedMinor = Number(r.withdrawalFees ?? 0);
-            const totalEarningsMinor = Number(r.referralCommission ?? 0) + withdrawalFeesEarnedMinor;
+            const totalEarningsMinor =
+                Number(r.referralCommission ?? 0) + withdrawalFeesEarnedMinor;
             const claimedMinor = Number(r.claimedMinor ?? 0);
             return {
                 agentId: r.id,

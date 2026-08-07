@@ -25,10 +25,10 @@ If baseline verification is failing, repair that first before adding new scope.
 
 ## Required Artifacts
 
-- `feature_list.json` — Feature state tracker (source of truth)
-- `progress.md` — Session continuity log
-- `init.sh` — Standard startup and verification path
-- `session-handoff.md` — Optional, for larger sessions
+- `feature_list.json` Feature state tracker (source of truth)
+- `progress.md` Session continuity log
+- `init.sh` Standard startup and verification path
+- `session-handoff.md` Optional, for larger sessions
 
 ## Definition of Done
 
@@ -62,6 +62,7 @@ Required checks:
 ## Escalation
 
 If you encounter:
+
 - **Architecture decisions**: Consult project architecture docs if present, otherwise ask user
 - **Unclear requirements**: Check product/requirements docs if present, otherwise ask user
 - **Repeated test failures**: Update progress, flag for human review

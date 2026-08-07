@@ -1,4 +1,8 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import {
+    BadRequestException,
+    ConflictException,
+    Injectable,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
 import { WalletService, WalletMutationResult } from '../wallet/wallet.service';
@@ -16,502 +20,585 @@ import { TelebirrReceiptVerifierService } from './telebirr-receipt-verifier.serv
 import { MpesaReceiptVerifierService } from './mpesa-receipt-verifier.service';
 
 export type TelebirrReceiptPreview = {
-  receiptNo: string;
-  amountMinor: number;
-  payerName?: string;
-  payerPhone?: string;
-  receiverName?: string;
-  transactionStatus?: string;
-  date?: string;
+    receiptNo: string;
+    amountMinor: number;
+    payerName?: string;
+    payerPhone?: string;
+    receiverName?: string;
+    transactionStatus?: string;
+    date?: string;
 };
 
 export type TelebirrDepositResponse = {
-  id: string;
-  receiptNo: string;
-  amountMinor: number;
-  currencyCode: string;
-  status: string;
-  agentId?: string;
-  walletCredit?: Record<string, unknown>;
-  parsedReceipt: Record<string, unknown>;
-  verification: Record<string, unknown>;
+    id: string;
+    receiptNo: string;
+    amountMinor: number;
+    currencyCode: string;
+    status: string;
+    agentId?: string;
+    walletCredit?: Record<string, unknown>;
+    parsedReceipt: Record<string, unknown>;
+    verification: Record<string, unknown>;
 };
 
 export type MpesaReceiptPreview = {
-  confirmationCode: string;
-  amountMinor: number;
-  payerPhone?: string;
-  receiverName?: string;
-  receiverPhone?: string;
-  date?: string;
+    confirmationCode: string;
+    amountMinor: number;
+    payerPhone?: string;
+    receiverName?: string;
+    receiverPhone?: string;
+    date?: string;
 };
 
 export type MpesaDepositResponse = {
-  id: string;
-  confirmationCode: string;
-  amountMinor: number;
-  currencyCode: string;
-  status: string;
-  agentId?: string;
-  walletCredit?: Record<string, unknown>;
-  parsedSms: Record<string, unknown>;
-  verification: Record<string, unknown>;
+    id: string;
+    confirmationCode: string;
+    amountMinor: number;
+    currencyCode: string;
+    status: string;
+    agentId?: string;
+    walletCredit?: Record<string, unknown>;
+    parsedSms: Record<string, unknown>;
+    verification: Record<string, unknown>;
 };
 
 @Injectable()
 export class PaymentsService {
-  constructor(
-    private readonly dataSource: DataSource,
-    @InjectRepository(TelebirrDeposit)
-    private readonly telebirrDepositRepository: Repository<TelebirrDeposit>,
-    @InjectRepository(MpesaDeposit)
-    private readonly mpesaDepositRepository: Repository<MpesaDeposit>,
-    private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
-    private readonly mpesaReceiptVerifierService: MpesaReceiptVerifierService,
-    private readonly walletService: WalletService,
-    private readonly notificationsService: NotificationsService,
-    private readonly adminService: AdminService,
-  ) {}
+    constructor(
+        private readonly dataSource: DataSource,
+        @InjectRepository(TelebirrDeposit)
+        private readonly telebirrDepositRepository: Repository<TelebirrDeposit>,
+        @InjectRepository(MpesaDeposit)
+        private readonly mpesaDepositRepository: Repository<MpesaDeposit>,
+        private readonly telebirrReceiptVerifierService: TelebirrReceiptVerifierService,
+        private readonly mpesaReceiptVerifierService: MpesaReceiptVerifierService,
+        private readonly walletService: WalletService,
+        private readonly notificationsService: NotificationsService,
+        private readonly adminService: AdminService,
+    ) {}
 
-  /** Player-facing deposit rules (currently just the admin-set minimum). */
-  async getPublicConfig(): Promise<{ minDepositMinor: number }> {
-    const config = await this.adminService.getSystemConfig();
-    return { minDepositMinor: config.minDepositMinor ?? 0 };
-  }
-
-  /**
-   * Ops self-test: can THIS server reach Ethiotelecom's receipt service? Telebirr
-   * deposits depend entirely on fetching the real receipt, so if the host (e.g. a
-   * locked-down cPanel box) can't make the outbound request, every deposit fails.
-   * Optionally pass a real `receipt` id to also test the full fetch + parse path.
-   */
-  async telebirrHealth(receipt?: string): Promise<Record<string, unknown>> {
-    const host = 'https://transactioninfo.ethiotelecom.et/';
-    const hostname = 'transactioninfo.ethiotelecom.et';
-
-    // Step 1: DNS. Distinguishes "can't resolve the name" from "resolves but the
-    // connection is blocked" — different fixes when talking to the host provider.
-    let dns: Record<string, unknown>;
-    const dnsStart = Date.now();
-    try {
-      const { lookup } = await import('node:dns/promises');
-      const timeout = new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error('DNS lookup timed out')), 5000),
-      );
-      const { address } = (await Promise.race([lookup(hostname), timeout])) as { address: string };
-      dns = { resolved: true, address, latencyMs: Date.now() - dnsStart };
-    } catch (error) {
-      dns = {
-        resolved: false,
-        latencyMs: Date.now() - dnsStart,
-        error: error instanceof Error ? error.message : String(error),
-        code: (error as { code?: string })?.code,
-      };
+    /** Player-facing deposit rules (currently just the admin-set minimum). */
+    async getPublicConfig(): Promise<{ minDepositMinor: number }> {
+        const config = await this.adminService.getSystemConfig();
+        return { minDepositMinor: config.minDepositMinor ?? 0 };
     }
 
-    // Step 2: HTTPS connect.
-    const startedAt = Date.now();
-    let connectivity: Record<string, unknown>;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      const res: { status: number } = await (globalThis as {
-        fetch: (u: string, o: unknown) => Promise<{ status: number }>;
-      }).fetch(host, { method: 'GET', redirect: 'manual', signal: controller.signal });
-      clearTimeout(timer);
-      connectivity = { reachable: true, httpStatus: res.status, latencyMs: Date.now() - startedAt };
-    } catch (error) {
-      const code = (error as { cause?: { code?: string } })?.cause?.code
-        ?? (error as { name?: string })?.name;
-      connectivity = {
-        reachable: false,
-        latencyMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error),
-        code,
-      };
-    }
+    /**
+     * Ops self-test: can THIS server reach Ethiotelecom's receipt service? Telebirr
+     * deposits depend entirely on fetching the real receipt, so if the host (e.g. a
+     * locked-down cPanel box) can't make the outbound request, every deposit fails.
+     * Optionally pass a real `receipt` id to also test the full fetch + parse path.
+     */
+    async telebirrHealth(receipt?: string): Promise<Record<string, unknown>> {
+        const host = 'https://transactioninfo.ethiotelecom.et/';
+        const hostname = 'transactioninfo.ethiotelecom.et';
 
-    let verdict: string;
-    if (connectivity.reachable) {
-      verdict = 'OK — this server can reach Ethiotelecom; Telebirr deposits should work.';
-    } else if (!dns.resolved) {
-      verdict = 'DNS FAILED — the server cannot resolve the Ethiotelecom hostname. Ask the host to allow DNS resolution (or set a working resolver like 8.8.8.8).';
-    } else {
-      verdict = 'BLOCKED — DNS resolves but the outbound HTTPS connection is dropped (timeout). Ask the host to allow outbound TCP 443 to transactioninfo.ethiotelecom.et. Deposits will fail until then.';
-    }
-
-    const result: Record<string, unknown> = {
-      host,
-      checkedAt: new Date().toISOString(),
-      dns,
-      connectivity,
-      verdict,
-    };
-    if (receipt) {
-      result.receiptProbe = await this.telebirrReceiptVerifierService.probeReceipt(receipt);
-    }
-    return result;
-  }
-
-  /** Throws if the amount is below the admin-configured minimum deposit. */
-  private async assertMeetsMinimum(amountMinor: number): Promise<void> {
-    const config = await this.adminService.getSystemConfig();
-    const min = config.minDepositMinor ?? 0;
-    if (min > 0 && amountMinor < min) {
-      throw new BadRequestException(
-        `The minimum deposit is ${min.toLocaleString()} ETB. This receipt is for ${amountMinor.toLocaleString()} ETB.`,
-      );
-    }
-  }
-
-  /**
-   * Chooses where a deposit's player-credit is funded from: the matched agent's
-   * OWN wallet first — they already received this money for real, into their
-   * personal Telebirr/M-Pesa account — falling back to the Master Wallet only
-   * when the agent can't cover it (inactive, or insufficient balance). Callers
-   * persist `fundedBy`/`fundingFallbackReason` on the deposit row for
-   * traceability. The receiving player's ledger history is identical either
-   * way (same `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/`metadata`),
-   * only the debit side differs.
-   */
-  private async fundDepositCredit(
-    manager: EntityManager,
-    input: {
-      agentId: string | undefined;
-      userId: string;
-      amountMinor: number;
-      sourceType: string;
-      sourceId: string;
-      idempotencyKey: string;
-      metadata: Record<string, unknown>;
-    },
-  ): Promise<{ walletCredit: WalletMutationResult; fundedBy: 'agent_wallet' | 'master_wallet'; fundingFallbackReason?: string }> {
-    let fundingFallbackReason: string | undefined;
-
-    if (!input.agentId) {
-      fundingFallbackReason = 'no_agent_matched';
-    } else {
-      const agent = await manager.getRepository(User).findOneBy({ id: input.agentId });
-      if (!agent || agent.status !== 'active') {
-        fundingFallbackReason = 'agent_inactive';
-      } else {
+        // Step 1: DNS. Distinguishes "can't resolve the name" from "resolves but the
+        // connection is blocked"  different fixes when talking to the host provider.
+        let dns: Record<string, unknown>;
+        const dnsStart = Date.now();
         try {
-          const walletCredit = await this.walletService.fundUserCreditFromAgent(
+            const { lookup } = await import('node:dns/promises');
+            const timeout = new Promise<never>((_, rej) =>
+                setTimeout(() => rej(new Error('DNS lookup timed out')), 5000),
+            );
+            const { address } = (await Promise.race([
+                lookup(hostname),
+                timeout,
+            ])) as { address: string };
+            dns = { resolved: true, address, latencyMs: Date.now() - dnsStart };
+        } catch (error) {
+            dns = {
+                resolved: false,
+                latencyMs: Date.now() - dnsStart,
+                error: error instanceof Error ? error.message : String(error),
+                code: (error as { code?: string })?.code,
+            };
+        }
+
+        // Step 2: HTTPS connect.
+        const startedAt = Date.now();
+        let connectivity: Record<string, unknown>;
+        try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            const res: { status: number } = await (
+                globalThis as {
+                    fetch: (
+                        u: string,
+                        o: unknown,
+                    ) => Promise<{ status: number }>;
+                }
+            ).fetch(host, {
+                method: 'GET',
+                redirect: 'manual',
+                signal: controller.signal,
+            });
+            clearTimeout(timer);
+            connectivity = {
+                reachable: true,
+                httpStatus: res.status,
+                latencyMs: Date.now() - startedAt,
+            };
+        } catch (error) {
+            const code =
+                (error as { cause?: { code?: string } })?.cause?.code ??
+                (error as { name?: string })?.name;
+            connectivity = {
+                reachable: false,
+                latencyMs: Date.now() - startedAt,
+                error: error instanceof Error ? error.message : String(error),
+                code,
+            };
+        }
+
+        let verdict: string;
+        if (connectivity.reachable) {
+            verdict =
+                'OK  this server can reach Ethiotelecom; Telebirr deposits should work.';
+        } else if (!dns.resolved) {
+            verdict =
+                'DNS FAILED  the server cannot resolve the Ethiotelecom hostname. Ask the host to allow DNS resolution (or set a working resolver like 8.8.8.8).';
+        } else {
+            verdict =
+                'BLOCKED  DNS resolves but the outbound HTTPS connection is dropped (timeout). Ask the host to allow outbound TCP 443 to transactioninfo.ethiotelecom.et. Deposits will fail until then.';
+        }
+
+        const result: Record<string, unknown> = {
+            host,
+            checkedAt: new Date().toISOString(),
+            dns,
+            connectivity,
+            verdict,
+        };
+        if (receipt) {
+            result.receiptProbe =
+                await this.telebirrReceiptVerifierService.probeReceipt(receipt);
+        }
+        return result;
+    }
+
+    /** Throws if the amount is below the admin-configured minimum deposit. */
+    private async assertMeetsMinimum(amountMinor: number): Promise<void> {
+        const config = await this.adminService.getSystemConfig();
+        const min = config.minDepositMinor ?? 0;
+        if (min > 0 && amountMinor < min) {
+            throw new BadRequestException(
+                `The minimum deposit is ${min.toLocaleString()} ETB. This receipt is for ${amountMinor.toLocaleString()} ETB.`,
+            );
+        }
+    }
+
+    /**
+     * Chooses where a deposit's player-credit is funded from: the matched agent's
+     * OWN wallet first  they already received this money for real, into their
+     * personal Telebirr/M-Pesa account  falling back to the Master Wallet only
+     * when the agent can't cover it (inactive, or insufficient balance). Callers
+     * persist `fundedBy`/`fundingFallbackReason` on the deposit row for
+     * traceability. The receiving player's ledger history is identical either
+     * way (same `entryType`/`sourceType`/`sourceId`/`idempotencyKey`/`metadata`),
+     * only the debit side differs.
+     */
+    private async fundDepositCredit(
+        manager: EntityManager,
+        input: {
+            agentId: string | undefined;
+            userId: string;
+            amountMinor: number;
+            sourceType: string;
+            sourceId: string;
+            idempotencyKey: string;
+            metadata: Record<string, unknown>;
+        },
+    ): Promise<{
+        walletCredit: WalletMutationResult;
+        fundedBy: 'agent_wallet' | 'master_wallet';
+        fundingFallbackReason?: string;
+    }> {
+        let fundingFallbackReason: string | undefined;
+
+        if (!input.agentId) {
+            fundingFallbackReason = 'no_agent_matched';
+        } else {
+            const agent = await manager
+                .getRepository(User)
+                .findOneBy({ id: input.agentId });
+            if (!agent || agent.status !== 'active') {
+                fundingFallbackReason = 'agent_inactive';
+            } else {
+                try {
+                    const walletCredit =
+                        await this.walletService.fundUserCreditFromAgent(
+                            {
+                                agentId: input.agentId,
+                                targetUserId: input.userId,
+                                amountMinor: input.amountMinor,
+                                entryType: 'deposit',
+                                sourceType: input.sourceType,
+                                sourceId: input.sourceId,
+                                idempotencyKey: input.idempotencyKey,
+                                metadata: input.metadata,
+                            },
+                            manager,
+                        );
+                    return { walletCredit, fundedBy: 'agent_wallet' };
+                } catch (error) {
+                    if (!(error instanceof ConflictException)) throw error;
+                    fundingFallbackReason = 'insufficient_agent_balance';
+                }
+            }
+        }
+
+        const walletCredit = await this.adminService.creditFromMasterWallet(
             {
-              agentId: input.agentId,
-              targetUserId: input.userId,
-              amountMinor: input.amountMinor,
-              entryType: 'deposit',
-              sourceType: input.sourceType,
-              sourceId: input.sourceId,
-              idempotencyKey: input.idempotencyKey,
-              metadata: input.metadata,
+                targetUserId: input.userId,
+                amountMinor: input.amountMinor,
+                entryType: 'deposit',
+                sourceType: input.sourceType,
+                sourceId: input.sourceId,
+                idempotencyKey: input.idempotencyKey,
+                metadata: input.metadata,
             },
             manager,
-          );
-          return { walletCredit, fundedBy: 'agent_wallet' };
-        } catch (error) {
-          if (!(error instanceof ConflictException)) throw error;
-          fundingFallbackReason = 'insufficient_agent_balance';
-        }
-      }
-    }
-
-    const walletCredit = await this.adminService.creditFromMasterWallet(
-      {
-        targetUserId: input.userId,
-        amountMinor: input.amountMinor,
-        entryType: 'deposit',
-        sourceType: input.sourceType,
-        sourceId: input.sourceId,
-        idempotencyKey: input.idempotencyKey,
-        metadata: input.metadata,
-      },
-      manager,
-    );
-    return { walletCredit, fundedBy: 'master_wallet', fundingFallbackReason };
-  }
-
-  async previewTelebirrReceipt(
-    userId: string,
-    dto: PreviewTelebirrReceiptDto,
-  ): Promise<TelebirrReceiptPreview> {
-    const submittedReceipt = dto.receiptNo ?? dto.receiptUrl;
-    if (!submittedReceipt) {
-      throw new ConflictException('receiptNo or receiptUrl is required');
-    }
-    const verified = await this.telebirrReceiptVerifierService.verifyReceipt(submittedReceipt, userId);
-    // Reject below-minimum receipts at the verify step so the player is told
-    // before they try to confirm the deposit.
-    await this.assertMeetsMinimum(verified.amountMinor);
-    const p = verified.parsedReceipt;
-    return {
-      receiptNo: verified.receiptNo,
-      amountMinor: verified.amountMinor,
-      payerName:        typeof p.payer_name         === 'string' ? p.payer_name         : undefined,
-      payerPhone:       typeof p.payer_phone        === 'string' ? p.payer_phone        : undefined,
-      receiverName:     typeof p.credited_party_name === 'string' ? p.credited_party_name : undefined,
-      transactionStatus: typeof p.transaction_status === 'string' ? p.transaction_status : undefined,
-      date:             typeof p.date               === 'string' ? p.date               : undefined,
-    };
-  }
-
-  async submitTelebirrReceipt(
-    userId: string,
-    dto: SubmitTelebirrReceiptDto
-  ): Promise<TelebirrDepositResponse> {
-    const submittedReceipt = dto.receiptNo ?? dto.receiptUrl;
-    if (!submittedReceipt) {
-      throw new ConflictException('receiptNo or receiptUrl is required');
-    }
-
-    const verified = await this.telebirrReceiptVerifierService.verifyReceipt(
-      submittedReceipt,
-      userId
-    );
-
-    // Enforce the admin-configured minimum deposit before crediting.
-    await this.assertMeetsMinimum(verified.amountMinor);
-
-    let credited = false;
-    const result = await this.dataSource.transaction(async (manager) => {
-      const depositRepo = manager.getRepository(TelebirrDeposit);
-      const existingDeposit = await depositRepo.findOneBy({ receiptNo: verified.receiptNo });
-
-      if (existingDeposit) {
-        if (existingDeposit.status === 'rejected') {
-          throw new ConflictException('Telebirr receipt was already rejected');
-        }
-        if (existingDeposit.userId !== userId) {
-          throw new ConflictException('Telebirr receipt was already used');
-        }
-        return this.toResponse(existingDeposit);
-      }
-
-      const deposit = depositRepo.create({
-        userId,
-        agentId: verified.agentId || undefined,
-        receiptNo: verified.receiptNo,
-        receiptFileUrl: dto.receiptFileUrl,
-        amountMinor: verified.amountMinor,
-        currencyCode: 'CREDIT',
-        status: 'credited',
-        payerName: verified.parsedReceipt.payer_name,
-        payerPhone: verified.parsedReceipt.payer_phone,
-        creditedPartyName: verified.parsedReceipt.credited_party_name,
-        creditedPartyAccount: verified.parsedReceipt.credited_party_acc_no,
-        transactionStatus: verified.parsedReceipt.transaction_status,
-        parsedReceipt: verified.parsedReceipt,
-        verification: verified.verification
-      });
-      await depositRepo.save(deposit);
-
-      // Prefer funding the player's credit from the matched agent's OWN
-      // wallet — they already received this money for real — falling back to
-      // the Master Wallet only if the agent can't cover it.
-      const { walletCredit, fundedBy, fundingFallbackReason } = await this.fundDepositCredit(manager, {
-        agentId: deposit.agentId,
-        userId,
-        amountMinor: verified.amountMinor,
-        sourceType: 'telebirr_receipt',
-        sourceId: verified.receiptNo,
-        idempotencyKey: `telebirr:${verified.receiptNo}`,
-        metadata: {
-          receiptNo: verified.receiptNo,
-          payerName: verified.parsedReceipt.payer_name,
-          payerPhone: verified.parsedReceipt.payer_phone,
-          transactionStatus: verified.parsedReceipt.transaction_status
-        }
-      });
-
-      deposit.walletCredit = walletCredit;
-      deposit.fundedBy = fundedBy;
-      deposit.fundingFallbackReason = fundingFallbackReason ?? undefined;
-      await depositRepo.save(deposit);
-      credited = true;
-
-      if (deposit.agentId) {
-        // First-deposit agent linking (Approach B): the agent who processed the
-        // customer's FIRST credited deposit becomes their referring agent. Only set
-        // when not already linked — first deposit wins, never reassigned.
-        await manager
-          .createQueryBuilder()
-          .update(User)
-          .set({ referredByAgentId: deposit.agentId })
-          .where('id = :userId AND referredByAgentId IS NULL', { userId })
-          .execute();
-
-        const agentActionRepo = manager.getRepository(AgentActionLog);
-        await agentActionRepo.save(
-          agentActionRepo.create({
-            agentId: deposit.agentId,
-            userId,
-            amountMinor: deposit.amountMinor,
-            ledgerEntryId: walletCredit.ledgerEntry.id,
-            actionType: 'telebirr_deposit_receipt',
-            metadata: {
-              receiptNo: deposit.receiptNo,
-              payerPhone: deposit.payerPhone,
-              creditedPartyAccount: deposit.creditedPartyAccount,
-            },
-          }),
         );
-      }
-
-      return this.toResponse(deposit);
-    });
-
-    // Post-commit, best-effort — only on a genuinely new credit (not a duplicate submit).
-    if (credited) {
-      await this.notificationsService.safeCreate({
-        userId,
-        type: 'deposit',
-        title: 'Deposit received',
-        body: `Your wallet was credited with ${result.amountMinor.toLocaleString()} ETB.`,
-        data: { amountMinor: result.amountMinor, receiptNo: result.receiptNo },
-      });
+        return {
+            walletCredit,
+            fundedBy: 'master_wallet',
+            fundingFallbackReason,
+        };
     }
-    return result;
-  }
 
-  private toResponse(deposit: TelebirrDeposit): TelebirrDepositResponse {
-    return {
-      id: deposit.id,
-      receiptNo: deposit.receiptNo,
-      amountMinor: deposit.amountMinor,
-      currencyCode: deposit.currencyCode,
-      status: deposit.status,
-      agentId: deposit.agentId,
-      walletCredit: deposit.walletCredit || {},
-      parsedReceipt: deposit.parsedReceipt,
-      verification: deposit.verification || {}
-    };
-  }
-
-  // ── M-PESA ─────────────────────────────────────────────────────────
-
-  async previewMpesaSms(userId: string, dto: PreviewMpesaSmsDto): Promise<MpesaReceiptPreview> {
-    const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
-    await this.assertMeetsMinimum(verified.amountMinor);
-    const p = verified.parsedSms;
-    return {
-      confirmationCode: verified.confirmationCode,
-      amountMinor: verified.amountMinor,
-      receiverName: p.counterpartyName,
-      receiverPhone: p.counterpartyPhone,
-      date: p.dateRaw,
-    };
-  }
-
-  async submitMpesaSms(userId: string, dto: SubmitMpesaSmsDto): Promise<MpesaDepositResponse> {
-    const verified = await this.mpesaReceiptVerifierService.verifySms(dto.sms, userId);
-    await this.assertMeetsMinimum(verified.amountMinor);
-
-    let credited = false;
-    const result = await this.dataSource.transaction(async (manager) => {
-      const depositRepo = manager.getRepository(MpesaDeposit);
-      const existingDeposit = await depositRepo.findOneBy({ confirmationCode: verified.confirmationCode });
-
-      if (existingDeposit) {
-        if (existingDeposit.status === 'rejected') {
-          throw new ConflictException('M-PESA receipt was already rejected');
+    async previewTelebirrReceipt(
+        userId: string,
+        dto: PreviewTelebirrReceiptDto,
+    ): Promise<TelebirrReceiptPreview> {
+        const submittedReceipt = dto.receiptNo ?? dto.receiptUrl;
+        if (!submittedReceipt) {
+            throw new ConflictException('receiptNo or receiptUrl is required');
         }
-        if (existingDeposit.userId !== userId) {
-          throw new ConflictException('M-PESA receipt was already used');
+        const verified =
+            await this.telebirrReceiptVerifierService.verifyReceipt(
+                submittedReceipt,
+                userId,
+            );
+        // Reject below-minimum receipts at the verify step so the player is told
+        // before they try to confirm the deposit.
+        await this.assertMeetsMinimum(verified.amountMinor);
+        const p = verified.parsedReceipt;
+        return {
+            receiptNo: verified.receiptNo,
+            amountMinor: verified.amountMinor,
+            payerName:
+                typeof p.payer_name === 'string' ? p.payer_name : undefined,
+            payerPhone:
+                typeof p.payer_phone === 'string' ? p.payer_phone : undefined,
+            receiverName:
+                typeof p.credited_party_name === 'string'
+                    ? p.credited_party_name
+                    : undefined,
+            transactionStatus:
+                typeof p.transaction_status === 'string'
+                    ? p.transaction_status
+                    : undefined,
+            date: typeof p.date === 'string' ? p.date : undefined,
+        };
+    }
+
+    async submitTelebirrReceipt(
+        userId: string,
+        dto: SubmitTelebirrReceiptDto,
+    ): Promise<TelebirrDepositResponse> {
+        const submittedReceipt = dto.receiptNo ?? dto.receiptUrl;
+        if (!submittedReceipt) {
+            throw new ConflictException('receiptNo or receiptUrl is required');
         }
-        return this.toMpesaResponse(existingDeposit);
-      }
 
-      const deposit = depositRepo.create({
-        userId,
-        agentId: verified.agentId || undefined,
-        confirmationCode: verified.confirmationCode,
-        receiptFileUrl: dto.receiptFileUrl,
-        amountMinor: verified.amountMinor,
-        currencyCode: 'CREDIT',
-        status: 'credited',
-        creditedPartyName: verified.parsedSms.counterpartyName,
-        creditedPartyAccount: verified.parsedSms.counterpartyPhone,
-        transactionStatus: verified.parsedSms.direction,
-        parsedSms: verified.parsedSms,
-        verification: verified.verification,
-      });
-      await depositRepo.save(deposit);
+        const verified =
+            await this.telebirrReceiptVerifierService.verifyReceipt(
+                submittedReceipt,
+                userId,
+            );
 
-      // Prefer funding from the matched agent's own wallet — see the matching
-      // Telebirr comment above.
-      const { walletCredit, fundedBy, fundingFallbackReason } = await this.fundDepositCredit(manager, {
-        agentId: deposit.agentId,
-        userId,
-        amountMinor: verified.amountMinor,
-        sourceType: 'mpesa_receipt',
-        sourceId: verified.confirmationCode,
-        idempotencyKey: `mpesa:${verified.confirmationCode}`,
-        metadata: {
-          confirmationCode: verified.confirmationCode,
-          receiverName: verified.parsedSms.counterpartyName,
-          receiverPhone: verified.parsedSms.counterpartyPhone,
-        },
-      });
+        // Enforce the admin-configured minimum deposit before crediting.
+        await this.assertMeetsMinimum(verified.amountMinor);
 
-      deposit.walletCredit = walletCredit;
-      deposit.fundedBy = fundedBy;
-      deposit.fundingFallbackReason = fundingFallbackReason ?? undefined;
-      await depositRepo.save(deposit);
-      credited = true;
+        let credited = false;
+        const result = await this.dataSource.transaction(async (manager) => {
+            const depositRepo = manager.getRepository(TelebirrDeposit);
+            const existingDeposit = await depositRepo.findOneBy({
+                receiptNo: verified.receiptNo,
+            });
 
-      if (deposit.agentId) {
-        // First-deposit agent linking — mirrors the Telebirr flow. First deposit
-        // wins; never reassigned.
-        await manager
-          .createQueryBuilder()
-          .update(User)
-          .set({ referredByAgentId: deposit.agentId })
-          .where('id = :userId AND referredByAgentId IS NULL', { userId })
-          .execute();
+            if (existingDeposit) {
+                if (existingDeposit.status === 'rejected') {
+                    throw new ConflictException(
+                        'Telebirr receipt was already rejected',
+                    );
+                }
+                if (existingDeposit.userId !== userId) {
+                    throw new ConflictException(
+                        'Telebirr receipt was already used',
+                    );
+                }
+                return this.toResponse(existingDeposit);
+            }
 
-        const agentActionRepo = manager.getRepository(AgentActionLog);
-        await agentActionRepo.save(
-          agentActionRepo.create({
-            agentId: deposit.agentId,
-            userId,
+            const deposit = depositRepo.create({
+                userId,
+                agentId: verified.agentId || undefined,
+                receiptNo: verified.receiptNo,
+                receiptFileUrl: dto.receiptFileUrl,
+                amountMinor: verified.amountMinor,
+                currencyCode: 'CREDIT',
+                status: 'credited',
+                payerName: verified.parsedReceipt.payer_name,
+                payerPhone: verified.parsedReceipt.payer_phone,
+                creditedPartyName: verified.parsedReceipt.credited_party_name,
+                creditedPartyAccount:
+                    verified.parsedReceipt.credited_party_acc_no,
+                transactionStatus: verified.parsedReceipt.transaction_status,
+                parsedReceipt: verified.parsedReceipt,
+                verification: verified.verification,
+            });
+            await depositRepo.save(deposit);
+
+            // Prefer funding the player's credit from the matched agent's OWN
+            // wallet  they already received this money for real  falling back to
+            // the Master Wallet only if the agent can't cover it.
+            const { walletCredit, fundedBy, fundingFallbackReason } =
+                await this.fundDepositCredit(manager, {
+                    agentId: deposit.agentId,
+                    userId,
+                    amountMinor: verified.amountMinor,
+                    sourceType: 'telebirr_receipt',
+                    sourceId: verified.receiptNo,
+                    idempotencyKey: `telebirr:${verified.receiptNo}`,
+                    metadata: {
+                        receiptNo: verified.receiptNo,
+                        payerName: verified.parsedReceipt.payer_name,
+                        payerPhone: verified.parsedReceipt.payer_phone,
+                        transactionStatus:
+                            verified.parsedReceipt.transaction_status,
+                    },
+                });
+
+            deposit.walletCredit = walletCredit;
+            deposit.fundedBy = fundedBy;
+            deposit.fundingFallbackReason = fundingFallbackReason ?? undefined;
+            await depositRepo.save(deposit);
+            credited = true;
+
+            if (deposit.agentId) {
+                // First-deposit agent linking (Approach B): the agent who processed the
+                // customer's FIRST credited deposit becomes their referring agent. Only set
+                // when not already linked  first deposit wins, never reassigned.
+                await manager
+                    .createQueryBuilder()
+                    .update(User)
+                    .set({ referredByAgentId: deposit.agentId })
+                    .where('id = :userId AND referredByAgentId IS NULL', {
+                        userId,
+                    })
+                    .execute();
+
+                const agentActionRepo = manager.getRepository(AgentActionLog);
+                await agentActionRepo.save(
+                    agentActionRepo.create({
+                        agentId: deposit.agentId,
+                        userId,
+                        amountMinor: deposit.amountMinor,
+                        ledgerEntryId: walletCredit.ledgerEntry.id,
+                        actionType: 'telebirr_deposit_receipt',
+                        metadata: {
+                            receiptNo: deposit.receiptNo,
+                            payerPhone: deposit.payerPhone,
+                            creditedPartyAccount: deposit.creditedPartyAccount,
+                        },
+                    }),
+                );
+            }
+
+            return this.toResponse(deposit);
+        });
+
+        // Post-commit, best-effort  only on a genuinely new credit (not a duplicate submit).
+        if (credited) {
+            await this.notificationsService.safeCreate({
+                userId,
+                type: 'deposit',
+                title: 'Deposit received',
+                body: `Your wallet was credited with ${result.amountMinor.toLocaleString()} ETB.`,
+                data: {
+                    amountMinor: result.amountMinor,
+                    receiptNo: result.receiptNo,
+                },
+            });
+        }
+        return result;
+    }
+
+    private toResponse(deposit: TelebirrDeposit): TelebirrDepositResponse {
+        return {
+            id: deposit.id,
+            receiptNo: deposit.receiptNo,
             amountMinor: deposit.amountMinor,
-            ledgerEntryId: walletCredit.ledgerEntry.id,
-            actionType: 'mpesa_deposit_receipt',
-            metadata: {
-              confirmationCode: deposit.confirmationCode,
-              creditedPartyAccount: deposit.creditedPartyAccount,
-            },
-          }),
-        );
-      }
-
-      return this.toMpesaResponse(deposit);
-    });
-
-    if (credited) {
-      await this.notificationsService.safeCreate({
-        userId,
-        type: 'deposit',
-        title: 'Deposit received',
-        body: `Your wallet was credited with ${result.amountMinor.toLocaleString()} ETB.`,
-        data: { amountMinor: result.amountMinor, confirmationCode: result.confirmationCode },
-      });
+            currencyCode: deposit.currencyCode,
+            status: deposit.status,
+            agentId: deposit.agentId,
+            walletCredit: deposit.walletCredit || {},
+            parsedReceipt: deposit.parsedReceipt,
+            verification: deposit.verification || {},
+        };
     }
-    return result;
-  }
 
-  private toMpesaResponse(deposit: MpesaDeposit): MpesaDepositResponse {
-    return {
-      id: deposit.id,
-      confirmationCode: deposit.confirmationCode,
-      amountMinor: deposit.amountMinor,
-      currencyCode: deposit.currencyCode,
-      status: deposit.status,
-      agentId: deposit.agentId,
-      walletCredit: deposit.walletCredit || {},
-      parsedSms: deposit.parsedSms,
-      verification: deposit.verification || {},
-    };
-  }
+    // ── M-PESA ─────────────────────────────────────────────────────────
+
+    async previewMpesaSms(
+        userId: string,
+        dto: PreviewMpesaSmsDto,
+    ): Promise<MpesaReceiptPreview> {
+        const verified = await this.mpesaReceiptVerifierService.verifySms(
+            dto.sms,
+            userId,
+        );
+        await this.assertMeetsMinimum(verified.amountMinor);
+        const p = verified.parsedSms;
+        return {
+            confirmationCode: verified.confirmationCode,
+            amountMinor: verified.amountMinor,
+            receiverName: p.counterpartyName,
+            receiverPhone: p.counterpartyPhone,
+            date: p.dateRaw,
+        };
+    }
+
+    async submitMpesaSms(
+        userId: string,
+        dto: SubmitMpesaSmsDto,
+    ): Promise<MpesaDepositResponse> {
+        const verified = await this.mpesaReceiptVerifierService.verifySms(
+            dto.sms,
+            userId,
+        );
+        await this.assertMeetsMinimum(verified.amountMinor);
+
+        let credited = false;
+        const result = await this.dataSource.transaction(async (manager) => {
+            const depositRepo = manager.getRepository(MpesaDeposit);
+            const existingDeposit = await depositRepo.findOneBy({
+                confirmationCode: verified.confirmationCode,
+            });
+
+            if (existingDeposit) {
+                if (existingDeposit.status === 'rejected') {
+                    throw new ConflictException(
+                        'M-PESA receipt was already rejected',
+                    );
+                }
+                if (existingDeposit.userId !== userId) {
+                    throw new ConflictException(
+                        'M-PESA receipt was already used',
+                    );
+                }
+                return this.toMpesaResponse(existingDeposit);
+            }
+
+            const deposit = depositRepo.create({
+                userId,
+                agentId: verified.agentId || undefined,
+                confirmationCode: verified.confirmationCode,
+                receiptFileUrl: dto.receiptFileUrl,
+                amountMinor: verified.amountMinor,
+                currencyCode: 'CREDIT',
+                status: 'credited',
+                creditedPartyName: verified.parsedSms.counterpartyName,
+                creditedPartyAccount: verified.parsedSms.counterpartyPhone,
+                transactionStatus: verified.parsedSms.direction,
+                parsedSms: verified.parsedSms,
+                verification: verified.verification,
+            });
+            await depositRepo.save(deposit);
+
+            // Prefer funding from the matched agent's own wallet  see the matching
+            // Telebirr comment above.
+            const { walletCredit, fundedBy, fundingFallbackReason } =
+                await this.fundDepositCredit(manager, {
+                    agentId: deposit.agentId,
+                    userId,
+                    amountMinor: verified.amountMinor,
+                    sourceType: 'mpesa_receipt',
+                    sourceId: verified.confirmationCode,
+                    idempotencyKey: `mpesa:${verified.confirmationCode}`,
+                    metadata: {
+                        confirmationCode: verified.confirmationCode,
+                        receiverName: verified.parsedSms.counterpartyName,
+                        receiverPhone: verified.parsedSms.counterpartyPhone,
+                    },
+                });
+
+            deposit.walletCredit = walletCredit;
+            deposit.fundedBy = fundedBy;
+            deposit.fundingFallbackReason = fundingFallbackReason ?? undefined;
+            await depositRepo.save(deposit);
+            credited = true;
+
+            if (deposit.agentId) {
+                // First-deposit agent linking  mirrors the Telebirr flow. First deposit
+                // wins; never reassigned.
+                await manager
+                    .createQueryBuilder()
+                    .update(User)
+                    .set({ referredByAgentId: deposit.agentId })
+                    .where('id = :userId AND referredByAgentId IS NULL', {
+                        userId,
+                    })
+                    .execute();
+
+                const agentActionRepo = manager.getRepository(AgentActionLog);
+                await agentActionRepo.save(
+                    agentActionRepo.create({
+                        agentId: deposit.agentId,
+                        userId,
+                        amountMinor: deposit.amountMinor,
+                        ledgerEntryId: walletCredit.ledgerEntry.id,
+                        actionType: 'mpesa_deposit_receipt',
+                        metadata: {
+                            confirmationCode: deposit.confirmationCode,
+                            creditedPartyAccount: deposit.creditedPartyAccount,
+                        },
+                    }),
+                );
+            }
+
+            return this.toMpesaResponse(deposit);
+        });
+
+        if (credited) {
+            await this.notificationsService.safeCreate({
+                userId,
+                type: 'deposit',
+                title: 'Deposit received',
+                body: `Your wallet was credited with ${result.amountMinor.toLocaleString()} ETB.`,
+                data: {
+                    amountMinor: result.amountMinor,
+                    confirmationCode: result.confirmationCode,
+                },
+            });
+        }
+        return result;
+    }
+
+    private toMpesaResponse(deposit: MpesaDeposit): MpesaDepositResponse {
+        return {
+            id: deposit.id,
+            confirmationCode: deposit.confirmationCode,
+            amountMinor: deposit.amountMinor,
+            currencyCode: deposit.currencyCode,
+            status: deposit.status,
+            agentId: deposit.agentId,
+            walletCredit: deposit.walletCredit || {},
+            parsedSms: deposit.parsedSms,
+            verification: deposit.verification || {},
+        };
+    }
 }

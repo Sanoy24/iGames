@@ -1,4 +1,4 @@
-# Gotchas — Harness Engineering Failure Modes
+# Gotchas Harness Engineering Failure Modes
 
 Non-obvious principles that will cause bugs if you violate them.
 
@@ -30,7 +30,7 @@ Non-obvious principles that will cause bugs if you violate them.
 ```bash
 # Test priority ordering
 cat ~/.claude/CLAUDE.md          # User level
-cat ./CLAUDE.md                   # Project level  
+cat ./CLAUDE.md                   # Project level
 cat ./CLAUDE.local.md             # Local override (WINS)
 ```
 
@@ -70,9 +70,9 @@ toolRegistry.register('shell', { concurrentSafe: false });
 
 // Do this:
 function isCallConcurrentSafe(call: ToolCall): boolean {
-  if (call.args.command.startsWith('rm -rf')) return false;
-  if (call.args.command.startsWith('cat')) return true;
-  // ...runtime classification
+    if (call.args.command.startsWith('rm -rf')) return false;
+    if (call.args.command.startsWith('cat')) return true;
+    // ...runtime classification
 }
 ```
 
@@ -119,8 +119,8 @@ function isCallConcurrentSafe(call: ToolCall): boolean {
 ```typescript
 // Example: Cache invalidation at mutation point
 async function editFile(path: string, content: string) {
-  await writeFile(path, content);
-  context.cache.invalidate(`file:${path}`); // MUST invalidate
+    await writeFile(path, content);
+    context.cache.invalidate(`file:${path}`); // MUST invalidate
 }
 ```
 
@@ -130,7 +130,7 @@ async function editFile(path: string, content: string) {
 
 **Symptom**: Entire extension system disabled because one hook untrusted.
 
-**Cause**: If workspace untrusted, all hooks skip — not just suspicious ones.
+**Cause**: If workspace untrusted, all hooks skip not just suspicious ones.
 
 **Fix**: Design hooks with trust gate at dispatch point. Don't attempt per-hook trust evaluation.
 
@@ -143,6 +143,7 @@ async function editFile(path: string, content: string) {
 **Cause**: Work unit evicted before parent notified of completion. Race condition: parent tries to read result that's already GC'd.
 
 **Fix**: Two-phase eviction:
+
 1. Clean disk output at terminal state (eager)
 2. Clean in-memory record after parent notified (lazy)
 
@@ -173,8 +174,8 @@ async function editFile(path: string, content: string) {
 
 ```typescript
 registry.register('shell', {
-  defaultPermission: 'ask', // NOT 'allow'
-  // ...
+    defaultPermission: 'ask', // NOT 'allow'
+    // ...
 });
 ```
 
@@ -202,8 +203,8 @@ registry.register('shell', {
 
 ## Related Reading
 
-- [Memory Persistence Pattern](memory-persistence-pattern.md) — Gotchas #1, #3, #4, #15
-- [Tool Registry Pattern](tool-registry-pattern.md) — Gotchas #5, #6, #13
-- [Multi-agent Pattern](multi-agent-pattern.md) — Gotchas #8, #11
-- [Context Engineering Pattern](context-engineering-pattern.md) — Gotchas #9
-- [Lifecycle Pattern](lifecycle-bootstrap-pattern.md) — Gotchas #10, #14
+- [Memory Persistence Pattern](memory-persistence-pattern.md) Gotchas #1, #3, #4, #15
+- [Tool Registry Pattern](tool-registry-pattern.md) Gotchas #5, #6, #13
+- [Multi-agent Pattern](multi-agent-pattern.md) Gotchas #8, #11
+- [Context Engineering Pattern](context-engineering-pattern.md) Gotchas #9
+- [Lifecycle Pattern](lifecycle-bootstrap-pattern.md) Gotchas #10, #14

@@ -43,16 +43,16 @@ const POLL_INTERVAL_MS = 5_000;
 // Paced reveal cadence. One ball is revealed every REVEAL_BASE_MS so each gets a
 // full, unhurried moment on the caller, the board and the cards.
 // REVEAL_BASE_MS is only the fallback used before the first `bingo.number.drawn`
-// event of a session arrives — once a draw event lands, its `intervalMs` (the
+// event of a session arrives  once a draw event lands, its `intervalMs` (the
 // server's actual configured cadence) takes over as the steady-state delay. This
 // was previously a hardcoded 1500ms, faster than the server's own 2000ms default,
-// so the client routinely caught up and stalled waiting on the socket — visible
+// so the client routinely caught up and stalled waiting on the socket  visible
 // as uneven/laggy calling ("it seems the bot is calculating").
 const REVEAL_BASE_MS = 1_500;
 
 // If the client falls more than this many balls behind (backgrounded tab,
-// dropped socket, a big poll catch-up — see the visibility/focus resync
-// effect below), we do NOT animate through the backlog at a sped-up pace —
+// dropped socket, a big poll catch-up  see the visibility/focus resync
+// effect below), we do NOT animate through the backlog at a sped-up pace
 // that reads as suspicious ("is this rigged?") rather than as a resync. We
 // jump straight to CATCHUP_TAIL balls short of live and resume the normal
 // calm cadence from there, showing a brief "Catching up…" badge so the jump
@@ -127,7 +127,7 @@ function getPrefilledStyle(n: number, gridSize: number) {
 
 // ─── Group definitions ────────────────────────────────────────────────────────
 
-// 75-ball: B/I/N/G/O columns — each is a distinct accent
+// 75-ball: B/I/N/G/O columns  each is a distinct accent
 const BINGO_COLS_75 = [
     {
         letter: 'B',
@@ -171,7 +171,7 @@ const BINGO_COLS_75 = [
     },
 ];
 
-// 90-ball: 9 groups of 10 — each decade gets a different accent
+// 90-ball: 9 groups of 10  each decade gets a different accent
 const BALL_GROUPS_90 = [
     {
         from: 1,
@@ -270,7 +270,7 @@ const NumberBoard = memo(
         isPatternMode: boolean;
     }) => {
         const drawnSet = useMemo(() => new Set(drawnNumbers), [drawnNumbers]);
-        // The most-recently revealed ball — highlighted distinctly on the board so it's
+        // The most-recently revealed ball  highlighted distinctly on the board so it's
         // obvious where the "now calling" number landed.
         const current =
             drawnNumbers.length > 0
@@ -494,8 +494,10 @@ const CartelaGrid = memo(
                         textStyle = { color: '#f5f5f5', fontWeight: 900 };
                     }
 
-                    const canBuy = salesOpen && !takenByOther && !pending && !returnLocked;
-                    const canRefund = mine && salesOpen && !pending && !returnLocked;
+                    const canBuy =
+                        salesOpen && !takenByOther && !pending && !returnLocked;
+                    const canRefund =
+                        mine && salesOpen && !pending && !returnLocked;
                     const canTap = canBuy || canRefund;
 
                     return (
@@ -508,7 +510,11 @@ const CartelaGrid = memo(
                             style={{
                                 ...cellStyle,
                                 ...textStyle,
-                                cursor: canTap ? 'pointer' : mine && returnLocked ? 'not-allowed' : 'default',
+                                cursor: canTap
+                                    ? 'pointer'
+                                    : mine && returnLocked
+                                      ? 'not-allowed'
+                                      : 'default',
                                 minWidth: 0,
                                 opacity: pending ? 0.45 : 1,
                             }}
@@ -548,7 +554,7 @@ function RecentCallsStrip({
             <div className='text-[8px] font-black uppercase tracking-widest text-slate-600 mb-1.5'>
                 {t('bingo.recentCalls')}
             </div>
-            {/* Keyed by number (unique per room) — NOT array index — so the sliding
+            {/* Keyed by number (unique per room)  NOT array index  so the sliding
           window doesn't remount every pill on each draw. Only the genuinely new
           pill animates in; the rest stay put and simply glide as the row grows. */}
             <div
@@ -628,7 +634,7 @@ function CurrentBallDisplay({
 }) {
     const { t } = useTranslation();
     // `drawnNumbers` is the parent's already-paced "revealed" list, so the last
-    // entry here is exactly the ball currently lit on the board and cards — they
+    // entry here is exactly the ball currently lit on the board and cards  they
     // all advance together.
     const n =
         drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
@@ -650,7 +656,9 @@ function CurrentBallDisplay({
                 <span
                     className={`text-[10px] font-black uppercase tracking-widest ${replaying ? 'text-amber-400' : 'text-amber-500'}`}
                 >
-                    {replaying ? t('bingo.replayingResult') : t('bingo.drawComplete')}
+                    {replaying
+                        ? t('bingo.replayingResult')
+                        : t('bingo.drawComplete')}
                 </span>
                 <span className='text-[9px] font-mono text-slate-500'>
                     {t('bingo.numbersCalled', { count, max })}
@@ -682,10 +690,10 @@ function CurrentBallDisplay({
                 {catchingUp ? t('bingo.catchingUp') : t('bingo.nowCalling')}
             </span>
             {/* `mode="wait"` guarantees the previous ball fully exits before the next
-          enters — one unhurried ball at a time, never two mid-flight overlapping
+          enters  one unhurried ball at a time, never two mid-flight overlapping
           into a jittery blur even if reveals land close together. */}
             <AnimatePresence mode='wait'>
-                {/* iGames' own rounded-tile caller. The smoothness — not the shape — is
+                {/* iGames' own rounded-tile caller. The smoothness  not the shape  is
             what we borrowed from the reference: it pops in on a calm spring, the
             glow breathes gently, and `mode="wait"` keeps exactly one tile in
             flight so it never smears into the next. */}
@@ -788,7 +796,15 @@ const PatternTicketCard = memo(
                     </span>
                     <span
                         className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
-                        style={won ? undefined : { fontSize: 7, padding: '1px 5px', letterSpacing: 0 }}
+                        style={
+                            won
+                                ? undefined
+                                : {
+                                      fontSize: 7,
+                                      padding: '1px 5px',
+                                      letterSpacing: 0,
+                                  }
+                        }
                     >
                         {won
                             ? `+${formatCredits(ticket.payoutMinor)} ETB`
@@ -798,7 +814,11 @@ const PatternTicketCard = memo(
                 {ticket.completedPatterns?.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>
                         {ticket.completedPatterns
-                            .map((pid) => patternPrizeMap.get(pid) ?? t('bingo.pattern'))
+                            .map(
+                                (pid) =>
+                                    patternPrizeMap.get(pid) ??
+                                    t('bingo.pattern'),
+                            )
                             .join(' · ')}
                     </p>
                 )}
@@ -890,7 +910,15 @@ const BingoTicketCard = memo(
                     </span>
                     <span
                         className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
-                        style={won ? undefined : { fontSize: 7, padding: '1px 5px', letterSpacing: 0 }}
+                        style={
+                            won
+                                ? undefined
+                                : {
+                                      fontSize: 7,
+                                      padding: '1px 5px',
+                                      letterSpacing: 0,
+                                  }
+                        }
                     >
                         {won
                             ? `+${formatCredits(ticket.payoutMinor)} ETB`
@@ -953,8 +981,16 @@ const BingoTicketCard = memo(
                     })}
                 </div>
                 <div className='flex justify-between text-[9px] text-slate-600 pt-1 border-t border-white/[0.05]'>
-                    <span>{t('bingo.stakeEtb', { amount: formatCredits(ticket.stakeMinor) })}</span>
-                    <span>{t('bingo.linesOf3', { count: ticket.completedLines.length })}</span>
+                    <span>
+                        {t('bingo.stakeEtb', {
+                            amount: formatCredits(ticket.stakeMinor),
+                        })}
+                    </span>
+                    <span>
+                        {t('bingo.linesOf3', {
+                            count: ticket.completedLines.length,
+                        })}
+                    </span>
                 </div>
             </motion.article>
         );
@@ -987,7 +1023,7 @@ function WinnerBingoCard({
     drawnNumbers: number[];
     markedNumbers?: number[];
     /** The exact cells that satisfied the awarded pattern (server-computed).
-     * When present, ONLY these render as the win — a card can legitimately
+     * When present, ONLY these render as the win  a card can legitimately
      * have extra lines complete by chance, and those must not be shown as if
      * they were required to win. Falls back to auto-detecting any complete
      * line when absent (older rooms settled before this field existed). */
@@ -1117,7 +1153,7 @@ const PLACE_LABEL: Record<PrefilledPlaceKey, string> = {
 // queue (or the underlying game) is shown again.
 const LIVE_PLACE_WIN_MS = 3_400;
 // Beat where the winning ball sits in the "now calling" display BEFORE the 5×5
-// winner card pops — so the call is seen first, then the card, then the summary.
+// winner card pops  so the call is seen first, then the card, then the summary.
 const NOW_CALLING_HOLD_MS = 1_400;
 
 export type LivePlaceWin = {
@@ -1139,7 +1175,9 @@ function BingoLiveWinCard({
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
     const winCells =
-        (entry.winPatternCells as Array<{ row: number; col: number }> | undefined) ?? undefined;
+        (entry.winPatternCells as
+            | Array<{ row: number; col: number }>
+            | undefined) ?? undefined;
     const name =
         (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
@@ -1182,7 +1220,9 @@ function BingoLiveWinCard({
                 <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
                     <span
                         className='rounded-lg px-3 py-1 font-black text-white'
-                        style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
+                        style={{
+                            background: disqualified ? '#b91c1c' : '#2f8f4f',
+                        }}
                     >
                         {name}
                         {last4 ? ` ( *${last4} )` : ''}
@@ -1236,7 +1276,9 @@ function BingoLiveWinCard({
                                     className='text-[13px] font-black'
                                     style={{ color: '#34d399' }}
                                 >
-                                    {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
+                                    {t('bingo.prizeEtb', {
+                                        amount: formatCreditsFull(prize),
+                                    })}
                                 </span>
                             )}
                             {cartela != null && (
@@ -1290,11 +1332,12 @@ function LivePlaceWinPopup({
     const grid = entry.winnerGrid as Array<Array<number | null>>;
     const marked =
         (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
-    const name = (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
+    const name =
+        (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
     const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
     const prize = (entry.prizeMinor as number | undefined) ?? 0;
     const cartela = entry.winnerCartelaNumber as number | undefined;
-    // This card was the winner but got disqualified for a premature BINGO call —
+    // This card was the winner but got disqualified for a premature BINGO call
     // the prize goes to the house, not the player. We still reveal the card.
     const disqualified = !!entry.disqualified;
     const lastCalled =
@@ -1333,12 +1376,17 @@ function LivePlaceWinPopup({
                         {t('bingo.bingoExclaim')}
                     </div>
                     <div className='text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1'>
-                        {PLACE_MEDAL[place]} {t('bingo.placeOrdinal', { place: PLACE_LABEL[place] })}
+                        {PLACE_MEDAL[place]}{' '}
+                        {t('bingo.placeOrdinal', { place: PLACE_LABEL[place] })}
                     </div>
                     <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
                         <span
                             className='rounded-lg px-3 py-1 font-black text-white'
-                            style={{ background: disqualified ? '#b91c1c' : '#2f8f4f' }}
+                            style={{
+                                background: disqualified
+                                    ? '#b91c1c'
+                                    : '#2f8f4f',
+                            }}
                         >
                             {name}
                             {last4 ? ` ( *${last4} )` : ''}
@@ -1391,7 +1439,9 @@ function LivePlaceWinPopup({
                                         className='text-[13px] font-black'
                                         style={{ color: '#34d399' }}
                                     >
-                                        {t('bingo.prizeEtb', { amount: formatCreditsFull(prize) })}
+                                        {t('bingo.prizeEtb', {
+                                            amount: formatCreditsFull(prize),
+                                        })}
                                     </span>
                                 )}
                                 {cartela != null && (
@@ -1430,8 +1480,8 @@ function RoomResultOverlay({
     // A non-winner has no access to the winner's ticket (getRoomState only returns
     // the caller's own tickets), so the settlement entry is the ONLY source of the
     // winning 5×5 card for them. Prefer the primary place, but fall back to ANY
-    // settlement entry that carries winner data — so the card still renders if only
-    // 2nd/3rd settled, or the key naming differs — instead of degrading to a
+    // settlement entry that carries winner data  so the card still renders if only
+    // 2nd/3rd settled, or the key naming differs  instead of degrading to a
     // name-only dialog.
     const summaryEntries = Object.values(summary).filter(
         (v): v is Record<string, unknown> =>
@@ -1456,7 +1506,8 @@ function RoomResultOverlay({
         (summary[primaryKey] as Record<string, unknown> | undefined) ??
         summaryEntries.find((e) => e.winnerGrid || e.winnerDisplayName);
     const winnerDisplayName =
-        (winEntry?.winnerDisplayName as string | undefined) ?? tr('bingo.luckyPlayer');
+        (winEntry?.winnerDisplayName as string | undefined) ??
+        tr('bingo.luckyPlayer');
     const prizeMinor =
         (winEntry?.prizeMinor as number | undefined) ?? room.prizeMinor;
     const winnerTicket = iWon
@@ -1575,7 +1626,7 @@ function RoomResultOverlay({
                         )}
                     </div>
 
-                    {/* Final standings — every place that was won: medal + name + last-4
+                    {/* Final standings  every place that was won: medal + name + last-4
               phone + card# + amount won. No 5×5 replay (that showed live). */}
                     {hasWinner && placeEntries.length > 0 && (
                         <div
@@ -1592,71 +1643,80 @@ function RoomResultOverlay({
                                 {placeEntries.map(({ place, entry }) => {
                                     const dq = !!entry.disqualified;
                                     return (
-                                    <div
-                                        key={place}
-                                        className='flex items-center justify-between rounded-lg px-2 py-1 bg-black/20'
-                                    >
-                                        <span className='flex items-center gap-1.5 min-w-0'>
-                                            <span className='text-sm leading-none'>
-                                                {PLACE_MEDAL[place]}
+                                        <div
+                                            key={place}
+                                            className='flex items-center justify-between rounded-lg px-2 py-1 bg-black/20'
+                                        >
+                                            <span className='flex items-center gap-1.5 min-w-0'>
+                                                <span className='text-sm leading-none'>
+                                                    {PLACE_MEDAL[place]}
+                                                </span>
+                                                <span className='text-[11px] font-black truncate text-white'>
+                                                    {(entry.winnerDisplayName as
+                                                        | string
+                                                        | undefined) ??
+                                                        tr('bingo.player')}
+                                                    {entry.winnerPhoneLast4 ? (
+                                                        <span className='text-slate-400'>
+                                                            {' '}
+                                                            *
+                                                            {
+                                                                entry.winnerPhoneLast4 as string
+                                                            }
+                                                        </span>
+                                                    ) : null}
+                                                    {dq && (
+                                                        <span className='ml-1 rounded bg-red-500/20 border border-red-400/40 px-1 py-px text-[7px] font-black uppercase tracking-wider text-red-300 align-middle'>
+                                                            {tr(
+                                                                'bingo.disqualified',
+                                                            )}
+                                                        </span>
+                                                    )}
+                                                </span>
                                             </span>
-                                            <span className='text-[11px] font-black truncate text-white'>
-                                                {(entry.winnerDisplayName as
-                                                    | string
-                                                    | undefined) ?? tr('bingo.player')}
-                                                {entry.winnerPhoneLast4 ? (
-                                                    <span className='text-slate-400'>
-                                                        {' '}
-                                                        *
+                                            <span className='flex items-center gap-2 flex-shrink-0'>
+                                                {entry.winnerCartelaNumber !=
+                                                    null && (
+                                                    <span className='text-[10px] font-black text-slate-400'>
+                                                        #
                                                         {
-                                                            entry.winnerPhoneLast4 as string
+                                                            entry.winnerCartelaNumber as number
                                                         }
                                                     </span>
-                                                ) : null}
-                                                {dq && (
-                                                    <span className='ml-1 rounded bg-red-500/20 border border-red-400/40 px-1 py-px text-[7px] font-black uppercase tracking-wider text-red-300 align-middle'>
-                                                        {tr('bingo.disqualified')}
-                                                    </span>
                                                 )}
-                                            </span>
-                                        </span>
-                                        <span className='flex items-center gap-2 flex-shrink-0'>
-                                            {entry.winnerCartelaNumber !=
-                                                null && (
-                                                <span className='text-[10px] font-black text-slate-400'>
-                                                    #
-                                                    {
-                                                        entry.winnerCartelaNumber as number
-                                                    }
-                                                </span>
-                                            )}
-                                            {dq ? (
-                                                <span className='text-[11px] font-black flex items-center gap-1'>
-                                                    <span className='line-through text-slate-500'>
+                                                {dq ? (
+                                                    <span className='text-[11px] font-black flex items-center gap-1'>
+                                                        <span className='line-through text-slate-500'>
+                                                            {formatCreditsFull(
+                                                                (entry.prizeMinor as
+                                                                    | number
+                                                                    | undefined) ??
+                                                                    0,
+                                                            )}
+                                                        </span>
+                                                        <span className='text-red-300 text-[8px] uppercase tracking-wide'>
+                                                            {tr(
+                                                                'bingo.toHouse',
+                                                            )}
+                                                        </span>
+                                                    </span>
+                                                ) : (
+                                                    <span
+                                                        className='text-[11px] font-black'
+                                                        style={{
+                                                            color: '#34d399',
+                                                        }}
+                                                    >
                                                         {formatCreditsFull(
                                                             (entry.prizeMinor as
                                                                 | number
-                                                                | undefined) ?? 0,
+                                                                | undefined) ??
+                                                                0,
                                                         )}
                                                     </span>
-                                                    <span className='text-red-300 text-[8px] uppercase tracking-wide'>
-                                                        {tr('bingo.toHouse')}
-                                                    </span>
-                                                </span>
-                                            ) : (
-                                                <span
-                                                    className='text-[11px] font-black'
-                                                    style={{ color: '#34d399' }}
-                                                >
-                                                    {formatCreditsFull(
-                                                        (entry.prizeMinor as
-                                                            | number
-                                                            | undefined) ?? 0,
-                                                    )}
-                                                </span>
-                                            )}
-                                        </span>
-                                    </div>
+                                                )}
+                                            </span>
+                                        </div>
                                     );
                                 })}
                             </div>
@@ -1736,7 +1796,11 @@ function RoomResultOverlay({
                                 : '0 0 20px rgba(248,113,113,0.7), 0 2px 0 rgba(0,0,0,0.6)',
                         }}
                     >
-                        {iWon ? tr('bingo.youWonExclaim') : hasWinner ? tr('bingo.bingoExclaim') : tr('bingo.noWin')}
+                        {iWon
+                            ? tr('bingo.youWonExclaim')
+                            : hasWinner
+                              ? tr('bingo.bingoExclaim')
+                              : tr('bingo.noWin')}
                     </div>
                     <p className='text-slate-300 text-sm'>
                         {iWon ? (
@@ -1897,17 +1961,21 @@ function BingoLobbyCard({
             className='relative w-full rounded-2xl p-3.5 text-left overflow-hidden active:scale-[0.98] transition-transform shadow-lg'
             style={{ background: palette.gradient, minHeight: 132 }}
         >
-            {/* Decorative bingo ball — half-cut off in the corner, purely visual */}
+            {/* Decorative bingo ball  half-cut off in the corner, purely visual */}
             <div
                 className='absolute -right-3 -bottom-3 w-16 h-16 rounded-full flex items-center justify-center border-4 border-white/25 shadow-lg'
                 style={{ background: palette.ballGradient }}
             >
-                <span className='text-lg font-black text-black/70 drop-shadow-sm'>{ballNumber}</span>
+                <span className='text-lg font-black text-black/70 drop-shadow-sm'>
+                    {ballNumber}
+                </span>
             </div>
 
             <span
                 className={`absolute top-2.5 right-2.5 text-[7px] font-black uppercase px-1.5 py-0.5 rounded ${
-                    room.status === 'running' ? 'bg-black/30 text-red-100' : 'bg-black/20 text-white/90'
+                    room.status === 'running'
+                        ? 'bg-black/30 text-red-100'
+                        : 'bg-black/20 text-white/90'
                 }`}
             >
                 {room.status === 'running'
@@ -1920,12 +1988,19 @@ function BingoLobbyCard({
                     {room.name}
                 </span>
                 <span className='text-xl font-black text-white drop-shadow-sm'>
-                    {formatCredits(room.ticketPriceMinor)} <span className='text-[11px] font-bold opacity-80'>ETB</span>
+                    {formatCredits(room.ticketPriceMinor)}{' '}
+                    <span className='text-[11px] font-bold opacity-80'>
+                        ETB
+                    </span>
                 </span>
                 <span className='text-[9px] font-bold text-white/75 mt-0.5'>
-                    {t('bingo.playersCount', { count: room.players, defaultValue: `${room.players} players` })}
+                    {t('bingo.playersCount', {
+                        count: room.players,
+                        defaultValue: `${room.players} players`,
+                    })}
                     {' · '}
-                    {t('bingo.statDerash', { defaultValue: 'Pot' })} {formatCredits(room.potMinor)}
+                    {t('bingo.statDerash', { defaultValue: 'Pot' })}{' '}
+                    {formatCredits(room.potMinor)}
                 </span>
             </div>
 
@@ -1962,7 +2037,7 @@ function BingoLobby({
             </div>
             <p className='text-[11px] text-slate-500'>
                 {t('bingo.chooseRoomHint', {
-                    defaultValue: "Pick a room and stake to play.",
+                    defaultValue: 'Pick a room and stake to play.',
                 })}
             </p>
             <div className='grid grid-cols-2 gap-3'>
@@ -1971,7 +2046,9 @@ function BingoLobby({
                 ))}
                 {rooms.length === 0 && (
                     <div className='col-span-2 card p-6 text-center text-slate-500 text-sm'>
-                        {t('bingo.noRooms', { defaultValue: 'No rooms available right now.' })}
+                        {t('bingo.noRooms', {
+                            defaultValue: 'No rooms available right now.',
+                        })}
                     </div>
                 )}
             </div>
@@ -1995,7 +2072,10 @@ export function Bingo({ onBack }: BingoProps) {
     // Per-agent room mode (Approach B): the lobby of joinable rooms, and the room
     // the customer picked. When the lobby is enabled + has >1 room and none is
     // picked, we show the lobby instead of a game.
-    const [lobby, setLobby] = useState<{ enabled: boolean; rooms: BingoLobbyRoom[] } | null>(null);
+    const [lobby, setLobby] = useState<{
+        enabled: boolean;
+        rooms: BingoLobbyRoom[];
+    } | null>(null);
     const [pinnedRoomId, setPinnedRoomId] = useState<string | null>(null);
     const [holdingResult, setHoldingResult] = useState(false);
     const [buying, setBuying] = useState(false);
@@ -2030,7 +2110,9 @@ export function Bingo({ onBack }: BingoProps) {
     const victoryRoomRef = useRef<string | null>(null);
     const completedRoomRef = useRef<string | null>(null);
     const cancelledRoomRef = useRef<string | null>(null);
-    const cancelHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cancelHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+    );
     const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
         null,
     );
@@ -2038,7 +2120,7 @@ export function Bingo({ onBack }: BingoProps) {
     const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
     // The calling card (75-window board + caller). On entering the playing phase we
     // scroll it into view ONCE per room so the player lands on the grid, not the
-    // ticker/stats above it — then leave scrolling to the user (no re-snapping).
+    // ticker/stats above it  then leave scrolling to the user (no re-snapping).
     const callingCardRef = useRef<HTMLDivElement>(null);
     const focusedRoomRef = useRef<string | null>(null);
 
@@ -2147,7 +2229,9 @@ export function Bingo({ onBack }: BingoProps) {
                     return bingoApi.getRoomState(replacement.id);
                 }
 
-                const fallback = await bingoApi.getCurrentRoom().catch(() => null);
+                const fallback = await bingoApi
+                    .getCurrentRoom()
+                    .catch(() => null);
                 if (
                     fallback &&
                     fallback.id !== current.id &&
@@ -2187,7 +2271,8 @@ export function Bingo({ onBack }: BingoProps) {
                     return;
                 }
             }
-            const nextIsLive = !!next && (next.status === 'open' || next.status === 'running');
+            const nextIsLive =
+                !!next && (next.status === 'open' || next.status === 'running');
             if (
                 room?.status === 'cancelled' &&
                 cancelledRoomRef.current === room.id &&
@@ -2205,7 +2290,7 @@ export function Bingo({ onBack }: BingoProps) {
                 }
             }
             setRoom((prev) => {
-                // During result hold, don't switch to a different (newer) room —
+                // During result hold, don't switch to a different (newer) room
                 // only allow updating the same room (e.g. to pick up settlement data).
                 if (holdingResultRef.current && next?.id !== prev?.id)
                     return prev;
@@ -2242,7 +2327,11 @@ export function Bingo({ onBack }: BingoProps) {
 
     // Lobby (per-agent mode): keep the room list fresh so players/pots update.
     useEffect(() => {
-        const fetchLobby = () => bingoApi.getLobby().then(setLobby).catch(() => undefined);
+        const fetchLobby = () =>
+            bingoApi
+                .getLobby()
+                .then(setLobby)
+                .catch(() => undefined);
         void fetchLobby();
         const id = setInterval(fetchLobby, 5000);
         return () => clearInterval(id);
@@ -2250,10 +2339,11 @@ export function Bingo({ onBack }: BingoProps) {
 
     // Show the lobby when per-agent mode is on, there is more than one room, and the
     // customer hasn't picked one yet.
-    const showLobby = !!lobby?.enabled && lobby.rooms.length > 1 && !pinnedRoomId;
+    const showLobby =
+        !!lobby?.enabled && lobby.rooms.length > 1 && !pinnedRoomId;
 
     useEffect(() => {
-        // Don't load a game while the lobby is showing — the player is choosing.
+        // Don't load a game while the lobby is showing  the player is choosing.
         if (showLobby) {
             setLoading(false);
             return;
@@ -2275,7 +2365,9 @@ export function Bingo({ onBack }: BingoProps) {
             if (holdingResultRef.current) return;
             void loadCurrent();
         };
-        const onVisible = () => { if (document.visibilityState === 'visible') resync(); };
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') resync();
+        };
         window.addEventListener('focus', resync);
         document.addEventListener('visibilitychange', onVisible);
         return () => {
@@ -2381,7 +2473,7 @@ export function Bingo({ onBack }: BingoProps) {
             // us to the next (already-opened) room before the overlay renders.
             holdingResultRef.current = true;
             completedRoomRef.current = completedId;
-            // Apply the completion payload immediately — it carries the winner name
+            // Apply the completion payload immediately  it carries the winner name
             // (settlementSummary) so the overlay can render right away.
             setRoom((prev) => {
                 if (!prev || prev.id !== completedId) return prev;
@@ -2414,10 +2506,10 @@ export function Bingo({ onBack }: BingoProps) {
             text: string;
             timestamp: string;
         }) => {
-            // Bingo chat is a single global lobby — the server broadcasts to every
+            // Bingo chat is a single global lobby  the server broadcasts to every
             // player in `game_bingo`, not per-room. Rooms rotate each round with a
             // fresh id, so filtering on the current room id silently dropped every
-            // message whose sender was on a (transiently) different room id — which
+            // message whose sender was on a (transiently) different room id  which
             // is why "text from others" never showed. Accept all lobby messages.
             setChatMessages((prev) => [...prev.slice(-49), { ...p }]);
         };
@@ -2477,8 +2569,8 @@ export function Bingo({ onBack }: BingoProps) {
             return;
         }
         completedRoomRef.current = room.id;
-        // Empty round — nobody bought a ticket (a stray/legacy room that finished with
-        // no players). There is no result to celebrate, so DON'T show the "No players —
+        // Empty round  nobody bought a ticket (a stray/legacy room that finished with
+        // no players). There is no result to celebrate, so DON'T show the "No players
         // no win this round" overlay; quietly advance to the next (idle) room.
         if ((room.soldTickets ?? 0) === 0) {
             holdingResultRef.current = false;
@@ -2491,7 +2583,7 @@ export function Bingo({ onBack }: BingoProps) {
         setHoldingResult(true);
 
         // Hold the room open (no room switch) while the live per-place 5×5 windows are
-        // still playing — the summary "win window" only shows once the queue drains, so
+        // still playing  the summary "win window" only shows once the queue drains, so
         // don't start its display countdown until then. Otherwise a multi-place
         // leaderboard round could burn the whole result window on the live popups and
         // never show the summary. The effect re-runs when the queue length changes.
@@ -2520,12 +2612,18 @@ export function Bingo({ onBack }: BingoProps) {
             if (resultTimerRef.current) clearTimeout(resultTimerRef.current);
             if (countdownRef.current) clearInterval(countdownRef.current);
         };
-    }, [room?.id, room?.status, room?.soldTickets, livePlaceQueue.length, loadCurrent]);
+    }, [
+        room?.id,
+        room?.status,
+        room?.soldTickets,
+        livePlaceQueue.length,
+        loadCurrent,
+    ]);
 
     // ── Buy-window countdown ─────────────────────────────────────────────────────
     useEffect(() => {
         setTimeRemainingSecs(null);
-        // A room with zero sold tickets is IDLE — waiting for the first buyer. Show
+        // A room with zero sold tickets is IDLE  waiting for the first buyer. Show
         // the idle state, never a countdown, no matter what scheduledStartAt holds
         // (a legacy DB default could set it to "now" before anyone has played).
         if (
@@ -2536,7 +2634,9 @@ export function Bingo({ onBack }: BingoProps) {
         )
             return;
         const tick = () => {
-            const ms = new Date(room.scheduledStartAt as string).getTime() - Date.now();
+            const ms =
+                new Date(room.scheduledStartAt as string).getTime() -
+                Date.now();
             setTimeRemainingSecs(Math.max(0, Math.floor(ms / 1000)));
         };
         tick();
@@ -2547,8 +2647,8 @@ export function Bingo({ onBack }: BingoProps) {
     // ── Focus the 75-window board when calling opens ─────────────────────────────
     // On entering the playing (drawing) phase, scroll the calling card into view
     // ONCE per room so the player lands on the grid + caller rather than the ticker
-    // and stats above it. Guarded by focusedRoomRef so it fires a single time —
-    // never on later draw ticks — leaving the user's own scrolling free and smooth.
+    // and stats above it. Guarded by focusedRoomRef so it fires a single time
+    // never on later draw ticks  leaving the user's own scrolling free and smooth.
     useEffect(() => {
         if (!room || room.status !== 'running') return;
         if (focusedRoomRef.current === room.id) return;
@@ -2579,9 +2679,9 @@ export function Bingo({ onBack }: BingoProps) {
             colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'],
         });
         // The bell notification is created + pushed by the server at settlement (so it
-        // lands even if the player left the screen) — no client-side entry here to
+        // lands even if the player left the screen)  no client-side entry here to
         // avoid a duplicate.
-        // The win credit landed server-side — pull the fresh balance into the header.
+        // The win credit landed server-side  pull the fresh balance into the header.
         walletApi
             .getWallet()
             .then(setWallet)
@@ -2600,11 +2700,11 @@ export function Bingo({ onBack }: BingoProps) {
           ? 'result'
           : room.status === 'cancelled' && room.winMode === 'prefilled'
             ? 'buy'
-          : room.status === 'open'
-            ? 'buy'
-            : room.status === 'running'
-              ? 'playing'
-              : 'result';
+            : room.status === 'open'
+              ? 'buy'
+              : room.status === 'running'
+                ? 'playing'
+                : 'result';
 
     const patternPrizeMap = useMemo(
         () =>
@@ -2630,7 +2730,7 @@ export function Bingo({ onBack }: BingoProps) {
     // Prefilled cards are 75-ball 5×5, so the board uses the B/I/N/G/O layout.
     const boardBingoStyle = isPatternMode || isPrefilledMode;
     const gridSize = room?.gridSize ?? 75;
-    // Server draws, clamped to the valid pool — drops any out-of-range ball a
+    // Server draws, clamped to the valid pool  drops any out-of-range ball a
     // legacy room may have produced so it never reaches the UI.
     const drawnNumbers = useMemo(
         () =>
@@ -2645,7 +2745,10 @@ export function Bingo({ onBack }: BingoProps) {
         ? Math.max(0, room.maxTickets - room.soldTickets)
         : 0;
     const salesOpen = room?.status === 'open';
-    const cartelaChangeLockSeconds = Math.max(0, room?.cartelaChangeLockSeconds ?? 3);
+    const cartelaChangeLockSeconds = Math.max(
+        0,
+        room?.cartelaChangeLockSeconds ?? 3,
+    );
     const cartelaChangesLocked =
         phase === 'buy' &&
         room?.status === 'open' &&
@@ -2658,7 +2761,7 @@ export function Bingo({ onBack }: BingoProps) {
 
     // ── Paced reveal ─────────────────────────────────────────────────────────────
     // One shared cursor drives "now calling", the board and every card so they all
-    // advance TOGETHER, one ball at a time at a readable pace — even when a poll
+    // advance TOGETHER, one ball at a time at a readable pace  even when a poll
     // delivers several numbers at once. Snap instantly to full only on room switch
     // (no history replay) or cancellation. On completion, reveal keeps pacing
     // through (see the effect below) so the card never jumps to "done" ahead of
@@ -2672,22 +2775,27 @@ export function Bingo({ onBack }: BingoProps) {
     // up…" instead of letting the jump look like an unexplained teleport.
     const [isCatchingUp, setIsCatchingUp] = useState(false);
     // Distinguishes "you fell behind a still-live game" from "you're seeing the
-    // recap of a round that already ended" — same jump-forward mechanics, but the
+    // recap of a round that already ended"  same jump-forward mechanics, but the
     // second one must never read as if it just happened live.
-    const [catchupKind, setCatchupKind] = useState<'live' | 'completed'>('live');
-    const catchupBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [catchupKind, setCatchupKind] = useState<'live' | 'completed'>(
+        'live',
+    );
+    const catchupBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+    );
     // Mirrors isCatchingUp/catchupKind for processNextReveal (a stable useCallback)
     // to read without needing them in its dependency list.
     const replayingCompletedRef = useRef(false);
     useEffect(() => {
-        replayingCompletedRef.current = isCatchingUp && catchupKind === 'completed';
+        replayingCompletedRef.current =
+            isCatchingUp && catchupKind === 'completed';
     }, [isCatchingUp, catchupKind]);
 
     const processNextReveal = useCallback(() => {
         revealTimerRef.current = null;
         setRevealedCount((c) => c + 1);
         // A tick playing out during a "replaying an already-decided round" catch-up
-        // is narrating balls drawn seconds/minutes ago — keep the visual marking
+        // is narrating balls drawn seconds/minutes ago  keep the visual marking
         // (honest, unchanged) but skip the "live call" sound cue for it.
         if (!replayingCompletedRef.current) soundEngine.pop();
     }, []);
@@ -2698,7 +2806,7 @@ export function Bingo({ onBack }: BingoProps) {
 
     useEffect(() => {
         const total = drawnNumbers.length;
-        // Cancelled rooms have no result to narrate — snap immediately, nothing lost.
+        // Cancelled rooms have no result to narrate  snap immediately, nothing lost.
         if (room?.status === 'cancelled') {
             if (revealTimerRef.current) {
                 clearTimeout(revealTimerRef.current);
@@ -2719,7 +2827,7 @@ export function Bingo({ onBack }: BingoProps) {
         if (revealTimerRef.current) return;
 
         // A completed room falls through to the SAME backlog/steady-cadence logic
-        // below as a still-running one — no special instant snap. A card that was
+        // below as a still-running one  no special instant snap. A card that was
         // already keeping up finishes marking at the same pace it ran all round
         // (landing "fully marked" around when the first win popup arms, never
         // before); a card that had fallen behind (backgrounded tab, dropped
@@ -2727,7 +2835,7 @@ export function Bingo({ onBack }: BingoProps) {
         // jumping to the final state with no explanation.
         const backlog = total - revealedCount;
         if (backlog > REVEAL_CATCHUP_BACKLOG) {
-            // Fell far behind — jump straight to near-live instead of animating
+            // Fell far behind  jump straight to near-live instead of animating
             // through the gap at a sped-up pace (see CATCHUP_TAIL/BADGE comment
             // above). The effect re-runs on the new revealedCount and falls
             // through to the normal branch below for the remaining tail.
@@ -2735,21 +2843,29 @@ export function Bingo({ onBack }: BingoProps) {
             setRevealedCount(target);
             setIsCatchingUp(true);
             setCatchupKind(room?.status === 'completed' ? 'completed' : 'live');
-            if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
-            catchupBadgeTimerRef.current = setTimeout(() => setIsCatchingUp(false), CATCHUP_BADGE_MS);
+            if (catchupBadgeTimerRef.current)
+                clearTimeout(catchupBadgeTimerRef.current);
+            catchupBadgeTimerRef.current = setTimeout(
+                () => setIsCatchingUp(false),
+                CATCHUP_BADGE_MS,
+            );
             return;
         }
 
         // One steady, calm cadence for every ball, matched to the server's actual
         // draw interval.
-        revealTimerRef.current = setTimeout(processNextReveal, serverIntervalMsRef.current);
+        revealTimerRef.current = setTimeout(
+            processNextReveal,
+            serverIntervalMsRef.current,
+        );
     }, [revealedCount, drawnNumbers.length, room?.status, processNextReveal]);
 
     // Cleanup on unmount
     useEffect(() => {
         return () => {
             if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
-            if (catchupBadgeTimerRef.current) clearTimeout(catchupBadgeTimerRef.current);
+            if (catchupBadgeTimerRef.current)
+                clearTimeout(catchupBadgeTimerRef.current);
         };
     }, []);
     const revealedNumbers = useMemo(
@@ -2797,14 +2913,15 @@ export function Bingo({ onBack }: BingoProps) {
     );
 
     // True for the whole stretch between a round ending and its last place's win
-    // popup closing — including the silent gaps before a popup arms and between
+    // popup closing  including the silent gaps before a popup arms and between
     // successive popups, which neither LivePlaceWinPopup nor RoomResultOverlay
     // covers on their own. Keyed off the same signal RoomResultOverlay already
     // gates on (livePlaceQueue.length === 0) so the two stay in sync without a
-    // second independent timer. Always-mounted while true — never itself a source
-    // of a gap — so the player never sees a fully-marked card with nothing
+    // second independent timer. Always-mounted while true  never itself a source
+    // of a gap  so the player never sees a fully-marked card with nothing
     // acknowledging the round is being resolved.
-    const resultsRevealing = room?.status === 'completed' && livePlaceQueue.length > 0;
+    const resultsRevealing =
+        room?.status === 'completed' && livePlaceQueue.length > 0;
 
     // When a place is won, the server already knows the winner.
     // We intentionally do NOT snap the paced reveal here to keep the drawing uniform.
@@ -2836,7 +2953,9 @@ export function Bingo({ onBack }: BingoProps) {
             autoPreferenceInitializedRef.current = false;
         }
         if (autoBusyRef.current || autoPreferenceInitializedRef.current) return;
-        const activeTickets = (room?.tickets ?? []).filter((t) => t.status === 'active');
+        const activeTickets = (room?.tickets ?? []).filter(
+            (t) => t.status === 'active',
+        );
         if (activeTickets.length > 0) {
             setAutoMode(activeTickets.every((t) => t.autoClaim !== false));
             autoPreferenceInitializedRef.current = true;
@@ -2870,10 +2989,7 @@ export function Bingo({ onBack }: BingoProps) {
                 addToast('success', t('bingo.toastYouWon'));
             } else if (res.result === 'disqualified') {
                 soundEngine.pop();
-                addToast(
-                    'error',
-                    t('bingo.toastWrongCall'),
-                );
+                addToast('error', t('bingo.toastWrongCall'));
             } else {
                 addToast('info', t('bingo.toastNoBingoYet'));
             }
@@ -2900,7 +3016,8 @@ export function Bingo({ onBack }: BingoProps) {
 
     // ── Buy ──────────────────────────────────────────────────────────────────────
     const buyTickets = async () => {
-        if (!room || !salesOpen || alreadyBought || cartelaChangesLocked) return;
+        if (!room || !salesOpen || alreadyBought || cartelaChangesLocked)
+            return;
         setBuying(true);
         try {
             const bought = await bingoApi.purchaseTickets(
@@ -2924,7 +3041,7 @@ export function Bingo({ onBack }: BingoProps) {
         }
     };
 
-    // Shared toast classification for a purchase/refund failure — pulled out so
+    // Shared toast classification for a purchase/refund failure  pulled out so
     // both the immediate refund path and the batched buy path (see
     // flushPendingBuys below) show the same specific messages.
     const toastCartelaError = useCallback(
@@ -2941,20 +3058,27 @@ export function Bingo({ onBack }: BingoProps) {
             else if (msg.toLowerCase().includes('closed'))
                 addToast('error', t('bingo.toastSalesClosed'));
             else if (msg.toLowerCase().includes('limit'))
-                addToast('error', t('bingo.cartelaLimit', { count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10) }));
+                addToast(
+                    'error',
+                    t('bingo.cartelaLimit', {
+                        count: parseInt(msg.match(/\d+/)?.[0] ?? '0', 10),
+                    }),
+                );
             else addToast('error', msg);
         },
         [addToast, t],
     );
 
     // Rapid taps queue their cartela number here instead of firing one HTTP
-    // request each — each request takes a pessimistic write lock on the room,
+    // request each  each request takes a pessimistic write lock on the room,
     // so many concurrent single-cartela buys were serializing on that lock and
     // occasionally surfacing as a generic "service error" under load. A short
     // trailing debounce coalesces everything tapped in the same burst into one
     // purchaseCartelas([...]) call.
     const pendingBuyQueueRef = useRef<number[]>([]);
-    const pendingBuyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingBuyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+        null,
+    );
     const pendingBuyRoomIdRef = useRef<string | null>(null);
     const pendingBuyIdempotencyKeyRef = useRef<string | null>(null);
 
@@ -2969,12 +3093,19 @@ export function Bingo({ onBack }: BingoProps) {
         if (numbers.length === 0 || !roomId || !idempotencyKey) return;
 
         try {
-            const bought = await bingoApi.purchaseCartelas(roomId, numbers, idempotencyKey);
+            const bought = await bingoApi.purchaseCartelas(
+                roomId,
+                numbers,
+                idempotencyKey,
+            );
             localRoomIdRef.current = roomId;
             setLocalTickets((prev) => [...prev, ...bought]);
             soundEngine.cashout();
             if (numbers.length === 1) {
-                addToast('success', t('bingo.toastCartelaPurchased', { n: numbers[0] }));
+                addToast(
+                    'success',
+                    t('bingo.toastCartelaPurchased', { n: numbers[0] }),
+                );
             } else {
                 addToast(
                     'success',
@@ -2984,7 +3115,10 @@ export function Bingo({ onBack }: BingoProps) {
                     }),
                 );
             }
-            const [nextWallet] = await Promise.all([walletApi.getWallet(), loadCurrent()]);
+            const [nextWallet] = await Promise.all([
+                walletApi.getWallet(),
+                loadCurrent(),
+            ]);
             setWallet(nextWallet);
         } catch (err) {
             toastCartelaError(err);
@@ -3000,7 +3134,7 @@ export function Bingo({ onBack }: BingoProps) {
 
     // Instant buy-or-refund on a single tap. Tapping an available cartela queues
     // it for purchase (batched with any other cartelas tapped in the same short
-    // window — see flushPendingBuys); tapping one you already own (while sales
+    // window  see flushPendingBuys); tapping one you already own (while sales
     // are open) refunds it immediately. The final freeze window blocks both
     // directions, and a per-cartela pending guard prevents a double-tap from
     // firing twice.
@@ -3016,21 +3150,29 @@ export function Bingo({ onBack }: BingoProps) {
             const owned = myCartelaSet.has(n);
             if (owned && cartelaReturnsLocked) return;
             if (!owned && cartelaChangesLocked) return;
-            if (!owned && takenSet.has(n)) return; // taken by someone else — locked
+            if (!owned && takenSet.has(n)) return; // taken by someone else  locked
 
             setPendingCartelas((prev) => new Set(prev).add(n));
 
             if (owned) {
                 void (async () => {
                     try {
-                        const refund = await bingoApi.releaseCartela(room.id, n);
+                        const refund = await bingoApi.releaseCartela(
+                            room.id,
+                            n,
+                        );
                         setLocalTickets((prev) =>
                             prev.filter((t) => t.cartelaNumber !== n),
                         );
-                        addToast('info', t('bingo.toastCartelaRefunded', { n }));
+                        addToast(
+                            'info',
+                            t('bingo.toastCartelaRefunded', { n }),
+                        );
                         if (refund.roomCancelled) {
                             cancelledRoomRef.current = room.id;
-                            const cancelledRoom = await bingoApi.getRoomState(room.id);
+                            const cancelledRoom = await bingoApi.getRoomState(
+                                room.id,
+                            );
                             setRoom(cancelledRoom);
                             roomIdRef.current = cancelledRoom.id;
                             localRoomIdRef.current = cancelledRoom.id;
@@ -3061,9 +3203,11 @@ export function Bingo({ onBack }: BingoProps) {
             pendingBuyQueueRef.current.push(n);
             pendingBuyRoomIdRef.current = room.id;
             if (!pendingBuyIdempotencyKeyRef.current) {
-                pendingBuyIdempotencyKeyRef.current = createIdempotencyKey('bingo-cartela');
+                pendingBuyIdempotencyKeyRef.current =
+                    createIdempotencyKey('bingo-cartela');
             }
-            if (pendingBuyTimerRef.current) clearTimeout(pendingBuyTimerRef.current);
+            if (pendingBuyTimerRef.current)
+                clearTimeout(pendingBuyTimerRef.current);
             pendingBuyTimerRef.current = setTimeout(() => {
                 void flushPendingBuys();
             }, 250);
@@ -3124,7 +3268,7 @@ export function Bingo({ onBack }: BingoProps) {
                     ← {t('bingo.backToRooms', { defaultValue: 'Rooms' })}
                 </button>
             )}
-            {/* Room result overlay — gated on the timed `holdingResult` flag, not the
+            {/* Room result overlay  gated on the timed `holdingResult` flag, not the
           derived phase. A completed room's phase stays 'result' until the next
           room loads, so gating on phase left the dialog stuck open after the
           countdown hit 0. holdingResult flips false exactly when the timer ends. */}
@@ -3153,7 +3297,7 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
             </AnimatePresence>
 
-            {/* Live per-place win window — pops the instant a place is won DURING the
+            {/* Live per-place win window  pops the instant a place is won DURING the
           draw (derash), one place at a time (oldest first). It also plays out the
           game-ending place after completion; the summary overlay above waits for
           this queue to drain, so every winner gets its live 5×5 moment. */}
@@ -3286,7 +3430,10 @@ export function Bingo({ onBack }: BingoProps) {
                     )}
 
                     {/* ── Cartela picker (derash buy phase) / Number board ── */}
-                    <div className='card p-2.5 scroll-mt-2' ref={callingCardRef}>
+                    <div
+                        className='card p-2.5 scroll-mt-2'
+                        ref={callingCardRef}
+                    >
                         {isPrefilledMode && phase === 'buy' ? (
                             <div className='space-y-2'>
                                 <div className='flex items-center justify-between'>
@@ -3321,7 +3468,7 @@ export function Bingo({ onBack }: BingoProps) {
                                 <p className='text-[9px] text-slate-500'>
                                     {t('bingo.cartelaInstructions')}
                                 </p>
-                                {/* Bought cartelas — live chips. Tap a chip to remove (refund). */}
+                                {/* Bought cartelas  live chips. Tap a chip to remove (refund). */}
                                 {myCartelaSet.size > 0 && (
                                     <div className='flex items-center gap-1.5 flex-wrap rounded-lg bg-emerald-500/5 border border-emerald-500/15 px-2 py-1.5'>
                                         <span className='text-[8px] font-black uppercase tracking-wider text-emerald-400/80 mr-0.5'>
@@ -3341,12 +3488,16 @@ export function Bingo({ onBack }: BingoProps) {
                                                         onClick={() =>
                                                             handleCartelaTap(n)
                                                         }
-                                                        disabled={busy || cartelaChangesLocked}
+                                                        disabled={
+                                                            busy ||
+                                                            cartelaChangesLocked
+                                                        }
                                                         title={t(
                                                             'bingo.tapToRefund',
                                                         )}
                                                         className={`group flex items-center gap-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono font-black text-[11px] pl-2 pr-1.5 py-0.5 border border-emerald-400/30 transition ${
-                                                            busy || cartelaChangesLocked
+                                                            busy ||
+                                                            cartelaChangesLocked
                                                                 ? 'opacity-50'
                                                                 : 'hover:bg-red-500/20 hover:text-red-300 hover:border-red-400/40'
                                                         }`}
@@ -3423,7 +3574,7 @@ export function Bingo({ onBack }: BingoProps) {
                                         catchupKind={catchupKind}
                                     />
                                     {/* Always-mounted (no arm/disarm timer of its own) so it
-                                  bridges the real gaps before/between win popups — the round
+                                  bridges the real gaps before/between win popups  the round
                                   ending must never look like nothing is happening. */}
                                     {resultsRevealing && (
                                         <div className='flex items-center gap-1.5 text-[8px] font-black uppercase tracking-wide text-emerald-400'>
@@ -3492,8 +3643,12 @@ export function Bingo({ onBack }: BingoProps) {
                                                             }
                                                             title={
                                                                 autoMode
-                                                                    ? t('bingo.autoTitle')
-                                                                    : t('bingo.manualTitle')
+                                                                    ? t(
+                                                                          'bingo.autoTitle',
+                                                                      )
+                                                                    : t(
+                                                                          'bingo.manualTitle',
+                                                                      )
                                                             }
                                                             className='flex items-center gap-1.5'
                                                         >
@@ -3501,8 +3656,12 @@ export function Bingo({ onBack }: BingoProps) {
                                                                 className={`text-[9px] font-black uppercase tracking-wider ${autoMode ? 'text-emerald-400' : 'text-amber-400'}`}
                                                             >
                                                                 {autoMode
-                                                                    ? t('bingo.auto')
-                                                                    : t('bingo.manual')}
+                                                                    ? t(
+                                                                          'bingo.auto',
+                                                                      )
+                                                                    : t(
+                                                                          'bingo.manual',
+                                                                      )}
                                                             </span>
                                                             <span
                                                                 className={`relative w-8 h-[18px] rounded-full transition-colors duration-200 ${autoMode ? 'bg-emerald-500/80' : 'bg-slate-600'}`}
@@ -3517,18 +3676,20 @@ export function Bingo({ onBack }: BingoProps) {
                                                 {phase === 'playing' &&
                                                     !autoMode && (
                                                         <p className='w-full text-[8px] leading-tight text-amber-400/80 text-center'>
-                                                            Manual mode — only
-                                                            tap <b>BINGO</b>{' '}
-                                                            when your card
-                                                            actually wins. A
-                                                            wrong call{' '}
+                                                            Manual mode only tap{' '}
+                                                            <b>BINGO</b> when
+                                                            your card actually
+                                                            wins. A wrong call{' '}
                                                             <b>disqualifies</b>{' '}
                                                             the card!
                                                         </p>
                                                     )}
                                                 <div
                                                     className='w-full flex flex-col gap-1.5 overflow-y-auto pr-1 scrollbar-hide'
-                                                    style={{ maxHeight: 'min(470px, 70vh)' }}
+                                                    style={{
+                                                        maxHeight:
+                                                            'min(470px, 70vh)',
+                                                    }}
                                                 >
                                                     {myTickets.map((ticket) => (
                                                         <div
@@ -3565,13 +3726,17 @@ export function Bingo({ onBack }: BingoProps) {
                                                                         {claimingId ===
                                                                         ticket.id
                                                                             ? '…'
-                                                                            : t('bingo.bingoExclaim')}
+                                                                            : t(
+                                                                                  'bingo.bingoExclaim',
+                                                                              )}
                                                                     </button>
                                                                 )}
                                                             {ticket.status ===
                                                                 'disqualified' && (
                                                                 <span className='w-full text-center text-[9px] font-black text-red-400 uppercase tracking-wide'>
-                                                                    {t('bingo.disqualified')}
+                                                                    {t(
+                                                                        'bingo.disqualified',
+                                                                    )}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -3584,7 +3749,7 @@ export function Bingo({ onBack }: BingoProps) {
                         )}
                     </div>
 
-                    {/* ── Owned summary (derash) — buying happens instantly on tap ── */}
+                    {/* ── Owned summary (derash)  buying happens instantly on tap ── */}
                     {isPrefilledMode && phase === 'buy' && (
                         <div className='card'>
                             <div className='flex items-center justify-between text-[10px]'>
@@ -3612,7 +3777,7 @@ export function Bingo({ onBack }: BingoProps) {
                         </div>
                     )}
 
-                    {/* ── Buy panel (line/pattern mode only — prefilled buys via grid) ── */}
+                    {/* ── Buy panel (line/pattern mode only  prefilled buys via grid) ── */}
                     {!isPrefilledMode && phase === 'buy' && !alreadyBought && (
                         <div className='card space-y-2'>
                             <div className='flex items-center justify-between'>
@@ -3620,7 +3785,9 @@ export function Bingo({ onBack }: BingoProps) {
                                     {t('bingo.buyACard')}
                                 </p>
                                 <span className='text-[10px] text-slate-500'>
-                                    {t('bingo.spotsLeft', { count: remainingTickets })}
+                                    {t('bingo.spotsLeft', {
+                                        count: remainingTickets,
+                                    })}
                                 </span>
                             </div>
                             <motion.button
@@ -3651,7 +3818,11 @@ export function Bingo({ onBack }: BingoProps) {
                                 ) : remainingTickets <= 0 ? (
                                     t('bingo.roomFull')
                                 ) : (
-                                    t('bingo.buyCardEtb', { amount: formatCreditsFull(room.ticketPriceMinor) })
+                                    t('bingo.buyCardEtb', {
+                                        amount: formatCreditsFull(
+                                            room.ticketPriceMinor,
+                                        ),
+                                    })
                                 )}
                             </motion.button>
                         </div>
@@ -3679,7 +3850,9 @@ export function Bingo({ onBack }: BingoProps) {
                         <div className='space-y-2'>
                             <h3 className='text-[10px] font-black uppercase tracking-wider text-slate-500 px-1'>
                                 {isPrefilledMode
-                                    ? t('bingo.myCartelas', { count: myTickets.length })
+                                    ? t('bingo.myCartelas', {
+                                          count: myTickets.length,
+                                      })
                                     : t('bingo.myCard')}
                             </h3>
                             <div className='grid gap-3 grid-cols-1 sm:grid-cols-2'>
@@ -3719,7 +3892,8 @@ export function Bingo({ onBack }: BingoProps) {
                             className='w-full flex items-center justify-between'
                         >
                             <span className='text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2'>
-                                <MessageSquare size={11} /> {t('bingo.roomChat')}
+                                <MessageSquare size={11} />{' '}
+                                {t('bingo.roomChat')}
                             </span>
                             <span className='flex items-center gap-1'>
                                 {chatMessages.filter((m) => !m.isSystem)
@@ -3789,7 +3963,9 @@ export function Bingo({ onBack }: BingoProps) {
                                         <input
                                             ref={chatInputRef}
                                             className='input flex-1 text-xs py-1.5'
-                                            placeholder={t('bingo.saySomething')}
+                                            placeholder={t(
+                                                'bingo.saySomething',
+                                            )}
                                             maxLength={200}
                                             value={chatInput}
                                             onChange={(e) =>

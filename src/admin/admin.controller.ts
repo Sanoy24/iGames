@@ -2,21 +2,21 @@ import { mkdirSync } from 'fs';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import {
-  BadRequestException,
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  ParseIntPipe,
-  Patch,
-  Post,
-  Put,
-  Query,
-  UnsupportedMediaTypeException,
-  UploadedFile,
-  UseGuards,
-  UseInterceptors,
+    BadRequestException,
+    Body,
+    Controller,
+    Delete,
+    Get,
+    Param,
+    ParseIntPipe,
+    Patch,
+    Post,
+    Put,
+    Query,
+    UnsupportedMediaTypeException,
+    UploadedFile,
+    UseGuards,
+    UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -58,7 +58,7 @@ type UploadedReceiptFile = { filename: string; mimetype: string; size: number };
 const SETTLEMENT_RECEIPT_SUBDIR = 'settlement-receipts';
 const SETTLEMENT_RECEIPT_DIR = join(UPLOADS_ROOT, SETTLEMENT_RECEIPT_SUBDIR);
 
-// Same subdir the agent's own withdrawal-proof upload uses — an admin
+// Same subdir the agent's own withdrawal-proof upload uses  an admin
 // completing a withdrawal on an agent's behalf stores the receipt in the same
 // place a self-service agent submission would.
 const WITHDRAWAL_RECEIPT_SUBDIR = 'withdrawal-receipts';
@@ -70,502 +70,618 @@ const WITHDRAWAL_RECEIPT_DIR = join(UPLOADS_ROOT, WITHDRAWAL_RECEIPT_SUBDIR);
 @UseInterceptors(AdminAuditInterceptor)
 @Roles('admin')
 export class AdminController {
-  constructor(
-    private readonly adminService: AdminService,
-    private readonly usersService: UsersService,
-    private readonly walletService: WalletService,
-    private readonly locationsService: LocationsService,
-    private readonly gameEventsGateway: GameEventsGateway,
-    private readonly agentsService: AgentsService,
-  ) {}
+    constructor(
+        private readonly adminService: AdminService,
+        private readonly usersService: UsersService,
+        private readonly walletService: WalletService,
+        private readonly locationsService: LocationsService,
+        private readonly gameEventsGateway: GameEventsGateway,
+        private readonly agentsService: AgentsService,
+    ) {}
 
-  @Get('stats/overview')
-  getOverview() {
-    return this.adminService.getPlatformStats();
-  }
+    @Get('stats/overview')
+    getOverview() {
+        return this.adminService.getPlatformStats();
+    }
 
-  @Get('game-transactions')
-  getGameTransactions(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-  ) {
-    return this.adminService.getGameTransactions(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
-  }
+    @Get('game-transactions')
+    getGameTransactions(
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+    ) {
+        return this.adminService.getGameTransactions(
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+        );
+    }
 
-  @Get('deposits')
-  listDeposits(
-    @Query('provider') provider: 'telebirr' | 'mpesa' = 'telebirr',
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '20',
-    @Query('status') status?: 'credited' | 'rejected',
-    @Query('agentId') agentId?: string,
-  ) {
-    return this.adminService.listDeposits(
-      provider === 'mpesa' ? 'mpesa' : 'telebirr',
-      parseInt(page, 10) || 1,
-      parseInt(limit, 10) || 20,
-      { status, agentId },
-    );
-  }
+    @Get('deposits')
+    listDeposits(
+        @Query('provider') provider: 'telebirr' | 'mpesa' = 'telebirr',
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '20',
+        @Query('status') status?: 'credited' | 'rejected',
+        @Query('agentId') agentId?: string,
+    ) {
+        return this.adminService.listDeposits(
+            provider === 'mpesa' ? 'mpesa' : 'telebirr',
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 20,
+            { status, agentId },
+        );
+    }
 
-  @Patch('deposits/:id/verify')
-  verifyDeposit(
-    @Param('id') id: string,
-    @Body() dto: VerifyDepositDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.verifyDeposit(dto.provider, id, dto.verificationStatus, admin.id);
-  }
+    @Patch('deposits/:id/verify')
+    verifyDeposit(
+        @Param('id') id: string,
+        @Body() dto: VerifyDepositDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.verifyDeposit(
+            dto.provider,
+            id,
+            dto.verificationStatus,
+            admin.id,
+        );
+    }
 
-  @Get('config')
-  getConfig() {
-    return this.adminService.getSystemConfig();
-  }
+    @Get('config')
+    getConfig() {
+        return this.adminService.getSystemConfig();
+    }
 
-  @Post('config')
-  updateConfig(
-    @Body() dto: UpdateSystemConfigDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.updateSystemConfig(dto, admin.id);
-  }
+    @Post('config')
+    updateConfig(
+        @Body() dto: UpdateSystemConfigDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.updateSystemConfig(dto, admin.id);
+    }
 
-  @Get('config-history')
-  getConfigHistory(
-    @Query('configType') configType?: ConfigChangeType,
-    @Query('entityId') entityId?: string,
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-  ) {
-    return this.adminService.listConfigChanges(configType, entityId, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
-  }
+    @Get('config-history')
+    getConfigHistory(
+        @Query('configType') configType?: ConfigChangeType,
+        @Query('entityId') entityId?: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+    ) {
+        return this.adminService.listConfigChanges(
+            configType,
+            entityId,
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+        );
+    }
 
-  // ── Withdrawal fee ranges ─────────────────────────────────────────
+    // ── Withdrawal fee ranges ─────────────────────────────────────────
 
-  @Get('withdrawal-fee-ranges')
-  listWithdrawalFeeRanges() {
-    return this.adminService.listWithdrawalFeeRanges();
-  }
+    @Get('withdrawal-fee-ranges')
+    listWithdrawalFeeRanges() {
+        return this.adminService.listWithdrawalFeeRanges();
+    }
 
-  @Post('withdrawal-fee-ranges')
-  createWithdrawalFeeRange(
-    @Body() dto: CreateWithdrawalFeeRangeDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.createWithdrawalFeeRange(dto, admin.id);
-  }
+    @Post('withdrawal-fee-ranges')
+    createWithdrawalFeeRange(
+        @Body() dto: CreateWithdrawalFeeRangeDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.createWithdrawalFeeRange(dto, admin.id);
+    }
 
-  @Patch('withdrawal-fee-ranges/:id')
-  updateWithdrawalFeeRange(
-    @Param('id') id: string,
-    @Body() dto: UpdateWithdrawalFeeRangeDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.updateWithdrawalFeeRange(id, dto, admin.id);
-  }
+    @Patch('withdrawal-fee-ranges/:id')
+    updateWithdrawalFeeRange(
+        @Param('id') id: string,
+        @Body() dto: UpdateWithdrawalFeeRangeDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.updateWithdrawalFeeRange(id, dto, admin.id);
+    }
 
-  @Delete('withdrawal-fee-ranges/:id')
-  deleteWithdrawalFeeRange(
-    @Param('id') id: string,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.deleteWithdrawalFeeRange(id, admin.id);
-  }
+    @Delete('withdrawal-fee-ranges/:id')
+    deleteWithdrawalFeeRange(
+        @Param('id') id: string,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.deleteWithdrawalFeeRange(id, admin.id);
+    }
 
-  // ── Users ─────────────────────────────────────────────────────────
+    // ── Users ─────────────────────────────────────────────────────────
 
-  @Get('users')
-  async getUsers(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-    @Query('role') role?: string,
-    @Query('search') search?: string,
-    @Query('isBot') isBot?: string,
-    @Query('status') status?: 'active' | 'suspended' | 'closed',
-    @Query('online') online?: string,
-    @Query('hasPhone') hasPhone?: string,
-    @Query('minBalanceMinor') minBalanceMinor?: string,
-    @Query('maxBalanceMinor') maxBalanceMinor?: string,
-  ) {
-    const onlineIds = this.gameEventsGateway.getOnlineUserIds();
-    const result = await this.usersService.listUsers(
-      parseInt(page, 10) || 1,
-      parseInt(limit, 10) || 50,
-      role,
-      search,
-      {
-        isBot: isBot === 'true' ? true : isBot === 'false' ? false : undefined,
-        status,
-        online: online === 'true' ? true : online === 'false' ? false : undefined,
-        onlineUserIds: [...onlineIds],
-        hasPhone: hasPhone === 'true' ? true : hasPhone === 'false' ? false : undefined,
-        minBalanceMinor: minBalanceMinor !== undefined ? parseInt(minBalanceMinor, 10) : undefined,
-        maxBalanceMinor: maxBalanceMinor !== undefined ? parseInt(maxBalanceMinor, 10) : undefined,
-      },
-    );
-    return {
-      ...result,
-      data: result.data.map((user) => ({
-        ...user,
-        online: onlineIds.has(user.id),
-        isBot: !!(user.productMetadata as { botPolicy?: unknown } | undefined)?.botPolicy,
-      })),
-    };
-  }
+    @Get('users')
+    async getUsers(
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+        @Query('role') role?: string,
+        @Query('search') search?: string,
+        @Query('isBot') isBot?: string,
+        @Query('status') status?: 'active' | 'suspended' | 'closed',
+        @Query('online') online?: string,
+        @Query('hasPhone') hasPhone?: string,
+        @Query('minBalanceMinor') minBalanceMinor?: string,
+        @Query('maxBalanceMinor') maxBalanceMinor?: string,
+    ) {
+        const onlineIds = this.gameEventsGateway.getOnlineUserIds();
+        const result = await this.usersService.listUsers(
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+            role,
+            search,
+            {
+                isBot:
+                    isBot === 'true'
+                        ? true
+                        : isBot === 'false'
+                          ? false
+                          : undefined,
+                status,
+                online:
+                    online === 'true'
+                        ? true
+                        : online === 'false'
+                          ? false
+                          : undefined,
+                onlineUserIds: [...onlineIds],
+                hasPhone:
+                    hasPhone === 'true'
+                        ? true
+                        : hasPhone === 'false'
+                          ? false
+                          : undefined,
+                minBalanceMinor:
+                    minBalanceMinor !== undefined
+                        ? parseInt(minBalanceMinor, 10)
+                        : undefined,
+                maxBalanceMinor:
+                    maxBalanceMinor !== undefined
+                        ? parseInt(maxBalanceMinor, 10)
+                        : undefined,
+            },
+        );
+        return {
+            ...result,
+            data: result.data.map((user) => ({
+                ...user,
+                online: onlineIds.has(user.id),
+                isBot: !!(
+                    user.productMetadata as { botPolicy?: unknown } | undefined
+                )?.botPolicy,
+            })),
+        };
+    }
 
-  @Get('users/:id/activity')
-  getUserActivity(
-    @Param('id') userId: string,
-    @Query('limit') limit: string = '20',
-  ) {
-    return this.adminService.getUserActivity(userId, parseInt(limit, 10) || 20);
-  }
+    @Get('users/:id/activity')
+    getUserActivity(
+        @Param('id') userId: string,
+        @Query('limit') limit: string = '20',
+    ) {
+        return this.adminService.getUserActivity(
+            userId,
+            parseInt(limit, 10) || 20,
+        );
+    }
 
-  @Put('users/:id/status')
-  updateUserStatus(@Param('id') id: string, @Body('status') status: string) {
-    return this.usersService.updateStatus(id, status as any);
-  }
+    @Put('users/:id/status')
+    updateUserStatus(@Param('id') id: string, @Body('status') status: string) {
+        return this.usersService.updateStatus(id, status as any);
+    }
 
-  @Post('users/:id/wallet/adjust')
-  adjustUserWallet(
-    @Param('id') userId: string,
-    @Body() body: { amountMinor: number; direction: 'credit' | 'debit'; reason: string },
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.adjustUserWallet(userId, body.amountMinor, body.direction, body.reason, admin.id);
-  }
-
-  @Get('users/:id/wager-limit')
-  getWagerLimit(@Param('id') userId: string) {
-    return this.walletService.getWagerLimit(userId);
-  }
-
-  @Put('users/:id/wager-limit')
-  upsertWagerLimit(
-    @Param('id') userId: string,
-    @Body('dailyLimitMinor', ParseIntPipe) dailyLimitMinor: number,
-    @Body('weeklyLimitMinor', ParseIntPipe) weeklyLimitMinor: number,
-  ) {
-    return this.walletService.upsertWagerLimit(userId, dailyLimitMinor, weeklyLimitMinor);
-  }
-
-  @Delete('users/:id/wager-limit')
-  async deleteWagerLimit(@Param('id') userId: string) {
-    await this.walletService.deleteWagerLimit(userId);
-    return { deleted: true };
-  }
-
-  // ── Agents ────────────────────────────────────────────────────────
-
-  @Post('agents')
-  createAgent(@Body() dto: CreateAgentDto) {
-    return this.adminService.createAgent(dto);
-  }
-
-  @Get('agents')
-  listAgents(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-  ) {
-    return this.adminService.listAgents(parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
-  }
-
-  @Patch('agents/:id')
-  updateAgent(
-    @Param('id') id: string,
-    @Body() dto: UpdateAgentDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.updateAgentWithAudit(id, dto, admin.id);
-  }
-
-  @Patch('agents/:id/on-duty')
-  setAgentOnDuty(
-    @Param('id') id: string,
-    @Body() dto: SetAgentOnDutyDto,
-  ) {
-    return this.usersService.setAgentOnDutyMode(id, dto.mode);
-  }
-
-  @Get('agents/actions')
-  getAgentActions(@Query('limit') limit: string = '100') {
-    return this.adminService.getAgentActions(parseInt(limit, 10) || 100);
-  }
-
-  @Get('agents/performance')
-  getAgentPerformance() {
-    return this.adminService.getAgentPerformance();
-  }
-
-  // ── Agent Settlements ────────────────────────────────────────────
-  // Real-world payouts to an agent — separate from what they've earned.
-
-  /** Upload a photo/PDF of the payment receipt — required before a settlement
-   * can be marked 'paid'. Admin-uploaded per the business rule. */
-  @Post('settlements/receipts/upload')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          mkdirSync(SETTLEMENT_RECEIPT_DIR, { recursive: true });
-          cb(null, SETTLEMENT_RECEIPT_DIR);
+    @Post('users/:id/wallet/adjust')
+    adjustUserWallet(
+        @Param('id') userId: string,
+        @Body()
+        body: {
+            amountMinor: number;
+            direction: 'credit' | 'debit';
+            reason: string;
         },
-        filename: (_req, file, cb) => {
-          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
-          cb(null, `${randomUUID()}${ext}`);
-        },
-      }),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
-      fileFilter: (_req, file, cb) => {
-        if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
-          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP, GIF images or PDF are allowed'), false);
-          return;
-        }
-        cb(null, true);
-      },
-    }),
-  )
-  uploadSettlementReceipt(@UploadedFile() file?: UploadedReceiptFile) {
-    if (!file) throw new BadRequestException('No receipt file uploaded');
-    return { fileUrl: `${SETTLEMENT_RECEIPT_SUBDIR}/${file.filename}` };
-  }
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.adjustUserWallet(
+            userId,
+            body.amountMinor,
+            body.direction,
+            body.reason,
+            admin.id,
+        );
+    }
 
-  @Get('settlements')
-  listAllSettlements(
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-  ) {
-    return this.agentsService.listSettlements(undefined, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
-  }
+    @Get('users/:id/wager-limit')
+    getWagerLimit(@Param('id') userId: string) {
+        return this.walletService.getWagerLimit(userId);
+    }
 
-  @Get('agents/:id/settlements')
-  listAgentSettlements(
-    @Param('id') id: string,
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-  ) {
-    return this.agentsService.listSettlements(id, parseInt(page, 10) || 1, parseInt(limit, 10) || 50);
-  }
+    @Put('users/:id/wager-limit')
+    upsertWagerLimit(
+        @Param('id') userId: string,
+        @Body('dailyLimitMinor', ParseIntPipe) dailyLimitMinor: number,
+        @Body('weeklyLimitMinor', ParseIntPipe) weeklyLimitMinor: number,
+    ) {
+        return this.walletService.upsertWagerLimit(
+            userId,
+            dailyLimitMinor,
+            weeklyLimitMinor,
+        );
+    }
 
-  @Post('agents/:id/settlements')
-  createSettlement(@Param('id') id: string, @Body() dto: CreateSettlementDto) {
-    return this.agentsService.createSettlement(id, new Date(dto.periodStart), new Date(dto.periodEnd), dto.notes);
-  }
+    @Delete('users/:id/wager-limit')
+    async deleteWagerLimit(@Param('id') userId: string) {
+        await this.walletService.deleteWagerLimit(userId);
+        return { deleted: true };
+    }
 
-  @Patch('settlements/:id')
-  updateSettlement(
-    @Param('id') id: string,
-    @Body() dto: UpdateSettlementDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.agentsService.updateSettlement(
-      id,
-      {
-        status: dto.status,
-        paymentMethod: dto.paymentMethod,
-        ftNumber: dto.ftNumber,
-        receiptFileUrl: dto.receiptFileUrl,
-        paidAt: dto.paidAt !== undefined ? (dto.paidAt === null ? null : new Date(dto.paidAt)) : undefined,
-        amountPaidMinor: dto.amountPaidMinor,
-        notes: dto.notes,
-      },
-      admin.id,
-    );
-  }
+    // ── Agents ────────────────────────────────────────────────────────
 
-  // ── Locations ─────────────────────────────────────────────────────
+    @Post('agents')
+    createAgent(@Body() dto: CreateAgentDto) {
+        return this.adminService.createAgent(dto);
+    }
 
-  @Get('locations')
-  listLocations() {
-    return this.locationsService.listLocationsForAdmin();
-  }
+    @Get('agents')
+    listAgents(
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+    ) {
+        return this.adminService.listAgents(
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+        );
+    }
 
-  @Post('locations')
-  createLocation(@Body() dto: CreateLocationDto) {
-    return this.locationsService.createLocation(dto);
-  }
+    @Patch('agents/:id')
+    updateAgent(
+        @Param('id') id: string,
+        @Body() dto: UpdateAgentDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.updateAgentWithAudit(id, dto, admin.id);
+    }
 
-  @Patch('locations/:id')
-  updateLocation(@Param('id') id: string, @Body() dto: UpdateLocationDto) {
-    return this.locationsService.updateLocation(id, dto);
-  }
+    @Patch('agents/:id/on-duty')
+    setAgentOnDuty(@Param('id') id: string, @Body() dto: SetAgentOnDutyDto) {
+        return this.usersService.setAgentOnDutyMode(id, dto.mode);
+    }
 
-  @Delete('locations/:id')
-  deleteLocation(@Param('id') id: string) {
-    return this.locationsService.deleteLocation(id);
-  }
+    @Get('agents/actions')
+    getAgentActions(@Query('limit') limit: string = '100') {
+        return this.adminService.getAgentActions(parseInt(limit, 10) || 100);
+    }
 
-  @Get('locations/:id/agents')
-  listLocationAgents(@Param('id') id: string) {
-    return this.locationsService.listLocationAgents(id);
-  }
+    @Get('agents/performance')
+    getAgentPerformance() {
+        return this.adminService.getAgentPerformance();
+    }
 
-  @Get('agents/:id/locations')
-  listAgentLocations(@Param('id') id: string) {
-    return this.locationsService.listAgentLocations(id);
-  }
+    // ── Agent Settlements ────────────────────────────────────────────
+    // Real-world payouts to an agent  separate from what they've earned.
 
-  /** Replaces the agent's whole assignment set. */
-  @Put('agents/:id/locations')
-  setAgentLocations(@Param('id') id: string, @Body() dto: AssignAgentLocationsDto) {
-    return this.locationsService.setAgentLocations(id, dto);
-  }
+    /** Upload a photo/PDF of the payment receipt  required before a settlement
+     * can be marked 'paid'. Admin-uploaded per the business rule. */
+    @Post('settlements/receipts/upload')
+    @UseInterceptors(
+        FileInterceptor('file', {
+            storage: diskStorage({
+                destination: (_req, _file, cb) => {
+                    mkdirSync(SETTLEMENT_RECEIPT_DIR, { recursive: true });
+                    cb(null, SETTLEMENT_RECEIPT_DIR);
+                },
+                filename: (_req, file, cb) => {
+                    const ext =
+                        extname(file.originalname)
+                            .toLowerCase()
+                            .replace(/[^.a-z0-9]/g, '') || '.jpg';
+                    cb(null, `${randomUUID()}${ext}`);
+                },
+            }),
+            limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+            fileFilter: (_req, file, cb) => {
+                if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
+                    cb(
+                        new UnsupportedMediaTypeException(
+                            'Only JPEG, PNG, WEBP, GIF images or PDF are allowed',
+                        ),
+                        false,
+                    );
+                    return;
+                }
+                cb(null, true);
+            },
+        }),
+    )
+    uploadSettlementReceipt(@UploadedFile() file?: UploadedReceiptFile) {
+        if (!file) throw new BadRequestException('No receipt file uploaded');
+        return { fileUrl: `${SETTLEMENT_RECEIPT_SUBDIR}/${file.filename}` };
+    }
 
-  // ── Withdrawals ───────────────────────────────────────────────────
+    @Get('settlements')
+    listAllSettlements(
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+    ) {
+        return this.agentsService.listSettlements(
+            undefined,
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+        );
+    }
 
-  @Get('withdrawals')
-  getAllWithdrawals() {
-    return this.walletService.getAllWithdrawals();
-  }
+    @Get('agents/:id/settlements')
+    listAgentSettlements(
+        @Param('id') id: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+    ) {
+        return this.agentsService.listSettlements(
+            id,
+            parseInt(page, 10) || 1,
+            parseInt(limit, 10) || 50,
+        );
+    }
 
-  @Post('withdrawals/:id/process')
-  processWithdrawal(
-    @Param('id') id: string,
-    @Body() body: { action: 'approve' | 'reject'; adminNotes?: string },
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.walletService.processWithdrawal(id, body.action, body.adminNotes, admin.id);
-  }
+    @Post('agents/:id/settlements')
+    createSettlement(
+        @Param('id') id: string,
+        @Body() dto: CreateSettlementDto,
+    ) {
+        return this.agentsService.createSettlement(
+            id,
+            new Date(dto.periodStart),
+            new Date(dto.periodEnd),
+            dto.notes,
+        );
+    }
 
-  /**
-   * Admin verification of an agent-submitted withdrawal (FT number + receipt) —
-   * only valid while status is 'awaiting_verification'. Approving is what
-   * actually releases the player's fund-hold and credits the agent; rejecting
-   * refunds the reservation. See WalletService.verifyAgentWithdrawal.
-   */
-  @Post('withdrawals/:id/verify')
-  verifyWithdrawal(
-    @Param('id') id: string,
-    @Body() dto: VerifyWithdrawalDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.walletService.verifyAgentWithdrawal(id, dto.decision, admin.id, dto.notes);
-  }
+    @Patch('settlements/:id')
+    updateSettlement(
+        @Param('id') id: string,
+        @Body() dto: UpdateSettlementDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.agentsService.updateSettlement(
+            id,
+            {
+                status: dto.status,
+                paymentMethod: dto.paymentMethod,
+                ftNumber: dto.ftNumber,
+                receiptFileUrl: dto.receiptFileUrl,
+                paidAt:
+                    dto.paidAt !== undefined
+                        ? dto.paidAt === null
+                            ? null
+                            : new Date(dto.paidAt)
+                        : undefined,
+                amountPaidMinor: dto.amountPaidMinor,
+                notes: dto.notes,
+            },
+            admin.id,
+        );
+    }
 
-  /**
-   * Admin-direct completion — records the agent/fee/reference/receipt and
-   * completes the withdrawal in one step, for a payout an agent already made
-   * outside the self-service claim flow. Only valid from 'pending'/'processing'
-   * (the same set the bare "process" approve accepts). The fee is always
-   * resolved server-side from the active WithdrawalFeeRange table, never taken
-   * from the request body. See WalletService.adminCompleteWithdrawal.
-   */
-  @Post('withdrawals/:id/complete-with-agent')
-  async completeWithdrawalWithAgent(
-    @Param('id') id: string,
-    @Body() dto: AdminCompleteWithdrawalDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    // The fee goes to the Master Wallet here (not the agent) — an admin is
-    // recording/authorizing this payout rather than the agent self-submitting
-    // it, so the house keeps the cut. See WalletService.adminCompleteWithdrawal.
-    const houseWalletUserId = await this.adminService.getOrCreateMasterWalletUserId();
-    return this.walletService.adminCompleteWithdrawal({
-      withdrawalId: id,
-      agentId: dto.agentId,
-      telebirrReference: dto.telebirrReference,
-      receiptFileUrl: dto.receiptFileUrl,
-      adminUserId: admin.id,
-      houseWalletUserId,
-      transferCompletedAt: dto.transferCompletedAt ? new Date(dto.transferCompletedAt) : undefined,
-    });
-  }
+    // ── Locations ─────────────────────────────────────────────────────
 
-  /** Upload a photo/PDF of the payout receipt when an admin is completing a
-   * withdrawal directly (see completeWithdrawalWithAgent above). */
-  @Post('withdrawals/receipts/upload')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          mkdirSync(WITHDRAWAL_RECEIPT_DIR, { recursive: true });
-          cb(null, WITHDRAWAL_RECEIPT_DIR);
-        },
-        filename: (_req, file, cb) => {
-          const ext = extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
-          cb(null, `${randomUUID()}${ext}`);
-        },
-      }),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
-      fileFilter: (_req, file, cb) => {
-        if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
-          cb(new UnsupportedMediaTypeException('Only JPEG, PNG, WEBP, GIF images or PDF are allowed'), false);
-          return;
-        }
-        cb(null, true);
-      },
-    }),
-  )
-  uploadWithdrawalReceipt(@UploadedFile() file?: UploadedReceiptFile) {
-    if (!file) throw new BadRequestException('No receipt file uploaded');
-    return { fileUrl: `${WITHDRAWAL_RECEIPT_SUBDIR}/${file.filename}` };
-  }
+    @Get('locations')
+    listLocations() {
+        return this.locationsService.listLocationsForAdmin();
+    }
 
-  // ── Admin Wallet Operations (shared house wallet — see AdminService) ──
+    @Post('locations')
+    createLocation(@Body() dto: CreateLocationDto) {
+        return this.locationsService.createLocation(dto);
+    }
 
-  @Get('wallet/house')
-  getHouseWallet() {
-    return this.adminService.getHouseWallet();
-  }
+    @Patch('locations/:id')
+    updateLocation(@Param('id') id: string, @Body() dto: UpdateLocationDto) {
+        return this.locationsService.updateLocation(id, dto);
+    }
 
-  @Post('wallet/topup')
-  topupWallet(
-    @Body() dto: AdminTopupDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.adminTopup(admin.id, dto.amountMinor, dto.idempotencyKey);
-  }
+    @Delete('locations/:id')
+    deleteLocation(@Param('id') id: string) {
+        return this.locationsService.deleteLocation(id);
+    }
 
-  @Post('wallet/transfer-to-agent')
-  transferToAgent(
-    @Body() dto: AdminTransferToAgentDto,
-    @CurrentUser() admin: AuthenticatedUser,
-  ) {
-    return this.adminService.transferAdminToAgent(admin.id, dto.agentId, dto.amountMinor, dto.idempotencyKey);
-  }
+    @Get('locations/:id/agents')
+    listLocationAgents(@Param('id') id: string) {
+        return this.locationsService.listLocationAgents(id);
+    }
 
-  // ── Agent Shifts ──────────────────────────────────────────────────
+    @Get('agents/:id/locations')
+    listAgentLocations(@Param('id') id: string) {
+        return this.locationsService.listAgentLocations(id);
+    }
 
-  @Get('shifts')
-  listShifts() {
-    return this.adminService.listShifts();
-  }
+    /** Replaces the agent's whole assignment set. */
+    @Put('agents/:id/locations')
+    setAgentLocations(
+        @Param('id') id: string,
+        @Body() dto: AssignAgentLocationsDto,
+    ) {
+        return this.locationsService.setAgentLocations(id, dto);
+    }
 
-  @Get('shifts/active')
-  getActiveShift() {
-    return this.adminService.getActiveShift();
-  }
+    // ── Withdrawals ───────────────────────────────────────────────────
 
-  @Post('shifts')
-  createShift(@Body() dto: CreateShiftDto) {
-    return this.adminService.createShift(dto);
-  }
+    @Get('withdrawals')
+    getAllWithdrawals() {
+        return this.walletService.getAllWithdrawals();
+    }
 
-  @Put('shifts/:id')
-  updateShift(@Param('id') id: string, @Body() dto: Partial<CreateShiftDto>) {
-    return this.adminService.updateShift(id, dto);
-  }
+    @Post('withdrawals/:id/process')
+    processWithdrawal(
+        @Param('id') id: string,
+        @Body() body: { action: 'approve' | 'reject'; adminNotes?: string },
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.walletService.processWithdrawal(
+            id,
+            body.action,
+            body.adminNotes,
+            admin.id,
+        );
+    }
 
-  @Delete('shifts/:id')
-  async deleteShift(@Param('id') id: string) {
-    await this.adminService.deleteShift(id);
-    return { deleted: true };
-  }
+    /**
+     * Admin verification of an agent-submitted withdrawal (FT number + receipt)
+     * only valid while status is 'awaiting_verification'. Approving is what
+     * actually releases the player's fund-hold and credits the agent; rejecting
+     * refunds the reservation. See WalletService.verifyAgentWithdrawal.
+     */
+    @Post('withdrawals/:id/verify')
+    verifyWithdrawal(
+        @Param('id') id: string,
+        @Body() dto: VerifyWithdrawalDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.walletService.verifyAgentWithdrawal(
+            id,
+            dto.decision,
+            admin.id,
+            dto.notes,
+        );
+    }
 
-  // ── RNG Audit Logs ────────────────────────────────────────────────
+    /**
+     * Admin-direct completion  records the agent/fee/reference/receipt and
+     * completes the withdrawal in one step, for a payout an agent already made
+     * outside the self-service claim flow. Only valid from 'pending'/'processing'
+     * (the same set the bare "process" approve accepts). The fee is always
+     * resolved server-side from the active WithdrawalFeeRange table, never taken
+     * from the request body. See WalletService.adminCompleteWithdrawal.
+     */
+    @Post('withdrawals/:id/complete-with-agent')
+    async completeWithdrawalWithAgent(
+        @Param('id') id: string,
+        @Body() dto: AdminCompleteWithdrawalDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        // The fee goes to the Master Wallet here (not the agent)  an admin is
+        // recording/authorizing this payout rather than the agent self-submitting
+        // it, so the house keeps the cut. See WalletService.adminCompleteWithdrawal.
+        const houseWalletUserId =
+            await this.adminService.getOrCreateMasterWalletUserId();
+        return this.walletService.adminCompleteWithdrawal({
+            withdrawalId: id,
+            agentId: dto.agentId,
+            telebirrReference: dto.telebirrReference,
+            receiptFileUrl: dto.receiptFileUrl,
+            adminUserId: admin.id,
+            houseWalletUserId,
+            transferCompletedAt: dto.transferCompletedAt
+                ? new Date(dto.transferCompletedAt)
+                : undefined,
+        });
+    }
 
-  @Get('rng/audit-logs')
-  getRngAuditLogs(
-    @Query('gameType') gameType?: string,
-    @Query('gameReference') gameReference?: string,
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '50',
-  ) {
-    return this.adminService.getRngAuditLogs({
-      gameType,
-      gameReference,
-      page: parseInt(page, 10) || 1,
-      limit: Math.min(parseInt(limit, 10) || 50, 100),
-    });
-  }
+    /** Upload a photo/PDF of the payout receipt when an admin is completing a
+     * withdrawal directly (see completeWithdrawalWithAgent above). */
+    @Post('withdrawals/receipts/upload')
+    @UseInterceptors(
+        FileInterceptor('file', {
+            storage: diskStorage({
+                destination: (_req, _file, cb) => {
+                    mkdirSync(WITHDRAWAL_RECEIPT_DIR, { recursive: true });
+                    cb(null, WITHDRAWAL_RECEIPT_DIR);
+                },
+                filename: (_req, file, cb) => {
+                    const ext =
+                        extname(file.originalname)
+                            .toLowerCase()
+                            .replace(/[^.a-z0-9]/g, '') || '.jpg';
+                    cb(null, `${randomUUID()}${ext}`);
+                },
+            }),
+            limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+            fileFilter: (_req, file, cb) => {
+                if (!RECEIPT_MIME_TYPES.includes(file.mimetype)) {
+                    cb(
+                        new UnsupportedMediaTypeException(
+                            'Only JPEG, PNG, WEBP, GIF images or PDF are allowed',
+                        ),
+                        false,
+                    );
+                    return;
+                }
+                cb(null, true);
+            },
+        }),
+    )
+    uploadWithdrawalReceipt(@UploadedFile() file?: UploadedReceiptFile) {
+        if (!file) throw new BadRequestException('No receipt file uploaded');
+        return { fileUrl: `${WITHDRAWAL_RECEIPT_SUBDIR}/${file.filename}` };
+    }
+
+    // ── Admin Wallet Operations (shared house wallet  see AdminService) ──
+
+    @Get('wallet/house')
+    getHouseWallet() {
+        return this.adminService.getHouseWallet();
+    }
+
+    @Post('wallet/topup')
+    topupWallet(
+        @Body() dto: AdminTopupDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.adminTopup(
+            admin.id,
+            dto.amountMinor,
+            dto.idempotencyKey,
+        );
+    }
+
+    @Post('wallet/transfer-to-agent')
+    transferToAgent(
+        @Body() dto: AdminTransferToAgentDto,
+        @CurrentUser() admin: AuthenticatedUser,
+    ) {
+        return this.adminService.transferAdminToAgent(
+            admin.id,
+            dto.agentId,
+            dto.amountMinor,
+            dto.idempotencyKey,
+        );
+    }
+
+    // ── Agent Shifts ──────────────────────────────────────────────────
+
+    @Get('shifts')
+    listShifts() {
+        return this.adminService.listShifts();
+    }
+
+    @Get('shifts/active')
+    getActiveShift() {
+        return this.adminService.getActiveShift();
+    }
+
+    @Post('shifts')
+    createShift(@Body() dto: CreateShiftDto) {
+        return this.adminService.createShift(dto);
+    }
+
+    @Put('shifts/:id')
+    updateShift(@Param('id') id: string, @Body() dto: Partial<CreateShiftDto>) {
+        return this.adminService.updateShift(id, dto);
+    }
+
+    @Delete('shifts/:id')
+    async deleteShift(@Param('id') id: string) {
+        await this.adminService.deleteShift(id);
+        return { deleted: true };
+    }
+
+    // ── RNG Audit Logs ────────────────────────────────────────────────
+
+    @Get('rng/audit-logs')
+    getRngAuditLogs(
+        @Query('gameType') gameType?: string,
+        @Query('gameReference') gameReference?: string,
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+    ) {
+        return this.adminService.getRngAuditLogs({
+            gameType,
+            gameReference,
+            page: parseInt(page, 10) || 1,
+            limit: Math.min(parseInt(limit, 10) || 50, 100),
+        });
+    }
 }

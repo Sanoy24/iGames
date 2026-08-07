@@ -1,6 +1,6 @@
 # GAME DEVELOPMENT SPECIFICATION
 
-# Title: ወርቅ ፍለጋ (Werk Flega — Gold Rush)
+# Title: ወርቅ ፍለጋ (Werk Flega Gold Rush)
 
 # Type: Multiplayer Browser-Based Maze Runner
 
@@ -38,7 +38,7 @@ The game must include:
   | 26-50 | 32x32 | 18% |
   | 51-75 | 40x40 | 20% |
   | 76-100 | 48x48 | 22% |
-- **Center cell** is always the "ገበታ / Center Hub" — a glowing golden zone
+- **Center cell** is always the "ገበታ / Center Hub" a glowing golden zone
   where players must return in Mode B.
 - Walls rendered in gold/brass color with Ethiopian cross motifs.
 - Floor in cream/tan representing highland terrain.
@@ -72,9 +72,9 @@ The game must include:
 
 ### 2.4 Special Items (Optional Power-ups)
 
-- **Speed Boost (ፍጥነት)** — 5 seconds of 1.5x speed (rare spawn)
-- **Coin Magnet (ማግኔት)** — attracts nearby coins for 8 seconds (rare spawn)
-- **Shield (ጋሻ)** — prevents losing coins once for 10 seconds (very rare)
+- **Speed Boost (ፍጥነት)** 5 seconds of 1.5x speed (rare spawn)
+- **Coin Magnet (ማግኔት)** attracts nearby coins for 8 seconds (rare spawn)
+- **Shield (ጋሻ)** prevents losing coins once for 10 seconds (very rare)
 - These spawn at ~5% of coin spawn locations
 
 ### 2.5 Movement & Controls (Human Player)
@@ -106,7 +106,7 @@ The admin portal lets the host choose ONE of two winning modes per game:
   1st place with 500 coins each, they split the 1st-place prize 3 ways.
 - Players can keep collecting until the timer hits 0
 
-### MODE B: "የጊዜ ፍልሚያ" (Time Race — Final Sprint)
+### MODE B: "የጊዜ ፍልሚያ" (Time Race Final Sprint)
 
 - Game runs for configured time
 - **7 seconds before time ends**, a loud horn sounds and the center hub
@@ -293,7 +293,7 @@ bot.currentPath = bfs(bot.cell, target.cell)
 
 ---
 
-## 9. AUDIO (Web Audio API — Synthesized)
+## 9. AUDIO (Web Audio API Synthesized)
 
 No external audio files. All sounds synthesized:
 

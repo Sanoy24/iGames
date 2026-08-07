@@ -1,32 +1,39 @@
 /**
  * The fixed set of lobby card gradient presets (see BingoLobby in Bingo.tsx
- * for the actual color values — kept there since it's pure CSS/display data
+ * for the actual color values  kept there since it's pure CSS/display data
  * the backend never needs). This file is the single source of truth for
  * which ids are VALID, so admin input and the random-assignment fallback in
  * BingoService both stay in sync with what the frontend can actually render.
  */
 export const BINGO_CARD_PALETTE_IDS = [
-  'blue',
-  'orange',
-  'purple',
-  'teal',
-  'pink',
-  'gold',
+    'blue',
+    'orange',
+    'purple',
+    'teal',
+    'pink',
+    'gold',
 ] as const;
 
 export type BingoCardPaletteId = (typeof BINGO_CARD_PALETTE_IDS)[number];
 
-export function isValidCardPaletteId(value: unknown): value is BingoCardPaletteId {
-  return typeof value === 'string' && (BINGO_CARD_PALETTE_IDS as readonly string[]).includes(value);
+export function isValidCardPaletteId(
+    value: unknown,
+): value is BingoCardPaletteId {
+    return (
+        typeof value === 'string' &&
+        (BINGO_CARD_PALETTE_IDS as readonly string[]).includes(value)
+    );
 }
 
 export function randomCardPaletteId(): BingoCardPaletteId {
-  return BINGO_CARD_PALETTE_IDS[Math.floor(Math.random() * BINGO_CARD_PALETTE_IDS.length)];
+    return BINGO_CARD_PALETTE_IDS[
+        Math.floor(Math.random() * BINGO_CARD_PALETTE_IDS.length)
+    ];
 }
 
 /** A decorative ball number within the room's own ball pool (1..maxNumber). */
 export function randomCardBallNumber(maxNumber: number): number {
-  return 1 + Math.floor(Math.random() * Math.max(1, maxNumber));
+    return 1 + Math.floor(Math.random() * Math.max(1, maxNumber));
 }
 
 /**
@@ -35,12 +42,15 @@ export function randomCardBallNumber(maxNumber: number): number {
  * rooms don't display the same decorative ball). Falls back to fully random
  * once every number in range is already taken.
  */
-export function randomCardBallNumberAvoiding(maxNumber: number, used: Iterable<number>): number {
-  const usedSet = new Set(used);
-  const pool: number[] = [];
-  for (let n = 1; n <= maxNumber; n++) {
-    if (!usedSet.has(n)) pool.push(n);
-  }
-  if (pool.length === 0) return randomCardBallNumber(maxNumber);
-  return pool[Math.floor(Math.random() * pool.length)];
+export function randomCardBallNumberAvoiding(
+    maxNumber: number,
+    used: Iterable<number>,
+): number {
+    const usedSet = new Set(used);
+    const pool: number[] = [];
+    for (let n = 1; n <= maxNumber; n++) {
+        if (!usedSet.has(n)) pool.push(n);
+    }
+    if (pool.length === 0) return randomCardBallNumber(maxNumber);
+    return pool[Math.floor(Math.random() * pool.length)];
 }

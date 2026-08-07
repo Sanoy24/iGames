@@ -45,7 +45,7 @@ if [ -f package.json ]; then
 elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then
   echo "=== Running Python verification ==="
   PY="$(command -v python3 || command -v python)"
-  # pytest exits 5 when no tests are collected — not a failure for a fresh project.
+  # pytest exits 5 when no tests are collected  not a failure for a fresh project.
   "$PY" -m pytest || [ $? -eq 5 ]
   # -x skips virtualenvs/build dirs so the syntax check doesn't compile dependencies.
   "$PY" -m compileall -q -x '(^|/)(\.?venv|env|node_modules|build|dist|__pycache__)(/|$)' .

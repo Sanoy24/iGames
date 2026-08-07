@@ -11,9 +11,14 @@ const STATUS_BADGE: Record<string, string> = {
   rejected: 'badge-red',
 };
 
-const PAYMENT_METHODS: AgentSettlementPaymentMethod[] = ['bank_transfer', 'cash', 'mobile_money', 'other'];
+// 'other' still requires an FT number + receipt server-side (only cash/bank_branch
+// are exempt — see AgentsService.updateSettlement), so it belongs with the
+// standard, proof-required methods rather than the no-proof cash/branch tab.
+const STANDARD_METHODS: AgentSettlementPaymentMethod[] = ['bank_transfer', 'mobile_money', 'other'];
+const CASH_BRANCH_METHODS: AgentSettlementPaymentMethod[] = ['cash', 'bank_branch'];
 
 type SettlementFilter = 'all' | 'agent_requests' | 'pending';
+type PaymentTab = 'electronic' | 'cash_branch';
 
 export function SettlementsAdmin() {
   const [agents, setAgents] = useState<User[]>([]);
@@ -23,6 +28,7 @@ export function SettlementsAdmin() {
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<SettlementFilter>('all');
+  const [paymentTab, setPaymentTab] = useState<PaymentTab>('electronic');
 
   const [newAgentId, setNewAgentId] = useState('');
   const [newPeriodStart, setNewPeriodStart] = useState('');
@@ -35,6 +41,7 @@ export function SettlementsAdmin() {
     receiptFile: File | null;
     paidAt: string;
     amountPaidMinor: string;
+    notes: string;
   }>>({});
 
   const load = useCallback(async () => {
@@ -87,28 +94,39 @@ export function SettlementsAdmin() {
 
   const markPaid = async (s: AgentSettlement) => {
     const form = payForm[s.id];
-    if (!form?.ftNumber?.trim()) {
+    const isCashBranch = paymentTab === 'cash_branch';
+
+    if (isCashBranch) {
+      if (!form?.notes?.trim()) {
+        setError('A note describing the payment is required for cash/branch settlements — it\'s the only record that will exist of it.');
+        return;
+      }
+    } else if (!form?.ftNumber?.trim()) {
       setError('An FT number is required to mark a settlement as paid.');
       return;
     }
+
     setSaving(true);
     setError(null);
     try {
       let receiptFileUrl = s.receiptFileUrl ?? undefined;
-      if (form.receiptFile) {
-        const uploaded = await adminSettlementsApi.uploadReceipt(form.receiptFile);
-        receiptFileUrl = uploaded.fileUrl;
-      }
-      if (!receiptFileUrl) {
-        setError('A payment receipt is required to mark a settlement as paid.');
-        setSaving(false);
-        return;
+      if (!isCashBranch) {
+        if (form.receiptFile) {
+          const uploaded = await adminSettlementsApi.uploadReceipt(form.receiptFile);
+          receiptFileUrl = uploaded.fileUrl;
+        }
+        if (!receiptFileUrl) {
+          setError('A payment receipt is required to mark a settlement as paid.');
+          setSaving(false);
+          return;
+        }
       }
       await adminSettlementsApi.update(s.id, {
         status: 'paid',
         paymentMethod: form.paymentMethod,
-        ftNumber: form.ftNumber.trim(),
-        receiptFileUrl,
+        ftNumber: isCashBranch ? undefined : form.ftNumber.trim(),
+        receiptFileUrl: isCashBranch ? undefined : receiptFileUrl,
+        notes: isCashBranch ? form.notes.trim() : undefined,
         paidAt: form.paidAt ? new Date(form.paidAt).toISOString() : new Date().toISOString(),
         amountPaidMinor: form.amountPaidMinor ? Number(form.amountPaidMinor) : undefined,
       });
@@ -120,24 +138,29 @@ export function SettlementsAdmin() {
     }
   };
 
-  const updatePayForm = (id: string, patch: Partial<{ paymentMethod: AgentSettlementPaymentMethod; ftNumber: string; receiptFile: File | null; paidAt: string; amountPaidMinor: string }>) => {
+  const updatePayForm = (id: string, patch: Partial<{ paymentMethod: AgentSettlementPaymentMethod; ftNumber: string; receiptFile: File | null; paidAt: string; amountPaidMinor: string; notes: string }>) => {
     setPayForm((prev) => ({
       ...prev,
       [id]: {
-        paymentMethod: prev[id]?.paymentMethod ?? 'bank_transfer',
+        paymentMethod: prev[id]?.paymentMethod ?? (paymentTab === 'cash_branch' ? 'cash' : 'bank_transfer'),
         ftNumber: prev[id]?.ftNumber ?? '',
         receiptFile: prev[id]?.receiptFile ?? null,
         paidAt: prev[id]?.paidAt ?? '',
         amountPaidMinor: prev[id]?.amountPaidMinor ?? '',
+        notes: prev[id]?.notes ?? '',
         ...patch,
       },
     }));
   };
 
   const pendingAgentRequests = settlements.filter((s) => s.requestedByAgent && s.status === 'pending');
+  const paymentTabMethods = paymentTab === 'electronic' ? STANDARD_METHODS : CASH_BRANCH_METHODS;
   const visibleSettlements = settlements.filter((s) => {
-    if (filter === 'agent_requests') return s.requestedByAgent;
-    if (filter === 'pending') return s.status === 'pending';
+    if (filter === 'agent_requests' && !s.requestedByAgent) return false;
+    if (filter === 'pending' && s.status !== 'pending') return false;
+    // Unresolved settlements haven't had a payment method chosen yet, so they
+    // show under whichever tab the admin is about to settle them from.
+    if (s.paymentMethod && !paymentTabMethods.includes(s.paymentMethod)) return false;
     return true;
   });
 
@@ -163,6 +186,24 @@ export function SettlementsAdmin() {
             {pendingAgentRequests.length} settlement request{pendingAgentRequests.length === 1 ? '' : 's'} from agents awaiting review
             <button className="adm-btn" style={{ marginLeft: 'auto' }} onClick={() => setFilter('agent_requests')}>Review</button>
           </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 6, padding: '0 16px 4px' }}>
+          {(['electronic', 'cash_branch'] as PaymentTab[]).map((pt) => (
+            <button
+              key={pt}
+              className="adm-btn"
+              style={paymentTab === pt ? { background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' } : undefined}
+              onClick={() => setPaymentTab(pt)}
+            >
+              {pt === 'electronic' ? 'Standard (FT + Receipt)' : 'Cash & Branch'}
+            </button>
+          ))}
+        </div>
+        {paymentTab === 'cash_branch' && (
+          <p className="adm-field-hint" style={{ padding: '0 16px 8px' }}>
+            No FT number or receipt required for cash/branch payouts — a short note is required instead.
+          </p>
         )}
 
         <div style={{ display: 'flex', gap: 6, padding: '0 16px 12px' }}>
@@ -214,7 +255,10 @@ export function SettlementsAdmin() {
         ) : (
           <div className="adm-list">
             {visibleSettlements.map((s) => {
-              const form = payForm[s.id] ?? { paymentMethod: 'bank_transfer' as AgentSettlementPaymentMethod, ftNumber: '', receiptFile: null, paidAt: '', amountPaidMinor: '' };
+              const form = payForm[s.id] ?? {
+                paymentMethod: (paymentTab === 'cash_branch' ? 'cash' : 'bank_transfer') as AgentSettlementPaymentMethod,
+                ftNumber: '', receiptFile: null, paidAt: '', amountPaidMinor: '', notes: '',
+              };
               return (
                 <div key={s.id} className="adm-w-row">
                   <div className="adm-w-main" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
@@ -224,7 +268,9 @@ export function SettlementsAdmin() {
                         {s.requestedByAgent && <span className="badge badge-gray">Agent request</span>}
                       </div>
                       <span className="adm-td-muted">{formatDateTime(s.periodStart)} – {formatDateTime(s.periodEnd)}</span>
-                      <span className="adm-td-muted">Earned {formatCreditsFull(s.totalEarnedMinor)} · Paid {formatCreditsFull(s.amountPaidMinor)}</span>
+                      <span className="adm-td-muted">
+                        Earned {formatCreditsFull(s.totalEarnedMinor)} · {s.status === 'paid' ? 'Paid' : 'Requested'} {formatCreditsFull(s.amountPaidMinor)}
+                      </span>
                     </div>
                     <div className="adm-w-right">
                       <span className={`badge ${STATUS_BADGE[s.status] ?? 'badge-gold'}`}>{s.status}</span>
@@ -252,7 +298,7 @@ export function SettlementsAdmin() {
                               <label className="adm-field">
                                 <span>Payment Method</span>
                                 <select className="input" value={form.paymentMethod} onChange={(e) => updatePayForm(s.id, { paymentMethod: e.target.value as AgentSettlementPaymentMethod })}>
-                                  {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                                  {(paymentTab === 'cash_branch' ? CASH_BRANCH_METHODS : STANDARD_METHODS).map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
                                 </select>
                               </label>
                               <label className="adm-field">
@@ -260,19 +306,35 @@ export function SettlementsAdmin() {
                                 <input className="input" type="number" min={0} placeholder={String(s.amountPaidMinor)}
                                   value={form.amountPaidMinor} onChange={(e) => updatePayForm(s.id, { amountPaidMinor: e.target.value })} />
                               </label>
-                              <label className="adm-field">
-                                <span>FT Number</span>
-                                <input className="input" value={form.ftNumber} onChange={(e) => updatePayForm(s.id, { ftNumber: e.target.value })} />
-                              </label>
-                              <label className="adm-field">
-                                <span>Paid At</span>
-                                <input className="input" type="datetime-local" value={form.paidAt} onChange={(e) => updatePayForm(s.id, { paidAt: e.target.value })} />
-                              </label>
-                              <label className="adm-field" style={{ gridColumn: 'span 2' }}>
-                                <span>Payment Receipt (image/PDF)</span>
-                                <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                                  onChange={(e) => updatePayForm(s.id, { receiptFile: e.target.files?.[0] ?? null })} />
-                              </label>
+                              {paymentTab === 'electronic' ? (
+                                <>
+                                  <label className="adm-field">
+                                    <span>FT Number</span>
+                                    <input className="input" value={form.ftNumber} onChange={(e) => updatePayForm(s.id, { ftNumber: e.target.value })} />
+                                  </label>
+                                  <label className="adm-field">
+                                    <span>Paid At</span>
+                                    <input className="input" type="datetime-local" value={form.paidAt} onChange={(e) => updatePayForm(s.id, { paidAt: e.target.value })} />
+                                  </label>
+                                  <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+                                    <span>Payment Receipt (image/PDF)</span>
+                                    <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                                      onChange={(e) => updatePayForm(s.id, { receiptFile: e.target.files?.[0] ?? null })} />
+                                  </label>
+                                </>
+                              ) : (
+                                <>
+                                  <label className="adm-field">
+                                    <span>Paid At</span>
+                                    <input className="input" type="datetime-local" value={form.paidAt} onChange={(e) => updatePayForm(s.id, { paidAt: e.target.value })} />
+                                  </label>
+                                  <label className="adm-field" style={{ gridColumn: 'span 2' }}>
+                                    <span>Note (required) — who received it, when, any witness</span>
+                                    <input className="input" placeholder="e.g. Handed to Agent Sara in person, 7 Aug, witnessed by..."
+                                      value={form.notes} onChange={(e) => updatePayForm(s.id, { notes: e.target.value })} />
+                                  </label>
+                                </>
+                              )}
                             </div>
                             <button className="adm-btn adm-btn-success" disabled={saving} onClick={() => markPaid(s)}>
                               {saving ? '…' : 'Mark Paid'}
@@ -283,9 +345,13 @@ export function SettlementsAdmin() {
 
                       {s.status === 'paid' && (
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                          <div>Paid {s.paidAt ? formatDateTime(s.paidAt) : '—'} via {s.paymentMethod ?? '—'}</div>
-                          <div>FT Number: {s.ftNumber ?? '—'}</div>
-                          {s.receiptFileUrl && <a href={`/uploads/${s.receiptFileUrl}`} target="_blank" rel="noreferrer">View receipt</a>}
+                          <div>Paid {s.paidAt ? formatDateTime(s.paidAt) : '—'} via {s.paymentMethod?.replace('_', ' ') ?? '—'}</div>
+                          {!(s.paymentMethod && CASH_BRANCH_METHODS.includes(s.paymentMethod)) && (
+                            <>
+                              <div>FT Number: {s.ftNumber ?? '—'}</div>
+                              {s.receiptFileUrl && <a href={`/uploads/${s.receiptFileUrl}`} target="_blank" rel="noreferrer">View receipt</a>}
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

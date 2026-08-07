@@ -1,37 +1,37 @@
-import { APP_GUARD } from "@nestjs/core";
-import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { TypeOrmModule } from "@nestjs/typeorm";
-import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
-import { AuthModule } from "./auth/auth.module";
-import { BingoModule } from "./bingo/bingo.module";
-import { BotsModule } from "./bots/bots.module";
-import { RequestIdMiddleware } from "./common/middleware/request-id.middleware";
-import { validateEnv } from "./config/env.validation";
-import { DevModule } from "./dev/dev.module";
-import { GameEventsModule } from "./events/game-events.module";
-import { HealthModule } from "./health/health.module";
-import { KenoModule } from "./keno/keno.module";
-import { LocationsModule } from "./locations/locations.module";
-import { PaymentsModule } from "./payments/payments.module";
-import { RedisModule } from "./redis/redis.module";
-import { RngModule } from "./rng/rng.module";
-import { SchedulerModule } from "./scheduler/scheduler.module";
-import { TelegramModule } from "./telegram/telegram.module";
-import { UsersModule } from "./users/users.module";
-import { WalletModule } from "./wallet/wallet.module";
-import { AdminModule } from "./admin/admin.module";
-import { AgentsModule } from "./agents/agents.module";
-import { BroadcastModule } from "./broadcast/broadcast.module";
-import { CrashModule } from "./crash/crash.module";
-import { NotificationsModule } from "./notifications/notifications.module";
-import { SupportModule } from "./support/support.module";
-import { GamesModule } from "./games/games.module";
-import { PoolModule } from "./pool/pool.module";
-import { WerkModule } from "./werk/werk.module";
+import { APP_GUARD } from '@nestjs/core';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AuthModule } from './auth/auth.module';
+import { BingoModule } from './bingo/bingo.module';
+import { BotsModule } from './bots/bots.module';
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { validateEnv } from './config/env.validation';
+import { DevModule } from './dev/dev.module';
+import { GameEventsModule } from './events/game-events.module';
+import { HealthModule } from './health/health.module';
+import { KenoModule } from './keno/keno.module';
+import { LocationsModule } from './locations/locations.module';
+import { PaymentsModule } from './payments/payments.module';
+import { RedisModule } from './redis/redis.module';
+import { RngModule } from './rng/rng.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
+import { TelegramModule } from './telegram/telegram.module';
+import { UsersModule } from './users/users.module';
+import { WalletModule } from './wallet/wallet.module';
+import { AdminModule } from './admin/admin.module';
+import { AgentsModule } from './agents/agents.module';
+import { BroadcastModule } from './broadcast/broadcast.module';
+import { CrashModule } from './crash/crash.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SupportModule } from './support/support.module';
+import { GamesModule } from './games/games.module';
+import { PoolModule } from './pool/pool.module';
+import { WerkModule } from './werk/werk.module';
 
-const isDev = process.env.NODE_ENV !== "production";
+const isDev = process.env.NODE_ENV !== 'production';
 
 @Module({
     imports: [
@@ -50,7 +50,7 @@ const isDev = process.env.NODE_ENV !== "production";
                 database: configService.getOrThrow<string>('DB_DATABASE'),
                 autoLoadEntities: true,
                 // Schema is managed by the idempotent `npm run schema:sync` tool
-                // (src/scripts/ensure-schema.ts), NOT by TypeORM's synchronize —
+                // (src/scripts/ensure-schema.ts), NOT by TypeORM's synchronize
                 // synchronize churns/recreates indexes on MySQL and aborts, which
                 // left new columns unapplied in production. Opt back in for a
                 // throwaway dev DB with DB_SYNCHRONIZE=true.
@@ -64,8 +64,8 @@ const isDev = process.env.NODE_ENV !== "production";
             useFactory: (cfg: ConfigService) => [
                 {
                     name: 'default',
-                    ttl: cfg.get<number>("THROTTLE_TTL_SECONDS", 60) * 1000,
-                    limit: cfg.get<number>("THROTTLE_MAX_REQUESTS", 120),
+                    ttl: cfg.get<number>('THROTTLE_TTL_SECONDS', 60) * 1000,
+                    limit: cfg.get<number>('THROTTLE_MAX_REQUESTS', 120),
                 },
                 {
                     // High default so this bucket only becomes strict where @Throttle({ strict: ... }) overrides it.
@@ -110,6 +110,6 @@ const isDev = process.env.NODE_ENV !== "production";
 })
 export class AppModule implements NestModule {
     configure(consumer: MiddlewareConsumer) {
-        consumer.apply(RequestIdMiddleware).forRoutes("*");
+        consumer.apply(RequestIdMiddleware).forRoutes('*');
     }
 }

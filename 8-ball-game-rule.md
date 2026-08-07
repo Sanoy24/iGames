@@ -122,11 +122,11 @@ If neither happens:
 If cue ball is pocketed:
 
 - Break is legal if other conditions met (a pot or four balls to a rail).
-- Incoming player receives ball in hand — the region depends on the ruleset:
-  - **BCA (Rule 7):** ball in hand **behind the head string** only.
-  - **WPA / most app rulesets:** ball in hand **anywhere on the table**.
+- Incoming player receives ball in hand the region depends on the ruleset:
+    - **BCA (Rule 7):** ball in hand **behind the head string** only.
+    - **WPA / most app rulesets:** ball in hand **anywhere on the table**.
 
-> Implementation note: iGames follows the WPA variant — a break scratch gives
+> Implementation note: iGames follows the WPA variant a break scratch gives
 > ball in hand anywhere on the table.
 
 ---
@@ -455,7 +455,7 @@ Immediate loss if:
 
 Pocket 8-ball before clearing group.
 
-Pocket the 8-ball on the **same stroke** as the last ball of your group (the 8 must be pocketed on a **separate, later** stroke — BCA/WPA §20).
+Pocket the 8-ball on the **same stroke** as the last ball of your group (the 8 must be pocketed on a **separate, later** stroke BCA/WPA §20).
 
 Pocket 8-ball in wrong pocket.
 

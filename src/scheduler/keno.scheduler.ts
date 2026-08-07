@@ -1,17 +1,24 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
-import { BotsService } from "../bots/bots.service";
-import { KenoService } from "../keno/keno.service";
-import { GamesService } from "../games/games.service";
-import { GameEventsGateway } from "../events/game-events.gateway";
-import { RedisLockService } from "../redis/redis-lock.service";
-import { TelegramBotService } from "../telegram/telegram-bot.service";
+import {
+    Injectable,
+    Logger,
+    OnApplicationBootstrap,
+    OnApplicationShutdown,
+} from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { BotsService } from '../bots/bots.service';
+import { KenoService } from '../keno/keno.service';
+import { GamesService } from '../games/games.service';
+import { GameEventsGateway } from '../events/game-events.gateway';
+import { RedisLockService } from '../redis/redis-lock.service';
+import { TelegramBotService } from '../telegram/telegram-bot.service';
 
-const DRAW_LOCK_KEY = "igames:keno:draw-lock";
-const DRAW_LOCK_TTL_MS = 300_000; // 5 minutes — prevents lock expiration during long settlements
+const DRAW_LOCK_KEY = 'igames:keno:draw-lock';
+const DRAW_LOCK_TTL_MS = 300_000; // 5 minutes  prevents lock expiration during long settlements
 
 @Injectable()
-export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutdown {
+export class KenoScheduler
+    implements OnApplicationBootstrap, OnApplicationShutdown
+{
     private readonly logger = new Logger(KenoScheduler.name);
     private shuttingDown = false;
 
@@ -26,17 +33,27 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
 
     async onApplicationBootstrap(): Promise<void> {
         try {
-            const config = await this.kenoService.getActiveConfig().catch(() => null);
-            const autoScheduleIntervalMs = config ? this.kenoService.getAutoScheduleIntervalMs(config) : 0;
+            const config = await this.kenoService
+                .getActiveConfig()
+                .catch(() => null);
+            const autoScheduleIntervalMs = config
+                ? this.kenoService.getAutoScheduleIntervalMs(config)
+                : 0;
             if (!config || autoScheduleIntervalMs <= 0) return;
             const activeDraw = await this.kenoService.getActiveDraw();
             if (!activeDraw) {
-                const scheduledAt = new Date(Date.now() + autoScheduleIntervalMs);
+                const scheduledAt = new Date(
+                    Date.now() + autoScheduleIntervalMs,
+                );
                 await this.kenoService.scheduleDraw(scheduledAt);
-                this.logger.log(`Bootstrapped first Keno draw at ${scheduledAt.toISOString()}`);
+                this.logger.log(
+                    `Bootstrapped first Keno draw at ${scheduledAt.toISOString()}`,
+                );
             }
         } catch (error) {
-            this.logger.warn(`Keno bootstrap skipped: ${error instanceof Error ? error.message : error}`);
+            this.logger.warn(
+                `Keno bootstrap skipped: ${error instanceof Error ? error.message : error}`,
+            );
         }
     }
 
@@ -54,15 +71,18 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
         if (this.shuttingDown) return;
         // Paused by admin (maintenance/hidden): don't execute or spin up new draws.
         if (!(await this.gamesService.isPlayable('keno'))) return;
-        const config = await this.kenoService.getActiveConfig().catch(() => null);
-        if (!config || this.kenoService.getAutoScheduleIntervalMs(config) <= 0) return;
+        const config = await this.kenoService
+            .getActiveConfig()
+            .catch(() => null);
+        if (!config || this.kenoService.getAutoScheduleIntervalMs(config) <= 0)
+            return;
 
         const lock = await this.lockService.acquireLock(
             DRAW_LOCK_KEY,
             DRAW_LOCK_TTL_MS,
         );
         if (!lock) {
-            // Another instance already holds the lock — skip silently
+            // Another instance already holds the lock  skip silently
             return;
         }
 
@@ -88,16 +108,21 @@ export class KenoScheduler implements OnApplicationBootstrap, OnApplicationShutd
             this.gameEventsGateway.emitKenoDrawCompleted(result);
 
             // Fire-and-forget Telegram win notifications
-            this.kenoService.getDrawWinners(result.id).then((winners) => {
-              for (const w of winners) {
-                this.telegramBotService.notifyUserWin(w.userId, w.payoutMinor, 'Keno').catch(() => {});
-              }
-            }).catch(() => {});
+            this.kenoService
+                .getDrawWinners(result.id)
+                .then((winners) => {
+                    for (const w of winners) {
+                        this.telegramBotService
+                            .notifyUserWin(w.userId, w.payoutMinor, 'Keno')
+                            .catch(() => {});
+                    }
+                })
+                .catch(() => {});
             // Persist in-app win notifications (survive leaving the game screen)
             void this.kenoService.notifyDrawWinners(result.id).catch(() => {});
         } catch (error) {
             this.logger.error(
-                "Keno scheduler error",
+                'Keno scheduler error',
                 error instanceof Error ? error.stack : error,
             );
         } finally {

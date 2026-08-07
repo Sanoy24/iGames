@@ -6,29 +6,29 @@ import { BingoRoom } from './entities/bingo-room.entity';
 
 let _roomCounter = 0;
 function makeRoom(overrides: Partial<BingoRoom> = {}): BingoRoom {
-  _roomCounter++;
-  const pad = String(_roomCounter).padStart(12, '0');
-  return Object.assign(new BingoRoom(), {
-    id: `00000000-0000-0000-0000-${pad}`,
-    name: 'Test Room',
-    status: 'open',
-    ticketPriceMinor: 100,
-    maxTickets: 100,
-    prizes: { one_line: 5000, two_lines: 10000, full_house: 20000 },
-    winMode: 'line',
-    numberRange: 90,
-    patternPrizes: [],
-    scheduledStartAt: new Date(),
-    drawnNumbers: [],
-    settledTiers: [],
-    winnersByTier: {},
-    settlementSummary: {},
-    houseEdgePct: 5,
-    prizeMinor: 0,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    ...overrides,
-  });
+    _roomCounter++;
+    const pad = String(_roomCounter).padStart(12, '0');
+    return Object.assign(new BingoRoom(), {
+        id: `00000000-0000-0000-0000-${pad}`,
+        name: 'Test Room',
+        status: 'open',
+        ticketPriceMinor: 100,
+        maxTickets: 100,
+        prizes: { one_line: 5000, two_lines: 10000, full_house: 20000 },
+        winMode: 'line',
+        numberRange: 90,
+        patternPrizes: [],
+        scheduledStartAt: new Date(),
+        drawnNumbers: [],
+        settledTiers: [],
+        winnersByTier: {},
+        settlementSummary: {},
+        houseEdgePct: 5,
+        prizeMinor: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...overrides,
+    });
 }
 
 // ─── Service factory ──────────────────────────────────────────────────────────
@@ -36,2074 +36,2938 @@ function makeRoom(overrides: Partial<BingoRoom> = {}): BingoRoom {
 // mocked. Tests call getCurrentRoom() which queries those repos.
 
 function makeService({ rooms }: { rooms: BingoRoom[] }) {
-  const getByStatus = (status: string) =>
-    rooms.filter((r) => r.status === status).sort((a, b) =>
-      (a.scheduledStartAt?.getTime() ?? 0) - (b.scheduledStartAt?.getTime() ?? 0)
-    )[0] ?? null;
+    const getByStatus = (status: string) =>
+        rooms
+            .filter((r) => r.status === status)
+            .sort(
+                (a, b) =>
+                    (a.scheduledStartAt?.getTime() ?? 0) -
+                    (b.scheduledStartAt?.getTime() ?? 0),
+            )[0] ?? null;
 
-  const getLastCompleted = () =>
-    rooms
-      .filter((r) => r.status === 'completed')
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0] ?? null;
+    const getLastCompleted = () =>
+        rooms
+            .filter((r) => r.status === 'completed')
+            .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0] ??
+        null;
 
-  const mockRoomRepo = {
-    findOne: jest.fn().mockImplementation(({ where }: any) => {
-      if (where.status === 'running') return Promise.resolve(getByStatus('running'));
-      if (where.status === 'open') return Promise.resolve(getByStatus('open'));
-      if (where.status === 'completed') return Promise.resolve(getLastCompleted());
-      return Promise.resolve(null);
-    }),
-    find: jest.fn().mockResolvedValue([]),
-    create: jest.fn().mockImplementation((dto) => dto),
-    save: jest.fn().mockImplementation((r) => Promise.resolve(r)),
-    // Raw query used by getCurrentRoom for the "recently completed" window.
-    query: jest.fn().mockResolvedValue([]),
-    // findOneBy is used by findRoom(id) inside getRoomState
-    findOneBy: jest.fn().mockImplementation((where: any) => {
-      const found = rooms.find((r) => r.id === where.id) ?? null;
-      return Promise.resolve(found);
-    }),
-    createQueryBuilder: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      addSelect: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      leftJoinAndSelect: jest.fn().mockReturnThis(),
-      getMany: jest.fn().mockResolvedValue([]),
-      getOne: jest.fn().mockResolvedValue(null),
-      getRawMany: jest.fn().mockResolvedValue([]),
-    }),
-  };
+    const mockRoomRepo = {
+        findOne: jest.fn().mockImplementation(({ where }: any) => {
+            if (where.status === 'running')
+                return Promise.resolve(getByStatus('running'));
+            if (where.status === 'open')
+                return Promise.resolve(getByStatus('open'));
+            if (where.status === 'completed')
+                return Promise.resolve(getLastCompleted());
+            return Promise.resolve(null);
+        }),
+        find: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockImplementation((dto) => dto),
+        save: jest.fn().mockImplementation((r) => Promise.resolve(r)),
+        // Raw query used by getCurrentRoom for the "recently completed" window.
+        query: jest.fn().mockResolvedValue([]),
+        // findOneBy is used by findRoom(id) inside getRoomState
+        findOneBy: jest.fn().mockImplementation((where: any) => {
+            const found = rooms.find((r) => r.id === where.id) ?? null;
+            return Promise.resolve(found);
+        }),
+        createQueryBuilder: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnThis(),
+            addSelect: jest.fn().mockReturnThis(),
+            where: jest.fn().mockReturnThis(),
+            andWhere: jest.fn().mockReturnThis(),
+            orderBy: jest.fn().mockReturnThis(),
+            leftJoinAndSelect: jest.fn().mockReturnThis(),
+            getMany: jest.fn().mockResolvedValue([]),
+            getOne: jest.fn().mockResolvedValue(null),
+            getRawMany: jest.fn().mockResolvedValue([]),
+        }),
+    };
 
-  const mockBotNameRepo = {
-    find: jest.fn().mockResolvedValue([]),
-    findOneBy: jest.fn().mockResolvedValue(null),
-    create: jest.fn().mockImplementation((dto) => dto),
-    save: jest.fn().mockImplementation((value) => Promise.resolve(value)),
-    remove: jest.fn().mockResolvedValue(undefined),
-  };
+    const mockBotNameRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findOneBy: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation((dto) => dto),
+        save: jest.fn().mockImplementation((value) => Promise.resolve(value)),
+        remove: jest.fn().mockResolvedValue(undefined),
+    };
 
-  const mockTicketRepo = {
-    find: jest.fn().mockResolvedValue([]),
-    findOne: jest.fn().mockResolvedValue(null),
-    findOneBy: jest.fn().mockResolvedValue(null),
-    count: jest.fn().mockResolvedValue(0),
-    countBy: jest.fn().mockResolvedValue(0),
-    update: jest.fn().mockResolvedValue({ affected: 0 }),
-    createQueryBuilder: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      addSelect: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      groupBy: jest.fn().mockReturnThis(),
-      getRawMany: jest.fn().mockResolvedValue([]),
-    }),
-  };
+    const mockTicketRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findOne: jest.fn().mockResolvedValue(null),
+        findOneBy: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(0),
+        countBy: jest.fn().mockResolvedValue(0),
+        update: jest.fn().mockResolvedValue({ affected: 0 }),
+        createQueryBuilder: jest.fn().mockReturnValue({
+            select: jest.fn().mockReturnThis(),
+            addSelect: jest.fn().mockReturnThis(),
+            where: jest.fn().mockReturnThis(),
+            andWhere: jest.fn().mockReturnThis(),
+            groupBy: jest.fn().mockReturnThis(),
+            getRawMany: jest.fn().mockResolvedValue([]),
+        }),
+    };
 
-  const mockCardRepo = {
-    find: jest.fn().mockResolvedValue([]),
-    findOne: jest.fn().mockResolvedValue(null),
-    countBy: jest.fn().mockResolvedValue(0),
-    query: jest.fn().mockResolvedValue([]),
-    save: jest.fn().mockImplementation((c) => Promise.resolve(c)),
-    create: jest.fn().mockImplementation((dto) => dto),
-  };
+    const mockCardRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findOne: jest.fn().mockResolvedValue(null),
+        countBy: jest.fn().mockResolvedValue(0),
+        query: jest.fn().mockResolvedValue([]),
+        save: jest.fn().mockImplementation((c) => Promise.resolve(c)),
+        create: jest.fn().mockImplementation((dto) => dto),
+    };
 
-  const mockConfigRepo = {
-    findOneBy: jest.fn().mockResolvedValue({
-      key: 'default',
-      enabled: true,
-      autoRepeatIntervalMinutes: 5,
-      defaultTicketPriceMinor: 100,
-      defaultMaxTickets: 100,
-      defaultOneLineMinor: 5000,
-      defaultTwoLinesMinor: 10000,
-      defaultFullHouseMinor: 20000,
-      drawIntervalSeconds: 2,
-      salesWindowSeconds: 40,
-      resultDisplaySeconds: 10,
-      minTicketsToStart: 1,
-    }),
-    create: jest.fn().mockImplementation((dto) => dto),
-    save: jest.fn().mockImplementation((r) => Promise.resolve(r)),
-  };
+    const mockConfigRepo = {
+        findOneBy: jest.fn().mockResolvedValue({
+            key: 'default',
+            enabled: true,
+            autoRepeatIntervalMinutes: 5,
+            defaultTicketPriceMinor: 100,
+            defaultMaxTickets: 100,
+            defaultOneLineMinor: 5000,
+            defaultTwoLinesMinor: 10000,
+            defaultFullHouseMinor: 20000,
+            drawIntervalSeconds: 2,
+            salesWindowSeconds: 40,
+            resultDisplaySeconds: 10,
+            minTicketsToStart: 1,
+        }),
+        create: jest.fn().mockImplementation((dto) => dto),
+        save: jest.fn().mockImplementation((r) => Promise.resolve(r)),
+    };
 
-  const mockPatternRepo = {
-    find: jest.fn().mockResolvedValue([]),
-    findBy: jest.fn().mockResolvedValue([]),
-    findOneBy: jest.fn().mockResolvedValue(null),
-    save: jest.fn().mockImplementation((p) => Promise.resolve(p)),
-    create: jest.fn().mockImplementation((dto) => dto),
-    remove: jest.fn().mockResolvedValue(undefined),
-  };
+    const mockPatternRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findBy: jest.fn().mockResolvedValue([]),
+        findOneBy: jest.fn().mockResolvedValue(null),
+        save: jest.fn().mockImplementation((p) => Promise.resolve(p)),
+        create: jest.fn().mockImplementation((dto) => dto),
+        remove: jest.fn().mockResolvedValue(undefined),
+    };
 
-  const mockCustomRoomSlotRepo = {
-    find: jest.fn().mockResolvedValue([]),
-    findBy: jest.fn().mockResolvedValue([]),
-    findOneBy: jest.fn().mockResolvedValue(null),
-    save: jest.fn().mockImplementation((s) => Promise.resolve(s)),
-    create: jest.fn().mockImplementation((dto) => dto),
-    delete: jest.fn().mockResolvedValue({ affected: 1 }),
-  };
+    const mockCustomRoomSlotRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findBy: jest.fn().mockResolvedValue([]),
+        findOneBy: jest.fn().mockResolvedValue(null),
+        save: jest.fn().mockImplementation((s) => Promise.resolve(s)),
+        create: jest.fn().mockImplementation((dto) => dto),
+        delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
 
-  const mockCommissionSettlementErrorRepo = {
-    save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
-    create: jest.fn().mockImplementation((dto) => dto),
-  };
+    const mockCommissionSettlementErrorRepo = {
+        save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
+        create: jest.fn().mockImplementation((dto) => dto),
+    };
 
-  const mockOperationalAlertRepo = {
-    find: jest.fn().mockResolvedValue([]),
-    save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
-    create: jest.fn().mockImplementation((dto) => dto),
-  };
+    const mockOperationalAlertRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        save: jest.fn().mockImplementation((e) => Promise.resolve(e)),
+        create: jest.fn().mockImplementation((dto) => dto),
+    };
 
-  const walletService = { debitInSession: jest.fn(), creditInSession: jest.fn() };
-  const dataSource = { transaction: jest.fn() as any };
+    const walletService = {
+        debitInSession: jest.fn(),
+        creditInSession: jest.fn(),
+    };
+    const dataSource = { transaction: jest.fn() as any };
 
-  const service = new BingoService(
-    dataSource as any,
-    mockRoomRepo as any,
-    mockBotNameRepo as any,
-    mockTicketRepo as any,
-    mockCardRepo as any,
-    mockConfigRepo as any,
-    mockCustomRoomSlotRepo as any,
-    mockCommissionSettlementErrorRepo as any,
-    mockOperationalAlertRepo as any,
-    mockPatternRepo as any,
-    new (require('./bingo-rules.service').BingoRulesService)(),
-    { drawUniqueNumbers: jest.fn() } as any,
-    walletService as any,
-    { safeCreate: jest.fn(), create: jest.fn() } as any,
-    { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
-  );
+    const service = new BingoService(
+        dataSource as any,
+        mockRoomRepo as any,
+        mockBotNameRepo as any,
+        mockTicketRepo as any,
+        mockCardRepo as any,
+        mockConfigRepo as any,
+        mockCustomRoomSlotRepo as any,
+        mockCommissionSettlementErrorRepo as any,
+        mockOperationalAlertRepo as any,
+        mockPatternRepo as any,
+        new (require('./bingo-rules.service').BingoRulesService)(),
+        { drawUniqueNumbers: jest.fn() } as any,
+        walletService as any,
+        { safeCreate: jest.fn(), create: jest.fn() } as any,
+        {
+            assertPlayable: jest.fn().mockResolvedValue(undefined),
+            isPlayable: jest.fn().mockResolvedValue(true),
+        } as any,
+    );
 
-  return { service, mockRoomRepo, mockBotNameRepo, mockTicketRepo, mockCardRepo, mockConfigRepo, mockPatternRepo, mockOperationalAlertRepo, walletService, dataSource };
+    return {
+        service,
+        mockRoomRepo,
+        mockBotNameRepo,
+        mockTicketRepo,
+        mockCardRepo,
+        mockConfigRepo,
+        mockPatternRepo,
+        mockOperationalAlertRepo,
+        walletService,
+        dataSource,
+    };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe('BingoService.getCurrentRoom — unit (mocked repos)', () => {
-  it('returns the running room when one exists', async () => {
-    const running = makeRoom({ status: 'running' });
-    const open = makeRoom({ status: 'open' });
-    const { service } = makeService({ rooms: [running, open] });
+describe('BingoService.getCurrentRoom  unit (mocked repos)', () => {
+    it('returns the running room when one exists', async () => {
+        const running = makeRoom({ status: 'running' });
+        const open = makeRoom({ status: 'open' });
+        const { service } = makeService({ rooms: [running, open] });
 
-    const result = await service.getCurrentRoom();
-    expect(result?.id).toBe(running.id);
-  });
+        const result = await service.getCurrentRoom();
+        expect(result?.id).toBe(running.id);
+    });
 
-  it('returns the open room when no room is running', async () => {
-    const open = makeRoom({ status: 'open' });
-    const { service } = makeService({ rooms: [open] });
+    it('returns the open room when no room is running', async () => {
+        const open = makeRoom({ status: 'open' });
+        const { service } = makeService({ rooms: [open] });
 
-    const result = await service.getCurrentRoom();
-    expect(result?.id).toBe(open.id);
-  });
+        const result = await service.getCurrentRoom();
+        expect(result?.id).toBe(open.id);
+    });
 
-  it('returns a recently completed room during the result window', async () => {
-    const old = makeRoom({ status: 'completed', updatedAt: new Date('2026-01-01') });
-    const recent = makeRoom({ status: 'completed', updatedAt: new Date('2026-06-01') });
-    const { service, mockRoomRepo } = makeService({ rooms: [old, recent] });
-    mockRoomRepo.query.mockResolvedValueOnce([{ id: recent.id }]);
+    it('returns a recently completed room during the result window', async () => {
+        const old = makeRoom({
+            status: 'completed',
+            updatedAt: new Date('2026-01-01'),
+        });
+        const recent = makeRoom({
+            status: 'completed',
+            updatedAt: new Date('2026-06-01'),
+        });
+        const { service, mockRoomRepo } = makeService({ rooms: [old, recent] });
+        mockRoomRepo.query.mockResolvedValueOnce([{ id: recent.id }]);
 
-    const result = await service.getCurrentRoom();
-    expect(result?.id).toBe(recent.id);
-  });
+        const result = await service.getCurrentRoom();
+        expect(result?.id).toBe(recent.id);
+    });
 
-  it('does not return an old completed room after the result window has expired', async () => {
-    const completed = makeRoom({ status: 'completed', updatedAt: new Date('2026-06-01') });
-    const { service } = makeService({ rooms: [completed] });
+    it('does not return an old completed room after the result window has expired', async () => {
+        const completed = makeRoom({
+            status: 'completed',
+            updatedAt: new Date('2026-06-01'),
+        });
+        const { service } = makeService({ rooms: [completed] });
 
-    const result = await service.getCurrentRoom();
-    expect(result).toBeNull();
-  });
+        const result = await service.getCurrentRoom();
+        expect(result).toBeNull();
+    });
 
-  it('returns null when no rooms exist at all', async () => {
-    const { service } = makeService({ rooms: [] });
-    const result = await service.getCurrentRoom();
-    expect(result).toBeNull();
-  });
+    it('returns null when no rooms exist at all', async () => {
+        const { service } = makeService({ rooms: [] });
+        const result = await service.getCurrentRoom();
+        expect(result).toBeNull();
+    });
 
-  it('prefers running over open', async () => {
-    const running = makeRoom({ status: 'running' });
-    const open = makeRoom({ status: 'open' });
-    const completed = makeRoom({ status: 'completed', updatedAt: new Date() });
-    const { service } = makeService({ rooms: [completed, open, running] });
+    it('prefers running over open', async () => {
+        const running = makeRoom({ status: 'running' });
+        const open = makeRoom({ status: 'open' });
+        const completed = makeRoom({
+            status: 'completed',
+            updatedAt: new Date(),
+        });
+        const { service } = makeService({ rooms: [completed, open, running] });
 
-    const result = await service.getCurrentRoom();
-    expect(result?.id).toBe(running.id);
-  });
+        const result = await service.getCurrentRoom();
+        expect(result?.id).toBe(running.id);
+    });
 
-  it('prefers open over completed', async () => {
-    const open = makeRoom({ status: 'open' });
-    const completed = makeRoom({ status: 'completed', updatedAt: new Date() });
-    const { service } = makeService({ rooms: [completed, open] });
+    it('prefers open over completed', async () => {
+        const open = makeRoom({ status: 'open' });
+        const completed = makeRoom({
+            status: 'completed',
+            updatedAt: new Date(),
+        });
+        const { service } = makeService({ rooms: [completed, open] });
 
-    const result = await service.getCurrentRoom();
-    expect(result?.id).toBe(open.id);
-  });
+        const result = await service.getCurrentRoom();
+        expect(result?.id).toBe(open.id);
+    });
 });
 
 // ─── computePrefilledPrizeMinor (derash payout math) ─────────────────────────
 
-describe('BingoService.computePrefilledPrizeMinor — derash payout', () => {
-  const cfg = (overrides: any = {}) => ({
-    prefilledFirstPlacePct: 80,
-    prefilledSecondPlaceEnabled: false,
-    prefilledSecondPlacePct: 0,
-    prefilledThirdPlaceEnabled: false,
-    prefilledThirdPlacePct: 0,
-    ...overrides,
-  });
-
-  it('pays the FULL house-adjusted pool to a single 1st-place winner (no double fee)', () => {
-    const { service } = makeService({ rooms: [] });
-    // pot 40, 20% house edge → pool 32. Regression: must be 32, NOT 32*0.8 = 25.
-    expect(service.computePrefilledPrizeMinor(40, '1st', 20, cfg() as any)).toBe(32);
-    // pot 100 → pool 80. Regression: must be 80, NOT 64.
-    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg() as any)).toBe(80);
-  });
-
-  it('is independent of the configured 1st-place percentage when it is the only place', () => {
-    const { service } = makeService({ rooms: [] });
-    // Whether the weight is 80 or 100, a single enabled place gets the whole pool.
-    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 100 }) as any)).toBe(80);
-    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 50 }) as any)).toBe(80);
-  });
-
-  it('splits the pool by weight across enabled places', () => {
-    const { service } = makeService({ rooms: [] });
-    const c = cfg({ prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20 });
-    // pool 80, weights 80/20 (total 100) → 1st 64, 2nd 16.
-    expect(service.computePrefilledPrizeMinor(100, '1st', 20, c as any)).toBe(64);
-    expect(service.computePrefilledPrizeMinor(100, '2nd', 20, c as any)).toBe(16);
-  });
-
-  it('returns 0 when no enabled place has any weight', () => {
-    const { service } = makeService({ rooms: [] });
-    expect(service.computePrefilledPrizeMinor(100, '1st', 20, cfg({ prefilledFirstPlacePct: 0 }) as any)).toBe(0);
-  });
-
-  it('splits the pool across all five enabled places by weight', () => {
-    const { service } = makeService({ rooms: [] });
-    // No house edge → pool == pot. Weights 50/25/15/6/4 (total 100).
-    const c = cfg({
-      prefilledFirstPlacePct: 50,
-      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 25,
-      prefilledThirdPlaceEnabled: true,  prefilledThirdPlacePct: 15,
-      prefilledFourthPlaceEnabled: true, prefilledFourthPlacePct: 6,
-      prefilledFifthPlaceEnabled: true,  prefilledFifthPlacePct: 4,
+describe('BingoService.computePrefilledPrizeMinor  derash payout', () => {
+    const cfg = (overrides: any = {}) => ({
+        prefilledFirstPlacePct: 80,
+        prefilledSecondPlaceEnabled: false,
+        prefilledSecondPlacePct: 0,
+        prefilledThirdPlaceEnabled: false,
+        prefilledThirdPlacePct: 0,
+        ...overrides,
     });
-    expect(service.computePrefilledPrizeMinor(100, '1st', 0, c as any)).toBe(50);
-    expect(service.computePrefilledPrizeMinor(100, '2nd', 0, c as any)).toBe(25);
-    expect(service.computePrefilledPrizeMinor(100, '3rd', 0, c as any)).toBe(15);
-    expect(service.computePrefilledPrizeMinor(100, '4th', 0, c as any)).toBe(6);
-    expect(service.computePrefilledPrizeMinor(100, '5th', 0, c as any)).toBe(4);
-  });
 
-  it('does not let a DISABLED place dilute the enabled places', () => {
-    const { service } = makeService({ rooms: [] });
-    // 4th carries a weight but is NOT enabled, so its 50 must be excluded from the
-    // denominator — the enabled 1st/2nd keep their full 80/20 share of the pool.
-    // (computePrefilledPrizeMinor is only ever called for ENABLED places in the
-    // settlement loop via nextOpenPrefilledPlace, so 4th is never requested here.)
-    const c = cfg({
-      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20,
-      prefilledFourthPlaceEnabled: false, prefilledFourthPlacePct: 50,
+    it('pays the FULL house-adjusted pool to a single 1st-place winner (no double fee)', () => {
+        const { service } = makeService({ rooms: [] });
+        // pot 40, 20% house edge → pool 32. Regression: must be 32, NOT 32*0.8 = 25.
+        expect(
+            service.computePrefilledPrizeMinor(40, '1st', 20, cfg() as any),
+        ).toBe(32);
+        // pot 100 → pool 80. Regression: must be 80, NOT 64.
+        expect(
+            service.computePrefilledPrizeMinor(100, '1st', 20, cfg() as any),
+        ).toBe(80);
     });
-    expect(service.computePrefilledPrizeMinor(100, '1st', 20, c as any)).toBe(64); // 80/100 of pool 80
-    expect(service.computePrefilledPrizeMinor(100, '2nd', 20, c as any)).toBe(16); // 20/100 of pool 80
-  });
+
+    it('is independent of the configured 1st-place percentage when it is the only place', () => {
+        const { service } = makeService({ rooms: [] });
+        // Whether the weight is 80 or 100, a single enabled place gets the whole pool.
+        expect(
+            service.computePrefilledPrizeMinor(
+                100,
+                '1st',
+                20,
+                cfg({ prefilledFirstPlacePct: 100 }) as any,
+            ),
+        ).toBe(80);
+        expect(
+            service.computePrefilledPrizeMinor(
+                100,
+                '1st',
+                20,
+                cfg({ prefilledFirstPlacePct: 50 }) as any,
+            ),
+        ).toBe(80);
+    });
+
+    it('splits the pool by weight across enabled places', () => {
+        const { service } = makeService({ rooms: [] });
+        const c = cfg({
+            prefilledSecondPlaceEnabled: true,
+            prefilledSecondPlacePct: 20,
+        });
+        // pool 80, weights 80/20 (total 100) → 1st 64, 2nd 16.
+        expect(
+            service.computePrefilledPrizeMinor(100, '1st', 20, c as any),
+        ).toBe(64);
+        expect(
+            service.computePrefilledPrizeMinor(100, '2nd', 20, c as any),
+        ).toBe(16);
+    });
+
+    it('returns 0 when no enabled place has any weight', () => {
+        const { service } = makeService({ rooms: [] });
+        expect(
+            service.computePrefilledPrizeMinor(
+                100,
+                '1st',
+                20,
+                cfg({ prefilledFirstPlacePct: 0 }) as any,
+            ),
+        ).toBe(0);
+    });
+
+    it('splits the pool across all five enabled places by weight', () => {
+        const { service } = makeService({ rooms: [] });
+        // No house edge → pool == pot. Weights 50/25/15/6/4 (total 100).
+        const c = cfg({
+            prefilledFirstPlacePct: 50,
+            prefilledSecondPlaceEnabled: true,
+            prefilledSecondPlacePct: 25,
+            prefilledThirdPlaceEnabled: true,
+            prefilledThirdPlacePct: 15,
+            prefilledFourthPlaceEnabled: true,
+            prefilledFourthPlacePct: 6,
+            prefilledFifthPlaceEnabled: true,
+            prefilledFifthPlacePct: 4,
+        });
+        expect(
+            service.computePrefilledPrizeMinor(100, '1st', 0, c as any),
+        ).toBe(50);
+        expect(
+            service.computePrefilledPrizeMinor(100, '2nd', 0, c as any),
+        ).toBe(25);
+        expect(
+            service.computePrefilledPrizeMinor(100, '3rd', 0, c as any),
+        ).toBe(15);
+        expect(
+            service.computePrefilledPrizeMinor(100, '4th', 0, c as any),
+        ).toBe(6);
+        expect(
+            service.computePrefilledPrizeMinor(100, '5th', 0, c as any),
+        ).toBe(4);
+    });
+
+    it('does not let a DISABLED place dilute the enabled places', () => {
+        const { service } = makeService({ rooms: [] });
+        // 4th carries a weight but is NOT enabled, so its 50 must be excluded from the
+        // denominator  the enabled 1st/2nd keep their full 80/20 share of the pool.
+        // (computePrefilledPrizeMinor is only ever called for ENABLED places in the
+        // settlement loop via nextOpenPrefilledPlace, so 4th is never requested here.)
+        const c = cfg({
+            prefilledSecondPlaceEnabled: true,
+            prefilledSecondPlacePct: 20,
+            prefilledFourthPlaceEnabled: false,
+            prefilledFourthPlacePct: 50,
+        });
+        expect(
+            service.computePrefilledPrizeMinor(100, '1st', 20, c as any),
+        ).toBe(64); // 80/100 of pool 80
+        expect(
+            service.computePrefilledPrizeMinor(100, '2nd', 20, c as any),
+        ).toBe(16); // 20/100 of pool 80
+    });
 });
 
 // ─── findRunningRoomIdsDue ────────────────────────────────────────────────────
 
 // ─── computePrefilledFinalPrizeMinor (end-of-game pool reconciliation) ────────
 
-describe('BingoService.computePrefilledFinalPrizeMinor — filled-place reconciliation', () => {
-  const cfg = (overrides: any = {}) => ({
-    prefilledFirstPlacePct: 80,
-    prefilledSecondPlaceEnabled: false,
-    prefilledSecondPlacePct: 0,
-    prefilledThirdPlaceEnabled: false,
-    prefilledThirdPlacePct: 0,
-    ...overrides,
-  });
-
-  it('a single filled place always takes the whole house-adjusted pool', () => {
-    const { service } = makeService({ rooms: [] });
-    // pot 100, 20% edge → pool 80. Only 1st filled → 1st gets the full 80.
-    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, ['1st'], cfg() as any)).toBe(80);
-  });
-
-  it('equals the progressive prize when every enabled place is filled', () => {
-    const { service } = makeService({ rooms: [] });
-    const c = cfg({
-      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 20,
-      prefilledThirdPlaceEnabled: true, prefilledThirdPlacePct: 0, // 3rd enabled, weight 0
+describe('BingoService.computePrefilledFinalPrizeMinor  filled-place reconciliation', () => {
+    const cfg = (overrides: any = {}) => ({
+        prefilledFirstPlacePct: 80,
+        prefilledSecondPlaceEnabled: false,
+        prefilledSecondPlacePct: 0,
+        prefilledThirdPlaceEnabled: false,
+        prefilledThirdPlacePct: 0,
+        ...overrides,
     });
-    // Enabled weights 80/20/0 = 100. All three filled → 1st 64, 2nd 16, 3rd 0.
-    const filled = ['1st', '2nd', '3rd'] as any;
-    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, filled, c as any)).toBe(64);
-    expect(service.computePrefilledFinalPrizeMinor(100, '2nd', 20, filled, c as any)).toBe(16);
-  });
 
-  it('redistributes an UNFILLED place’s share to the filled places (no house leak)', () => {
-    const { service } = makeService({ rooms: [] });
-    // Enabled 1st/2nd/3rd = 50/30/20. But only 1st and 2nd actually filled.
-    const c = cfg({
-      prefilledFirstPlacePct: 50,
-      prefilledSecondPlaceEnabled: true, prefilledSecondPlacePct: 30,
-      prefilledThirdPlaceEnabled: true, prefilledThirdPlacePct: 20,
+    it('a single filled place always takes the whole house-adjusted pool', () => {
+        const { service } = makeService({ rooms: [] });
+        // pot 100, 20% edge → pool 80. Only 1st filled → 1st gets the full 80.
+        expect(
+            service.computePrefilledFinalPrizeMinor(
+                100,
+                '1st',
+                20,
+                ['1st'],
+                cfg() as any,
+            ),
+        ).toBe(80);
     });
-    const filled = ['1st', '2nd'] as any; // 3rd never filled
-    // Pool 80 split by FILLED weights 50/30 (total 80): 1st = 80*50/80 = 50, 2nd = 30.
-    // The unfilled 3rd's 20 share is NOT kept by the house — it lifts 1st+2nd.
-    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, filled, c as any)).toBe(50);
-    expect(service.computePrefilledFinalPrizeMinor(100, '2nd', 20, filled, c as any)).toBe(30);
-    // Filled prizes sum to the whole pool (50 + 30 = 80).
-  });
 
-  it('returns 0 when there are no filled places', () => {
-    const { service } = makeService({ rooms: [] });
-    expect(service.computePrefilledFinalPrizeMinor(100, '1st', 20, [], cfg() as any)).toBe(0);
-  });
+    it('equals the progressive prize when every enabled place is filled', () => {
+        const { service } = makeService({ rooms: [] });
+        const c = cfg({
+            prefilledSecondPlaceEnabled: true,
+            prefilledSecondPlacePct: 20,
+            prefilledThirdPlaceEnabled: true,
+            prefilledThirdPlacePct: 0, // 3rd enabled, weight 0
+        });
+        // Enabled weights 80/20/0 = 100. All three filled → 1st 64, 2nd 16, 3rd 0.
+        const filled = ['1st', '2nd', '3rd'] as any;
+        expect(
+            service.computePrefilledFinalPrizeMinor(
+                100,
+                '1st',
+                20,
+                filled,
+                c as any,
+            ),
+        ).toBe(64);
+        expect(
+            service.computePrefilledFinalPrizeMinor(
+                100,
+                '2nd',
+                20,
+                filled,
+                c as any,
+            ),
+        ).toBe(16);
+    });
+
+    it('redistributes an UNFILLED place’s share to the filled places (no house leak)', () => {
+        const { service } = makeService({ rooms: [] });
+        // Enabled 1st/2nd/3rd = 50/30/20. But only 1st and 2nd actually filled.
+        const c = cfg({
+            prefilledFirstPlacePct: 50,
+            prefilledSecondPlaceEnabled: true,
+            prefilledSecondPlacePct: 30,
+            prefilledThirdPlaceEnabled: true,
+            prefilledThirdPlacePct: 20,
+        });
+        const filled = ['1st', '2nd'] as any; // 3rd never filled
+        // Pool 80 split by FILLED weights 50/30 (total 80): 1st = 80*50/80 = 50, 2nd = 30.
+        // The unfilled 3rd's 20 share is NOT kept by the house  it lifts 1st+2nd.
+        expect(
+            service.computePrefilledFinalPrizeMinor(
+                100,
+                '1st',
+                20,
+                filled,
+                c as any,
+            ),
+        ).toBe(50);
+        expect(
+            service.computePrefilledFinalPrizeMinor(
+                100,
+                '2nd',
+                20,
+                filled,
+                c as any,
+            ),
+        ).toBe(30);
+        // Filled prizes sum to the whole pool (50 + 30 = 80).
+    });
+
+    it('returns 0 when there are no filled places', () => {
+        const { service } = makeService({ rooms: [] });
+        expect(
+            service.computePrefilledFinalPrizeMinor(
+                100,
+                '1st',
+                20,
+                [],
+                cfg() as any,
+            ),
+        ).toBe(0);
+    });
 });
 
-describe('BingoService.findRunningRoomIdsDue — unit', () => {
-  it('returns room IDs whose updatedAt is older than the interval', async () => {
-    const oldRoom = makeRoom({
-      status: 'running',
-      updatedAt: new Date(Date.now() - 10_000),
+describe('BingoService.findRunningRoomIdsDue  unit', () => {
+    it('returns room IDs whose updatedAt is older than the interval', async () => {
+        const oldRoom = makeRoom({
+            status: 'running',
+            updatedAt: new Date(Date.now() - 10_000),
+        });
+
+        const mockRoomRepo = {
+            find: jest.fn().mockResolvedValue([oldRoom]),
+            query: jest.fn().mockResolvedValue([{ id: oldRoom.id }]),
+            findOne: jest.fn(),
+            findOneBy: jest.fn(),
+        } as any;
+
+        const service = new BingoService(
+            { transaction: jest.fn() } as any,
+            mockRoomRepo,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                createQueryBuilder: jest
+                    .fn()
+                    .mockReturnValue({
+                        select: jest.fn().mockReturnThis(),
+                        addSelect: jest.fn().mockReturnThis(),
+                        where: jest.fn().mockReturnThis(),
+                        groupBy: jest.fn().mockReturnThis(),
+                        getRawMany: jest.fn().mockResolvedValue([]),
+                    }),
+            } as any,
+            {
+                countBy: jest.fn().mockResolvedValue(0),
+                query: jest.fn().mockResolvedValue([]),
+                find: jest.fn().mockResolvedValue([]),
+                findOne: jest.fn(),
+                save: jest.fn(),
+                create: jest.fn(),
+            } as any,
+            {
+                findOneBy: jest
+                    .fn()
+                    .mockResolvedValue({
+                        drawIntervalSeconds: 2,
+                        salesWindowSeconds: 40,
+                        resultDisplaySeconds: 10,
+                        enabled: true,
+                        defaultTicketPriceMinor: 100,
+                        defaultMaxTickets: 100,
+                        defaultOneLineMinor: 5000,
+                        defaultTwoLinesMinor: 10000,
+                        defaultFullHouseMinor: 20000,
+                        autoRepeatIntervalMinutes: 5,
+                        minTicketsToStart: 1,
+                    }),
+                create: jest.fn().mockImplementation((d) => d),
+                save: jest.fn().mockImplementation((d) => d),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findBy: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn(),
+                save: jest.fn(),
+                create: jest.fn(),
+                delete: jest.fn(),
+            } as any,
+            {
+                save: jest
+                    .fn()
+                    .mockImplementation((e: unknown) => Promise.resolve(e)),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                save: jest
+                    .fn()
+                    .mockImplementation((e: unknown) => Promise.resolve(e)),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn(),
+                save: jest.fn(),
+                create: jest.fn(),
+            } as any,
+            new (require('./bingo-rules.service').BingoRulesService)(),
+            { drawUniqueNumbers: jest.fn() } as any,
+            { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
+            { safeCreate: jest.fn(), create: jest.fn() } as any,
+            {} as any,
+            {
+                assertPlayable: jest.fn().mockResolvedValue(undefined),
+                isPlayable: jest.fn().mockResolvedValue(true),
+            } as any,
+        );
+
+        const ids = await service.findRunningRoomIdsDue(2);
+        expect(ids).toContain(oldRoom.id);
     });
 
-    const mockRoomRepo = {
-      find: jest.fn().mockResolvedValue([oldRoom]),
-      query: jest.fn().mockResolvedValue([{ id: oldRoom.id }]),
-      findOne: jest.fn(),
-      findOneBy: jest.fn(),
-    } as any;
+    it('returns empty array when no rooms are due', async () => {
+        const freshRoom = makeRoom({
+            id: 'room-fresh',
+            status: 'running',
+            updatedAt: new Date(), // just updated
+        });
 
-    const service = new BingoService(
-      { transaction: jest.fn() } as any,
-      mockRoomRepo,
-      { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn().mockResolvedValue([]) }) } as any,
-      { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
-      { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40, resultDisplaySeconds: 10, enabled: true, defaultTicketPriceMinor: 100, defaultMaxTickets: 100, defaultOneLineMinor: 5000, defaultTwoLinesMinor: 10000, defaultFullHouseMinor: 20000, autoRepeatIntervalMinutes: 5, minTicketsToStart: 1 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
-      { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
-      { save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
-      { find: jest.fn().mockResolvedValue([]), save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
-      { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
-      new (require('./bingo-rules.service').BingoRulesService)(),
-      { drawUniqueNumbers: jest.fn() } as any,
-      { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
-      { safeCreate: jest.fn(), create: jest.fn() } as any,
-      {} as any,
-      { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
-    );
+        const mockRoomRepo = {
+            find: jest.fn().mockResolvedValue([]),
+            query: jest.fn().mockResolvedValue([]),
+            findOne: jest.fn(),
+            findOneBy: jest.fn(),
+        } as any;
 
-    const ids = await service.findRunningRoomIdsDue(2);
-    expect(ids).toContain(oldRoom.id);
-  });
+        const service = new BingoService(
+            { transaction: jest.fn() } as any,
+            mockRoomRepo,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                createQueryBuilder: jest
+                    .fn()
+                    .mockReturnValue({
+                        select: jest.fn().mockReturnThis(),
+                        addSelect: jest.fn().mockReturnThis(),
+                        where: jest.fn().mockReturnThis(),
+                        groupBy: jest.fn().mockReturnThis(),
+                        getRawMany: jest.fn().mockResolvedValue([]),
+                    }),
+            } as any,
+            {
+                countBy: jest.fn().mockResolvedValue(0),
+                query: jest.fn().mockResolvedValue([]),
+                find: jest.fn().mockResolvedValue([]),
+                findOne: jest.fn(),
+                save: jest.fn(),
+                create: jest.fn(),
+            } as any,
+            {
+                findOneBy: jest
+                    .fn()
+                    .mockResolvedValue({
+                        drawIntervalSeconds: 2,
+                        salesWindowSeconds: 40,
+                    }),
+                create: jest.fn().mockImplementation((d) => d),
+                save: jest.fn().mockImplementation((d) => d),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findBy: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn(),
+                save: jest.fn(),
+                create: jest.fn(),
+                delete: jest.fn(),
+            } as any,
+            {
+                save: jest
+                    .fn()
+                    .mockImplementation((e: unknown) => Promise.resolve(e)),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                save: jest
+                    .fn()
+                    .mockImplementation((e: unknown) => Promise.resolve(e)),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn(),
+                save: jest.fn(),
+                create: jest.fn(),
+            } as any,
+            new (require('./bingo-rules.service').BingoRulesService)(),
+            { drawUniqueNumbers: jest.fn() } as any,
+            { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
+            { safeCreate: jest.fn(), create: jest.fn() } as any,
+            {} as any,
+            {
+                assertPlayable: jest.fn().mockResolvedValue(undefined),
+                isPlayable: jest.fn().mockResolvedValue(true),
+            } as any,
+        );
 
-  it('returns empty array when no rooms are due', async () => {
-    const freshRoom = makeRoom({
-      id: 'room-fresh',
-      status: 'running',
-      updatedAt: new Date(), // just updated
+        const ids = await service.findRunningRoomIdsDue(2);
+        expect(ids).toHaveLength(0);
+
+        void freshRoom; // referenced to avoid unused warning
     });
-
-    const mockRoomRepo = {
-      find: jest.fn().mockResolvedValue([]),
-      query: jest.fn().mockResolvedValue([]),
-      findOne: jest.fn(),
-      findOneBy: jest.fn(),
-    } as any;
-
-    const service = new BingoService(
-      { transaction: jest.fn() } as any,
-      mockRoomRepo,
-      { find: jest.fn().mockResolvedValue([]), createQueryBuilder: jest.fn().mockReturnValue({ select: jest.fn().mockReturnThis(), addSelect: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), groupBy: jest.fn().mockReturnThis(), getRawMany: jest.fn().mockResolvedValue([]) }) } as any,
-      { countBy: jest.fn().mockResolvedValue(0), query: jest.fn().mockResolvedValue([]), find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
-      { findOneBy: jest.fn().mockResolvedValue({ drawIntervalSeconds: 2, salesWindowSeconds: 40 }), create: jest.fn().mockImplementation((d) => d), save: jest.fn().mockImplementation((d) => d) } as any,
-      { find: jest.fn().mockResolvedValue([]), findBy: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn(), delete: jest.fn() } as any,
-      { save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
-      { find: jest.fn().mockResolvedValue([]), save: jest.fn().mockImplementation((e: unknown) => Promise.resolve(e)), create: jest.fn().mockImplementation((dto: unknown) => dto) } as any,
-      { find: jest.fn().mockResolvedValue([]), findOneBy: jest.fn(), save: jest.fn(), create: jest.fn() } as any,
-      new (require('./bingo-rules.service').BingoRulesService)(),
-      { drawUniqueNumbers: jest.fn() } as any,
-      { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
-      { safeCreate: jest.fn(), create: jest.fn() } as any,
-      {} as any,
-      { assertPlayable: jest.fn().mockResolvedValue(undefined), isPlayable: jest.fn().mockResolvedValue(true) } as any,
-    );
-
-    const ids = await service.findRunningRoomIdsDue(2);
-    expect(ids).toHaveLength(0);
-
-    void freshRoom; // referenced to avoid unused warning
-  });
 });
 
 describe('BingoService cartela lifecycle guards', () => {
-  const botCfg = (overrides: any = {}) => ({
-    botCartelaPolicyEnabled: true,
-    botCartelaPolicyMode: 'mirror',
-    botMaxCartelasPerBotPerRoom: 5,
-    botBelowThresholdEnabled: true,
-    botBelowThresholdRealPlayers: 10,
-    botAboveThresholdEnabled: true,
-    botAboveThresholdRealPlayers: 50,
-    botMaxRealPlayers: 10,
-    botBonusWinEnabled: true,
-    botBonusWinMode: 'interval',
-    botBonusWinEveryNRounds: 0,
-    botBonusWinChancePct: 0,
-    globalBingoBotWinInterval: 0,
-    ...overrides,
-  });
-
-  it('rejects cartel-dual config when fewer than two active Bingo bots exist', async () => {
-    const { service, mockConfigRepo } = makeService({ rooms: [] });
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
-      key: 'global',
-      botWinMode: 'statistical',
-    } as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
-    jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(null);
-    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
-
-    await expect(service.updateBingoConfig({ botWinMode: 'cartel-dual' } as any)).rejects.toThrow(
-      'Cartel Dual requires at least 2 active Bingo-enabled bots',
-    );
-
-    expect(saveSpy).not.toHaveBeenCalled();
-  });
-
-  it('rejects cartel-dual config when the cooldown leaves fewer than two eligible Bingo bots', async () => {
-    const { service, mockConfigRepo } = makeService({ rooms: [] });
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
-      key: 'global',
-      botWinMode: 'statistical',
-      botWinnerCooldownRooms: 25,
-    } as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2', 'bot-3']));
-    jest.spyOn(service as any, 'getRecentBingoBotWinnerUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2']));
-    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
-
-    await expect(service.updateBingoConfig({ botWinMode: 'cartel-dual' } as any)).rejects.toThrow(
-      'Cartel Dual requires at least 2 cooldown-eligible Bingo bots',
-    );
-
-    expect(saveSpy).not.toHaveBeenCalled();
-  });
-
-  it('saves bot winner cooldown rooms from the admin config', async () => {
-    const { service, mockConfigRepo } = makeService({ rooms: [] });
-    const cfg = {
-      key: 'global',
-      botWinMode: 'statistical',
-      botWinnerCooldownRooms: 25,
-    };
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(cfg as any);
-    jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(null);
-    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
-
-    await service.updateBingoConfig({ botWinnerCooldownRooms: 7 } as any);
-
-    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ botWinnerCooldownRooms: 7 }));
-  });
-
-  it('defaults old configs without bot winner cooldown rooms to the legacy cooldown', () => {
-    const { service } = makeService({ rooms: [] });
-
-    expect((service as any).resolveBotWinnerCooldownRooms({})).toBe(25);
-  });
-
-  it('rejects cartela returns during the freeze window before the draw', async () => {
-    const { service, dataSource } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 1,
-      scheduledStartAt: new Date(Date.now() + 4_000),
-      cartelaChangeLockSeconds: 5,
-    });
-    const userId = '550e8400-e29b-41d4-a716-446655440001';
-    const ticket = {
-      id: 'ticket-1',
-      userId,
-      roomId: room.id,
-      cartelaNumber: 7,
-      stakeMinor: 100,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-      cardId: null,
-    };
-    const manager = {
-      findOne: jest.fn().mockImplementation((entity: unknown, options: any) => {
-        if (options?.where?.id === room.id) return Promise.resolve(room);
-        return Promise.resolve(ticket);
-      }),
-      find: jest.fn(),
-      save: jest.fn().mockResolvedValue(undefined),
-      update: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn().mockResolvedValue([{ c: 1 }]),
-      countBy: jest.fn().mockResolvedValue(1),
-    };
-    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
-
-    await expect(
-      service.releaseCartela({ userId, roomId: room.id, cartelaNumber: 7 }),
-    ).rejects.toThrow('Cartela changes are locked near the draw start');
-
-    expect(manager.findOne).toHaveBeenCalledTimes(1);
-  });
-
-  it('cancels the room and returns bot cartelas when the last real player leaves', async () => {
-    const { service, dataSource, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 2,
-      scheduledStartAt: new Date(Date.now() + 20_000),
-    });
-    const userId = '550e8400-e29b-41d4-a716-446655440002';
-    const realTicket = {
-      id: 'ticket-1',
-      userId,
-      roomId: room.id,
-      cartelaNumber: 7,
-      stakeMinor: 100,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-      cardId: null,
-    };
-    const botTicket = {
-      id: 'bot-ticket-1',
-      userId: 'bot-1',
-      roomId: room.id,
-      cartelaNumber: 8,
-      stakeMinor: 100,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-      cardId: null,
-    };
-    const manager = {
-      findOne: jest.fn().mockImplementation((entity: unknown, options: any) => {
-        if (options?.where?.id === room.id) return Promise.resolve(room);
-        return Promise.resolve(realTicket);
-      }),
-      find: jest.fn().mockResolvedValue([botTicket]),
-      save: jest.fn().mockImplementation(async (value: any) => value),
-      update: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn().mockResolvedValue([{ c: 0 }]),
-      countBy: jest.fn().mockResolvedValue(1),
-    };
-    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
-    walletService.creditInSession = jest.fn().mockResolvedValue({ id: 'credit-1' });
-
-    const result = await service.releaseCartela({ userId, roomId: room.id, cartelaNumber: 7 });
-
-    expect(result).toEqual({ cartelaNumber: 7, refundedMinor: 100, roomCancelled: true });
-    expect(room.status).toBe('cancelled');
-    expect(room.soldTickets).toBe(0);
-    expect(room.settlementSummary).toMatchObject({ reason: 'bingo_room_no_real_players' });
-    expect(botTicket.status).toBe('cancelled');
-    expect(botTicket.settlementStatus).toBe('settled');
-    expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
-    expect(manager.update).toHaveBeenCalledWith(
-      BingoCard,
-      { roomId: room.id },
-      { assignedTicketId: null, assignedUserId: null },
-    );
-    expect(manager.find).toHaveBeenCalled();
-  });
-
-  it('cancels bot-only rooms instead of starting the draw', async () => {
-    const { service, dataSource, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'line',
-      status: 'open',
-      soldTickets: 2,
-      scheduledStartAt: new Date(Date.now() - 1_000),
-    });
-    const botTicket = {
-      id: 'bot-ticket-1',
-      userId: 'bot-1',
-      roomId: room.id,
-      stakeMinor: 100,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-      cardId: null,
-    };
-    const manager = {
-      findOne: jest.fn().mockResolvedValue(room),
-      find: jest.fn().mockResolvedValue([botTicket]),
-      save: jest.fn().mockImplementation(async (value: any) => value),
-      update: jest.fn().mockResolvedValue(undefined),
-      query: jest.fn().mockResolvedValue([{ c: 0 }]),
-      countBy: jest.fn().mockResolvedValue(2),
-    };
-    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
-    walletService.creditInSession = jest.fn().mockResolvedValue({ id: 'credit-1' });
-
-    const result = await service.drawNextNumber(room.id);
-
-    expect(result.status).toBe('cancelled');
-    expect(room.status).toBe('cancelled');
-    expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects cartela purchases in the freeze window before the draw', async () => {
-    const { service, dataSource, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      scheduledStartAt: new Date(Date.now() + 4_000),
-      cartelaChangeLockSeconds: 5,
-    });
-    const manager = {
-      find: jest.fn().mockResolvedValue([]),
-      findOne: jest.fn().mockResolvedValue(room),
-    };
-    (dataSource.transaction as jest.Mock).mockImplementation((cb: (m: unknown) => Promise<unknown>) => cb(manager));
-
-    await expect(
-      service.purchaseTickets({
-        userId: '550e8400-e29b-41d4-a716-446655440000',
-        roomId: room.id,
-        cartelaNumbers: [1],
-        idempotencyKey: 'purchase-lock-test',
-      }),
-    ).rejects.toThrow('Cartela changes are locked near the draw start');
-
-    expect(walletService.debitInSession).not.toHaveBeenCalled();
-  });
-
-  it('skips bot reconcile when the room enters the freeze window', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      scheduledStartAt: new Date(Date.now() + 4_000),
-      cartelaChangeLockSeconds: 5,
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
-      botMaxRealPlayers: 10,
-      botWinMode: 'statistical',
-    } as any);
-    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
-    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
-    const releaseSpy = jest.spyOn(service, 'releaseCartela').mockResolvedValue({ cartelaNumber: 1, refundedMinor: 100 } as any);
-
-    const changed = await service.reconcileBotCartelasInRoom(room.id);
-
-    expect(changed).toBe(false);
-    expect(purchaseSpy).not.toHaveBeenCalled();
-    expect(releaseSpy).not.toHaveBeenCalled();
-  });
-
-  it('randomizes bot cartela assignment across the available pool', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 2,
-      scheduledStartAt: new Date(Date.now() + 20_000),
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg() as any);
-    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
-    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(2 as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
-    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
-    jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([1, 2, 3]);
-    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]].reverse());
-    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
-
-    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
-
-    expect((purchaseSpy.mock.calls as any[]).map((call) => call[0].cartelaNumbers[0])).toEqual([3, 2]);
-  });
-
-  it('keeps cartel-dual at a minimum of two bot cartelas when only one human cartela exists', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 1,
-      scheduledStartAt: new Date(Date.now() + 20_000),
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
-      botWinMode: 'cartel-dual',
-    }) as any);
-    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(1);
-    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(1 as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2']));
-    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
-    jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([1, 2, 3]);
-    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]]);
-    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
-
-    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
-
-    expect(purchaseSpy).toHaveBeenCalledTimes(2);
-    expect(purchaseSpy.mock.calls.map((call) => call[0].userId)).toEqual(['bot-1', 'bot-2']);
-    expect(purchaseSpy.mock.calls.map((call) => call[0]?.cartelaNumbers?.[0])).toEqual([1, 2]);
-  });
-
-  it('assigns the second cartel-dual bot cartela to a different bot account when one bot already holds a card', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 2,
-      scheduledStartAt: new Date(Date.now() + 20_000),
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
-      botWinMode: 'cartel-dual',
-    }) as any);
-    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(1);
-    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(1);
-    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(2 as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1', 'bot-2']));
-    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
-    jest.spyOn(service as any, 'countUserCartelasInRoom').mockImplementation(async (botId: unknown) => (
-      botId === 'bot-1' ? 1 : 0
-    ));
-    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([7, 8, 9]);
-    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]]);
-    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
-
-    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
-
-    expect(purchaseSpy).toHaveBeenCalledTimes(1);
-    expect(purchaseSpy.mock.calls[0][0].userId).toBe('bot-2');
-    expect(purchaseSpy.mock.calls[0][0].cartelaNumbers).toEqual([7]);
-  });
-
-  it('enforces the per-bot cartela cap while still letting bots join above threshold independently', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 3,
-      scheduledStartAt: new Date(Date.now() + 20_000),
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
-      botCartelaPolicyMode: 'fixed_cap',
-      botMaxCartelasPerBotPerRoom: 1,
-      botBelowThresholdEnabled: false,
-      botAboveThresholdEnabled: true,
-      botAboveThresholdRealPlayers: 50,
-    }) as any);
-    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(60);
-    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(3 as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
-    jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue({} as any);
-    jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'listAvailableCartelaNumbers').mockResolvedValue([1, 2, 3]);
-    jest.spyOn(service as any, 'shuffle' as any).mockImplementation((...args: any[]) => [...args[0]]);
-    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
-
-    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(true);
-
-    expect(purchaseSpy).toHaveBeenCalledTimes(1);
-    expect(purchaseSpy.mock.calls[0][0].cartelaNumbers).toHaveLength(1);
-  });
-
-  it('keeps bots out when the below-threshold rule is disabled, even if the room is small', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'open',
-      soldTickets: 1,
-      scheduledStartAt: new Date(Date.now() + 20_000),
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(false);
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
-      botBelowThresholdEnabled: false,
-      botAboveThresholdEnabled: true,
-      botAboveThresholdRealPlayers: 50,
-    }) as any);
-    jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(5);
-    jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
-    jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(1 as any);
-    jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(new Set(['bot-1']));
-    const purchaseSpy = jest.spyOn(service, 'purchaseTickets').mockResolvedValue([] as any);
-
-    await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(false);
-
-    expect(purchaseSpy).not.toHaveBeenCalled();
-  });
-
-  it('uses only explicitly Bingo-enabled bot users for new Bingo cartelas', async () => {
-    const { service } = makeService({ rooms: [] });
-    const manager = { query: jest.fn().mockResolvedValue([]) };
-
-    await (service as any).getActiveBotUserIds(manager);
-
-    expect(manager.query.mock.calls[0][0]).toContain(
-      "JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') = true",
-    );
-    expect(manager.query.mock.calls[0][0]).not.toContain(
-      "JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') IS NULL",
-    );
-  });
-
-  it('does not redirect multiple prize places to the same bot identity', () => {
-    const { service } = makeService({ rooms: [] });
-    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
-      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
-
-    const winner = (service as any).pickBotRedirectWinner(
-      [
-        { id: 'ticket-1', userId: 'bot-1', grid: [[1]] },
-        { id: 'ticket-2', userId: 'bot-2', grid: [[2]] },
-      ],
-      new Set(['bot-1', 'bot-2']),
-      { id: 'pattern-1' },
-      [1],
-      75,
-      { awardedBotUserIds: new Set(['bot-1']) },
-    );
-
-    expect(winner?.userId).toBe('bot-2');
-  });
-
-  it('relaxes exclusions (cooldown, then same-room dedup) rather than holding when they would leave zero bots', () => {
-    const { service } = makeService({ rooms: [] });
-    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
-      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
-
-    // Only one bot cartela is in the room, and it's both already-awarded this
-    // room AND on cross-room cooldown — the strict exclusion set would leave
-    // zero bots. Cartel-dual must still redirect the win onto it rather than
-    // holding the real player's win indefinitely.
-    const winner = (service as any).pickBotRedirectWinner(
-      [{ id: 'ticket-1', userId: 'bot-1', grid: [[1]] }],
-      new Set(['bot-1']),
-      { id: 'pattern-1' },
-      [1],
-      75,
-      { awardedBotUserIds: new Set(['bot-1']), recentBotWinnerUserIds: new Set(['bot-1']) },
-    );
-
-    expect(winner?.userId).toBe('bot-1');
-  });
-
-  it('synthesizes a fresh, valid winning grid for a bot when none naturally completes the pattern', () => {
-    const { service } = makeService({ rooms: [] });
-    const pattern = { id: 'pattern-1', patternType: 'any_line' } as any;
-    const drawnNumbers = [3, 20, 35, 50, 65, 7, 22, 37, 52, 67];
-    const botTicket = {
-      id: 'ticket-bot',
-      userId: 'bot-1',
-      // Doesn't complete any_line against drawnNumbers above — forces the
-      // fallback (synthesis) path instead of the natural-winner shortcut.
-      grid: [
-        [99, null, null, null, null],
-        [null, null, null, null, null],
-        [null, null, null, null, null],
-        [null, null, null, null, null],
-        [null, null, null, null, null],
-      ] as (number | null)[][],
-      markedNumbers: [] as number[],
-    };
-
-    const winner = (service as any).pickBotRedirectWinner(
-      [botTicket],
-      new Set(['bot-1']),
-      pattern,
-      drawnNumbers,
-      75,
-    );
-
-    expect(winner).toBe(botTicket);
-    const rulesService = (service as any).bingoRulesService;
-    const { completedPatternIds } = rulesService.evaluatePatternTicket(winner.grid, drawnNumbers, [pattern]);
-    expect(completedPatternIds).toContain('pattern-1');
-    const numbers = winner.grid.flat().filter((v: number | null) => v !== null);
-    expect(new Set(numbers).size).toBe(numbers.length);
-  });
-
-  it('holds (returns null) when there is no eligible bot to synthesize a win onto', () => {
-    const { service } = makeService({ rooms: [] });
-    const pattern = { id: 'pattern-1', patternType: 'any_line' } as any;
-
-    const winner = (service as any).pickBotRedirectWinner([], new Set(['bot-1']), pattern, [1, 2, 3], 75);
-
-    expect(winner).toBeNull();
-  });
-
-  it('randomizes Derash bot winners while skipping the previous room bot winner', () => {
-    const { service } = makeService({ rooms: [] });
-    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
-      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
-    jest.spyOn(service as any, 'shuffle').mockImplementation((values: unknown) => [...(values as unknown[])]);
-
-    const winner = (service as any).pickDerashAutoWinner({
-      tickets: [
-        { id: 'ticket-1', userId: 'bot-1', autoClaim: true, grid: [[1]] },
-        { id: 'ticket-2', userId: 'bot-2', autoClaim: true, grid: [[2]] },
-      ],
-      botIds: new Set(['bot-1', 'bot-2']),
-      awardedBotUserIds: new Set(),
-      recentBotWinnerUserIds: new Set(['bot-1']),
-      pattern: { id: 'pattern-1' },
-      drawnNumbers: [1],
+    const botCfg = (overrides: any = {}) => ({
+        botCartelaPolicyEnabled: true,
+        botCartelaPolicyMode: 'mirror',
+        botMaxCartelasPerBotPerRoom: 5,
+        botBelowThresholdEnabled: true,
+        botBelowThresholdRealPlayers: 10,
+        botAboveThresholdEnabled: true,
+        botAboveThresholdRealPlayers: 50,
+        botMaxRealPlayers: 10,
+        botBonusWinEnabled: true,
+        botBonusWinMode: 'interval',
+        botBonusWinEveryNRounds: 0,
+        botBonusWinChancePct: 0,
+        globalBingoBotWinInterval: 0,
+        ...overrides,
     });
 
-    expect(winner?.userId).toBe('bot-2');
-  });
+    it('rejects cartel-dual config when fewer than two active Bingo bots exist', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+            botWinMode: 'statistical',
+        } as any);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1']),
+        );
+        jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(
+            null,
+        );
+        const saveSpy = jest.spyOn(mockConfigRepo, 'save');
 
-  it('does not let the only eligible bot win consecutive Bingo rooms', () => {
-    const { service } = makeService({ rooms: [] });
-    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
-      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        await expect(
+            service.updateBingoConfig({ botWinMode: 'cartel-dual' } as any),
+        ).rejects.toThrow(
+            'Cartel Dual requires at least 2 active Bingo-enabled bots',
+        );
 
-    const winner = (service as any).pickDerashAutoWinner({
-      tickets: [
-        { id: 'ticket-1', userId: 'bot-1', autoClaim: true, grid: [[1]] },
-      ],
-      botIds: new Set(['bot-1']),
-      awardedBotUserIds: new Set(),
-      recentBotWinnerUserIds: new Set(['bot-1']),
-      pattern: { id: 'pattern-1' },
-      drawnNumbers: [1],
+        expect(saveSpy).not.toHaveBeenCalled();
     });
 
-    expect(winner).toBeNull();
-  });
+    it('rejects cartel-dual config when the cooldown leaves fewer than two eligible Bingo bots', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+            botWinMode: 'statistical',
+            botWinnerCooldownRooms: 25,
+        } as any);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2', 'bot-3']),
+        );
+        jest.spyOn(
+            service as any,
+            'getRecentBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set(['bot-1', 'bot-2']));
+        const saveSpy = jest.spyOn(mockConfigRepo, 'save');
 
-  it('keeps recent Bingo bot winners out of rotation across multiple completed rooms', async () => {
-    const { service } = makeService({ rooms: [] });
-    const currentRoom = makeRoom({ id: '00000000-0000-0000-0000-000000000099' });
-    const completedRooms = Array.from({ length: 3 }, (_, index) => makeRoom({
-      id: `00000000-0000-0000-0000-00000000010${index}`,
-      status: 'completed',
-      settlementSummary: {
-        '1st': { winnerId: `ticket-${index + 1}` },
-      },
-      updatedAt: new Date(Date.now() - index * 1000),
-    }));
-    const roomFind = jest.fn().mockResolvedValue([currentRoom, ...completedRooms]);
-    const manager = {
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return {
-            find: roomFind,
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
-            { id: 'ticket-1', userId: 'bot-1', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
-            { id: 'ticket-2', userId: 'bot-2', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
-            { id: 'ticket-3', userId: 'bot-3', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
-          ]),
+        await expect(
+            service.updateBingoConfig({ botWinMode: 'cartel-dual' } as any),
+        ).rejects.toThrow(
+            'Cartel Dual requires at least 2 cooldown-eligible Bingo bots',
+        );
+
+        expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it('saves bot winner cooldown rooms from the admin config', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        const cfg = {
+            key: 'global',
+            botWinMode: 'statistical',
+            botWinnerCooldownRooms: 25,
         };
-      }),
-    };
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(cfg as any);
+        jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(
+            null,
+        );
+        const saveSpy = jest.spyOn(mockConfigRepo, 'save');
 
-    const recent = await (service as any).getPreviousBingoBotWinnerUserIds(currentRoom, manager);
+        await service.updateBingoConfig({ botWinnerCooldownRooms: 7 } as any);
 
-    expect(recent).toEqual(new Set(['bot-1', 'bot-2', 'bot-3']));
-    expect(roomFind).toHaveBeenCalledWith(expect.objectContaining({ take: 26 }));
-  });
+        expect(saveSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ botWinnerCooldownRooms: 7 }),
+        );
+    });
 
-  it('uses the configured bot winner cooldown window for recent winner rotation', async () => {
-    const { service } = makeService({ rooms: [] });
-    const currentRoom = makeRoom({ id: '00000000-0000-0000-0000-000000000199' });
-    const completedRooms = Array.from({ length: 3 }, (_, index) => makeRoom({
-      id: `00000000-0000-0000-0000-00000000020${index}`,
-      status: 'completed',
-      settlementSummary: {
-        '1st': { winnerId: `ticket-${index + 1}` },
-      },
-      updatedAt: new Date(Date.now() - index * 1000),
-    }));
-    const roomFind = jest.fn().mockResolvedValue([currentRoom, ...completedRooms]);
-    const manager = {
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return {
-            find: roomFind,
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
-            { id: 'ticket-1', userId: 'bot-1', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
-            { id: 'ticket-2', userId: 'bot-2', user: { productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } } } },
-          ]),
+    it('defaults old configs without bot winner cooldown rooms to the legacy cooldown', () => {
+        const { service } = makeService({ rooms: [] });
+
+        expect((service as any).resolveBotWinnerCooldownRooms({})).toBe(25);
+    });
+
+    it('rejects cartela returns during the freeze window before the draw', async () => {
+        const { service, dataSource } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 1,
+            scheduledStartAt: new Date(Date.now() + 4_000),
+            cartelaChangeLockSeconds: 5,
+        });
+        const userId = '550e8400-e29b-41d4-a716-446655440001';
+        const ticket = {
+            id: 'ticket-1',
+            userId,
+            roomId: room.id,
+            cartelaNumber: 7,
+            stakeMinor: 100,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+            cardId: null,
         };
-      }),
-    };
+        const manager = {
+            findOne: jest
+                .fn()
+                .mockImplementation((entity: unknown, options: any) => {
+                    if (options?.where?.id === room.id)
+                        return Promise.resolve(room);
+                    return Promise.resolve(ticket);
+                }),
+            find: jest.fn(),
+            save: jest.fn().mockResolvedValue(undefined),
+            update: jest.fn().mockResolvedValue(undefined),
+            query: jest.fn().mockResolvedValue([{ c: 1 }]),
+            countBy: jest.fn().mockResolvedValue(1),
+        };
+        (dataSource.transaction as jest.Mock).mockImplementation(
+            (cb: (m: unknown) => Promise<unknown>) => cb(manager),
+        );
 
-    const recent = await (service as any).getPreviousBingoBotWinnerUserIds(currentRoom, manager, 2);
+        await expect(
+            service.releaseCartela({
+                userId,
+                roomId: room.id,
+                cartelaNumber: 7,
+            }),
+        ).rejects.toThrow('Cartela changes are locked near the draw start');
 
-    expect(recent).toEqual(new Set(['bot-1', 'bot-2']));
-    expect(roomFind).toHaveBeenCalledWith(expect.objectContaining({ take: 3 }));
-  });
-
-  it('includes room-scoped bot identities in admin room details', async () => {
-    const { service, mockRoomRepo, mockTicketRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      botIdentityMap: {
-        'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
-      },
+        expect(manager.findOne).toHaveBeenCalledTimes(1);
     });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    mockTicketRepo.find.mockResolvedValue([]);
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
-    jest.spyOn(service as any, 'refreshBotWinnerDisplayNames').mockResolvedValue(undefined);
 
-    const details = await service.getRoomAdminDetails(room.id);
+    it('cancels the room and returns bot cartelas when the last real player leaves', async () => {
+        const { service, dataSource, walletService } = makeService({
+            rooms: [],
+        });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 2,
+            scheduledStartAt: new Date(Date.now() + 20_000),
+        });
+        const userId = '550e8400-e29b-41d4-a716-446655440002';
+        const realTicket = {
+            id: 'ticket-1',
+            userId,
+            roomId: room.id,
+            cartelaNumber: 7,
+            stakeMinor: 100,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+            cardId: null,
+        };
+        const botTicket = {
+            id: 'bot-ticket-1',
+            userId: 'bot-1',
+            roomId: room.id,
+            cartelaNumber: 8,
+            stakeMinor: 100,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+            cardId: null,
+        };
+        const manager = {
+            findOne: jest
+                .fn()
+                .mockImplementation((entity: unknown, options: any) => {
+                    if (options?.where?.id === room.id)
+                        return Promise.resolve(room);
+                    return Promise.resolve(realTicket);
+                }),
+            find: jest.fn().mockResolvedValue([botTicket]),
+            save: jest.fn().mockImplementation(async (value: any) => value),
+            update: jest.fn().mockResolvedValue(undefined),
+            query: jest.fn().mockResolvedValue([{ c: 0 }]),
+            countBy: jest.fn().mockResolvedValue(1),
+        };
+        (dataSource.transaction as jest.Mock).mockImplementation(
+            (cb: (m: unknown) => Promise<unknown>) => cb(manager),
+        );
+        walletService.creditInSession = jest
+            .fn()
+            .mockResolvedValue({ id: 'credit-1' });
 
-    expect(details.room.botIdentityMap).toEqual(room.botIdentityMap);
-  });
+        const result = await service.releaseCartela({
+            userId,
+            roomId: room.id,
+            cartelaNumber: 7,
+        });
 
-  it('retries the same Derash place with another bot when a duplicate bot award is refused', async () => {
-    const { service } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      drawnNumbers: [1],
-      status: 'running',
+        expect(result).toEqual({
+            cartelaNumber: 7,
+            refundedMinor: 100,
+            roomCancelled: true,
+        });
+        expect(room.status).toBe('cancelled');
+        expect(room.soldTickets).toBe(0);
+        expect(room.settlementSummary).toMatchObject({
+            reason: 'bingo_room_no_real_players',
+        });
+        expect(botTicket.status).toBe('cancelled');
+        expect(botTicket.settlementStatus).toBe('settled');
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
+        expect(manager.update).toHaveBeenCalledWith(
+            BingoCard,
+            { roomId: room.id },
+            { assignedTicketId: null, assignedUserId: null },
+        );
+        expect(manager.find).toHaveBeenCalled();
     });
-    const duplicateBotTicket = {
-      id: 'ticket-duplicate',
-      userId: 'bot-1',
-      grid: [[1]],
-      markedNumbers: [],
-      wonTiers: [],
-      autoClaim: true,
-    };
-    const freshBotTicket = {
-      id: 'ticket-fresh',
-      userId: 'bot-2',
-      grid: [[1]],
-      markedNumbers: [],
-      wonTiers: [],
-      autoClaim: true,
-    };
-    const manager = {
-      find: jest.fn().mockResolvedValueOnce([duplicateBotTicket, freshBotTicket]).mockResolvedValueOnce([]),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
-    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
-      botIds: new Set(['bot-1', 'bot-2']),
-      bingoEnabledBotIds: new Set(['bot-1', 'bot-2']),
-      nonBingoBotIds: new Set(),
+
+    it('cancels bot-only rooms instead of starting the draw', async () => {
+        const { service, dataSource, walletService } = makeService({
+            rooms: [],
+        });
+        const room = makeRoom({
+            winMode: 'line',
+            status: 'open',
+            soldTickets: 2,
+            scheduledStartAt: new Date(Date.now() - 1_000),
+        });
+        const botTicket = {
+            id: 'bot-ticket-1',
+            userId: 'bot-1',
+            roomId: room.id,
+            stakeMinor: 100,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+            cardId: null,
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue(room),
+            find: jest.fn().mockResolvedValue([botTicket]),
+            save: jest.fn().mockImplementation(async (value: any) => value),
+            update: jest.fn().mockResolvedValue(undefined),
+            query: jest.fn().mockResolvedValue([{ c: 0 }]),
+            countBy: jest.fn().mockResolvedValue(2),
+        };
+        (dataSource.transaction as jest.Mock).mockImplementation(
+            (cb: (m: unknown) => Promise<unknown>) => cb(manager),
+        );
+        walletService.creditInSession = jest
+            .fn()
+            .mockResolvedValue({ id: 'credit-1' });
+
+        const result = await service.drawNextNumber(room.id);
+
+        expect(result.status).toBe('cancelled');
+        expect(room.status).toBe('cancelled');
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
     });
-    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
-    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
-    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
-    jest.spyOn(service as any, 'resolveBingoBotParticipation').mockReturnValue({
-      belowEnabled: false,
-      belowThreshold: 0,
-      aboveEnabled: false,
-      aboveThreshold: 0,
-      shouldParticipate: () => false,
+
+    it('rejects cartela purchases in the freeze window before the draw', async () => {
+        const { service, dataSource, walletService } = makeService({
+            rooms: [],
+        });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            scheduledStartAt: new Date(Date.now() + 4_000),
+            cartelaChangeLockSeconds: 5,
+        });
+        const manager = {
+            find: jest.fn().mockResolvedValue([]),
+            findOne: jest.fn().mockResolvedValue(room),
+        };
+        (dataSource.transaction as jest.Mock).mockImplementation(
+            (cb: (m: unknown) => Promise<unknown>) => cb(manager),
+        );
+
+        await expect(
+            service.purchaseTickets({
+                userId: '550e8400-e29b-41d4-a716-446655440000',
+                roomId: room.id,
+                cartelaNumbers: [1],
+                idempotencyKey: 'purchase-lock-test',
+            }),
+        ).rejects.toThrow('Cartela changes are locked near the draw start');
+
+        expect(walletService.debitInSession).not.toHaveBeenCalled();
     });
-    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
-    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
-    jest.spyOn(service as any, 'pickDerashAutoWinnerCandidates').mockReturnValue([duplicateBotTicket, freshBotTicket]);
-    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace')
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
 
-    await (service as any).evaluateAndSettleDerash(room, { botWinMode: 'off' }, manager);
+    it('skips bot reconcile when the room enters the freeze window', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            scheduledStartAt: new Date(Date.now() + 4_000),
+            cartelaChangeLockSeconds: 5,
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botMaxRealPlayers: 10,
+            botWinMode: 'statistical',
+        } as any);
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+        const releaseSpy = jest
+            .spyOn(service, 'releaseCartela')
+            .mockResolvedValue({ cartelaNumber: 1, refundedMinor: 100 } as any);
 
-    expect(awardSpy).toHaveBeenCalledTimes(2);
-    const firstAwardInput = awardSpy.mock.calls[0][0] as { winner: { userId: string }; place: string };
-    const secondAwardInput = awardSpy.mock.calls[1][0] as { winner: { userId: string }; place: string };
-    expect(firstAwardInput.winner.userId).toBe('bot-1');
-    expect(secondAwardInput.winner.userId).toBe('bot-2');
-    expect(secondAwardInput.place).toBe('1st');
-  });
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
 
-  it('does not award a real player while below-threshold cartel-dual is waiting for an eligible bot', async () => {
-    const { service } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      drawnNumbers: [1],
-      status: 'running',
+        expect(changed).toBe(false);
+        expect(purchaseSpy).not.toHaveBeenCalled();
+        expect(releaseSpy).not.toHaveBeenCalled();
     });
-    const realTicket = {
-      id: 'ticket-real',
-      userId: 'player-1',
-      grid: [[1]],
-      markedNumbers: [],
-      wonTiers: [],
-      autoClaim: true,
-    };
-    const botTicket = {
-      id: 'ticket-bot',
-      userId: 'bot-1',
-      grid: [[2]],
-      markedNumbers: [],
-      wonTiers: [],
-      autoClaim: true,
-    };
-    const manager = {
-      find: jest.fn().mockResolvedValueOnce([realTicket, botTicket]).mockResolvedValueOnce([]),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
-    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
-      botIds: new Set(['bot-1']),
-      bingoEnabledBotIds: new Set(['bot-1']),
-      nonBingoBotIds: new Set(),
+
+    it('randomizes bot cartela assignment across the available pool', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 2,
+            scheduledStartAt: new Date(Date.now() + 20_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg() as any,
+        );
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
+        jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(
+            2 as any,
+        );
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1']),
+        );
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue([1, 2, 3]);
+        jest.spyOn(service as any, 'shuffle' as any).mockImplementation(
+            (...args: any[]) => [...args[0]].reverse(),
+        );
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(
+            true,
+        );
+
+        expect(
+            (purchaseSpy.mock.calls as any[]).map(
+                (call) => call[0].cartelaNumbers[0],
+            ),
+        ).toEqual([3, 2]);
     });
-    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
-    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
-    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
-    jest.spyOn(service as any, 'resolveBingoBotParticipation').mockReturnValue({
-      belowEnabled: true,
-      belowThreshold: 10,
-      aboveEnabled: false,
-      aboveThreshold: 50,
-      shouldParticipate: () => true,
+
+    it('keeps cartel-dual at a minimum of two bot cartelas when only one human cartela exists', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 1,
+            scheduledStartAt: new Date(Date.now() + 20_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg({
+                botWinMode: 'cartel-dual',
+            }) as any,
+        );
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(1);
+        jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(
+            1 as any,
+        );
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2']),
+        );
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue([1, 2, 3]);
+        jest.spyOn(service as any, 'shuffle' as any).mockImplementation(
+            (...args: any[]) => [...args[0]],
+        );
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(
+            true,
+        );
+
+        expect(purchaseSpy).toHaveBeenCalledTimes(2);
+        expect(purchaseSpy.mock.calls.map((call) => call[0].userId)).toEqual([
+            'bot-1',
+            'bot-2',
+        ]);
+        expect(
+            purchaseSpy.mock.calls.map((call) => call[0]?.cartelaNumbers?.[0]),
+        ).toEqual([1, 2]);
     });
-    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
-    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
-    jest.spyOn(service as any, 'pickDerashAutoWinnerCandidates').mockReturnValue([realTicket]);
-    jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(null);
-    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace').mockResolvedValue(true);
 
-    await (service as any).evaluateAndSettleDerash(room, { botWinMode: 'cartel-dual' }, manager);
+    it('assigns the second cartel-dual bot cartela to a different bot account when one bot already holds a card', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 2,
+            scheduledStartAt: new Date(Date.now() + 20_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg({
+                botWinMode: 'cartel-dual',
+            }) as any,
+        );
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(1);
+        jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(1);
+        jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(
+            2 as any,
+        );
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2']),
+        );
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(
+            service as any,
+            'countUserCartelasInRoom',
+        ).mockImplementation(async (botId: unknown) =>
+            botId === 'bot-1' ? 1 : 0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue([7, 8, 9]);
+        jest.spyOn(service as any, 'shuffle' as any).mockImplementation(
+            (...args: any[]) => [...args[0]],
+        );
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
 
-    expect(awardSpy).not.toHaveBeenCalled();
-    expect(room.settledTiers).toEqual([]);
-  });
+        await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(
+            true,
+        );
 
-  it('redirects a manual real-user Bingo claim to an eligible bot in below-threshold cartel-dual', async () => {
-    const { service, dataSource } = makeService({ rooms: [] });
-    const userId = '550e8400-e29b-41d4-a716-446655440101';
-    const ticketId = '550e8400-e29b-41d4-a716-446655440102';
-    const botId = '550e8400-e29b-41d4-a716-446655440103';
-    const room = makeRoom({
-      winMode: 'prefilled',
-      drawnNumbers: [1],
-      status: 'running',
+        expect(purchaseSpy).toHaveBeenCalledTimes(1);
+        expect(purchaseSpy.mock.calls[0][0].userId).toBe('bot-2');
+        expect(purchaseSpy.mock.calls[0][0].cartelaNumbers).toEqual([7]);
     });
-    const realTicket = {
-      id: ticketId,
-      userId,
-      roomId: room.id,
-      grid: [[1]],
-      markedNumbers: [],
-      wonTiers: [],
-      completedLines: [],
-      completedPatterns: [],
-      autoClaim: false,
-      stakeMinor: 20,
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const botTicket = {
-      id: '550e8400-e29b-41d4-a716-446655440104',
-      userId: botId,
-      roomId: room.id,
-      grid: [[1]],
-      markedNumbers: [],
-      wonTiers: [],
-      completedLines: [],
-      completedPatterns: [],
-      autoClaim: true,
-      stakeMinor: 20,
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn().mockImplementation((_entity: unknown, options: any) => {
-        if (options?.where?.id === room.id) return Promise.resolve(room);
-        if (options?.where?.id === ticketId) return Promise.resolve(realTicket);
-        return Promise.resolve(null);
-      }),
-      find: jest.fn().mockResolvedValue([realTicket, botTicket]),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
-      botWinMode: 'cartel-dual',
-      botWinnerCooldownRooms: 5,
-    }) as any);
-    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
-      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
-    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
-    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
-    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
-    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
-      botIds: new Set([botId]),
-      bingoEnabledBotIds: new Set([botId]),
-      nonBingoBotIds: new Set(),
+
+    it('enforces the per-bot cartela cap while still letting bots join above threshold independently', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 3,
+            scheduledStartAt: new Date(Date.now() + 20_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg({
+                botCartelaPolicyMode: 'fixed_cap',
+                botMaxCartelasPerBotPerRoom: 1,
+                botBelowThresholdEnabled: false,
+                botAboveThresholdEnabled: true,
+                botAboveThresholdRealPlayers: 50,
+            }) as any,
+        );
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(60);
+        jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(
+            3 as any,
+        );
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1']),
+        );
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue([1, 2, 3]);
+        jest.spyOn(service as any, 'shuffle' as any).mockImplementation(
+            (...args: any[]) => [...args[0]],
+        );
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(
+            true,
+        );
+
+        expect(purchaseSpy).toHaveBeenCalledTimes(1);
+        expect(purchaseSpy.mock.calls[0][0].cartelaNumbers).toHaveLength(1);
     });
-    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
-    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
-    jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(botTicket);
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
-    jest.spyOn(service as any, 'finalizeDerashIfDone').mockResolvedValue(false);
-    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
-    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace').mockResolvedValue(true);
 
-    const outcome = await service.claimBingo({ userId, roomId: room.id, ticketId });
+    it('keeps bots out when the below-threshold rule is disabled, even if the room is small', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 1,
+            scheduledStartAt: new Date(Date.now() + 20_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg({
+                botBelowThresholdEnabled: false,
+                botAboveThresholdEnabled: true,
+                botAboveThresholdRealPlayers: 50,
+            }) as any,
+        );
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(5);
+        jest.spyOn(service, 'countBotCartelasInRoom').mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets' as any).mockResolvedValue(
+            1 as any,
+        );
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1']),
+        );
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
 
-    expect(outcome.result).toBe('ignored');
-    expect(awardSpy).toHaveBeenCalledWith(expect.objectContaining({
-      winner: botTicket,
-      place: '1st',
-    }));
-  });
+        await expect(service.reconcileBotCartelasInRoom(room.id)).resolves.toBe(
+            false,
+        );
 
-  it('ignores a manual real-user Bingo claim in below-threshold cartel-dual when no bot can prove the pattern yet', async () => {
-    const { service, dataSource } = makeService({ rooms: [] });
-    const userId = '550e8400-e29b-41d4-a716-446655440111';
-    const ticketId = '550e8400-e29b-41d4-a716-446655440112';
-    const room = makeRoom({
-      winMode: 'prefilled',
-      drawnNumbers: [1],
-      status: 'running',
+        expect(purchaseSpy).not.toHaveBeenCalled();
     });
-    const realTicket = {
-      id: ticketId,
-      userId,
-      roomId: room.id,
-      grid: [[1]],
-      markedNumbers: [],
-      wonTiers: [],
-      completedLines: [],
-      completedPatterns: [],
-      autoClaim: false,
-      stakeMinor: 20,
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn().mockImplementation((_entity: unknown, options: any) => {
-        if (options?.where?.id === room.id) return Promise.resolve(room);
-        if (options?.where?.id === ticketId) return Promise.resolve(realTicket);
-        return Promise.resolve(null);
-      }),
-      find: jest.fn().mockResolvedValue([realTicket]),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue(botCfg({
-      botWinMode: 'cartel-dual',
-      botWinnerCooldownRooms: 5,
-    }) as any);
-    jest.spyOn((service as any).bingoRulesService, 'evaluatePatternTicket')
-      .mockReturnValue({ completedPatternIds: ['pattern-1'] });
-    jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(1);
-    jest.spyOn(service as any, 'resolvePrefilledPlacePattern').mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
-    jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue(['1st']);
-    jest.spyOn(service as any, 'getBotUserGroupsForTickets').mockResolvedValue({
-      botIds: new Set(),
-      bingoEnabledBotIds: new Set(),
-      nonBingoBotIds: new Set(),
+
+    it('uses only explicitly Bingo-enabled bot users for new Bingo cartelas', async () => {
+        const { service } = makeService({ rooms: [] });
+        const manager = { query: jest.fn().mockResolvedValue([]) };
+
+        await (service as any).getActiveBotUserIds(manager);
+
+        expect(manager.query.mock.calls[0][0]).toContain(
+            "JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') = true",
+        );
+        expect(manager.query.mock.calls[0][0]).not.toContain(
+            "JSON_EXTRACT(productMetadata, '$.botPolicy.games.bingo.active') IS NULL",
+        );
     });
-    jest.spyOn(service as any, 'awardedBotUserIdsForTickets').mockReturnValue(new Set());
-    jest.spyOn(service as any, 'getPreviousBingoBotWinnerUserIds').mockResolvedValue(new Set());
-    jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(null);
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(1);
-    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
-    const awardSpy = jest.spyOn(service as any, 'awardDerashPlace').mockResolvedValue(true);
 
-    const outcome = await service.claimBingo({ userId, roomId: room.id, ticketId });
+    it('does not redirect multiple prize places to the same bot identity', () => {
+        const { service } = makeService({ rooms: [] });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
 
-    expect(outcome.result).toBe('ignored');
-    expect(realTicket.status).toBe('active');
-    expect(awardSpy).not.toHaveBeenCalled();
-  });
+        const winner = (service as any).pickBotRedirectWinner(
+            [
+                { id: 'ticket-1', userId: 'bot-1', grid: [[1]] },
+                { id: 'ticket-2', userId: 'bot-2', grid: [[2]] },
+            ],
+            new Set(['bot-1', 'bot-2']),
+            { id: 'pattern-1' },
+            [1],
+            75,
+            { awardedBotUserIds: new Set(['bot-1']) },
+        );
 
-  it('classifies master bots without Bingo enabled as ineligible for Bingo winner selection', async () => {
-    const { service } = makeService({ rooms: [] });
-    const manager = {
-      getRepository: jest.fn().mockReturnValue({
-        find: jest.fn().mockResolvedValue([
-          {
-            id: 'bot-1',
-            productMetadata: { botPolicy: { active: true } },
-          },
-          {
-            id: 'bot-2',
-            productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-          },
-          {
-            id: 'human-1',
-            productMetadata: {},
-          },
-        ]),
-      }),
-    };
-
-    const groups = await (service as any).getBotUserGroupsForTickets(
-      [
-        { userId: 'bot-1' },
-        { userId: 'bot-2' },
-        { userId: 'human-1' },
-      ],
-      manager,
-    );
-
-    expect([...groups.botIds].sort()).toEqual(['bot-1', 'bot-2']);
-    expect([...groups.bingoEnabledBotIds]).toEqual(['bot-2']);
-    expect([...groups.nonBingoBotIds]).toEqual(['bot-1']);
-  });
-
-  it('records the room-scoped Bingo bot name in winner standings instead of the bot account name', async () => {
-    const { service, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      botIdentityMap: {
-        'bot-1': { displayName: 'Hana', phoneSuffix: '0851' },
-      },
-      settlementSummary: {},
-      settledTiers: [],
-      winnersByTier: {},
+        expect(winner?.userId).toBe('bot-2');
     });
-    const winner = {
-      id: 'ticket-1',
-      userId: 'bot-1',
-      cartelaNumber: 25,
-      grid: [[1]],
-      markedNumbers: [1],
-      wonTiers: [],
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 'bot-1',
-        displayName: 'Abrsh',
-        phoneNumber: '',
-        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-      }),
-      save: jest.fn().mockImplementation(async (value) => value),
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return { save: jest.fn().mockImplementation(async (value) => value) };
-        }
-        if (entityName === 'BotName') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { displayName: 'Hana', active: true },
-            ]),
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
+
+    it('relaxes exclusions (cooldown, then same-room dedup) rather than holding when they would leave zero bots', () => {
+        const { service } = makeService({ rooms: [] });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+
+        // Only one bot cartela is in the room, and it's both already-awarded this
+        // room AND on cross-room cooldown  the strict exclusion set would leave
+        // zero bots. Cartel-dual must still redirect the win onto it rather than
+        // holding the real player's win indefinitely.
+        const winner = (service as any).pickBotRedirectWinner(
+            [{ id: 'ticket-1', userId: 'bot-1', grid: [[1]] }],
+            new Set(['bot-1']),
+            { id: 'pattern-1' },
+            [1],
+            75,
             {
-              id: 'bot-1',
-              displayName: 'Abrsh',
-              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+                awardedBotUserIds: new Set(['bot-1']),
+                recentBotWinnerUserIds: new Set(['bot-1']),
             },
-          ]),
+        );
+
+        expect(winner?.userId).toBe('bot-1');
+    });
+
+    it('synthesizes a fresh, valid winning grid for a bot when none naturally completes the pattern', () => {
+        const { service } = makeService({ rooms: [] });
+        const pattern = { id: 'pattern-1', patternType: 'any_line' } as any;
+        const drawnNumbers = [3, 20, 35, 50, 65, 7, 22, 37, 52, 67];
+        const botTicket = {
+            id: 'ticket-bot',
+            userId: 'bot-1',
+            // Doesn't complete any_line against drawnNumbers above  forces the
+            // fallback (synthesis) path instead of the natural-winner shortcut.
+            grid: [
+                [99, null, null, null, null],
+                [null, null, null, null, null],
+                [null, null, null, null, null],
+                [null, null, null, null, null],
+                [null, null, null, null, null],
+            ] as (number | null)[][],
+            markedNumbers: [] as number[],
         };
-      }),
-    };
-    walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
 
-    await (service as any).awardDerashPlace({
-      room,
-      winner,
-      place: '1st',
-      pattern: { id: 'pattern-1', name: 'Any Line' },
-      totalPotMinor: 100,
-      houseEdgePct: 20,
-      cfg: { prefilledFirstPlacePct: 100 },
-      manager,
+        const winner = (service as any).pickBotRedirectWinner(
+            [botTicket],
+            new Set(['bot-1']),
+            pattern,
+            drawnNumbers,
+            75,
+        );
+
+        expect(winner).toBe(botTicket);
+        const rulesService = (service as any).bingoRulesService;
+        const { completedPatternIds } = rulesService.evaluatePatternTicket(
+            winner.grid,
+            drawnNumbers,
+            [pattern],
+        );
+        expect(completedPatternIds).toContain('pattern-1');
+        const numbers = winner.grid
+            .flat()
+            .filter((v: number | null) => v !== null);
+        expect(new Set(numbers).size).toBe(numbers.length);
     });
 
-    expect(manager.findOne).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        select: expect.arrayContaining(['id', 'displayName', 'phoneNumber', 'productMetadata']),
-      }),
-    );
-    const summary = room.settlementSummary ?? {};
-    expect((summary['1st'] as any).winnerDisplayName).toBe('Hana');
-    expect((summary['1st'] as any).winnerPhoneLast4).toBe('0851');
-  });
+    it('holds (returns null) when there is no eligible bot to synthesize a win onto', () => {
+        const { service } = makeService({ rooms: [] });
+        const pattern = { id: 'pattern-1', patternType: 'any_line' } as any;
 
-  it('refuses to award the same bot two visible Derash places in one room', async () => {
-    const { service, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      botIdentityMap: {
-        'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
-      },
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-1',
-          winnerDisplayName: 'Hana',
-          winnerPhoneLast4: '1771',
-          winnerIsBot: true,
-        },
-      },
-      settledTiers: ['1st'],
-      winnersByTier: { '1st': ['ticket-1'] },
-    });
-    const winner = {
-      id: 'ticket-2',
-      userId: 'bot-1',
-      cartelaNumber: 91,
-      grid: [[1]],
-      markedNumbers: [1],
-      wonTiers: [],
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 'bot-1',
-        displayName: 'House Bot',
-        phoneNumber: '',
-        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-      }),
-      save: jest.fn().mockImplementation(async (value) => value),
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return { save: jest.fn().mockImplementation(async (value) => value) };
-        }
-        if (entityName === 'BotName') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { displayName: 'Hana', active: true },
-            ]),
-          };
-        }
-        if (entityName === 'BingoTicket') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { id: 'ticket-1', userId: 'bot-1' },
-            ]),
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
-            {
-              id: 'bot-1',
-              displayName: 'House Bot',
-              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-            },
-          ]),
-        };
-      }),
-    };
-    jest.spyOn(service as any, 'resolveDisplayedNameForUser').mockResolvedValue({
-      displayName: 'Hana',
-      phoneLast4: '1771',
-      phoneSuffix: '1771',
-      isBot: true,
+        const winner = (service as any).pickBotRedirectWinner(
+            [],
+            new Set(['bot-1']),
+            pattern,
+            [1, 2, 3],
+            75,
+        );
+
+        expect(winner).toBeNull();
     });
 
-    const awarded = await (service as any).awardDerashPlace({
-      room,
-      winner,
-      place: '2nd',
-      pattern: { id: 'pattern-1', name: 'Any Line' },
-      totalPotMinor: 100,
-      houseEdgePct: 20,
-      cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
-      manager,
-    });
+    it('randomizes Derash bot winners while skipping the previous room bot winner', () => {
+        const { service } = makeService({ rooms: [] });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(service as any, 'shuffle').mockImplementation(
+            (values: unknown) => [...(values as unknown[])],
+        );
 
-    expect(awarded).toBe(false);
-    expect(room.winnersByTier['2nd']).toBeUndefined();
-    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
-    expect(walletService.creditInSession).not.toHaveBeenCalled();
-  });
-
-  it('allows a different Bingo bot to win the next visible Derash place', async () => {
-    const { service, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      botIdentityMap: {
-        'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
-        'bot-2': { displayName: 'Samuel', phoneSuffix: '6023' },
-      },
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-1',
-          winnerDisplayName: 'Hana',
-          winnerPhoneLast4: '1771',
-          winnerIsBot: true,
-        },
-      },
-      settledTiers: ['1st'],
-      winnersByTier: { '1st': ['ticket-1'] },
-    });
-    const winner = {
-      id: 'ticket-2',
-      userId: 'bot-2',
-      cartelaNumber: 91,
-      grid: [[1]],
-      markedNumbers: [1],
-      wonTiers: [],
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 'bot-2',
-        displayName: 'House Bot 2',
-        phoneNumber: '',
-        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-      }),
-      save: jest.fn().mockImplementation(async (value) => value),
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return { save: jest.fn().mockImplementation(async (value) => value) };
-        }
-        if (entityName === 'BotName') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { displayName: 'Hana', active: true },
-              { displayName: 'Samuel', active: true },
-            ]),
-          };
-        }
-        if (entityName === 'BingoTicket') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { id: 'ticket-1', userId: 'bot-1' },
-            ]),
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
-            {
-              id: 'bot-2',
-              displayName: 'House Bot 2',
-              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-            },
-          ]),
-        };
-      }),
-    };
-    walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
-
-    const awarded = await (service as any).awardDerashPlace({
-      room,
-      winner,
-      place: '2nd',
-      pattern: { id: 'pattern-1', name: 'Any Line' },
-      totalPotMinor: 100,
-      houseEdgePct: 20,
-      cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
-      manager,
-    });
-
-    expect(awarded).toBe(true);
-    expect(room.winnersByTier['2nd']).toEqual(['ticket-2']);
-    expect(((room.settlementSummary ?? {})['2nd'] as any).winnerDisplayName).toBe('Samuel');
-    expect(((room.settlementSummary ?? {})['2nd'] as any).winnerPhoneLast4).toBe('6023');
-    expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
-  });
-
-  it('refuses the same cartela ticket from winning two visible Derash places', async () => {
-    const { service, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-18',
-          winnerUserId: 'player-1',
-          winnerDisplayName: 'Hana',
-          winnerPhoneLast4: '9812',
-          winnerCartelaNumber: 18,
-        },
-      },
-      settledTiers: ['1st'],
-      winnersByTier: { '1st': ['ticket-18'] },
-    });
-    const winner = {
-      id: 'ticket-18',
-      userId: 'player-1',
-      cartelaNumber: 18,
-      grid: [[1]],
-      markedNumbers: [1],
-      wonTiers: ['1st'],
-      payoutMinor: 60,
-      status: 'won',
-      settlementStatus: 'settled',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn(),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-
-    const awarded = await (service as any).awardDerashPlace({
-      room,
-      winner,
-      place: '2nd',
-      pattern: { id: 'pattern-1', name: 'Any Line' },
-      totalPotMinor: 120,
-      houseEdgePct: 20,
-      cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
-      manager,
-    });
-
-    expect(awarded).toBe(false);
-    expect(manager.findOne).not.toHaveBeenCalled();
-    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
-    expect(walletService.creditInSession).not.toHaveBeenCalled();
-  });
-
-  it('refuses a duplicate cartela number from winning two visible Derash places', async () => {
-    const { service, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-original-18',
-          winnerUserId: 'bot-1',
-          winnerDisplayName: 'Hana',
-          winnerPhoneLast4: '9812',
-          winnerIsBot: true,
-          winnerCartelaNumber: 18,
-        },
-      },
-      settledTiers: ['1st'],
-      winnersByTier: { '1st': ['ticket-original-18'] },
-    });
-    const duplicateCartelaWinner = {
-      id: 'ticket-duplicate-18',
-      userId: 'bot-1',
-      cartelaNumber: 18,
-      grid: [[1]],
-      markedNumbers: [1],
-      wonTiers: [],
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn(),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-
-    const awarded = await (service as any).awardDerashPlace({
-      room,
-      winner: duplicateCartelaWinner,
-      place: '2nd',
-      pattern: { id: 'pattern-1', name: 'Any Line' },
-      totalPotMinor: 120,
-      houseEdgePct: 20,
-      cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
-      manager,
-    });
-
-    expect(awarded).toBe(false);
-    expect(manager.findOne).not.toHaveBeenCalled();
-    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
-    expect(walletService.creditInSession).not.toHaveBeenCalled();
-  });
-
-  it('refuses a different bot account when the visible Bingo bot identity already won', async () => {
-    const { service, walletService } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      botIdentityMap: {
-        'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
-        'bot-2': { displayName: 'Hana', phoneSuffix: '1771' },
-      },
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-1',
-          winnerUserId: 'bot-1',
-          winnerDisplayName: 'Hana',
-          winnerPhoneLast4: '1771',
-          winnerIsBot: true,
-        },
-      },
-      settledTiers: ['1st'],
-      winnersByTier: { '1st': ['ticket-1'] },
-    });
-    const winner = {
-      id: 'ticket-2',
-      userId: 'bot-2',
-      cartelaNumber: 91,
-      grid: [[1]],
-      markedNumbers: [1],
-      wonTiers: [],
-      payoutMinor: 0,
-      status: 'active',
-      settlementStatus: 'pending',
-      walletCredits: [],
-    };
-    const manager = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 'bot-2',
-        displayName: 'House Bot 2',
-        phoneNumber: '',
-        productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-      }),
-      save: jest.fn().mockImplementation(async (value) => value),
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return { save: jest.fn().mockImplementation(async (value) => value) };
-        }
-        if (entityName === 'BotName') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { displayName: 'Hana', active: true },
-            ]),
-          };
-        }
-        if (entityName === 'BingoTicket') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { id: 'ticket-1', userId: 'bot-1' },
-            ]),
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
-            {
-              id: 'bot-2',
-              displayName: 'House Bot 2',
-              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-            },
-          ]),
-        };
-      }),
-    };
-    jest.spyOn(service as any, 'resolveDisplayedNameForUser').mockResolvedValue({
-      displayName: 'Hana',
-      phoneLast4: '1771',
-      phoneSuffix: '1771',
-      isBot: true,
-    });
-
-    const awarded = await (service as any).awardDerashPlace({
-      room,
-      winner,
-      place: '2nd',
-      pattern: { id: 'pattern-1', name: 'Any Line' },
-      totalPotMinor: 100,
-      houseEdgePct: 20,
-      cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
-      manager,
-    });
-
-    expect(awarded).toBe(false);
-    expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
-    expect(walletService.creditInSession).not.toHaveBeenCalled();
-  });
-
-  it('repairs stale completed-room bot winner names before returning room state', async () => {
-    const { service, mockRoomRepo, mockTicketRepo } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'completed',
-      botIdentityMap: {
-        'bot-1': { displayName: 'Abrsh', phoneSuffix: '8975' },
-      },
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-1',
-          winnerDisplayName: 'Abrsh',
-          winnerPhoneLast4: '8975',
-          winnerIsBot: true,
-        },
-      },
-    });
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
-    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
-    mockTicketRepo.find.mockResolvedValue([]);
-
-    const roomRepoSave = jest.fn().mockImplementation(async (value) => value);
-    (mockRoomRepo as any).manager = {
-      getRepository: jest.fn().mockImplementation((entity: unknown) => {
-        const entityName = (entity as { name?: string })?.name;
-        if (entityName === 'BingoRoom') {
-          return { save: roomRepoSave };
-        }
-        if (entityName === 'BingoTicket') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              {
-                id: 'ticket-1',
-                userId: 'bot-1',
-                user: {
-                  id: 'bot-1',
-                  displayName: 'Abrsh',
-                  phoneNumber: '',
-                  productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
+        const winner = (service as any).pickDerashAutoWinner({
+            tickets: [
+                {
+                    id: 'ticket-1',
+                    userId: 'bot-1',
+                    autoClaim: true,
+                    grid: [[1]],
                 },
-              },
-            ]),
-          };
-        }
-        if (entityName === 'BotName') {
-          return {
-            find: jest.fn().mockResolvedValue([
-              { displayName: 'Hana', active: true },
-            ]),
-          };
-        }
-        return {
-          find: jest.fn().mockResolvedValue([
-            {
-              id: 'bot-1',
-              displayName: 'Abrsh',
-              productMetadata: { botPolicy: { active: true, games: { bingo: { active: true } } } },
-            },
-          ]),
+                {
+                    id: 'ticket-2',
+                    userId: 'bot-2',
+                    autoClaim: true,
+                    grid: [[2]],
+                },
+            ],
+            botIds: new Set(['bot-1', 'bot-2']),
+            awardedBotUserIds: new Set(),
+            recentBotWinnerUserIds: new Set(['bot-1']),
+            pattern: { id: 'pattern-1' },
+            drawnNumbers: [1],
+        });
+
+        expect(winner?.userId).toBe('bot-2');
+    });
+
+    it('does not let the only eligible bot win consecutive Bingo rooms', () => {
+        const { service } = makeService({ rooms: [] });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+
+        const winner = (service as any).pickDerashAutoWinner({
+            tickets: [
+                {
+                    id: 'ticket-1',
+                    userId: 'bot-1',
+                    autoClaim: true,
+                    grid: [[1]],
+                },
+            ],
+            botIds: new Set(['bot-1']),
+            awardedBotUserIds: new Set(),
+            recentBotWinnerUserIds: new Set(['bot-1']),
+            pattern: { id: 'pattern-1' },
+            drawnNumbers: [1],
+        });
+
+        expect(winner).toBeNull();
+    });
+
+    it('keeps recent Bingo bot winners out of rotation across multiple completed rooms', async () => {
+        const { service } = makeService({ rooms: [] });
+        const currentRoom = makeRoom({
+            id: '00000000-0000-0000-0000-000000000099',
+        });
+        const completedRooms = Array.from({ length: 3 }, (_, index) =>
+            makeRoom({
+                id: `00000000-0000-0000-0000-00000000010${index}`,
+                status: 'completed',
+                settlementSummary: {
+                    '1st': { winnerId: `ticket-${index + 1}` },
+                },
+                updatedAt: new Date(Date.now() - index * 1000),
+            }),
+        );
+        const roomFind = jest
+            .fn()
+            .mockResolvedValue([currentRoom, ...completedRooms]);
+        const manager = {
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return {
+                        find: roomFind,
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'ticket-1',
+                            userId: 'bot-1',
+                            user: {
+                                productMetadata: {
+                                    botPolicy: {
+                                        active: true,
+                                        games: { bingo: { active: true } },
+                                    },
+                                },
+                            },
+                        },
+                        {
+                            id: 'ticket-2',
+                            userId: 'bot-2',
+                            user: {
+                                productMetadata: {
+                                    botPolicy: {
+                                        active: true,
+                                        games: { bingo: { active: true } },
+                                    },
+                                },
+                            },
+                        },
+                        {
+                            id: 'ticket-3',
+                            userId: 'bot-3',
+                            user: {
+                                productMetadata: {
+                                    botPolicy: {
+                                        active: true,
+                                        games: { bingo: { active: true } },
+                                    },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
         };
-      }),
-    };
 
-    const response = await service.getRoomState({ roomId: room.id });
-    const entry = response.settlementSummary['1st'] as Record<string, unknown>;
+        const recent = await (service as any).getPreviousBingoBotWinnerUserIds(
+            currentRoom,
+            manager,
+        );
 
-    expect(entry.winnerDisplayName).toBe('Hana');
-    expect(entry.winnerPhoneLast4).not.toBe('8975');
-    expect(roomRepoSave).toHaveBeenCalled();
-  });
-
-  it('refreshes bot winner display before draw responses are emitted', async () => {
-    const { service, mockRoomRepo, dataSource } = makeService({ rooms: [] });
-    const room = makeRoom({
-      winMode: 'prefilled',
-      status: 'completed',
-      settlementSummary: {
-        '1st': {
-          winnerCount: 1,
-          winnerId: 'ticket-1',
-          winnerDisplayName: 'Abrsh',
-          winnerPhoneLast4: '8975',
-          winnerIsBot: true,
-        },
-      },
+        expect(recent).toEqual(new Set(['bot-1', 'bot-2', 'bot-3']));
+        expect(roomFind).toHaveBeenCalledWith(
+            expect.objectContaining({ take: 26 }),
+        );
     });
-    const refreshSpy = jest.spyOn(service as any, 'refreshBotWinnerDisplayNames').mockImplementation(async (value: unknown) => {
-      const r = value as BingoRoom;
-      r.settlementSummary = {
-        ...(r.settlementSummary ?? {}),
-        '1st': {
-          ...((r.settlementSummary ?? {})['1st'] as Record<string, unknown>),
-          winnerDisplayName: 'Hana',
-          winnerPhoneLast4: '0851',
-        },
-      };
+
+    it('uses the configured bot winner cooldown window for recent winner rotation', async () => {
+        const { service } = makeService({ rooms: [] });
+        const currentRoom = makeRoom({
+            id: '00000000-0000-0000-0000-000000000199',
+        });
+        const completedRooms = Array.from({ length: 3 }, (_, index) =>
+            makeRoom({
+                id: `00000000-0000-0000-0000-00000000020${index}`,
+                status: 'completed',
+                settlementSummary: {
+                    '1st': { winnerId: `ticket-${index + 1}` },
+                },
+                updatedAt: new Date(Date.now() - index * 1000),
+            }),
+        );
+        const roomFind = jest
+            .fn()
+            .mockResolvedValue([currentRoom, ...completedRooms]);
+        const manager = {
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return {
+                        find: roomFind,
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'ticket-1',
+                            userId: 'bot-1',
+                            user: {
+                                productMetadata: {
+                                    botPolicy: {
+                                        active: true,
+                                        games: { bingo: { active: true } },
+                                    },
+                                },
+                            },
+                        },
+                        {
+                            id: 'ticket-2',
+                            userId: 'bot-2',
+                            user: {
+                                productMetadata: {
+                                    botPolicy: {
+                                        active: true,
+                                        games: { bingo: { active: true } },
+                                    },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
+        };
+
+        const recent = await (service as any).getPreviousBingoBotWinnerUserIds(
+            currentRoom,
+            manager,
+            2,
+        );
+
+        expect(recent).toEqual(new Set(['bot-1', 'bot-2']));
+        expect(roomFind).toHaveBeenCalledWith(
+            expect.objectContaining({ take: 3 }),
+        );
     });
-    const manager = {
-      findOne: jest.fn().mockResolvedValue(room),
-      save: jest.fn().mockImplementation(async (value) => value),
-    };
-    dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
-    mockRoomRepo.findOneBy.mockResolvedValue(room);
-    jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
-    jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
 
-    const response = await service.drawNextNumber(room.id);
-    const entry = response.settlementSummary['1st'] as Record<string, unknown>;
+    it('includes room-scoped bot identities in admin room details', async () => {
+        const { service, mockRoomRepo, mockTicketRepo } = makeService({
+            rooms: [],
+        });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            botIdentityMap: {
+                'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
+            },
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        mockTicketRepo.find.mockResolvedValue([]);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(
+            service as any,
+            'refreshBotWinnerDisplayNames',
+        ).mockResolvedValue(undefined);
 
-    expect(refreshSpy).toHaveBeenCalled();
-    expect(entry.winnerDisplayName).toBe('Hana');
-    expect(entry.winnerPhoneLast4).toBe('0851');
-  });
+        const details = await service.getRoomAdminDetails(room.id);
+
+        expect(details.room.botIdentityMap).toEqual(room.botIdentityMap);
+    });
+
+    it('retries the same Derash place with another bot when a duplicate bot award is refused', async () => {
+        const { service } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            status: 'running',
+        });
+        const duplicateBotTicket = {
+            id: 'ticket-duplicate',
+            userId: 'bot-1',
+            grid: [[1]],
+            markedNumbers: [],
+            wonTiers: [],
+            autoClaim: true,
+        };
+        const freshBotTicket = {
+            id: 'ticket-fresh',
+            userId: 'bot-2',
+            grid: [[1]],
+            markedNumbers: [],
+            wonTiers: [],
+            autoClaim: true,
+        };
+        const manager = {
+            find: jest
+                .fn()
+                .mockResolvedValueOnce([duplicateBotTicket, freshBotTicket])
+                .mockResolvedValueOnce([]),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(['bot-1', 'bot-2']),
+            bingoEnabledBotIds: new Set(['bot-1', 'bot-2']),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(
+            service as any,
+            'awardedBotUserIdsForTickets',
+        ).mockReturnValue(new Set());
+        jest.spyOn(
+            service as any,
+            'getPreviousBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set());
+        jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(
+            1,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({
+            belowEnabled: false,
+            belowThreshold: 0,
+            aboveEnabled: false,
+            aboveThreshold: 0,
+            shouldParticipate: () => false,
+        });
+        jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue([
+            '1st',
+        ]);
+        jest.spyOn(
+            service as any,
+            'resolvePrefilledPlacePattern',
+        ).mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+        jest.spyOn(
+            service as any,
+            'pickDerashAutoWinnerCandidates',
+        ).mockReturnValue([duplicateBotTicket, freshBotTicket]);
+        const awardSpy = jest
+            .spyOn(service as any, 'awardDerashPlace')
+            .mockResolvedValueOnce(false)
+            .mockResolvedValueOnce(true);
+
+        await (service as any).evaluateAndSettleDerash(
+            room,
+            { botWinMode: 'off' },
+            manager,
+        );
+
+        expect(awardSpy).toHaveBeenCalledTimes(2);
+        const firstAwardInput = awardSpy.mock.calls[0][0] as {
+            winner: { userId: string };
+            place: string;
+        };
+        const secondAwardInput = awardSpy.mock.calls[1][0] as {
+            winner: { userId: string };
+            place: string;
+        };
+        expect(firstAwardInput.winner.userId).toBe('bot-1');
+        expect(secondAwardInput.winner.userId).toBe('bot-2');
+        expect(secondAwardInput.place).toBe('1st');
+    });
+
+    it('does not award a real player while below-threshold cartel-dual is waiting for an eligible bot', async () => {
+        const { service } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            status: 'running',
+        });
+        const realTicket = {
+            id: 'ticket-real',
+            userId: 'player-1',
+            grid: [[1]],
+            markedNumbers: [],
+            wonTiers: [],
+            autoClaim: true,
+        };
+        const botTicket = {
+            id: 'ticket-bot',
+            userId: 'bot-1',
+            grid: [[2]],
+            markedNumbers: [],
+            wonTiers: [],
+            autoClaim: true,
+        };
+        const manager = {
+            find: jest
+                .fn()
+                .mockResolvedValueOnce([realTicket, botTicket])
+                .mockResolvedValueOnce([]),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(['bot-1']),
+            bingoEnabledBotIds: new Set(['bot-1']),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(
+            service as any,
+            'awardedBotUserIdsForTickets',
+        ).mockReturnValue(new Set());
+        jest.spyOn(
+            service as any,
+            'getPreviousBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set());
+        jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(
+            1,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({
+            belowEnabled: true,
+            belowThreshold: 10,
+            aboveEnabled: false,
+            aboveThreshold: 50,
+            shouldParticipate: () => true,
+        });
+        jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue([
+            '1st',
+        ]);
+        jest.spyOn(
+            service as any,
+            'resolvePrefilledPlacePattern',
+        ).mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+        jest.spyOn(
+            service as any,
+            'pickDerashAutoWinnerCandidates',
+        ).mockReturnValue([realTicket]);
+        jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(
+            null,
+        );
+        const awardSpy = jest
+            .spyOn(service as any, 'awardDerashPlace')
+            .mockResolvedValue(true);
+
+        await (service as any).evaluateAndSettleDerash(
+            room,
+            { botWinMode: 'cartel-dual' },
+            manager,
+        );
+
+        expect(awardSpy).not.toHaveBeenCalled();
+        expect(room.settledTiers).toEqual([]);
+    });
+
+    it('redirects a manual real-user Bingo claim to an eligible bot in below-threshold cartel-dual', async () => {
+        const { service, dataSource } = makeService({ rooms: [] });
+        const userId = '550e8400-e29b-41d4-a716-446655440101';
+        const ticketId = '550e8400-e29b-41d4-a716-446655440102';
+        const botId = '550e8400-e29b-41d4-a716-446655440103';
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            status: 'running',
+        });
+        const realTicket = {
+            id: ticketId,
+            userId,
+            roomId: room.id,
+            grid: [[1]],
+            markedNumbers: [],
+            wonTiers: [],
+            completedLines: [],
+            completedPatterns: [],
+            autoClaim: false,
+            stakeMinor: 20,
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const botTicket = {
+            id: '550e8400-e29b-41d4-a716-446655440104',
+            userId: botId,
+            roomId: room.id,
+            grid: [[1]],
+            markedNumbers: [],
+            wonTiers: [],
+            completedLines: [],
+            completedPatterns: [],
+            autoClaim: true,
+            stakeMinor: 20,
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest
+                .fn()
+                .mockImplementation((_entity: unknown, options: any) => {
+                    if (options?.where?.id === room.id)
+                        return Promise.resolve(room);
+                    if (options?.where?.id === ticketId)
+                        return Promise.resolve(realTicket);
+                    return Promise.resolve(null);
+                }),
+            find: jest.fn().mockResolvedValue([realTicket, botTicket]),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        dataSource.transaction.mockImplementation(async (cb: any) =>
+            cb(manager),
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg({
+                botWinMode: 'cartel-dual',
+                botWinnerCooldownRooms: 5,
+            }) as any,
+        );
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(
+            1,
+        );
+        jest.spyOn(
+            service as any,
+            'resolvePrefilledPlacePattern',
+        ).mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+        jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue([
+            '1st',
+        ]);
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set([botId]),
+            bingoEnabledBotIds: new Set([botId]),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(
+            service as any,
+            'awardedBotUserIdsForTickets',
+        ).mockReturnValue(new Set());
+        jest.spyOn(
+            service as any,
+            'getPreviousBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set());
+        jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(
+            botTicket,
+        );
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(service as any, 'finalizeDerashIfDone').mockResolvedValue(
+            false,
+        );
+        jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+        const awardSpy = jest
+            .spyOn(service as any, 'awardDerashPlace')
+            .mockResolvedValue(true);
+
+        const outcome = await service.claimBingo({
+            userId,
+            roomId: room.id,
+            ticketId,
+        });
+
+        expect(outcome.result).toBe('ignored');
+        expect(awardSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                winner: botTicket,
+                place: '1st',
+            }),
+        );
+    });
+
+    it('ignores a manual real-user Bingo claim in below-threshold cartel-dual when no bot can prove the pattern yet', async () => {
+        const { service, dataSource } = makeService({ rooms: [] });
+        const userId = '550e8400-e29b-41d4-a716-446655440111';
+        const ticketId = '550e8400-e29b-41d4-a716-446655440112';
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            status: 'running',
+        });
+        const realTicket = {
+            id: ticketId,
+            userId,
+            roomId: room.id,
+            grid: [[1]],
+            markedNumbers: [],
+            wonTiers: [],
+            completedLines: [],
+            completedPatterns: [],
+            autoClaim: false,
+            stakeMinor: 20,
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest
+                .fn()
+                .mockImplementation((_entity: unknown, options: any) => {
+                    if (options?.where?.id === room.id)
+                        return Promise.resolve(room);
+                    if (options?.where?.id === ticketId)
+                        return Promise.resolve(realTicket);
+                    return Promise.resolve(null);
+                }),
+            find: jest.fn().mockResolvedValue([realTicket]),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        dataSource.transaction.mockImplementation(async (cb: any) =>
+            cb(manager),
+        );
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue(
+            botCfg({
+                botWinMode: 'cartel-dual',
+                botWinnerCooldownRooms: 5,
+            }) as any,
+        );
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(
+            1,
+        );
+        jest.spyOn(
+            service as any,
+            'resolvePrefilledPlacePattern',
+        ).mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+        jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue([
+            '1st',
+        ]);
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(),
+            bingoEnabledBotIds: new Set(),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(
+            service as any,
+            'awardedBotUserIdsForTickets',
+        ).mockReturnValue(new Set());
+        jest.spyOn(
+            service as any,
+            'getPreviousBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set());
+        jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(
+            null,
+        );
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(1);
+        jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+        const awardSpy = jest
+            .spyOn(service as any, 'awardDerashPlace')
+            .mockResolvedValue(true);
+
+        const outcome = await service.claimBingo({
+            userId,
+            roomId: room.id,
+            ticketId,
+        });
+
+        expect(outcome.result).toBe('ignored');
+        expect(realTicket.status).toBe('active');
+        expect(awardSpy).not.toHaveBeenCalled();
+    });
+
+    it('classifies master bots without Bingo enabled as ineligible for Bingo winner selection', async () => {
+        const { service } = makeService({ rooms: [] });
+        const manager = {
+            getRepository: jest.fn().mockReturnValue({
+                find: jest.fn().mockResolvedValue([
+                    {
+                        id: 'bot-1',
+                        productMetadata: { botPolicy: { active: true } },
+                    },
+                    {
+                        id: 'bot-2',
+                        productMetadata: {
+                            botPolicy: {
+                                active: true,
+                                games: { bingo: { active: true } },
+                            },
+                        },
+                    },
+                    {
+                        id: 'human-1',
+                        productMetadata: {},
+                    },
+                ]),
+            }),
+        };
+
+        const groups = await (service as any).getBotUserGroupsForTickets(
+            [{ userId: 'bot-1' }, { userId: 'bot-2' }, { userId: 'human-1' }],
+            manager,
+        );
+
+        expect([...groups.botIds].sort()).toEqual(['bot-1', 'bot-2']);
+        expect([...groups.bingoEnabledBotIds]).toEqual(['bot-2']);
+        expect([...groups.nonBingoBotIds]).toEqual(['bot-1']);
+    });
+
+    it('records the room-scoped Bingo bot name in winner standings instead of the bot account name', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            botIdentityMap: {
+                'bot-1': { displayName: 'Hana', phoneSuffix: '0851' },
+            },
+            settlementSummary: {},
+            settledTiers: [],
+            winnersByTier: {},
+        });
+        const winner = {
+            id: 'ticket-1',
+            userId: 'bot-1',
+            cartelaNumber: 25,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue({
+                id: 'bot-1',
+                displayName: 'Abrsh',
+                phoneNumber: '',
+                productMetadata: {
+                    botPolicy: {
+                        active: true,
+                        games: { bingo: { active: true } },
+                    },
+                },
+            }),
+            save: jest.fn().mockImplementation(async (value) => value),
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return {
+                        save: jest
+                            .fn()
+                            .mockImplementation(async (value) => value),
+                    };
+                }
+                if (entityName === 'BotName') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { displayName: 'Hana', active: true },
+                            ]),
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'bot-1',
+                            displayName: 'Abrsh',
+                            productMetadata: {
+                                botPolicy: {
+                                    active: true,
+                                    games: { bingo: { active: true } },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
+        };
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        await (service as any).awardDerashPlace({
+            room,
+            winner,
+            place: '1st',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 100,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 100 },
+            manager,
+        });
+
+        expect(manager.findOne).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                select: expect.arrayContaining([
+                    'id',
+                    'displayName',
+                    'phoneNumber',
+                    'productMetadata',
+                ]),
+            }),
+        );
+        const summary = room.settlementSummary ?? {};
+        expect((summary['1st'] as any).winnerDisplayName).toBe('Hana');
+        expect((summary['1st'] as any).winnerPhoneLast4).toBe('0851');
+    });
+
+    it('refuses to award the same bot two visible Derash places in one room', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            botIdentityMap: {
+                'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
+            },
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '1771',
+                    winnerIsBot: true,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-1'] },
+        });
+        const winner = {
+            id: 'ticket-2',
+            userId: 'bot-1',
+            cartelaNumber: 91,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue({
+                id: 'bot-1',
+                displayName: 'House Bot',
+                phoneNumber: '',
+                productMetadata: {
+                    botPolicy: {
+                        active: true,
+                        games: { bingo: { active: true } },
+                    },
+                },
+            }),
+            save: jest.fn().mockImplementation(async (value) => value),
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return {
+                        save: jest
+                            .fn()
+                            .mockImplementation(async (value) => value),
+                    };
+                }
+                if (entityName === 'BotName') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { displayName: 'Hana', active: true },
+                            ]),
+                    };
+                }
+                if (entityName === 'BingoTicket') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { id: 'ticket-1', userId: 'bot-1' },
+                            ]),
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'bot-1',
+                            displayName: 'House Bot',
+                            productMetadata: {
+                                botPolicy: {
+                                    active: true,
+                                    games: { bingo: { active: true } },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
+        };
+        jest.spyOn(
+            service as any,
+            'resolveDisplayedNameForUser',
+        ).mockResolvedValue({
+            displayName: 'Hana',
+            phoneLast4: '1771',
+            phoneSuffix: '1771',
+            isBot: true,
+        });
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 100,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
+            manager,
+        });
+
+        expect(awarded).toBe(false);
+        expect(room.winnersByTier['2nd']).toBeUndefined();
+        expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+        expect(walletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    it('allows a different Bingo bot to win the next visible Derash place', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            botIdentityMap: {
+                'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
+                'bot-2': { displayName: 'Samuel', phoneSuffix: '6023' },
+            },
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '1771',
+                    winnerIsBot: true,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-1'] },
+        });
+        const winner = {
+            id: 'ticket-2',
+            userId: 'bot-2',
+            cartelaNumber: 91,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue({
+                id: 'bot-2',
+                displayName: 'House Bot 2',
+                phoneNumber: '',
+                productMetadata: {
+                    botPolicy: {
+                        active: true,
+                        games: { bingo: { active: true } },
+                    },
+                },
+            }),
+            save: jest.fn().mockImplementation(async (value) => value),
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return {
+                        save: jest
+                            .fn()
+                            .mockImplementation(async (value) => value),
+                    };
+                }
+                if (entityName === 'BotName') {
+                    return {
+                        find: jest.fn().mockResolvedValue([
+                            { displayName: 'Hana', active: true },
+                            { displayName: 'Samuel', active: true },
+                        ]),
+                    };
+                }
+                if (entityName === 'BingoTicket') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { id: 'ticket-1', userId: 'bot-1' },
+                            ]),
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'bot-2',
+                            displayName: 'House Bot 2',
+                            productMetadata: {
+                                botPolicy: {
+                                    active: true,
+                                    games: { bingo: { active: true } },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
+        };
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 100,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
+            manager,
+        });
+
+        expect(awarded).toBe(true);
+        expect(room.winnersByTier['2nd']).toEqual(['ticket-2']);
+        expect(
+            ((room.settlementSummary ?? {})['2nd'] as any).winnerDisplayName,
+        ).toBe('Samuel');
+        expect(
+            ((room.settlementSummary ?? {})['2nd'] as any).winnerPhoneLast4,
+        ).toBe('6023');
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses the same cartela ticket from winning two visible Derash places', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-18',
+                    winnerUserId: 'player-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '9812',
+                    winnerCartelaNumber: 18,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-18'] },
+        });
+        const winner = {
+            id: 'ticket-18',
+            userId: 'player-1',
+            cartelaNumber: 18,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: ['1st'],
+            payoutMinor: 60,
+            status: 'won',
+            settlementStatus: 'settled',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn(),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 120,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
+            manager,
+        });
+
+        expect(awarded).toBe(false);
+        expect(manager.findOne).not.toHaveBeenCalled();
+        expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+        expect(walletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    it('refuses a duplicate cartela number from winning two visible Derash places', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-original-18',
+                    winnerUserId: 'bot-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '9812',
+                    winnerIsBot: true,
+                    winnerCartelaNumber: 18,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-original-18'] },
+        });
+        const duplicateCartelaWinner = {
+            id: 'ticket-duplicate-18',
+            userId: 'bot-1',
+            cartelaNumber: 18,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn(),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner: duplicateCartelaWinner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 120,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
+            manager,
+        });
+
+        expect(awarded).toBe(false);
+        expect(manager.findOne).not.toHaveBeenCalled();
+        expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+        expect(walletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    it('refuses a different bot account when the visible Bingo bot identity already won', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            botIdentityMap: {
+                'bot-1': { displayName: 'Hana', phoneSuffix: '1771' },
+                'bot-2': { displayName: 'Hana', phoneSuffix: '1771' },
+            },
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-1',
+                    winnerUserId: 'bot-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '1771',
+                    winnerIsBot: true,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-1'] },
+        });
+        const winner = {
+            id: 'ticket-2',
+            userId: 'bot-2',
+            cartelaNumber: 91,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue({
+                id: 'bot-2',
+                displayName: 'House Bot 2',
+                phoneNumber: '',
+                productMetadata: {
+                    botPolicy: {
+                        active: true,
+                        games: { bingo: { active: true } },
+                    },
+                },
+            }),
+            save: jest.fn().mockImplementation(async (value) => value),
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return {
+                        save: jest
+                            .fn()
+                            .mockImplementation(async (value) => value),
+                    };
+                }
+                if (entityName === 'BotName') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { displayName: 'Hana', active: true },
+                            ]),
+                    };
+                }
+                if (entityName === 'BingoTicket') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { id: 'ticket-1', userId: 'bot-1' },
+                            ]),
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'bot-2',
+                            displayName: 'House Bot 2',
+                            productMetadata: {
+                                botPolicy: {
+                                    active: true,
+                                    games: { bingo: { active: true } },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
+        };
+        jest.spyOn(
+            service as any,
+            'resolveDisplayedNameForUser',
+        ).mockResolvedValue({
+            displayName: 'Hana',
+            phoneLast4: '1771',
+            phoneSuffix: '1771',
+            isBot: true,
+        });
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 100,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 70, prefilledSecondPlacePct: 30 },
+            manager,
+        });
+
+        expect(awarded).toBe(false);
+        expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
+        expect(walletService.creditInSession).not.toHaveBeenCalled();
+    });
+
+    it('repairs stale completed-room bot winner names before returning room state', async () => {
+        const { service, mockRoomRepo, mockTicketRepo } = makeService({
+            rooms: [],
+        });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'completed',
+            botIdentityMap: {
+                'bot-1': { displayName: 'Abrsh', phoneSuffix: '8975' },
+            },
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-1',
+                    winnerDisplayName: 'Abrsh',
+                    winnerPhoneLast4: '8975',
+                    winnerIsBot: true,
+                },
+            },
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+        mockTicketRepo.find.mockResolvedValue([]);
+
+        const roomRepoSave = jest
+            .fn()
+            .mockImplementation(async (value) => value);
+        (mockRoomRepo as any).manager = {
+            getRepository: jest.fn().mockImplementation((entity: unknown) => {
+                const entityName = (entity as { name?: string })?.name;
+                if (entityName === 'BingoRoom') {
+                    return { save: roomRepoSave };
+                }
+                if (entityName === 'BingoTicket') {
+                    return {
+                        find: jest.fn().mockResolvedValue([
+                            {
+                                id: 'ticket-1',
+                                userId: 'bot-1',
+                                user: {
+                                    id: 'bot-1',
+                                    displayName: 'Abrsh',
+                                    phoneNumber: '',
+                                    productMetadata: {
+                                        botPolicy: {
+                                            active: true,
+                                            games: { bingo: { active: true } },
+                                        },
+                                    },
+                                },
+                            },
+                        ]),
+                    };
+                }
+                if (entityName === 'BotName') {
+                    return {
+                        find: jest
+                            .fn()
+                            .mockResolvedValue([
+                                { displayName: 'Hana', active: true },
+                            ]),
+                    };
+                }
+                return {
+                    find: jest.fn().mockResolvedValue([
+                        {
+                            id: 'bot-1',
+                            displayName: 'Abrsh',
+                            productMetadata: {
+                                botPolicy: {
+                                    active: true,
+                                    games: { bingo: { active: true } },
+                                },
+                            },
+                        },
+                    ]),
+                };
+            }),
+        };
+
+        const response = await service.getRoomState({ roomId: room.id });
+        const entry = response.settlementSummary['1st'] as Record<
+            string,
+            unknown
+        >;
+
+        expect(entry.winnerDisplayName).toBe('Hana');
+        expect(entry.winnerPhoneLast4).not.toBe('8975');
+        expect(roomRepoSave).toHaveBeenCalled();
+    });
+
+    it('refreshes bot winner display before draw responses are emitted', async () => {
+        const { service, mockRoomRepo, dataSource } = makeService({
+            rooms: [],
+        });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'completed',
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-1',
+                    winnerDisplayName: 'Abrsh',
+                    winnerPhoneLast4: '8975',
+                    winnerIsBot: true,
+                },
+            },
+        });
+        const refreshSpy = jest
+            .spyOn(service as any, 'refreshBotWinnerDisplayNames')
+            .mockImplementation(async (value: unknown) => {
+                const r = value as BingoRoom;
+                r.settlementSummary = {
+                    ...(r.settlementSummary ?? {}),
+                    '1st': {
+                        ...((r.settlementSummary ?? {})['1st'] as Record<
+                            string,
+                            unknown
+                        >),
+                        winnerDisplayName: 'Hana',
+                        winnerPhoneLast4: '0851',
+                    },
+                };
+            });
+        const manager = {
+            findOne: jest.fn().mockResolvedValue(room),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        dataSource.transaction.mockImplementation(async (cb: any) =>
+            cb(manager),
+        );
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+
+        const response = await service.drawNextNumber(room.id);
+        const entry = response.settlementSummary['1st'] as Record<
+            string,
+            unknown
+        >;
+
+        expect(refreshSpy).toHaveBeenCalled();
+        expect(entry.winnerDisplayName).toBe('Hana');
+        expect(entry.winnerPhoneLast4).toBe('0851');
+    });
 });
 
-describe('BingoService.setAutoClaim — active-card scope', () => {
-  it('updates only active tickets so disqualified cards cannot pin the toggle OFF', async () => {
-    const { service, mockTicketRepo } = makeService({ rooms: [] });
+describe('BingoService.setAutoClaim  active-card scope', () => {
+    it('updates only active tickets so disqualified cards cannot pin the toggle OFF', async () => {
+        const { service, mockTicketRepo } = makeService({ rooms: [] });
 
-    await expect(
-      service.setAutoClaim({
-        userId: '550e8400-e29b-41d4-a716-446655440099',
-        roomId: '550e8400-e29b-41d4-a716-446655440088',
-        auto: true,
-      }),
-    ).resolves.toEqual({ autoClaim: true, updated: 0 });
+        await expect(
+            service.setAutoClaim({
+                userId: '550e8400-e29b-41d4-a716-446655440099',
+                roomId: '550e8400-e29b-41d4-a716-446655440088',
+                auto: true,
+            }),
+        ).resolves.toEqual({ autoClaim: true, updated: 0 });
 
-    expect(mockTicketRepo.update).toHaveBeenCalledWith(
-      { userId: '550e8400-e29b-41d4-a716-446655440099', roomId: '550e8400-e29b-41d4-a716-446655440088', status: 'active' },
-      { autoClaim: true },
-    );
-  });
+        expect(mockTicketRepo.update).toHaveBeenCalledWith(
+            {
+                userId: '550e8400-e29b-41d4-a716-446655440099',
+                roomId: '550e8400-e29b-41d4-a716-446655440088',
+                status: 'active',
+            },
+            { autoClaim: true },
+        );
+    });
 });
 
 // ─── Pattern-resolution hardening (prevent + detect a silently-broken place) ───
-describe('BingoService — pattern-resolution hardening', () => {
-  it('updatePattern rejects renaming a built-in pattern', async () => {
-    const { service, mockPatternRepo } = makeService({ rooms: [] });
-    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p1', isBuiltIn: true, name: 'Any Line' });
+describe('BingoService  pattern-resolution hardening', () => {
+    it('updatePattern rejects renaming a built-in pattern', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        mockPatternRepo.findOneBy.mockResolvedValue({
+            id: 'p1',
+            isBuiltIn: true,
+            name: 'Any Line',
+        });
 
-    await expect(service.updatePattern('p1', { name: 'Not Any Line' } as any)).rejects.toThrow(
-      'Built-in pattern names cannot be changed',
-    );
-    expect(mockPatternRepo.save).not.toHaveBeenCalled();
-  });
+        await expect(
+            service.updatePattern('p1', { name: 'Not Any Line' } as any),
+        ).rejects.toThrow('Built-in pattern names cannot be changed');
+        expect(mockPatternRepo.save).not.toHaveBeenCalled();
+    });
 
-  it('updatePattern still allows other fields to change on a built-in pattern', async () => {
-    const { service, mockPatternRepo } = makeService({ rooms: [] });
-    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p1', isBuiltIn: true, name: 'Any Line', enabled: true });
+    it('updatePattern still allows other fields to change on a built-in pattern', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        mockPatternRepo.findOneBy.mockResolvedValue({
+            id: 'p1',
+            isBuiltIn: true,
+            name: 'Any Line',
+            enabled: true,
+        });
 
-    await service.updatePattern('p1', { enabled: false } as any);
+        await service.updatePattern('p1', { enabled: false } as any);
 
-    expect(mockPatternRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'p1', enabled: false }),
-    );
-  });
+        expect(mockPatternRepo.save).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'p1', enabled: false }),
+        );
+    });
 
-  it('deletePattern rejects removing a pattern still referenced by the config', async () => {
-    const { service, mockPatternRepo } = makeService({ rooms: [] });
-    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p2', isBuiltIn: false, name: 'Custom' });
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
-      key: 'global',
-      prefilledSecondPatternId: 'p2',
-    } as any);
+    it('deletePattern rejects removing a pattern still referenced by the config', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        mockPatternRepo.findOneBy.mockResolvedValue({
+            id: 'p2',
+            isBuiltIn: false,
+            name: 'Custom',
+        });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+            prefilledSecondPatternId: 'p2',
+        } as any);
 
-    await expect(service.deletePattern('p2')).rejects.toThrow('2nd');
-    expect(mockPatternRepo.remove).not.toHaveBeenCalled();
-  });
+        await expect(service.deletePattern('p2')).rejects.toThrow('2nd');
+        expect(mockPatternRepo.remove).not.toHaveBeenCalled();
+    });
 
-  it('deletePattern succeeds for a custom pattern no place references', async () => {
-    const { service, mockPatternRepo } = makeService({ rooms: [] });
-    mockPatternRepo.findOneBy.mockResolvedValue({ id: 'p3', isBuiltIn: false, name: 'Custom' });
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
-      key: 'global',
-      prefilledFirstPatternId: 'some-other-id',
-    } as any);
+    it('deletePattern succeeds for a custom pattern no place references', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        mockPatternRepo.findOneBy.mockResolvedValue({
+            id: 'p3',
+            isBuiltIn: false,
+            name: 'Custom',
+        });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+            prefilledFirstPatternId: 'some-other-id',
+        } as any);
 
-    await service.deletePattern('p3');
+        await service.deletePattern('p3');
 
-    expect(mockPatternRepo.remove).toHaveBeenCalled();
-  });
+        expect(mockPatternRepo.remove).toHaveBeenCalled();
+    });
 
-  it('updateBingoConfig rejects an unresolvable pattern id', async () => {
-    const { service, mockConfigRepo, mockPatternRepo } = makeService({ rooms: [] });
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({ key: 'global' } as any);
-    mockPatternRepo.findBy.mockResolvedValue([]); // nothing matches
-    const saveSpy = jest.spyOn(mockConfigRepo, 'save');
+    it('updateBingoConfig rejects an unresolvable pattern id', async () => {
+        const { service, mockConfigRepo, mockPatternRepo } = makeService({
+            rooms: [],
+        });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+        } as any);
+        mockPatternRepo.findBy.mockResolvedValue([]); // nothing matches
+        const saveSpy = jest.spyOn(mockConfigRepo, 'save');
 
-    await expect(
-      service.updateBingoConfig({ prefilledFirstPatternId: 'does-not-exist' } as any),
-    ).rejects.toThrow('Unknown Bingo pattern id(s)');
-    expect(saveSpy).not.toHaveBeenCalled();
-  });
+        await expect(
+            service.updateBingoConfig({
+                prefilledFirstPatternId: 'does-not-exist',
+            } as any),
+        ).rejects.toThrow('Unknown Bingo pattern id(s)');
+        expect(saveSpy).not.toHaveBeenCalled();
+    });
 
-  it('updateBingoConfig accepts a pattern id that resolves', async () => {
-    const { service, mockConfigRepo, mockPatternRepo } = makeService({ rooms: [] });
-    jest.spyOn(service, 'getBingoConfig').mockResolvedValue({ key: 'global' } as any);
-    mockPatternRepo.findBy.mockResolvedValue([{ id: 'valid-id' }]);
-    jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(null);
+    it('updateBingoConfig accepts a pattern id that resolves', async () => {
+        const { service, mockConfigRepo, mockPatternRepo } = makeService({
+            rooms: [],
+        });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+        } as any);
+        mockPatternRepo.findBy.mockResolvedValue([{ id: 'valid-id' }]);
+        jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(
+            null,
+        );
 
-    await service.updateBingoConfig({ prefilledFirstPatternId: 'valid-id' } as any);
+        await service.updateBingoConfig({
+            prefilledFirstPatternId: 'valid-id',
+        } as any);
 
-    expect(mockConfigRepo.save).toHaveBeenCalled();
-  });
+        expect(mockConfigRepo.save).toHaveBeenCalled();
+    });
 
-  it('resolvePrefilledPlacePattern logs and records an alert when it cannot resolve any pattern, but only once within the throttle window', async () => {
-    const { service, mockOperationalAlertRepo } = makeService({ rooms: [] });
-    const manager = { findOne: jest.fn().mockResolvedValue(null) } as any;
-    const cfg = { prefilledFirstPatternId: 'missing-id' } as any;
+    it('resolvePrefilledPlacePattern logs and records an alert when it cannot resolve any pattern, but only once within the throttle window', async () => {
+        const { service, mockOperationalAlertRepo } = makeService({
+            rooms: [],
+        });
+        const manager = { findOne: jest.fn().mockResolvedValue(null) } as any;
+        const cfg = { prefilledFirstPatternId: 'missing-id' } as any;
 
-    const first = await (service as any).resolvePrefilledPlacePattern(cfg, '1st', manager, 'room-1');
-    const second = await (service as any).resolvePrefilledPlacePattern(cfg, '1st', manager, 'room-2');
+        const first = await (service as any).resolvePrefilledPlacePattern(
+            cfg,
+            '1st',
+            manager,
+            'room-1',
+        );
+        const second = await (service as any).resolvePrefilledPlacePattern(
+            cfg,
+            '1st',
+            manager,
+            'room-2',
+        );
 
-    expect(first).toBeNull();
-    expect(second).toBeNull();
-    // Config-level failure — throttled by (place, id), not by room, so the
-    // second call (a different room, same misconfiguration) doesn't re-alert.
-    expect(mockOperationalAlertRepo.save).toHaveBeenCalledTimes(1);
-    expect(mockOperationalAlertRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'pattern_resolution_failed' }),
-    );
-  });
+        expect(first).toBeNull();
+        expect(second).toBeNull();
+        // Config-level failure  throttled by (place, id), not by room, so the
+        // second call (a different room, same misconfiguration) doesn't re-alert.
+        expect(mockOperationalAlertRepo.save).toHaveBeenCalledTimes(1);
+        expect(mockOperationalAlertRepo.save).toHaveBeenCalledWith(
+            expect.objectContaining({ kind: 'pattern_resolution_failed' }),
+        );
+    });
 
-  it('resolvePrefilledPlacePattern resolves normally when a pattern is found', async () => {
-    const { service } = makeService({ rooms: [] });
-    const pattern = { id: 'p1', name: 'Any Line' };
-    const manager = { findOne: jest.fn().mockResolvedValue(pattern) } as any;
-    const cfg = { prefilledFirstPatternId: 'p1' } as any;
+    it('resolvePrefilledPlacePattern resolves normally when a pattern is found', async () => {
+        const { service } = makeService({ rooms: [] });
+        const pattern = { id: 'p1', name: 'Any Line' };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue(pattern),
+        } as any;
+        const cfg = { prefilledFirstPatternId: 'p1' } as any;
 
-    const resolved = await (service as any).resolvePrefilledPlacePattern(cfg, '1st', manager, 'room-1');
+        const resolved = await (service as any).resolvePrefilledPlacePattern(
+            cfg,
+            '1st',
+            manager,
+            'room-1',
+        );
 
-    expect(resolved).toBe(pattern);
-  });
+        expect(resolved).toBe(pattern);
+    });
 });
 
 // ─── Stalled-room / operational-alert observability (admin visibility) ────────
-describe('BingoService — operational observability', () => {
-  it('findStalledRunningRooms queries running rooms whose updatedAt is stale', async () => {
-    const { service, mockRoomRepo } = makeService({ rooms: [] });
-    const staleRow = { id: 'room-1', name: 'Stuck Room', updatedAt: new Date(), stalledSeconds: '45' };
-    mockRoomRepo.query.mockResolvedValue([staleRow]);
+describe('BingoService  operational observability', () => {
+    it('findStalledRunningRooms queries running rooms whose updatedAt is stale', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const staleRow = {
+            id: 'room-1',
+            name: 'Stuck Room',
+            updatedAt: new Date(),
+            stalledSeconds: '45',
+        };
+        mockRoomRepo.query.mockResolvedValue([staleRow]);
 
-    const result = await service.findStalledRunningRooms(20);
+        const result = await service.findStalledRunningRooms(20);
 
-    expect(mockRoomRepo.query).toHaveBeenCalledWith(
-      expect.stringContaining("status = 'running'"),
-      [20],
-    );
-    expect(result).toEqual([{ ...staleRow, stalledSeconds: 45 }]);
-  });
+        expect(mockRoomRepo.query).toHaveBeenCalledWith(
+            expect.stringContaining("status = 'running'"),
+            [20],
+        );
+        expect(result).toEqual([{ ...staleRow, stalledSeconds: 45 }]);
+    });
 
-  it('listOperationalAlerts returns recent alerts most-recent-first', async () => {
-    const { service, mockOperationalAlertRepo } = makeService({ rooms: [] });
-    const rows = [{ id: 'a1' }, { id: 'a2' }];
-    mockOperationalAlertRepo.find.mockResolvedValue(rows);
+    it('listOperationalAlerts returns recent alerts most-recent-first', async () => {
+        const { service, mockOperationalAlertRepo } = makeService({
+            rooms: [],
+        });
+        const rows = [{ id: 'a1' }, { id: 'a2' }];
+        mockOperationalAlertRepo.find.mockResolvedValue(rows);
 
-    const result = await service.listOperationalAlerts();
+        const result = await service.listOperationalAlerts();
 
-    expect(mockOperationalAlertRepo.find).toHaveBeenCalledWith(
-      expect.objectContaining({ order: { createdAt: 'DESC' } }),
-    );
-    expect(result).toBe(rows);
-  });
+        expect(mockOperationalAlertRepo.find).toHaveBeenCalledWith(
+            expect.objectContaining({ order: { createdAt: 'DESC' } }),
+        );
+        expect(result).toBe(rows);
+    });
 });

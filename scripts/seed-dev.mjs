@@ -1,6 +1,6 @@
 /* eslint-disable no-undef */
 /**
- * Dev seed script — creates test users with funded wallets.
+ * Dev seed script  creates test users with funded wallets.
  *
  * Prerequisites:
  *   1. MongoDB running (docker compose up -d)
@@ -11,13 +11,13 @@
  *   node scripts/seed-dev.mjs http://localhost:3000   (custom base URL)
  */
 
-const BASE_URL = process.argv[2] || "http://localhost:3000";
+const BASE_URL = process.argv[2] || 'http://localhost:3000';
 
 async function post(path, body, token) {
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BASE_URL}${path}`, {
-        method: "POST",
+        method: 'POST',
         headers,
         body: JSON.stringify(body),
     });
@@ -30,7 +30,7 @@ async function post(path, body, token) {
 
 async function get(path, token) {
     const headers = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BASE_URL}${path}`, { headers });
     if (!res.ok) {
         const text = await res.text();
@@ -44,10 +44,10 @@ async function main() {
     console.log(`   Base URL: ${BASE_URL}\n`);
 
     // 1. Seed admin user with some initial funds
-    console.log("1️⃣  Seeding admin user...");
-    const admin = await post("/dev/seed/admin", {
-        displayName: "Dev Admin",
-        roles: ["admin", "player"],
+    console.log('1️⃣  Seeding admin user...');
+    const admin = await post('/dev/seed/admin', {
+        displayName: 'Dev Admin',
+        roles: ['admin', 'player'],
         initialBalanceMinor: 500000, // 5,000 credits
     });
     console.log(
@@ -56,9 +56,9 @@ async function main() {
     console.log(`   🔑 Admin token: ${admin.accessToken.slice(0, 40)}...`);
 
     // 2. Seed player user with some initial funds
-    console.log("\n2️⃣  Seeding player user...");
-    const player = await post("/dev/seed/player", {
-        displayName: "Dev Player",
+    console.log('\n2️⃣  Seeding player user...');
+    const player = await post('/dev/seed/player', {
+        displayName: 'Dev Player',
         initialBalanceMinor: 100000, // 1,000 credits
     });
     console.log(
@@ -67,17 +67,17 @@ async function main() {
     console.log(`   🔑 Player token: ${player.accessToken.slice(0, 40)}...`);
 
     // 3. Verify wallets
-    console.log("\n3️⃣  Verifying wallet balances...");
-    const adminWallet = await get("/wallet", admin.accessToken);
-    const playerWallet = await get("/wallet", player.accessToken);
+    console.log('\n3️⃣  Verifying wallet balances...');
+    const adminWallet = await get('/wallet', admin.accessToken);
+    const playerWallet = await get('/wallet', player.accessToken);
 
     console.log(`   💰 Admin balance: ${adminWallet.availableMinor} credits`);
     console.log(`   💰 Player balance: ${playerWallet.availableMinor} credits`);
 
     // 5. Print summary
-    console.log("\n" + "═".repeat(60));
-    console.log("📋 POSTMAN SETUP — Copy these values:");
-    console.log("═".repeat(60));
+    console.log('\n' + '═'.repeat(60));
+    console.log('📋 POSTMAN SETUP  Copy these values:');
+    console.log('═'.repeat(60));
     console.log(
         `\n🔐 Admin Token (use for admin/* endpoints):\n${admin.accessToken}\n`,
     );
@@ -91,11 +91,11 @@ async function main() {
     console.log(
         `   Body: { "displayName": "New User", "initialBalanceMinor": 500000 }`,
     );
-    console.log("\n" + "═".repeat(60));
+    console.log('\n' + '═'.repeat(60));
 }
 
 main().catch((err) => {
     console.error(`\n❌ Seed failed: ${err.message}`);
-    console.error("   Make sure the API is running: npm run start:dev");
+    console.error('   Make sure the API is running: npm run start:dev');
     process.exit(1);
 });

@@ -8,7 +8,7 @@
 ## Stack
 
 - **MySQL 8** + **TypeORM 0.3** via `@nestjs/typeorm`
-- All entities: `ROW_FORMAT=DYNAMIC` (InnoDB) — required to avoid 8126-byte inline row limit
+- All entities: `ROW_FORMAT=DYNAMIC` (InnoDB) required to avoid 8126-byte inline row limit
 - Transactions are `dataSource.transaction(async (manager) => { ... })`
 
 ---
@@ -18,15 +18,16 @@
 ```typescript
 // Game-critical operations use a shared EntityManager
 await this.dataSource.transaction(async (manager) => {
-  await this.walletService.debitInSession(input, manager);
-  await manager.save(KenoTicket, ticketEntity);
-  // ledger entry is created inside debitInSession — same manager = same transaction
+    await this.walletService.debitInSession(input, manager);
+    await manager.save(KenoTicket, ticketEntity);
+    // ledger entry is created inside debitInSession  same manager = same transaction
 });
 ```
 
 **Rules:**
+
 - Pass `manager` to every repo call inside the callback
-- Use `manager.getRepository(Entity)` or `manager.save(Entity, obj)` — not injected repos
+- Use `manager.getRepository(Entity)` or `manager.save(Entity, obj)` not injected repos
 - Never call `walletService.debit()` (own-transaction wrapper) inside an existing transaction
 - Pessimistic write locks: `{ lock: { mode: 'pessimistic_write' } }` on `findOne` for row-level locking (used in wallet mutation)
 
@@ -77,10 +78,11 @@ Scheduled jobs are protected at two levels:
 
 ```typescript
 // Example: draw execution guard
-if (draw.status !== 'open') throw new ConflictException(`Draw is ${draw.status}`);
+if (draw.status !== 'open')
+    throw new ConflictException(`Draw is ${draw.status}`);
 draw.status = 'locked';
 await manager.save(KenoDraw, draw);
-// now safe to proceed — concurrent instances will hit 'locked' and skip
+// now safe to proceed  concurrent instances will hit 'locked' and skip
 ```
 
 ---
@@ -106,8 +108,8 @@ Always use `BIGINT` for any amount column. Never use `DECIMAL` or `FLOAT`.
 ## Query Builder Notes
 
 - Use `createQueryBuilder` when you need `addSelect`, `setLock`, joins, or raw aggregation
-- `.getRawMany()` returns plain objects with aliased column names — map them explicitly
-- `.getMany()` returns entity instances — use this for normal queries
+- `.getRawMany()` returns plain objects with aliased column names map them explicitly
+- `.getMany()` returns entity instances use this for normal queries
 
 ---
 

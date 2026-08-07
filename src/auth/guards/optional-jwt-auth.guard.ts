@@ -13,28 +13,28 @@ import { JwtAuthGuard } from './jwt-auth.guard';
  * both logged-in players (who should get their own data, e.g. their tickets) and
  * anonymous spectators.
  *
- * The explicit constructor is required — a guard that merely `extends` another
+ * The explicit constructor is required  a guard that merely `extends` another
  * without redeclaring the constructor loses its DI param metadata, so Nest would
  * inject nothing and `super()` would run with undefined dependencies.
  */
 @Injectable()
 export class OptionalJwtAuthGuard extends JwtAuthGuard {
-  constructor(
-    configService: ConfigService,
-    jwtService: JwtService,
-    @InjectDataSource() dataSource: DataSource,
-    reflector: Reflector,
-  ) {
-    super(configService, jwtService, dataSource, reflector);
-  }
-
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    try {
-      return await super.canActivate(context);
-    } catch {
-      // No token, expired/invalid token, or inactive account → treat as anonymous
-      // rather than blocking the request.
-      return true;
+    constructor(
+        configService: ConfigService,
+        jwtService: JwtService,
+        @InjectDataSource() dataSource: DataSource,
+        reflector: Reflector,
+    ) {
+        super(configService, jwtService, dataSource, reflector);
     }
-  }
+
+    async canActivate(context: ExecutionContext): Promise<boolean> {
+        try {
+            return await super.canActivate(context);
+        } catch {
+            // No token, expired/invalid token, or inactive account → treat as anonymous
+            // rather than blocking the request.
+            return true;
+        }
+    }
 }

@@ -1,6 +1,13 @@
 import { Inject, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, WebSocketGateway, WebSocketServer, SubscribeMessage } from '@nestjs/websockets';
+import {
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    OnGatewayInit,
+    WebSocketGateway,
+    WebSocketServer,
+    SubscribeMessage,
+} from '@nestjs/websockets';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Server, Socket } from 'socket.io';
@@ -17,510 +24,584 @@ import { PoolQueueEntry } from '../pool/entities/pool-queue-entry.entity';
 import { PresenceService } from './presence.service';
 
 export type KenoDrawStartedPayload = {
-  drawId: string;
-  scheduledAt: Date;
-  configVersion: number;
+    drawId: string;
+    scheduledAt: Date;
+    configVersion: number;
 };
 
 export type KenoDrawCompletedPayload = {
-  drawId: string;
-  drawnNumbers: number[];
-  settlementSummary: Record<string, unknown>;
+    drawId: string;
+    drawnNumbers: number[];
+    settlementSummary: Record<string, unknown>;
 };
 
 export type BingoRoomUpdatedPayload = {
-  roomId: string;
-  status: string;
-  soldTickets: number;
-  scheduledStartAt: Date | null;
+    roomId: string;
+    status: string;
+    soldTickets: number;
+    scheduledStartAt: Date | null;
 };
 
 export type BingoNumberDrawnPayload = {
-  roomId: string;
-  number: number;
-  drawIndex: number;
-  totalDrawn: number;
-  // Carried on every draw so clients can announce a place the instant it is won
-  // (derash), rather than only learning the winners at room completion.
-  winnersByTier: Record<string, string[]>;
-  settlementSummary: Record<string, unknown>;
-  // Server clock at emit time and the configured cadence, so the client can pace
-  // its reveal animation off the server's actual interval instead of a hardcoded
-  // guess that can outrun it and stall waiting for the next socket event.
-  emittedAt: number;
-  intervalMs: number;
+    roomId: string;
+    number: number;
+    drawIndex: number;
+    totalDrawn: number;
+    // Carried on every draw so clients can announce a place the instant it is won
+    // (derash), rather than only learning the winners at room completion.
+    winnersByTier: Record<string, string[]>;
+    settlementSummary: Record<string, unknown>;
+    // Server clock at emit time and the configured cadence, so the client can pace
+    // its reveal animation off the server's actual interval instead of a hardcoded
+    // guess that can outrun it and stall waiting for the next socket event.
+    emittedAt: number;
+    intervalMs: number;
 };
 
 export type BingoRoomCompletedPayload = {
-  roomId: string;
-  drawnNumbers: number[];
-  winnersByTier: Record<string, string[]>;
-  settlementSummary: Record<string, unknown>;
+    roomId: string;
+    drawnNumbers: number[];
+    winnersByTier: Record<string, string[]>;
+    settlementSummary: Record<string, unknown>;
 };
 
 export type WithdrawalPendingPayload = {
-  withdrawalId: string;
-  userId: string;
-  amountMinor: number;
-  destinationAccount: string;
+    withdrawalId: string;
+    userId: string;
+    amountMinor: number;
+    destinationAccount: string;
 };
 
 export type CrashRoundPayload = {
-  roundId: string;
-  status: string;
-  seedHash: string;
-  elapsedMs?: number;
-  crashPointX100?: number | null;
+    roundId: string;
+    status: string;
+    seedHash: string;
+    elapsedMs?: number;
+    crashPointX100?: number | null;
 };
 
 export type CrashTickPayload = {
-  roundId: string;
-  multiplierX100: number;
-  elapsedMs: number;
+    roundId: string;
+    multiplierX100: number;
+    elapsedMs: number;
 };
 
 @WebSocketGateway({ cors: { origin: true, credentials: true } })
 export class GameEventsGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnApplicationShutdown
+    implements
+        OnGatewayInit,
+        OnGatewayConnection,
+        OnGatewayDisconnect,
+        OnApplicationShutdown
 {
-  @WebSocketServer()
-  private readonly server: Server;
+    @WebSocketServer()
+    private readonly server: Server;
 
-  private readonly logger = new Logger(GameEventsGateway.name);
+    private readonly logger = new Logger(GameEventsGateway.name);
 
-  constructor(
-    @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
-    @InjectRepository(User)
-    private readonly userRepository: Repository<User>,
-    @InjectRepository(PoolQueueEntry)
-    private readonly poolQueueRepo: Repository<PoolQueueEntry>,
-    private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
-    private readonly presenceService: PresenceService,
-  ) {}
+    constructor(
+        @Inject(REDIS_CLIENT) private readonly redisClient: IORedis,
+        @InjectRepository(User)
+        private readonly userRepository: Repository<User>,
+        @InjectRepository(PoolQueueEntry)
+        private readonly poolQueueRepo: Repository<PoolQueueEntry>,
+        private readonly jwtService: JwtService,
+        private readonly configService: ConfigService,
+        private readonly presenceService: PresenceService,
+    ) {}
 
-  async onApplicationShutdown(signal?: string) {
-    this.logger.warn(`Application shutting down via ${signal}. Broadcasting system.maintenance event.`);
-    this.server.emit('system.maintenance', { message: 'System is shutting down for maintenance or scaling.' });
-    this.server.disconnectSockets();
-  }
-
-  afterInit(server: Server) {
-    const pubClient = this.redisClient;
-    const subClient = pubClient.duplicate();
-    server.adapter(createAdapter(pubClient, subClient));
-    this.logger.log('Socket.IO Redis adapter attached — WebSocket events are now cluster-aware.');
-  }
-
-  async handleConnection(client: Socket) {
-    try {
-      const token = client.handshake.auth?.token;
-      if (!token) {
-        throw new Error('No token provided');
-      }
-
-      const secret = this.configService.getOrThrow<string>('JWT_ACCESS_SECRET');
-      const payload = await this.jwtService.verifyAsync(token, { secret });
-
-      if (!payload.sub) {
-        throw new Error('Token payload missing sub');
-      }
-
-      const user = await this.userRepository.findOne({
-        where: { id: payload.sub },
-        select: ['id', 'status', 'roles', 'displayName']
-      });
-
-      if (!user || user.status !== 'active') {
-        throw new Error('Account is not active');
-      }
-
-      client.data.user = payload;
-      client.data.displayName = user.displayName ?? 'Player';
-      await client.join(`user_${payload.sub}`);
-
-      // Agents join a shared room so withdrawal.pending broadcasts reach them all.
-      if (Array.isArray(user.roles) && user.roles.includes('agent')) {
-        await client.join('agents');
-      }
-
-      this.logger.debug(`Client connected: ${client.id} (User: ${payload.sub}, roles: ${(user.roles as string[]).join(',')})`);
-      await this.broadcastLiveCounts();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Unauthorized WebSocket connection attempt: ${client.id} - ${message}`);
-      client.disconnect();
+    async onApplicationShutdown(signal?: string) {
+        this.logger.warn(
+            `Application shutting down via ${signal}. Broadcasting system.maintenance event.`,
+        );
+        this.server.emit('system.maintenance', {
+            message: 'System is shutting down for maintenance or scaling.',
+        });
+        this.server.disconnectSockets();
     }
-  }
 
-  handleDisconnect(client: Socket) {
-    this.logger.debug(`Client disconnected: ${client.id}`);
-    void this.broadcastLiveCounts();
-  }
-
-  /** Distinct user IDs with at least one live socket connection right now (room-scoped when given). */
-  private getDistinctUsers(roomName?: string): Set<string> {
-    const socketMap = this.server?.sockets.sockets;
-    const socketIds = roomName
-      ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
-      : Array.from(socketMap?.keys() ?? []);
-    const users = new Set<string>();
-    for (const socketId of socketIds) {
-      const socket = socketMap?.get(socketId);
-      const userId = socket?.data?.user?.sub;
-      if (typeof userId === 'string' && userId) {
-        users.add(userId);
-      }
+    afterInit(server: Server) {
+        const pubClient = this.redisClient;
+        const subClient = pubClient.duplicate();
+        server.adapter(createAdapter(pubClient, subClient));
+        this.logger.log(
+            'Socket.IO Redis adapter attached  WebSocket events are now cluster-aware.',
+        );
     }
-    return users;
-  }
 
-  /** Currently-connected user IDs — lets admin views flag a player "online" right now. */
-  getOnlineUserIds(): Set<string> {
-    return this.getDistinctUsers();
-  }
+    async handleConnection(client: Socket) {
+        try {
+            const token = client.handshake.auth?.token;
+            if (!token) {
+                throw new Error('No token provided');
+            }
 
-  getLiveCounts() {
-    const kenoUsers = this.getDistinctUsers('game_keno');
-    const bingoUsers = this.getDistinctUsers('game_bingo');
-    const crashUsers = this.getDistinctUsers('game_crash');
-    const totalUsers = this.getDistinctUsers();
-    const playingUsers = new Set<string>([...kenoUsers, ...bingoUsers, ...crashUsers]);
+            const secret =
+                this.configService.getOrThrow<string>('JWT_ACCESS_SECRET');
+            const payload = await this.jwtService.verifyAsync(token, {
+                secret,
+            });
 
-    return {
-      kenoOnline: kenoUsers.size,
-      bingoOnline: bingoUsers.size,
-      crashOnline: crashUsers.size,
-      totalOnline: totalUsers.size,
-      totalPlaying: playingUsers.size,
-      totalConnections: this.server?.sockets.sockets.size || 0,
-    };
-  }
+            if (!payload.sub) {
+                throw new Error('Token payload missing sub');
+            }
 
-  /**
-   * Real socket counts (above) MERGED with house bot presence so the numbers shown
-   * to players include bots — per game (participating bots) and total (all active
-   * bots are "online"). The raw `bots` breakdown is included for the admin panel.
-   */
-  async getLiveCountsWithBots() {
-    const real = this.getLiveCounts();
-    const bots = await this.presenceService.getBotCounts().catch(() => ({
-      kenoBots: 0,
-      bingoBots: 0,
-      crashBots: 0,
-      totalBots: 0,
-    }));
-    // Players actively waiting in the two-player Pool queue. DB-sourced (shared
-    // across instances) so any node's heartbeat reports the true figure. Powers
-    // the Home "someone's waiting for a Pool match" banner.
-    const poolWaiting = await this.poolQueueRepo.count().catch(() => 0);
-    return {
-      kenoOnline: real.kenoOnline + bots.kenoBots,
-      bingoOnline: real.bingoOnline + bots.bingoBots,
-      crashOnline: real.crashOnline + bots.crashBots,
-      // Total online = real distinct users online + every active bot (bots count as online).
-      totalOnline: real.totalOnline + bots.totalBots,
-      // Playing = real players in a game + bots participating in a game.
-      totalPlaying: real.totalPlaying + bots.kenoBots + bots.bingoBots + bots.crashBots,
-      totalConnections: real.totalConnections,
-      poolWaiting,
-      bots,
-    };
-  }
+            const user = await this.userRepository.findOne({
+                where: { id: payload.sub },
+                select: ['id', 'status', 'roles', 'displayName'],
+            });
 
-  async broadcastLiveCounts() {
-    const counts = await this.getLiveCountsWithBots();
-    this.server?.emit('live.counts', counts);
-  }
+            if (!user || user.status !== 'active') {
+                throw new Error('Account is not active');
+            }
 
-  /**
-   * Periodic refresh so counts stay correct cluster-wide even if a
-   * connect/disconnect event was missed, and so freshly opened tabs converge.
-   */
-  @Interval(10_000)
-  handleLiveCountsHeartbeat() {
-    void this.broadcastLiveCounts();
-  }
+            client.data.user = payload;
+            client.data.displayName = user.displayName ?? 'Player';
+            await client.join(`user_${payload.sub}`);
 
-  /** On-demand pull — clients emit this on connect to populate counts immediately. */
-  @SubscribeMessage('request.counts')
-  async handleRequestCounts(client: Socket) {
-    client.emit('live.counts', await this.getLiveCountsWithBots());
-  }
+            // Agents join a shared room so withdrawal.pending broadcasts reach them all.
+            if (Array.isArray(user.roles) && user.roles.includes('agent')) {
+                await client.join('agents');
+            }
 
-  @SubscribeMessage('enter.game')
-  async handleEnterGame(client: Socket, payload: { game: 'keno' | 'bingo' | 'crash' }) {
-    if (payload?.game === 'keno') {
-      await client.join('game_keno');
-      this.logger.debug(`Client ${client.id} entered Keno`);
-    } else if (payload?.game === 'bingo') {
-      await client.join('game_bingo');
-      this.logger.debug(`Client ${client.id} entered Bingo`);
-    } else if (payload?.game === 'crash') {
-      await client.join('game_crash');
-      this.logger.debug(`Client ${client.id} entered Crash`);
+            this.logger.debug(
+                `Client connected: ${client.id} (User: ${payload.sub}, roles: ${(user.roles as string[]).join(',')})`,
+            );
+            await this.broadcastLiveCounts();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            this.logger.warn(
+                `Unauthorized WebSocket connection attempt: ${client.id} - ${message}`,
+            );
+            client.disconnect();
+        }
     }
-    await this.broadcastLiveCounts();
-  }
 
-  @SubscribeMessage('leave.game')
-  async handleLeaveGame(client: Socket, payload: { game: 'keno' | 'bingo' | 'crash' }) {
-    if (payload?.game === 'keno') {
-      await client.leave('game_keno');
-      this.logger.debug(`Client ${client.id} left Keno`);
-    } else if (payload?.game === 'bingo') {
-      await client.leave('game_bingo');
-      this.logger.debug(`Client ${client.id} left Bingo`);
-    } else if (payload?.game === 'crash') {
-      await client.leave('game_crash');
-      this.logger.debug(`Client ${client.id} left Crash`);
+    handleDisconnect(client: Socket) {
+        this.logger.debug(`Client disconnected: ${client.id}`);
+        void this.broadcastLiveCounts();
     }
-    await this.broadcastLiveCounts();
-  }
 
-  emitWalletUpdated(userId: string, wallet: WalletSummary): void {
-    this.server.to(`user_${userId}`).emit('wallet.updated', wallet);
-  }
+    /** Distinct user IDs with at least one live socket connection right now (room-scoped when given). */
+    private getDistinctUsers(roomName?: string): Set<string> {
+        const socketMap = this.server?.sockets.sockets;
+        const socketIds = roomName
+            ? Array.from(this.server?.sockets.adapter.rooms.get(roomName) ?? [])
+            : Array.from(socketMap?.keys() ?? []);
+        const users = new Set<string>();
+        for (const socketId of socketIds) {
+            const socket = socketMap?.get(socketId);
+            const userId = socket?.data?.user?.sub;
+            if (typeof userId === 'string' && userId) {
+                users.add(userId);
+            }
+        }
+        return users;
+    }
 
-  /** Push a durable notification live to a single user's socket room (bell). */
-  emitUserNotification(userId: string, payload: Record<string, unknown>): void {
-    this.server.to(`user_${userId}`).emit('notification.new', payload);
-  }
+    /** Currently-connected user IDs  lets admin views flag a player "online" right now. */
+    getOnlineUserIds(): Set<string> {
+        return this.getDistinctUsers();
+    }
 
-  /** Notify all connected agents that a new withdrawal is waiting. */
-  emitWithdrawalPending(payload: WithdrawalPendingPayload): void {
-    this.server.to('agents').emit('withdrawal.pending', payload);
-  }
+    getLiveCounts() {
+        const kenoUsers = this.getDistinctUsers('game_keno');
+        const bingoUsers = this.getDistinctUsers('game_bingo');
+        const crashUsers = this.getDistinctUsers('game_crash');
+        const totalUsers = this.getDistinctUsers();
+        const playingUsers = new Set<string>([
+            ...kenoUsers,
+            ...bingoUsers,
+            ...crashUsers,
+        ]);
 
-  /** Broadcast the updated public game catalog so clients hide/reveal games live. */
-  emitGamesCatalogUpdated(catalog: unknown): void {
-    this.server.emit('games.catalog.updated', catalog);
-  }
+        return {
+            kenoOnline: kenoUsers.size,
+            bingoOnline: bingoUsers.size,
+            crashOnline: crashUsers.size,
+            totalOnline: totalUsers.size,
+            totalPlaying: playingUsers.size,
+            totalConnections: this.server?.sockets.sockets.size || 0,
+        };
+    }
 
-  emitKenoDrawStarted(payload: KenoDrawStartedPayload): void {
-    this.server.emit('keno.draw.started', payload);
-  }
+    /**
+     * Real socket counts (above) MERGED with house bot presence so the numbers shown
+     * to players include bots  per game (participating bots) and total (all active
+     * bots are "online"). The raw `bots` breakdown is included for the admin panel.
+     */
+    async getLiveCountsWithBots() {
+        const real = this.getLiveCounts();
+        const bots = await this.presenceService.getBotCounts().catch(() => ({
+            kenoBots: 0,
+            bingoBots: 0,
+            crashBots: 0,
+            totalBots: 0,
+        }));
+        // Players actively waiting in the two-player Pool queue. DB-sourced (shared
+        // across instances) so any node's heartbeat reports the true figure. Powers
+        // the Home "someone's waiting for a Pool match" banner.
+        const poolWaiting = await this.poolQueueRepo.count().catch(() => 0);
+        return {
+            kenoOnline: real.kenoOnline + bots.kenoBots,
+            bingoOnline: real.bingoOnline + bots.bingoBots,
+            crashOnline: real.crashOnline + bots.crashBots,
+            // Total online = real distinct users online + every active bot (bots count as online).
+            totalOnline: real.totalOnline + bots.totalBots,
+            // Playing = real players in a game + bots participating in a game.
+            totalPlaying:
+                real.totalPlaying +
+                bots.kenoBots +
+                bots.bingoBots +
+                bots.crashBots,
+            totalConnections: real.totalConnections,
+            poolWaiting,
+            bots,
+        };
+    }
 
-  emitKenoDrawCompleted(draw: KenoDrawResponse): void {
-    const payload: KenoDrawCompletedPayload = {
-      drawId: draw.id,
-      drawnNumbers: draw.drawnNumbers,
-      settlementSummary: draw.settlementSummary
-    };
-    this.server.emit('keno.draw.completed', payload);
-  }
+    async broadcastLiveCounts() {
+        const counts = await this.getLiveCountsWithBots();
+        this.server?.emit('live.counts', counts);
+    }
 
-  emitBingoRoomUpdated(room: BingoRoomResponse): void {
-    const payload: BingoRoomUpdatedPayload = {
-      roomId: room.id,
-      status: room.status,
-      soldTickets: room.soldTickets,
-      scheduledStartAt: room.scheduledStartAt
-    };
-    this.server.emit('bingo.room.updated', payload);
-  }
+    /**
+     * Periodic refresh so counts stay correct cluster-wide even if a
+     * connect/disconnect event was missed, and so freshly opened tabs converge.
+     */
+    @Interval(10_000)
+    handleLiveCountsHeartbeat() {
+        void this.broadcastLiveCounts();
+    }
 
-  emitBingoNumberDrawn(room: BingoRoomResponse, intervalMs: number): void {
-    const drawnNumbers = room.drawnNumbers;
-    const latestNumber = drawnNumbers[drawnNumbers.length - 1];
-    if (latestNumber === undefined) return;
+    /** On-demand pull  clients emit this on connect to populate counts immediately. */
+    @SubscribeMessage('request.counts')
+    async handleRequestCounts(client: Socket) {
+        client.emit('live.counts', await this.getLiveCountsWithBots());
+    }
 
-    const payload: BingoNumberDrawnPayload = {
-      roomId: room.id,
-      number: latestNumber,
-      drawIndex: drawnNumbers.length - 1,
-      totalDrawn: drawnNumbers.length,
-      winnersByTier: room.winnersByTier,
-      settlementSummary: room.settlementSummary,
-      emittedAt: Date.now(),
-      intervalMs
-    };
-    this.server.emit('bingo.number.drawn', payload);
-  }
+    @SubscribeMessage('enter.game')
+    async handleEnterGame(
+        client: Socket,
+        payload: { game: 'keno' | 'bingo' | 'crash' },
+    ) {
+        if (payload?.game === 'keno') {
+            await client.join('game_keno');
+            this.logger.debug(`Client ${client.id} entered Keno`);
+        } else if (payload?.game === 'bingo') {
+            await client.join('game_bingo');
+            this.logger.debug(`Client ${client.id} entered Bingo`);
+        } else if (payload?.game === 'crash') {
+            await client.join('game_crash');
+            this.logger.debug(`Client ${client.id} entered Crash`);
+        }
+        await this.broadcastLiveCounts();
+    }
 
-  emitBingoRoomCompleted(room: BingoRoomResponse): void {
-    const payload: BingoRoomCompletedPayload = {
-      roomId: room.id,
-      drawnNumbers: room.drawnNumbers,
-      winnersByTier: room.winnersByTier,
-      settlementSummary: room.settlementSummary
-    };
-    this.server.emit('bingo.room.completed', payload);
-  }
+    @SubscribeMessage('leave.game')
+    async handleLeaveGame(
+        client: Socket,
+        payload: { game: 'keno' | 'bingo' | 'crash' },
+    ) {
+        if (payload?.game === 'keno') {
+            await client.leave('game_keno');
+            this.logger.debug(`Client ${client.id} left Keno`);
+        } else if (payload?.game === 'bingo') {
+            await client.leave('game_bingo');
+            this.logger.debug(`Client ${client.id} left Bingo`);
+        } else if (payload?.game === 'crash') {
+            await client.leave('game_crash');
+            this.logger.debug(`Client ${client.id} left Crash`);
+        }
+        await this.broadcastLiveCounts();
+    }
 
-  emitCrashRoundWaiting(payload: CrashRoundPayload): void {
-    this.server.emit('crash.round.waiting', payload);
-  }
+    emitWalletUpdated(userId: string, wallet: WalletSummary): void {
+        this.server.to(`user_${userId}`).emit('wallet.updated', wallet);
+    }
 
-  emitCrashRoundStarted(payload: CrashRoundPayload): void {
-    this.server.emit('crash.round.started', payload);
-  }
+    /** Push a durable notification live to a single user's socket room (bell). */
+    emitUserNotification(
+        userId: string,
+        payload: Record<string, unknown>,
+    ): void {
+        this.server.to(`user_${userId}`).emit('notification.new', payload);
+    }
 
-  emitCrashTick(payload: CrashTickPayload): void {
-    this.server.emit('crash.tick', payload);
-  }
+    /** Notify all connected agents that a new withdrawal is waiting. */
+    emitWithdrawalPending(payload: WithdrawalPendingPayload): void {
+        this.server.to('agents').emit('withdrawal.pending', payload);
+    }
 
-  emitCrashRoundCrashed(payload: CrashRoundPayload & { seed: string }): void {
-    this.server.emit('crash.round.crashed', payload);
-  }
+    /** Broadcast the updated public game catalog so clients hide/reveal games live. */
+    emitGamesCatalogUpdated(catalog: unknown): void {
+        this.server.emit('games.catalog.updated', catalog);
+    }
 
-  emitCrashBetPlaced(userId: string, payload: Record<string, unknown>): void {
-    this.server.to(`user_${userId}`).emit('crash.bet.placed', payload);
-  }
+    emitKenoDrawStarted(payload: KenoDrawStartedPayload): void {
+        this.server.emit('keno.draw.started', payload);
+    }
 
-  emitCrashCashedOut(userId: string, payload: Record<string, unknown>): void {
-    this.server.to(`user_${userId}`).emit('crash.bet.cashedout', payload);
-  }
+    emitKenoDrawCompleted(draw: KenoDrawResponse): void {
+        const payload: KenoDrawCompletedPayload = {
+            drawId: draw.id,
+            drawnNumbers: draw.drawnNumbers,
+            settlementSummary: draw.settlementSummary,
+        };
+        this.server.emit('keno.draw.completed', payload);
+    }
 
-  /** Public live "All Bets" feed — broadcast to everyone watching the crash room. */
-  emitCrashBetPublic(payload: Record<string, unknown>): void {
-    this.server.to('game_crash').emit('crash.bet.public', payload);
-  }
+    emitBingoRoomUpdated(room: BingoRoomResponse): void {
+        const payload: BingoRoomUpdatedPayload = {
+            roomId: room.id,
+            status: room.status,
+            soldTickets: room.soldTickets,
+            scheduledStartAt: room.scheduledStartAt,
+        };
+        this.server.emit('bingo.room.updated', payload);
+    }
 
-  emitCrashCashoutPublic(payload: Record<string, unknown>): void {
-    this.server.to('game_crash').emit('crash.cashout.public', payload);
-  }
+    emitBingoNumberDrawn(room: BingoRoomResponse, intervalMs: number): void {
+        const drawnNumbers = room.drawnNumbers;
+        const latestNumber = drawnNumbers[drawnNumbers.length - 1];
+        if (latestNumber === undefined) return;
 
-  @SubscribeMessage('enter.crash')
-  async handleEnterCrash(client: Socket) {
-    await client.join('game_crash');
-  }
+        const payload: BingoNumberDrawnPayload = {
+            roomId: room.id,
+            number: latestNumber,
+            drawIndex: drawnNumbers.length - 1,
+            totalDrawn: drawnNumbers.length,
+            winnersByTier: room.winnersByTier,
+            settlementSummary: room.settlementSummary,
+            emittedAt: Date.now(),
+            intervalMs,
+        };
+        this.server.emit('bingo.number.drawn', payload);
+    }
 
-  @SubscribeMessage('leave.crash')
-  async handleLeaveCrash(client: Socket) {
-    await client.leave('game_crash');
-  }
+    emitBingoRoomCompleted(room: BingoRoomResponse): void {
+        const payload: BingoRoomCompletedPayload = {
+            roomId: room.id,
+            drawnNumbers: room.drawnNumbers,
+            winnersByTier: room.winnersByTier,
+            settlementSummary: room.settlementSummary,
+        };
+        this.server.emit('bingo.room.completed', payload);
+    }
 
-  @SubscribeMessage('bingo.chat.send')
-  handleBingoChatSend(client: Socket, payload: { roomId: string; text: string }) {
-    if (!payload?.roomId || typeof payload.text !== 'string') return;
-    const text = payload.text.trim().slice(0, 200);
-    if (!text) return;
+    emitCrashRoundWaiting(payload: CrashRoundPayload): void {
+        this.server.emit('crash.round.waiting', payload);
+    }
 
-    const userId: string = client.data.user?.sub ?? '';
-    const displayName: string = client.data.displayName ?? 'Player';
+    emitCrashRoundStarted(payload: CrashRoundPayload): void {
+        this.server.emit('crash.round.started', payload);
+    }
 
-    this.server.to('game_bingo').emit('bingo.chat.message', {
-      roomId: payload.roomId,
-      userId,
-      displayName,
-      text,
-      timestamp: new Date().toISOString(),
-    });
-  }
+    emitCrashTick(payload: CrashTickPayload): void {
+        this.server.emit('crash.tick', payload);
+    }
 
-  // ── Pool ────────────────────────────────────────────────────────────────────
+    emitCrashRoundCrashed(payload: CrashRoundPayload & { seed: string }): void {
+        this.server.emit('crash.round.crashed', payload);
+    }
 
-  /** Spectators/players subscribe to a match's room to receive live state. */
-  @SubscribeMessage('pool.join')
-  async handlePoolJoin(client: Socket, payload: { matchId: string }) {
-    if (payload?.matchId) await client.join(`pool_match_${payload.matchId}`);
-  }
+    emitCrashBetPlaced(userId: string, payload: Record<string, unknown>): void {
+        this.server.to(`user_${userId}`).emit('crash.bet.placed', payload);
+    }
 
-  @SubscribeMessage('pool.leave')
-  async handlePoolLeave(client: Socket, payload: { matchId: string }) {
-    if (payload?.matchId) await client.leave(`pool_match_${payload.matchId}`);
-  }
+    emitCrashCashedOut(userId: string, payload: Record<string, unknown>): void {
+        this.server.to(`user_${userId}`).emit('crash.bet.cashedout', payload);
+    }
 
-  /** Whitelist of predefined quick-chat emote ids — keep in sync with the client's
-   * POOL_EMOTES. Only these ids are relayed; no free text is ever accepted. */
-  private static readonly POOL_EMOTES = new Set([
-    'tooEasy', 'bestShot', 'watchLearn', 'warmingUp', 'luckNextTime', 'feelingLucky',
-    'niceShot', 'wellPlayed', 'gg', 'respect', 'rematch', 'goodLuck',
-  ]);
-  private readonly lastEmoteAt = new Map<string, number>();
+    /** Public live "All Bets" feed  broadcast to everyone watching the crash room. */
+    emitCrashBetPublic(payload: Record<string, unknown>): void {
+        this.server.to('game_crash').emit('crash.bet.public', payload);
+    }
 
-  /**
-   * Relay a predefined quick-chat emote to everyone in the match room. Only a
-   * whitelisted id crosses the wire (each client localizes it), and each user is
-   * rate-limited so the taunts can't be spammed. Non-players are naturally
-   * filtered client-side (the bubble only renders for the two seat users).
-   */
-  @SubscribeMessage('pool.emote')
-  handlePoolEmote(client: Socket, payload: { matchId?: string; id?: string }) {
-    const matchId = payload?.matchId;
-    const id = payload?.id;
-    if (!matchId || typeof id !== 'string' || !GameEventsGateway.POOL_EMOTES.has(id)) return;
-    const userId: string | undefined = client.data?.user?.sub;
-    if (!userId) return;
-    const now = Date.now();
-    if (now - (this.lastEmoteAt.get(userId) ?? 0) < 1500) return; // ~1 per 1.5s
-    this.lastEmoteAt.set(userId, now);
-    this.server.to(`pool_match_${matchId}`).emit('pool.emote', { matchId, userId, id, ts: now });
-  }
+    emitCrashCashoutPublic(payload: Record<string, unknown>): void {
+        this.server.to('game_crash').emit('crash.cashout.public', payload);
+    }
 
-  /** Authoritative board/turn state after any change. */
-  emitPoolMatchUpdated(matchId: string, payload: unknown): void {
-    this.server.to(`pool_match_${matchId}`).emit('pool.match.updated', payload);
-  }
+    @SubscribeMessage('enter.crash')
+    async handleEnterCrash(client: Socket) {
+        await client.join('game_crash');
+    }
 
-  /** A resolved shot (for animation + the shot feed). */
-  emitPoolShotResolved(matchId: string, payload: unknown): void {
-    this.server.to(`pool_match_${matchId}`).emit('pool.shot.resolved', payload);
-  }
+    @SubscribeMessage('leave.crash')
+    async handleLeaveCrash(client: Socket) {
+        await client.leave('game_crash');
+    }
 
-  emitPoolMatchEnded(matchId: string, payload: unknown): void {
-    this.server.to(`pool_match_${matchId}`).emit('pool.match.ended', payload);
-  }
+    @SubscribeMessage('bingo.chat.send')
+    handleBingoChatSend(
+        client: Socket,
+        payload: { roomId: string; text: string },
+    ) {
+        if (!payload?.roomId || typeof payload.text !== 'string') return;
+        const text = payload.text.trim().slice(0, 200);
+        if (!text) return;
 
-  /** Direct notification to a user that matchmaking paired them. */
-  emitPoolMatchFound(userId: string, payload: unknown): void {
-    this.server.to(`user_${userId}`).emit('pool.match.found', payload);
-  }
+        const userId: string = client.data.user?.sub ?? '';
+        const displayName: string = client.data.displayName ?? 'Player';
 
-  // ── Werk Flega (shared server-authoritative round) ───────────────────────────
+        this.server.to('game_bingo').emit('bingo.chat.message', {
+            roomId: payload.roomId,
+            userId,
+            displayName,
+            text,
+            timestamp: new Date().toISOString(),
+        });
+    }
 
-  /**
-   * Runtime-registered handler so the gateway can forward player input to the
-   * WerkRoundManager without a circular module import. The manager registers
-   * itself on bootstrap.
-   */
-  private werkInputHandler?: (userId: string, input: unknown) => void;
+    // ── Pool ────────────────────────────────────────────────────────────────────
 
-  registerWerkInputHandler(fn: (userId: string, input: unknown) => void): void {
-    this.werkInputHandler = fn;
-  }
+    /** Spectators/players subscribe to a match's room to receive live state. */
+    @SubscribeMessage('pool.join')
+    async handlePoolJoin(client: Socket, payload: { matchId: string }) {
+        if (payload?.matchId)
+            await client.join(`pool_match_${payload.matchId}`);
+    }
 
-  /** Distinct users currently on the Werk screen (in the lobby room). */
-  werkPresenceCount(): number {
-    return this.getDistinctUsers('game_werk').size;
-  }
+    @SubscribeMessage('pool.leave')
+    async handlePoolLeave(client: Socket, payload: { matchId: string }) {
+        if (payload?.matchId)
+            await client.leave(`pool_match_${payload.matchId}`);
+    }
 
-  /** Join the shared lobby room + a specific round's room to play/spectate. */
-  @SubscribeMessage('werk.join')
-  async handleWerkJoin(client: Socket, payload: { roundId?: string }) {
-    await client.join('game_werk');
-    if (payload?.roundId) await client.join(`werk_round_${payload.roundId}`);
-  }
+    /** Whitelist of predefined quick-chat emote ids  keep in sync with the client's
+     * POOL_EMOTES. Only these ids are relayed; no free text is ever accepted. */
+    private static readonly POOL_EMOTES = new Set([
+        'tooEasy',
+        'bestShot',
+        'watchLearn',
+        'warmingUp',
+        'luckNextTime',
+        'feelingLucky',
+        'niceShot',
+        'wellPlayed',
+        'gg',
+        'respect',
+        'rematch',
+        'goodLuck',
+    ]);
+    private readonly lastEmoteAt = new Map<string, number>();
 
-  @SubscribeMessage('werk.leave')
-  async handleWerkLeave(client: Socket, payload: { roundId?: string }) {
-    if (payload?.roundId) await client.leave(`werk_round_${payload.roundId}`);
-    await client.leave('game_werk');
-  }
+    /**
+     * Relay a predefined quick-chat emote to everyone in the match room. Only a
+     * whitelisted id crosses the wire (each client localizes it), and each user is
+     * rate-limited so the taunts can't be spammed. Non-players are naturally
+     * filtered client-side (the bubble only renders for the two seat users).
+     */
+    @SubscribeMessage('pool.emote')
+    handlePoolEmote(
+        client: Socket,
+        payload: { matchId?: string; id?: string },
+    ) {
+        const matchId = payload?.matchId;
+        const id = payload?.id;
+        if (
+            !matchId ||
+            typeof id !== 'string' ||
+            !GameEventsGateway.POOL_EMOTES.has(id)
+        )
+            return;
+        const userId: string | undefined = client.data?.user?.sub;
+        if (!userId) return;
+        const now = Date.now();
+        if (now - (this.lastEmoteAt.get(userId) ?? 0) < 1500) return; // ~1 per 1.5s
+        this.lastEmoteAt.set(userId, now);
+        this.server
+            .to(`pool_match_${matchId}`)
+            .emit('pool.emote', { matchId, userId, id, ts: now });
+    }
 
-  /** A player's per-tick input (analog move vector + sprint + power). */
-  @SubscribeMessage('werk.input')
-  handleWerkInput(client: Socket, payload: unknown) {
-    const userId: string | undefined = client.data?.user?.sub;
-    if (!userId || !this.werkInputHandler) return;
-    this.werkInputHandler(userId, payload);
-  }
+    /** Authoritative board/turn state after any change. */
+    emitPoolMatchUpdated(matchId: string, payload: unknown): void {
+        this.server
+            .to(`pool_match_${matchId}`)
+            .emit('pool.match.updated', payload);
+    }
 
-  /** High-frequency authoritative snapshot of the running round. */
-  emitWerkSnapshot(roundId: string, snapshot: unknown): void {
-    this.server.to(`werk_round_${roundId}`).emit('werk.snapshot', snapshot);
-  }
+    /** A resolved shot (for animation + the shot feed). */
+    emitPoolShotResolved(matchId: string, payload: unknown): void {
+        this.server
+            .to(`pool_match_${matchId}`)
+            .emit('pool.shot.resolved', payload);
+    }
 
-  /** Round lifecycle transition (lobby opened, countdown, started). */
-  emitWerkRoundState(view: { id: string } & Record<string, unknown>): void {
-    this.server.to('game_werk').emit('werk.round.state', view);
-    this.server.to(`werk_round_${view.id}`).emit('werk.round.state', view);
-  }
+    emitPoolMatchEnded(matchId: string, payload: unknown): void {
+        this.server
+            .to(`pool_match_${matchId}`)
+            .emit('pool.match.ended', payload);
+    }
 
-  /** Final standings when a round settles. */
-  emitWerkRoundCompleted(view: { id: string } & Record<string, unknown>): void {
-    this.server.to('game_werk').emit('werk.round.completed', view);
-    this.server.to(`werk_round_${view.id}`).emit('werk.round.completed', view);
-  }
+    /** Direct notification to a user that matchmaking paired them. */
+    emitPoolMatchFound(userId: string, payload: unknown): void {
+        this.server.to(`user_${userId}`).emit('pool.match.found', payload);
+    }
+
+    // ── Werk Flega (shared server-authoritative round) ───────────────────────────
+
+    /**
+     * Runtime-registered handler so the gateway can forward player input to the
+     * WerkRoundManager without a circular module import. The manager registers
+     * itself on bootstrap.
+     */
+    private werkInputHandler?: (userId: string, input: unknown) => void;
+
+    registerWerkInputHandler(
+        fn: (userId: string, input: unknown) => void,
+    ): void {
+        this.werkInputHandler = fn;
+    }
+
+    /** Distinct users currently on the Werk screen (in the lobby room). */
+    werkPresenceCount(): number {
+        return this.getDistinctUsers('game_werk').size;
+    }
+
+    /** Join the shared lobby room + a specific round's room to play/spectate. */
+    @SubscribeMessage('werk.join')
+    async handleWerkJoin(client: Socket, payload: { roundId?: string }) {
+        await client.join('game_werk');
+        if (payload?.roundId)
+            await client.join(`werk_round_${payload.roundId}`);
+    }
+
+    @SubscribeMessage('werk.leave')
+    async handleWerkLeave(client: Socket, payload: { roundId?: string }) {
+        if (payload?.roundId)
+            await client.leave(`werk_round_${payload.roundId}`);
+        await client.leave('game_werk');
+    }
+
+    /** A player's per-tick input (analog move vector + sprint + power). */
+    @SubscribeMessage('werk.input')
+    handleWerkInput(client: Socket, payload: unknown) {
+        const userId: string | undefined = client.data?.user?.sub;
+        if (!userId || !this.werkInputHandler) return;
+        this.werkInputHandler(userId, payload);
+    }
+
+    /** High-frequency authoritative snapshot of the running round. */
+    emitWerkSnapshot(roundId: string, snapshot: unknown): void {
+        this.server.to(`werk_round_${roundId}`).emit('werk.snapshot', snapshot);
+    }
+
+    /** Round lifecycle transition (lobby opened, countdown, started). */
+    emitWerkRoundState(view: { id: string } & Record<string, unknown>): void {
+        this.server.to('game_werk').emit('werk.round.state', view);
+        this.server.to(`werk_round_${view.id}`).emit('werk.round.state', view);
+    }
+
+    /** Final standings when a round settles. */
+    emitWerkRoundCompleted(
+        view: { id: string } & Record<string, unknown>,
+    ): void {
+        this.server.to('game_werk').emit('werk.round.completed', view);
+        this.server
+            .to(`werk_round_${view.id}`)
+            .emit('werk.round.completed', view);
+    }
 }

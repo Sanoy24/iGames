@@ -11,22 +11,25 @@ import { LocationsService } from './locations.service';
 @UseGuards(JwtAuthGuard)
 @Controller('locations')
 export class LocationsController {
-  constructor(private readonly locationsService: LocationsService) {}
+    constructor(private readonly locationsService: LocationsService) {}
 
-  /** The registration dropdown. Players pick one of these, or "Other". */
-  @Get()
-  list() {
-    return this.locationsService.listPublicLocations();
-  }
+    /** The registration dropdown. Players pick one of these, or "Other". */
+    @Get()
+    list() {
+        return this.locationsService.listPublicLocations();
+    }
 
-  /** Null when the player has never answered — the Mini App uses this to prompt. */
-  @Get('me')
-  getMine(@CurrentUser() user: AuthenticatedUser) {
-    return this.locationsService.getUserLocation(user.id);
-  }
+    /** Null when the player has never answered  the Mini App uses this to prompt. */
+    @Get('me')
+    getMine(@CurrentUser() user: AuthenticatedUser) {
+        return this.locationsService.getUserLocation(user.id);
+    }
 
-  @Patch('me')
-  setMine(@CurrentUser() user: AuthenticatedUser, @Body() dto: SetMyLocationDto) {
-    return this.locationsService.setUserLocation(user.id, dto);
-  }
+    @Patch('me')
+    setMine(
+        @CurrentUser() user: AuthenticatedUser,
+        @Body() dto: SetMyLocationDto,
+    ) {
+        return this.locationsService.setUserLocation(user.id, dto);
+    }
 }

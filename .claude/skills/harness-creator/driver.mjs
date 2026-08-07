@@ -28,131 +28,148 @@ import { parseArgs } from 'node:util';
 // ---- CLI args ----------------------------------------------------------------
 
 const { values } = parseArgs({
-  options: {
-    target:    { type: 'string',  default: process.cwd() },
-    name:      { type: 'string' },
-    stack:     { type: 'string' },
-    force:     { type: 'boolean', default: false },
-    'dry-run': { type: 'boolean', default: false },
-  },
-  strict: false,
+    options: {
+        target: { type: 'string', default: process.cwd() },
+        name: { type: 'string' },
+        stack: { type: 'string' },
+        force: { type: 'boolean', default: false },
+        'dry-run': { type: 'boolean', default: false },
+    },
+    strict: false,
 });
 
-const TARGET  = resolve(values.target);
-const FORCE   = values.force;
+const TARGET = resolve(values.target);
+const FORCE = values.force;
 const DRY_RUN = values['dry-run'];
 
 // ---- Detection ---------------------------------------------------------------
 
 function detectStack(dir) {
-  if (values.stack) return values.stack;
-  if (existsSync(join(dir, 'package.json'))) {
-    const pkg = safeJson(join(dir, 'package.json'));
-    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-    if (deps['@nestjs/core'])  return 'nestjs';
-    if (deps['next'])          return 'nextjs';
-    if (deps['react'])         return 'react';
-    if (deps['express'])       return 'express';
-    if (deps['fastify'])       return 'fastify';
-    return 'nodejs';
-  }
-  if (existsSync(join(dir, 'pyproject.toml')) || existsSync(join(dir, 'setup.py'))) return 'python';
-  if (existsSync(join(dir, 'go.mod')))     return 'go';
-  if (existsSync(join(dir, 'Cargo.toml'))) return 'rust';
-  return 'generic';
+    if (values.stack) return values.stack;
+    if (existsSync(join(dir, 'package.json'))) {
+        const pkg = safeJson(join(dir, 'package.json'));
+        const deps = {
+            ...(pkg.dependencies ?? {}),
+            ...(pkg.devDependencies ?? {}),
+        };
+        if (deps['@nestjs/core']) return 'nestjs';
+        if (deps['next']) return 'nextjs';
+        if (deps['react']) return 'react';
+        if (deps['express']) return 'express';
+        if (deps['fastify']) return 'fastify';
+        return 'nodejs';
+    }
+    if (
+        existsSync(join(dir, 'pyproject.toml')) ||
+        existsSync(join(dir, 'setup.py'))
+    )
+        return 'python';
+    if (existsSync(join(dir, 'go.mod'))) return 'go';
+    if (existsSync(join(dir, 'Cargo.toml'))) return 'rust';
+    return 'generic';
 }
 
 function detectName(dir) {
-  if (values.name) return values.name;
-  if (existsSync(join(dir, 'package.json'))) {
-    const pkg = safeJson(join(dir, 'package.json'));
-    if (pkg.name) return pkg.name;
-  }
-  return basename(dir);
+    if (values.name) return values.name;
+    if (existsSync(join(dir, 'package.json'))) {
+        const pkg = safeJson(join(dir, 'package.json'));
+        if (pkg.name) return pkg.name;
+    }
+    return basename(dir);
 }
 
 const STACK_BUILD = {
-  nestjs:  'npm run build',
-  nextjs:  'npm run build',
-  react:   'npm run build',
-  express: 'npx tsc --noEmit',
-  nodejs:  'npx tsc --noEmit',
-  python:  'python -m py_compile src/**/*.py',
-  go:      'go build ./...',
-  rust:    'cargo build',
-  generic: 'echo "no build step defined"',
+    nestjs: 'npm run build',
+    nextjs: 'npm run build',
+    react: 'npm run build',
+    express: 'npx tsc --noEmit',
+    nodejs: 'npx tsc --noEmit',
+    python: 'python -m py_compile src/**/*.py',
+    go: 'go build ./...',
+    rust: 'cargo build',
+    generic: 'echo "no build step defined"',
 };
 
 const STACK_TEST = {
-  nestjs:  'npm test -- --forceExit',
-  nextjs:  'npm test',
-  react:   'npm test -- --watchAll=false',
-  express: 'npm test',
-  nodejs:  'npm test',
-  python:  'pytest',
-  go:      'go test ./...',
-  rust:    'cargo test',
-  generic: 'echo "no test command defined"',
+    nestjs: 'npm test -- --forceExit',
+    nextjs: 'npm test',
+    react: 'npm test -- --watchAll=false',
+    express: 'npm test',
+    nodejs: 'npm test',
+    python: 'pytest',
+    go: 'go test ./...',
+    rust: 'cargo test',
+    generic: 'echo "no test command defined"',
 };
 
 const STACK_DEV = {
-  nestjs:  'npm run start:dev',
-  nextjs:  'npm run dev',
-  react:   'npm run dev',
-  express: 'node src/index.js',
-  nodejs:  'node src/index.js',
-  python:  'uvicorn main:app --reload',
-  go:      'go run ./...',
-  rust:    'cargo run',
-  generic: 'echo "define your dev command"',
+    nestjs: 'npm run start:dev',
+    nextjs: 'npm run dev',
+    react: 'npm run dev',
+    express: 'node src/index.js',
+    nodejs: 'node src/index.js',
+    python: 'uvicorn main:app --reload',
+    go: 'go run ./...',
+    rust: 'cargo run',
+    generic: 'echo "define your dev command"',
 };
 
 const STACK_INSTALL = {
-  nestjs:  'npm install',
-  nextjs:  'npm install',
-  react:   'npm install',
-  express: 'npm install',
-  nodejs:  'npm install',
-  python:  'pip install -r requirements.txt',
-  go:      'go mod download',
-  rust:    'cargo fetch',
-  generic: 'echo "define your install command"',
+    nestjs: 'npm install',
+    nextjs: 'npm install',
+    react: 'npm install',
+    express: 'npm install',
+    nodejs: 'npm install',
+    python: 'pip install -r requirements.txt',
+    go: 'go mod download',
+    rust: 'cargo fetch',
+    generic: 'echo "define your install command"',
 };
 
 const STACK_LABEL = {
-  nestjs:  'NestJS + TypeScript (see AGENTS.md for full stack details)',
-  nextjs:  'Next.js + TypeScript full-stack',
-  react:   'React + TypeScript frontend',
-  express: 'Express + Node.js',
-  nodejs:  'Node.js',
-  python:  'Python',
-  go:      'Go',
-  rust:    'Rust',
-  generic: 'See AGENTS.md for stack details',
+    nestjs: 'NestJS + TypeScript (see AGENTS.md for full stack details)',
+    nextjs: 'Next.js + TypeScript full-stack',
+    react: 'React + TypeScript frontend',
+    express: 'Express + Node.js',
+    nodejs: 'Node.js',
+    python: 'Python',
+    go: 'Go',
+    rust: 'Rust',
+    generic: 'See AGENTS.md for stack details',
 };
 
 // ---- Helpers -----------------------------------------------------------------
 
 function safeJson(p) {
-  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return {}; }
+    try {
+        return JSON.parse(readFileSync(p, 'utf8'));
+    } catch {
+        return {};
+    }
 }
 
 const written = [];
 const skipped = [];
 
 function write(relPath, content) {
-  const fullPath = join(TARGET, relPath);
-  if (existsSync(fullPath) && !FORCE) { skipped.push(relPath); return; }
-  if (DRY_RUN) { written.push(relPath + '  (dry-run)'); return; }
-  mkdirSync(fullPath.replace(/[/\\][^/\\]+$/, ''), { recursive: true });
-  writeFileSync(fullPath, content, 'utf8');
-  written.push(relPath);
+    const fullPath = join(TARGET, relPath);
+    if (existsSync(fullPath) && !FORCE) {
+        skipped.push(relPath);
+        return;
+    }
+    if (DRY_RUN) {
+        written.push(relPath + '  (dry-run)');
+        return;
+    }
+    mkdirSync(fullPath.replace(/[/\\][^/\\]+$/, ''), { recursive: true });
+    writeFileSync(fullPath, content, 'utf8');
+    written.push(relPath);
 }
 
 // ---- Templates ---------------------------------------------------------------
 
 function tAgentsMd(name, stack, build, test, dev, install) {
-  return `# ${name} — Agent Guide
+    return `# ${name}  Agent Guide
 
 Practical working reference for AI coding agents. Read alongside \`CLAUDE.md\` (domain rules).
 
@@ -162,8 +179,8 @@ Practical working reference for AI coding agents. Read alongside \`CLAUDE.md\` (
 
 Before writing any code:
 
-1. Read \`PROGRESS.md\` — current verified state and next actions
-2. Check \`feature_list.json\` — pick the first \`not_started\` or \`in_progress\` feature
+1. Read \`PROGRESS.md\`  current verified state and next actions
+2. Check \`feature_list.json\`  pick the first \`not_started\` or \`in_progress\` feature
 3. Work on **one feature at a time** (WIP=1). Only advance after the verification command exits 0.
 4. If something fails, check \`.harness/method-map.md\` before modifying code
 
@@ -179,7 +196,7 @@ Before closing:
 
 ## Definition of Done
 
-A feature is done when — and only when — its verification command exits 0:
+A feature is done when  and only when  its verification command exits 0:
 
 \`\`\`bash
 ${build}
@@ -195,7 +212,7 @@ Agent confidence is not a completion signal. The verification command is.
 | File | When to read |
 | --- | --- |
 | \`PROGRESS.md\` | Every session start and end |
-| \`feature_list.json\` | Every session start — pick next task |
+| \`feature_list.json\` | Every session start  pick next task |
 | \`DECISIONS.md\` | Before making any architectural choice |
 | \`.harness/method-map.md\` | When a bug or build failure occurs |
 | \`.harness/topics/\` | When working on a specific domain area |
@@ -215,11 +232,11 @@ ${test}
 
 ---
 
-## Adding a New Feature — Checklist
+## Adding a New Feature  Checklist
 
 1. Write the implementation
 2. Write or update tests
-3. Run the verification command — both commands above must exit 0
+3. Run the verification command  both commands above must exit 0
 4. Update \`feature_list.json\` status to \`passing\`
 5. Update \`PROGRESS.md\`
 
@@ -230,12 +247,12 @@ ${test}
 - Do not refactor code unrelated to the current feature
 - Do not change test infrastructure without an explicit task
 - Do not add dependencies without approval
-- Do not edit existing \`DECISIONS.md\` entries — only append new ones
+- Do not edit existing \`DECISIONS.md\` entries  only append new ones
 `;
 }
 
 function tClaudeMd(name, stack) {
-  return `# ${name} — Domain Rules
+    return `# ${name}  Domain Rules
 
 > Apply to all agents and contributors. Supplements \`AGENTS.md\`.
 
@@ -266,31 +283,43 @@ function tClaudeMd(name, stack) {
 }
 
 function tFeatureList(name) {
-  return JSON.stringify({
-    _meta: {
-      schema_version: '1.0',
-      project: name,
-      wip_limit: 1,
-      status_transitions: ['not_started', 'in_progress', 'blocked', 'passing'],
-    },
-    features: [
-      {
-        id: 'FEAT-01',
-        title: 'Initial project setup',
-        status: 'not_started',
-        scope: 'Define project structure and initial configuration.',
-        verification: 'echo "Replace with your real verification command"',
-        evidence: null,
-        blocked_by: [],
-        notes: '',
-      },
-    ],
-  }, null, 2) + '\n';
+    return (
+        JSON.stringify(
+            {
+                _meta: {
+                    schema_version: '1.0',
+                    project: name,
+                    wip_limit: 1,
+                    status_transitions: [
+                        'not_started',
+                        'in_progress',
+                        'blocked',
+                        'passing',
+                    ],
+                },
+                features: [
+                    {
+                        id: 'FEAT-01',
+                        title: 'Initial project setup',
+                        status: 'not_started',
+                        scope: 'Define project structure and initial configuration.',
+                        verification:
+                            'echo "Replace with your real verification command"',
+                        evidence: null,
+                        blocked_by: [],
+                        notes: '',
+                    },
+                ],
+            },
+            null,
+            2,
+        ) + '\n'
+    );
 }
 
 function tProgressMd(name, build, test) {
-  const today = new Date().toISOString().slice(0, 10);
-  return `# PROGRESS — ${name}
+    const today = new Date().toISOString().slice(0, 10);
+    return `# PROGRESS  ${name}
 
 > Session state file. Update at the end of every session.
 > New sessions start by reading this file.
@@ -299,15 +328,15 @@ function tProgressMd(name, build, test) {
 
 ## Current Verified State
 
-- **Build:** \`${build}\` — not yet verified
-- **Tests:** \`${test}\` — not yet verified
+- **Build:** \`${build}\`  not yet verified
+- **Tests:** \`${test}\`  not yet verified
 - **Last verified:** not yet
 
 ---
 
 ## Active Feature
 
-None — pick the first \`not_started\` entry in \`feature_list.json\`.
+None  pick the first \`not_started\` entry in \`feature_list.json\`.
 
 ---
 
@@ -334,12 +363,12 @@ None.
 }
 
 function tDecisionsMd(name) {
-  const today = new Date().toISOString().slice(0, 10);
-  return `# DECISIONS — ${name}
+    const today = new Date().toISOString().slice(0, 10);
+    return `# DECISIONS  ${name}
 
 > Settled architectural and design choices.
 > Read this before making any architectural decision.
-> Only append — never edit existing entries.
+> Only append  never edit existing entries.
 
 ---
 
@@ -358,8 +387,8 @@ command-based verification so agent confidence is never the completion signal.
 }
 
 function tInitSh(name, install) {
-  return `#!/usr/bin/env bash
-# .harness/init.sh — Bootstrap: run at the start of every session.
+    return `#!/usr/bin/env bash
+# .harness/init.sh  Bootstrap: run at the start of every session.
 set -e
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 
@@ -374,7 +403,7 @@ echo "=== Bootstrap complete. Read PROGRESS.md and feature_list.json to begin. =
 }
 
 function tSessionHandoff() {
-  return `# Session Handoff Template
+    return `# Session Handoff Template
 
 Fill this in at the end of every session before closing.
 
@@ -402,24 +431,24 @@ Fill this in at the end of every session before closing.
 }
 
 function tCleanStateChecklist() {
-  return `# Clean State Checklist
+    return `# Clean State Checklist
 
 Complete before ending every session. All 5 must be true.
 
 ---
 
-- [ ] **Build passes** — build command exits 0
-- [ ] **Tests pass** — test command exits 0
-- [ ] **PROGRESS.md updated** — reflects what changed and what's next
-- [ ] **feature_list.json updated** — status and evidence fields accurate
-- [ ] **No stale artifacts** — no temp files, debug logs, or half-written code committed
+- [ ] **Build passes**  build command exits 0
+- [ ] **Tests pass**  test command exits 0
+- [ ] **PROGRESS.md updated**  reflects what changed and what's next
+- [ ] **feature_list.json updated**  status and evidence fields accurate
+- [ ] **No stale artifacts**  no temp files, debug logs, or half-written code committed
 
 If any item is false, fix it before closing the session.
 `;
 }
 
 function tEvaluatorRubric(build, test) {
-  return `# Evaluator Rubric
+    return `# Evaluator Rubric
 
 Score the session on each dimension. Total >= 9/12 passes.
 
@@ -434,12 +463,12 @@ Score the session on each dimension. Total >= 9/12 passes.
 | **State Handoff** | PROGRESS.md not updated | Partially updated | PROGRESS.md + feature_list.json fully accurate |
 | **Maintainability** | Confusing code added | Some unclear choices | Code readable; DECISIONS.md updated if needed |
 
-**Total: __ / 12** — Pass threshold: >= 9 / 12.
+**Total: __ / 12**  Pass threshold: >= 9 / 12.
 `;
 }
 
 function tMethodMap() {
-  return `# Method Map — Failure Patterns -> Fixes
+    return `# Method Map  Failure Patterns -> Fixes
 
 > When a session fails, find the pattern here before touching code.
 > Add new rows as you discover failure modes in this project.
@@ -483,7 +512,7 @@ function tMethodMap() {
 }
 
 function tTopicPlaceholder(topic) {
-  return `# Topic: ${topic}
+    return `# Topic: ${topic}
 
 > Agent topic document. Fill with domain-specific patterns and rules as you build.
 > Add a row in AGENTS.md harness files table pointing here with a "When to read" trigger.
@@ -502,11 +531,11 @@ _Add non-obvious traps and their solutions here._
 
 // ---- Main --------------------------------------------------------------------
 
-const stack   = detectStack(TARGET);
-const name    = detectName(TARGET);
-const build   = STACK_BUILD[stack]   ?? STACK_BUILD.generic;
-const test    = STACK_TEST[stack]    ?? STACK_TEST.generic;
-const dev     = STACK_DEV[stack]     ?? STACK_DEV.generic;
+const stack = detectStack(TARGET);
+const name = detectName(TARGET);
+const build = STACK_BUILD[stack] ?? STACK_BUILD.generic;
+const test = STACK_TEST[stack] ?? STACK_TEST.generic;
+const dev = STACK_DEV[stack] ?? STACK_DEV.generic;
 const install = STACK_INSTALL[stack] ?? STACK_INSTALL.generic;
 
 console.log('\n=== harness-creator ===');
@@ -518,30 +547,32 @@ console.log(`Dry-run : ${DRY_RUN}`);
 console.log('');
 
 // 1. Instructions subsystem
-write('AGENTS.md',  tAgentsMd(name, stack, build, test, dev, install));
-write('CLAUDE.md',  tClaudeMd(name, stack));
+write('AGENTS.md', tAgentsMd(name, stack, build, test, dev, install));
+write('CLAUDE.md', tClaudeMd(name, stack));
 
 // 2. State subsystem
 write('feature_list.json', tFeatureList(name));
-write('PROGRESS.md',       tProgressMd(name, build, test));
-write('DECISIONS.md',      tDecisionsMd(name));
+write('PROGRESS.md', tProgressMd(name, build, test));
+write('DECISIONS.md', tDecisionsMd(name));
 
 // 3-5. Session lifecycle + verification subsystems
-write('.harness/init.sh',                  tInitSh(name, install));
-write('.harness/session-handoff.md',       tSessionHandoff());
+write('.harness/init.sh', tInitSh(name, install));
+write('.harness/session-handoff.md', tSessionHandoff());
 write('.harness/clean-state-checklist.md', tCleanStateChecklist());
-write('.harness/evaluator-rubric.md',      tEvaluatorRubric(build, test));
-write('.harness/method-map.md',            tMethodMap());
+write('.harness/evaluator-rubric.md', tEvaluatorRubric(build, test));
+write('.harness/method-map.md', tMethodMap());
 
 // Topic document stubs
-write('.harness/topics/core-patterns.md',  tTopicPlaceholder('Core Patterns'));
+write('.harness/topics/core-patterns.md', tTopicPlaceholder('Core Patterns'));
 
 console.log(`Files written (${written.length}):`);
-written.forEach(f => console.log(`  + ${f}`));
+written.forEach((f) => console.log(`  + ${f}`));
 
 if (skipped.length) {
-  console.log(`\nSkipped — already exist (use --force to overwrite) (${skipped.length}):`);
-  skipped.forEach(f => console.log(`  ~ ${f}`));
+    console.log(
+        `\nSkipped  already exist (use --force to overwrite) (${skipped.length}):`,
+    );
+    skipped.forEach((f) => console.log(`  ~ ${f}`));
 }
 
 if (DRY_RUN) console.log('\nDry-run complete. No files written.');

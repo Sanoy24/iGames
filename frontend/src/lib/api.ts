@@ -16,12 +16,12 @@ import type {
     KenoConfig,
     KenoDraw,
     KenoTicket,
-    LeaderboardEntry,
+    LeaderboardResponse,
     LedgerEntry,
     AdminLocation,
     PublicLocation,
     UserLocation,
-    RecentWin,
+    RecentWinsResponse,
     SpectatorCard,
     User,
     Wallet,
@@ -172,7 +172,7 @@ export const walletApi = {
             .then((r) => r.data),
     getRecentWins: (limit = 20) =>
         api
-            .get<RecentWin[]>(`/wallet/recent-wins?limit=${limit}`)
+            .get<RecentWinsResponse>(`/wallet/recent-wins?limit=${limit}`)
             .then((r) => r.data),
     getLeaderboard: (
         period: 'all' | 'monthly' | 'weekly' = 'all',
@@ -180,7 +180,7 @@ export const walletApi = {
     ) =>
         api
             .get<
-                LeaderboardEntry[]
+                LeaderboardResponse
             >(`/wallet/leaderboard?period=${period}&limit=${limit}`)
             .then((r) => r.data),
     requestWithdrawal: (amountMinor: number, destinationAccount: string) =>
@@ -575,6 +575,10 @@ export type SystemConfig = {
     referralCommissionPct?: number;
     /** Minimum hours between an agent's own self-service settlement requests. 0 = no cooldown. */
     agentSettlementCooldownHours?: number;
+    /** Player-facing Leaderboard tab. Off shows a Coming Soon placeholder to everyone. */
+    leaderboardEnabled?: boolean;
+    /** Home page Live Wins Ticker. Off shows rotating trust messages instead of win data. */
+    recentWinsEnabled?: boolean;
 };
 
 export type WithdrawalFeeRange = {

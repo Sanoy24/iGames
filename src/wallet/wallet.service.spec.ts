@@ -728,3 +728,139 @@ describe('WalletService  unit (mocked repos)', () => {
         });
     });
 });
+
+// ─── getLeaderboard / getRecentPlatformWins  admin-gated, bots excluded ──────
+// Self-contained mocks (not the shared makeService above): these two methods
+// only ever touch systemConfigRepository + a raw LedgerEntry QueryBuilder, not
+// any of the wallet/wagerLimit/withdrawal repos or ledgerService.
+
+function makeQueryBuilder(rawRows: unknown[]) {
+    const qb: Record<string, jest.Mock> = {};
+    for (const method of [
+        'innerJoin',
+        'select',
+        'addSelect',
+        'where',
+        'andWhere',
+        'groupBy',
+        'addGroupBy',
+        'orderBy',
+        'limit',
+    ]) {
+        qb[method] = jest.fn().mockReturnValue(qb);
+    }
+    qb.getRawMany = jest.fn().mockResolvedValue(rawRows);
+    return qb;
+}
+
+function makeLeaderboardService(input: {
+    config?: { leaderboardEnabled?: boolean; recentWinsEnabled?: boolean } | null;
+    rawRows?: unknown[];
+}) {
+    const qb = makeQueryBuilder(input.rawRows ?? []);
+    const mockDataSource = {
+        getRepository: jest.fn().mockReturnValue({
+            createQueryBuilder: jest.fn().mockReturnValue(qb),
+        }),
+    } as unknown as DataSource;
+
+    const systemConfigRepository = {
+        findOneBy: jest.fn().mockResolvedValue(input.config ?? null),
+    };
+
+    const service = new WalletService(
+        mockDataSource,
+        {} as any,
+        {} as any,
+        {} as any,
+        systemConfigRepository as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+    );
+
+    return { service, mockDataSource, qb };
+}
+
+describe('WalletService.getLeaderboard', () => {
+    it('returns disabled with no entries and never queries the DB when the flag is off', async () => {
+        const { service, mockDataSource } = makeLeaderboardService({
+            config: { leaderboardEnabled: false },
+        });
+
+        const result = await service.getLeaderboard({ limit: 10 });
+
+        expect(result).toEqual({ enabled: false, entries: [] });
+        expect(mockDataSource.getRepository).not.toHaveBeenCalled();
+    });
+
+    it('returns disabled with no entries when no config row exists', async () => {
+        const { service } = makeLeaderboardService({ config: null });
+
+        const result = await service.getLeaderboard({ limit: 10 });
+
+        expect(result).toEqual({ enabled: false, entries: [] });
+    });
+
+    it('excludes bot accounts via the real-players-only filter when enabled', async () => {
+        const { service, qb } = makeLeaderboardService({
+            config: { leaderboardEnabled: true },
+            rawRows: [
+                { displayName: 'Abebe', totalWinMinor: '5000', winCount: '3' },
+            ],
+        });
+
+        const result = await service.getLeaderboard({ limit: 10 });
+
+        expect(result.enabled).toBe(true);
+        expect(result.entries).toEqual([
+            { rank: 1, displayName: 'Abebe', totalWinMinor: 5000, winCount: 3 },
+        ]);
+        expect(qb.andWhere).toHaveBeenCalledWith(
+            expect.stringContaining("botPolicy"),
+        );
+    });
+});
+
+describe('WalletService.getRecentPlatformWins', () => {
+    it('returns disabled with no wins and never queries the DB when the flag is off', async () => {
+        const { service, mockDataSource } = makeLeaderboardService({
+            config: { recentWinsEnabled: false },
+        });
+
+        const result = await service.getRecentPlatformWins(20);
+
+        expect(result).toEqual({ enabled: false, wins: [] });
+        expect(mockDataSource.getRepository).not.toHaveBeenCalled();
+    });
+
+    it('excludes bot accounts via the real-players-only filter when enabled', async () => {
+        const { service, qb } = makeLeaderboardService({
+            config: { recentWinsEnabled: true },
+            rawRows: [
+                {
+                    displayName: 'Kebede',
+                    amountMinor: '1200',
+                    sourceType: 'bingo_win',
+                    createdAt: new Date('2026-08-07T00:00:00Z'),
+                },
+            ],
+        });
+
+        const result = await service.getRecentPlatformWins(20);
+
+        expect(result.enabled).toBe(true);
+        expect(result.wins).toEqual([
+            {
+                displayName: 'Kebede',
+                amountMinor: 1200,
+                game: 'Bingo',
+                timestamp: '2026-08-07T00:00:00.000Z',
+            },
+        ]);
+        expect(qb.andWhere).toHaveBeenCalledWith(
+            expect.stringContaining("botPolicy"),
+        );
+    });
+});

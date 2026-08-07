@@ -72,6 +72,24 @@ export class SystemConfig {
     @Column({ type: 'int', default: 0 })
     agentSettlementCooldownHours: number;
 
+    /**
+     * Player-facing Leaderboard tab. When false, the tab stays in navigation but
+     * shows a "Coming Soon" placeholder instead of data (see WalletService.getLeaderboard).
+     * Default off until an admin verifies real-player win volume looks good enough
+     * to show  the tab always excludes bot accounts once turned on.
+     */
+    @Column({ type: 'boolean', default: false })
+    leaderboardEnabled: boolean;
+
+    /**
+     * Home page "Live Wins Ticker". When false, the ticker shows rotating platform
+     * trust messages instead of win data (see WalletService.getRecentPlatformWins).
+     * Default off for the same reason as leaderboardEnabled; always excludes bots
+     * once turned on.
+     */
+    @Column({ type: 'boolean', default: false })
+    recentWinsEnabled: boolean;
+
     @CreateDateColumn({ type: 'timestamp' })
     createdAt: Date;
 

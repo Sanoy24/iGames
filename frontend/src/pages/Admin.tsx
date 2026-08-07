@@ -3427,6 +3427,8 @@ function ConfigAdmin() {
         agentRoomsEnabled: false,
         referralCommissionPct: 0,
         agentSettlementCooldownHours: 0,
+        leaderboardEnabled: false,
+        recentWinsEnabled: false,
     });
     const [perf, setPerf] = useState<AgentPerformance[]>([]);
     const [loading, setLoading] = useState(true);
@@ -3442,6 +3444,8 @@ function ConfigAdmin() {
         agentRoomsEnabled: c.agentRoomsEnabled ?? false,
         referralCommissionPct: c.referralCommissionPct ?? 0,
         agentSettlementCooldownHours: c.agentSettlementCooldownHours ?? 0,
+        leaderboardEnabled: c.leaderboardEnabled ?? false,
+        recentWinsEnabled: c.recentWinsEnabled ?? false,
     });
 
     useEffect(() => {
@@ -3490,6 +3494,56 @@ function ConfigAdmin() {
             />
         </label>
     );
+
+    // Same on/off switch as the "Per-agent rooms" toggle below, factored out
+    // so leaderboardEnabled/recentWinsEnabled don't duplicate the markup.
+    const toggleField = (key: keyof SystemConfig, label: string, hint: string) => {
+        const on = !!form[key];
+        return (
+            <label
+                className='adm-field'
+                key={key}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+            >
+                <button
+                    type='button'
+                    role='switch'
+                    aria-checked={on}
+                    onClick={() =>
+                        setForm((f) => ({ ...f, [key]: !f[key] }))
+                    }
+                    style={{
+                        position: 'relative',
+                        width: 44,
+                        height: 24,
+                        borderRadius: 999,
+                        flexShrink: 0,
+                        cursor: 'pointer',
+                        background: on ? 'var(--green, #10b981)' : 'var(--border)',
+                        border: 'none',
+                        transition: 'background .15s',
+                    }}
+                >
+                    <span
+                        style={{
+                            position: 'absolute',
+                            top: 2,
+                            left: on ? 22 : 2,
+                            width: 20,
+                            height: 20,
+                            borderRadius: '50%',
+                            background: '#fff',
+                            transition: 'left .15s',
+                        }}
+                    />
+                </button>
+                <span>
+                    <strong>{label}</strong>
+                    <em className='adm-field-hint'> {hint}</em>
+                </span>
+            </label>
+        );
+    };
 
     if (loading) return <div className='adm-empty'>Loading configuration…</div>;
 
@@ -3571,6 +3625,22 @@ function ConfigAdmin() {
             </div>
 
             <ConfigHistoryAdmin />
+
+            <div className='adm-panel'>
+                <div className='adm-panel-head'>Player-facing Features</div>
+                <div style={{ padding: 16, display: 'grid', gap: 14 }}>
+                    {toggleField(
+                        'leaderboardEnabled',
+                        'Leaderboard',
+                        'OFF = the Leaderboard tab stays visible but shows a Coming Soon placeholder to everyone. ON = shows real leaderboard rankings, bot accounts always excluded.',
+                    )}
+                    {toggleField(
+                        'recentWinsEnabled',
+                        'Live Wins Ticker',
+                        'OFF = the Home page ticker shows rotating platform trust messages instead. ON = shows real recent wins, bot accounts always excluded.',
+                    )}
+                </div>
+            </div>
 
             <div className='adm-panel'>
                 <div className='adm-panel-head'>Bingo Agent-owned Rooms</div>

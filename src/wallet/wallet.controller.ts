@@ -142,14 +142,17 @@ export class WalletController {
     @Get('leaderboard')
     @ApiOkResponse({
         schema: {
-            example: [
-                {
-                    rank: 1,
-                    displayName: 'Player',
-                    totalWinMinor: 50000,
-                    winCount: 12,
-                },
-            ],
+            example: {
+                enabled: true,
+                entries: [
+                    {
+                        rank: 1,
+                        displayName: 'Player',
+                        totalWinMinor: 50000,
+                        winCount: 12,
+                    },
+                ],
+            },
         },
     })
     getLeaderboard(

@@ -23,6 +23,9 @@ import {
     Target,
     Trophy,
     Circle,
+    Shield,
+    Headphones,
+    type LucideIcon,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { kenoApi, walletApi } from '../lib/api';
@@ -151,6 +154,54 @@ function LiveWinsTicker({ wins }: { wins: RecentWin[] }) {
                         >
                             {t('home.on')} {w.game}
                         </span>
+                        <span
+                            style={{
+                                color: 'rgba(255,255,255,0.1)',
+                                margin: '0 4px',
+                            }}
+                        >
+                            •
+                        </span>
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ─── Trust messages ticker ──────────────────────────────────────────────────────
+
+// Shown in the exact spot LiveWinsTicker would occupy when the admin has the
+// real-wins ticker toggled off  never fabricated wins/players, only honest,
+// always-true platform facts (no conditional claims like the welcome bonus,
+// which has its own on/off toggle).
+const TRUST_MESSAGES: Array<{ Icon: LucideIcon; key: string }> = [
+    { Icon: Shield, key: 'home.trustFair' },
+    { Icon: Zap, key: 'home.trustFastPayouts' },
+    { Icon: Headphones, key: 'home.trustSupport' },
+];
+
+function TrustMessagesTicker() {
+    const { t } = useTranslation();
+    const items = [...TRUST_MESSAGES, ...TRUST_MESSAGES];
+    return (
+        <div
+            className='ticker-wrap'
+            style={{
+                borderRadius: 10,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                padding: '6px 0',
+            }}
+        >
+            <div className='ticker-inner'>
+                {items.map(({ Icon, key }, i) => (
+                    <span key={i} className='ticker-item'>
+                        <Icon
+                            size={11}
+                            style={{ color: 'var(--accent)', flexShrink: 0 }}
+                        />
+                        <span className='ticker-item-name'>{t(key)}</span>
                         <span
                             style={{
                                 color: 'rgba(255,255,255,0.1)',
@@ -400,11 +451,15 @@ export function Home({ onNavigate }: Props) {
     const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
     const [recentActivity, setRecentActivity] = useState<LedgerEntry[]>([]);
     const [recentWins, setRecentWins] = useState<RecentWin[]>([]);
+    const [winsEnabled, setWinsEnabled] = useState(false);
 
     const loadRecentWins = useCallback(() => {
         walletApi
             .getRecentWins(20)
-            .then(setRecentWins)
+            .then((res) => {
+                setWinsEnabled(res.enabled);
+                setRecentWins(res.wins);
+            })
             .catch(() => {});
     }, []);
 
@@ -594,8 +649,12 @@ export function Home({ onNavigate }: Props) {
 
     return (
         <div className='stack-lg'>
-            {/* ── Live wins ticker ── */}
-            <LiveWinsTicker wins={recentWins} />
+            {/* ── Live wins ticker (real players only) or trust-message ticker ── */}
+            {winsEnabled ? (
+                <LiveWinsTicker wins={recentWins} />
+            ) : (
+                <TrustMessagesTicker />
+            )}
 
             {/* ── Pool queue call-to-action (only while someone is waiting, Pool visible) ── */}
             {!gameInfo('pool').hidden && (

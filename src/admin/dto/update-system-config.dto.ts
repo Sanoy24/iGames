@@ -50,4 +50,14 @@ export class UpdateSystemConfigDto {
   @IsInt()
   @Min(0)
   agentSettlementCooldownHours?: number;
+
+  /** Player-facing Leaderboard tab  off shows a Coming Soon placeholder to everyone. */
+  @IsOptional()
+  @IsBoolean()
+  leaderboardEnabled?: boolean;
+
+  /** Home page Live Wins Ticker  off shows rotating trust messages instead of win data. */
+  @IsOptional()
+  @IsBoolean()
+  recentWinsEnabled?: boolean;
 }

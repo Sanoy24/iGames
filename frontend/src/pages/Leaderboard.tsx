@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy } from 'lucide-react';
+import { Trophy, Clock } from 'lucide-react';
 import { walletApi } from '../lib/api';
 import type { LeaderboardEntry } from '../lib/models';
 
@@ -25,13 +25,17 @@ export function Leaderboard() {
   const { t } = useTranslation();
   const [period, setPeriod] = useState<Period>('all');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
     walletApi.getLeaderboard(period, 20)
-      .then(setEntries)
-      .catch(() => setEntries([]))
+      .then((res) => {
+        setEnabled(res.enabled);
+        setEntries(res.entries);
+      })
+      .catch(() => { setEnabled(true); setEntries([]); })
       .finally(() => setLoading(false));
   }, [period]);
 
@@ -43,6 +47,17 @@ export function Leaderboard() {
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{t('leaderboard.title')}</h2>
       </div>
 
+      {!loading && !enabled ? (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
+          padding: '48px 20px', color: 'var(--text-secondary)',
+        }}>
+          <Clock size={36} strokeWidth={1.5} style={{ color: 'var(--accent)', marginBottom: 14 }} />
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{t('leaderboard.comingSoonTitle')}</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 320 }}>{t('leaderboard.comingSoonBody')}</div>
+        </div>
+      ) : (
+        <>
       {/* Period switcher */}
       <div style={{
         display: 'flex',
@@ -143,6 +158,8 @@ export function Leaderboard() {
             ))}
           </motion.div>
         </AnimatePresence>
+      )}
+        </>
       )}
     </div>
   );

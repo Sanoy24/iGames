@@ -168,14 +168,26 @@ export class WalletService {
         }));
     }
 
-    async getRecentPlatformWins(limit: number): Promise<
-        Array<{
+    /** House bot accounts always carry productMetadata.botPolicy  same exclusion
+     * used everywhere else a "real players only" view is needed (UsersService,
+     * AdminService, WalletService.getLeaderboard). */
+    private static readonly REAL_PLAYER_ONLY =
+        "JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL";
+
+    async getRecentPlatformWins(limit: number): Promise<{
+        enabled: boolean;
+        wins: Array<{
             displayName: string;
             amountMinor: number;
             game: string;
             timestamp: string;
-        }>
-    > {
+        }>;
+    }> {
+        const config = await this.systemConfigRepository.findOneBy({
+            key: 'global',
+        });
+        if (!config?.recentWinsEnabled) return { enabled: false, wins: [] };
+
         const safeLimit = Math.min(Math.max(limit || 20, 1), 50);
         const rows = await this.dataSource
             .getRepository(LedgerEntry)
@@ -190,6 +202,7 @@ export class WalletService {
             .where('le.entryType = :type', { type: 'win' })
             .andWhere('le.direction = :dir', { dir: 'credit' })
             .andWhere('le.amountMinor > 0')
+            .andWhere(WalletService.REAL_PLAYER_ONLY)
             .orderBy('le.createdAt', 'DESC')
             .limit(safeLimit)
             .getRawMany<{
@@ -199,29 +212,38 @@ export class WalletService {
                 createdAt: Date | string;
             }>();
 
-        return rows.map((row) => ({
-            displayName: row.displayName ?? 'Player',
-            amountMinor: Number(row.amountMinor ?? 0),
-            game: String(row.sourceType ?? '')
-                .toLowerCase()
-                .includes('keno')
-                ? 'Keno'
-                : 'Bingo',
-            timestamp:
-                row.createdAt instanceof Date
-                    ? row.createdAt.toISOString()
-                    : String(row.createdAt),
-        }));
+        return {
+            enabled: true,
+            wins: rows.map((row) => ({
+                displayName: row.displayName ?? 'Player',
+                amountMinor: Number(row.amountMinor ?? 0),
+                game: String(row.sourceType ?? '')
+                    .toLowerCase()
+                    .includes('keno')
+                    ? 'Keno'
+                    : 'Bingo',
+                timestamp:
+                    row.createdAt instanceof Date
+                        ? row.createdAt.toISOString()
+                        : String(row.createdAt),
+            })),
+        };
     }
 
-    async getLeaderboard(input: { period?: string; limit: number }): Promise<
-        Array<{
+    async getLeaderboard(input: { period?: string; limit: number }): Promise<{
+        enabled: boolean;
+        entries: Array<{
             rank: number;
             displayName: string;
             totalWinMinor: number;
             winCount: number;
-        }>
-    > {
+        }>;
+    }> {
+        const config = await this.systemConfigRepository.findOneBy({
+            key: 'global',
+        });
+        if (!config?.leaderboardEnabled) return { enabled: false, entries: [] };
+
         const safeLimit = Math.min(Math.max(input.limit || 10, 1), 50);
         let since: Date | undefined;
         if (input.period === 'weekly')
@@ -238,7 +260,8 @@ export class WalletService {
             .addSelect('COUNT(le.id)', 'winCount')
             .where('le.entryType = :type', { type: 'win' })
             .andWhere('le.direction = :dir', { dir: 'credit' })
-            .andWhere('le.amountMinor > 0');
+            .andWhere('le.amountMinor > 0')
+            .andWhere(WalletService.REAL_PLAYER_ONLY);
 
         if (since) qb.andWhere('le.createdAt >= :since', { since });
 
@@ -253,12 +276,15 @@ export class WalletService {
                 winCount: string;
             }>();
 
-        return rows.map((row, i) => ({
-            rank: i + 1,
-            displayName: row.displayName ?? 'Player',
-            totalWinMinor: Number(row.totalWinMinor ?? 0),
-            winCount: Number(row.winCount ?? 0),
-        }));
+        return {
+            enabled: true,
+            entries: rows.map((row, i) => ({
+                rank: i + 1,
+                displayName: row.displayName ?? 'Player',
+                totalWinMinor: Number(row.totalWinMinor ?? 0),
+                winCount: Number(row.winCount ?? 0),
+            })),
+        };
     }
 
     debit(input: WalletMutationInput): Promise<WalletMutationResult> {

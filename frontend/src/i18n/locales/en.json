@@ -40,6 +40,9 @@
         "inBingo": "in Bingo",
         "inCrash": "in Crash",
         "totalOnline": "total online",
+        "trustFair": "Provably fair - every result is verifiable",
+        "trustFastPayouts": "Instant Telebirr deposits & withdrawals",
+        "trustSupport": "24/7 player support",
         "playNow": "Play Now",
         "allGames": "All games →",
         "seeAll": "See all →",
@@ -276,7 +279,9 @@
         "winnings": "Winnings",
         "wins": "wins",
         "empty": "No winners yet. Be the first!",
-        "you": "You"
+        "you": "You",
+        "comingSoonTitle": "Coming Soon",
+        "comingSoonBody": "The leaderboard is being prepared and will be available here soon."
     },
     "wallet": {
         "title": "Wallet",

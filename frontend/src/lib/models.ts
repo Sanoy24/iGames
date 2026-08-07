@@ -80,6 +80,13 @@ export type RecentWin = {
     timestamp: string;
 };
 
+/** enabled=false means the admin has this feature toggled off  wins is always
+ * empty in that case, never partial/fabricated data. */
+export type RecentWinsResponse = {
+    enabled: boolean;
+    wins: RecentWin[];
+};
+
 export type Wallet = {
     id: string;
     userId?: string;
@@ -362,6 +369,13 @@ export type LeaderboardEntry = {
     displayName: string;
     totalWinMinor: number;
     winCount: number;
+};
+
+/** enabled=false means the admin has the Leaderboard tab toggled off  entries
+ * is always empty in that case. */
+export type LeaderboardResponse = {
+    enabled: boolean;
+    entries: LeaderboardEntry[];
 };
 
 export type SpectatorCard = {

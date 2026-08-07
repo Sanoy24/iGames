@@ -16,6 +16,15 @@ export function formatCreditsFull(minor: number): string {
 }
 
 /**
+ * Online-player counts never show a real number below 15  low counts read as
+ * an empty platform, so anything under the threshold is shown as "10+"
+ * instead. At 15 or above, the actual number is shown.
+ */
+export function formatOnlineCount(n: number): string {
+    return n < 15 ? '10+' : String(n);
+}
+
+/**
  * All user-facing dates render in Ethiopia time (EAT, UTC+3) regardless of the
  * device/webview timezone  timestamps are stored in UTC, so we must pin the zone
  * here or players in a UTC (or other) locale see the wrong clock.

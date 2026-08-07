@@ -1,9 +1,10 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Zap, Users, Clock, Trophy, Star, TrendingUp, Target } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
+import { formatOnlineCount } from '../lib/utils';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
@@ -68,6 +69,18 @@ export function Games({ onNavigate }: Props) {
   const showPool  = (filter === 'all' || filter === 'pool')  && !pool.hidden;
   const showWerk  = (filter === 'all' || filter === 'werk')  && !werk.hidden;
 
+  // A deactivated game's filter chip shouldn't appear at all — only 'all' plus
+  // whichever games the catalog currently has visible.
+  const visibleFilterChips = FILTER_CHIPS.filter((chip) => chip.id === 'all' || !gameInfo(chip.id).hidden);
+
+  // If the selected filter's game gets hidden out from under the user (catalog
+  // update while this tab is open), its chip disappears — fall back to 'all'
+  // rather than leaving the filter stuck on a chip that no longer exists.
+  useEffect(() => {
+    if (filter !== 'all' && gameInfo(filter).hidden) setFilter('all');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, gameCatalog]);
+
   return (
     <motion.div
       className="stack-lg"
@@ -103,7 +116,7 @@ export function Games({ onNavigate }: Props) {
           >
             <span className="stat-pill">
               <Users size={11} style={{ display: 'inline', marginRight: 4, color: 'var(--green)' }} />
-              <span className="stat-pill-val">{liveCounts.totalOnline}</span>
+              <span className="stat-pill-val">{formatOnlineCount(liveCounts.totalOnline)}</span>
               <span className="stat-pill-lbl"> {t('common.online')}</span>
             </span>
             {liveCounts.kenoOnline > 0 && (
@@ -131,7 +144,7 @@ export function Games({ onNavigate }: Props) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15 }}
       >
-        {FILTER_CHIPS.map((chip) => (
+        {visibleFilterChips.map((chip) => (
           <motion.button
             key={chip.id}
             className={`game-filter-chip${filter === chip.id ? ' active' : ''}`}

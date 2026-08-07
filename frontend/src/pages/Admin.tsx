@@ -1178,6 +1178,8 @@ function LocationsAdmin() {
 function AgentsAdmin() {
   const addToast = useStore((s) => s.addToast);
   const [agents, setAgents] = useState<User[]>([]);
+  const [perf, setPerf] = useState<AgentPerformance[]>([]);
+  const [perfLoading, setPerfLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -1223,6 +1225,14 @@ function AgentsAdmin() {
   }, [addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    setPerfLoading(true);
+    adminApi.getAgentPerformance()
+      .then(setPerf)
+      .catch(() => undefined)
+      .finally(() => setPerfLoading(false));
+  }, []);
 
   // Set an agent's duty mode: 'auto' follows their working hours, 'on'/'off' are
   // manual overrides. Force-'on' is single-primary (backend demotes other pins).
@@ -1534,6 +1544,40 @@ function AgentsAdmin() {
             ? <>On duty: <span style={{ color: '#34d399' }}>{onDutyAgent.displayName}</span>{onDutyAgent.phoneNumber ? ` · ${onDutyAgent.phoneNumber}` : ''}</>
             : <span style={{ color: '#f87171' }}>Nobody is on duty — players can&apos;t deposit right now.</span>}
         </span>
+      </div>
+
+      <div className="adm-panel">
+        <div className="adm-panel-head">Referrals &amp; Earnings</div>
+        {perfLoading && perf.length === 0 ? (
+          <div className="adm-empty">Loading…</div>
+        ) : perf.length === 0 ? (
+          <div className="adm-empty">No agent activity yet.</div>
+        ) : (
+          <table className="adm-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Referred Players</th>
+                <th>Total Earnings</th>
+                <th>Settled</th>
+                <th>Remaining</th>
+              </tr>
+            </thead>
+            <tbody>
+              {perf.map((p) => (
+                <tr key={p.agentId} className="adm-tr">
+                  <td><strong>{p.displayName}</strong></td>
+                  <td className="adm-td-muted">{p.customersBrought}</td>
+                  <td><strong>{formatCreditsFull(p.totalEarningsMinor)}</strong></td>
+                  <td style={{ color: 'var(--green)' }}>{formatCreditsFull(p.totalSettledMinor)}</td>
+                  <td style={{ color: p.remainingMinor > 0 ? 'var(--danger)' : 'var(--adm-muted, #888)' }}>
+                    {formatCreditsFull(p.remainingMinor)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="adm-panel">

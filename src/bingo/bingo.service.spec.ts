@@ -747,7 +747,7 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(saveSpy).not.toHaveBeenCalled();
     });
 
-    it('rejects cartel-dual config when the cooldown leaves fewer than two eligible Bingo bots', async () => {
+    it('allows enabling cartel-dual even when the cooldown leaves fewer than two eligible bots (only the active-bot-count check applies)', async () => {
         const { service, mockConfigRepo } = makeService({ rooms: [] });
         jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
             key: 'global',
@@ -757,35 +757,26 @@ describe('BingoService cartela lifecycle guards', () => {
         jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
             new Set(['bot-1', 'bot-2', 'bot-3']),
         );
-        jest.spyOn(
-            service as any,
-            'getRecentBingoBotWinnerUserIds',
-        ).mockResolvedValue(new Set(['bot-1', 'bot-2']));
-        const saveSpy = jest.spyOn(mockConfigRepo, 'save');
+        jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(
+            null,
+        );
 
         await expect(
             service.updateBingoConfig({ botWinMode: 'cartel-dual' } as any),
-        ).rejects.toThrow(
-            'Cartel Dual requires at least 2 cooldown-eligible Bingo bots',
-        );
+        ).resolves.toBeTruthy();
 
-        expect(saveSpy).not.toHaveBeenCalled();
+        expect(mockConfigRepo.save).toHaveBeenCalled();
     });
 
-    it('does NOT re-run the bot-pool check when the config was already cartel-dual and stays cartel-dual (unrelated field save)', async () => {
+    it('does not re-run the active-bot-count check when the config was already cartel-dual and stays cartel-dual (unrelated field save)', async () => {
         const { service, mockConfigRepo } = makeService({ rooms: [] });
         jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
             key: 'global',
             botWinMode: 'cartel-dual', // already cartel-dual before this save
-            botWinnerCooldownRooms: 25,
         } as any);
         jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
-            new Set(['bot-1', 'bot-2']),
+            new Set(['bot-1']), // only 1 active  would fail the check if it re-ran
         );
-        jest.spyOn(
-            service as any,
-            'getRecentBingoBotWinnerUserIds',
-        ).mockResolvedValue(new Set(['bot-1', 'bot-2'])); // both cooling down -> 0 eligible
         jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(
             null,
         );

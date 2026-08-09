@@ -1252,26 +1252,12 @@ export class BingoService implements OnModuleInit {
             }
         }
         if (cfg.botWinMode === 'cartel-dual' && !wasCartelDual) {
-            const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
             const activeBingoBots = await this.getActiveBotUserIds(
                 this.bingoRoomRepository.manager,
             );
             if (activeBingoBots.size < 2) {
                 throw new BadRequestException(
                     `Cartel Dual requires at least 2 active Bingo-enabled bots. Current active Bingo bots: ${activeBingoBots.size}.`,
-                );
-            }
-            const coolingDownBots = await this.getRecentBingoBotWinnerUserIds(
-                this.bingoRoomRepository.manager,
-                cooldownRooms,
-            );
-            const eligibleBingoBots = [...activeBingoBots].filter(
-                (botId) => !coolingDownBots.has(botId),
-            );
-            if (eligibleBingoBots.length < 2) {
-                throw new BadRequestException(
-                    `Cartel Dual requires at least 2 cooldown-eligible Bingo bots. ` +
-                        `Active: ${activeBingoBots.size}, cooling down: ${coolingDownBots.size}, eligible: ${eligibleBingoBots.length}.`,
                 );
             }
         }

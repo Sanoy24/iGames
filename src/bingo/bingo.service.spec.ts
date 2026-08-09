@@ -772,6 +772,37 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(saveSpy).not.toHaveBeenCalled();
     });
 
+    it('does NOT re-run the bot-pool check when the config was already cartel-dual and stays cartel-dual (unrelated field save)', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            key: 'global',
+            botWinMode: 'cartel-dual', // already cartel-dual before this save
+            botWinnerCooldownRooms: 25,
+        } as any);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2']),
+        );
+        jest.spyOn(
+            service as any,
+            'getRecentBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set(['bot-1', 'bot-2'])); // both cooling down -> 0 eligible
+        jest.spyOn(service as any, 'autoCreateNextRoom').mockResolvedValue(
+            null,
+        );
+
+        // Admin form always resubmits the full config, so botWinMode is still
+        // 'cartel-dual' in the dto even though the admin only meant to change
+        // an unrelated field (e.g. botBonusWinEnabled).
+        await expect(
+            service.updateBingoConfig({
+                botWinMode: 'cartel-dual',
+                botBonusWinEnabled: false,
+            } as any),
+        ).resolves.toBeTruthy();
+
+        expect(mockConfigRepo.save).toHaveBeenCalled();
+    });
+
     it('saves bot winner cooldown rooms from the admin config', async () => {
         const { service, mockConfigRepo } = makeService({ rooms: [] });
         const cfg = {

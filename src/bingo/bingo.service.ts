@@ -1215,6 +1215,14 @@ export class BingoService implements OnModuleInit {
 
     async updateBingoConfig(dto: UpdateBingoConfigDto): Promise<BingoConfig> {
         const cfg = await this.getBingoConfig();
+        // The admin form always resubmits the entire config (including botWinMode
+        // as whatever it currently is), so checking dto.botWinMode alone can't
+        // distinguish "turning cartel-dual on" from "already on, saving something
+        // unrelated"  only a transition from a non-cartel-dual mode requires this
+        // bot-pool check. Otherwise a transient dip below 2 eligible bots (e.g.
+        // both currently cooling down) would block every unrelated config save
+        // for as long as it lasts.
+        const wasCartelDual = cfg.botWinMode === 'cartel-dual';
         Object.assign(cfg, dto);
         // A stale/typo'd pattern id here is otherwise invisible until draw time, where
         // resolvePrefilledPlacePattern silently skips the place forever (no log, no
@@ -1243,7 +1251,7 @@ export class BingoService implements OnModuleInit {
                 );
             }
         }
-        if (cfg.botWinMode === 'cartel-dual') {
+        if (cfg.botWinMode === 'cartel-dual' && !wasCartelDual) {
             const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
             const activeBingoBots = await this.getActiveBotUserIds(
                 this.bingoRoomRepository.manager,

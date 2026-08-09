@@ -2198,6 +2198,31 @@ export const adminPoolApi = {
 
 export default api;
 
+export type GameTransactionsDashboard = {
+    winSplit: { botWinMinor: number; realWinMinor: number };
+    botWinBySource: Array<{ source: string; amountMinor: number }>;
+    ticketSplit: { botTickets: number; realTickets: number };
+    roomParticipationTrend: Array<{
+        roomId: string;
+        createdAt: string;
+        realPlayers: number;
+        bots: number;
+    }>;
+    dailyTrend: Array<{
+        day: string;
+        realStakeMinor: number;
+        realPayoutMinor: number;
+        botPayoutMinor: number;
+    }>;
+    revenueByAgent: Array<{
+        agentId: string;
+        agentName: string;
+        realStakeMinor: number;
+        realPayoutMinor: number;
+        realEmoneyEarnedMinor: number;
+    }>;
+};
+
 export const adminGameTransactionsApi = {
     getGameTransactions: (page?: number, limit?: number) =>
         api
@@ -2206,6 +2231,10 @@ export const adminGameTransactionsApi = {
                 total: number;
                 totalBotWinMinor: number;
             }>('/admin/game-transactions', { params: { page, limit } })
+            .then((r) => r.data),
+    getDashboard: () =>
+        api
+            .get<GameTransactionsDashboard>('/admin/game-transactions/dashboard')
             .then((r) => r.data),
 };
 

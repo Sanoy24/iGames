@@ -95,6 +95,11 @@ export class AdminController {
         );
     }
 
+    @Get('game-transactions/dashboard')
+    getGameTransactionsDashboard() {
+        return this.adminService.getGameTransactionsDashboard();
+    }
+
     @Get('deposits')
     listDeposits(
         @Query('provider') provider: 'telebirr' | 'mpesa' = 'telebirr',

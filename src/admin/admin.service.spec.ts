@@ -2,6 +2,27 @@ import { ConflictException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { AdminService } from './admin.service';
 
+function makeDashboardService(queryResults: unknown[][]) {
+    const query = jest.fn();
+    queryResults.forEach((rows) => query.mockResolvedValueOnce(rows));
+    const dataSource = { query } as unknown as DataSource;
+
+    const service = new AdminService(
+        dataSource,
+        {} as any, // systemConfigRepository
+        {} as any, // platformStatsRepository
+        {} as any, // configChangeLogRepository
+        {} as any, // withdrawalFeeRangeRepository
+        {} as any, // walletService
+        {} as any, // usersService
+        {} as any, // agentsService
+        {} as any, // gameEventsGateway
+        {} as any, // notificationsService
+    );
+
+    return { service, query };
+}
+
 // Covers only the Master Wallet transfer primitives added so that EVERY credit
 // in the system (player deposits, agent commissions, admin adjustments, welcome
 // bonus) is funded from the Master Wallet rather than minted independently  the
@@ -234,5 +255,96 @@ describe('AdminService  Master Wallet backed crediting', () => {
                 'Insufficient wallet balance or concurrent update failed',
             );
         });
+    });
+});
+
+describe('AdminService.getGameTransactionsDashboard', () => {
+    it('combines ticket wins and the bonus faucet into winSplit.botWinMinor, and maps every section', async () => {
+        const { service, query } = makeDashboardService([
+            [{ botTicketWin: '500', realTicketWin: '300' }],
+            [
+                { source: 'bingo_ticket', amountMinor: '500' },
+                { source: 'bingo_bot_win_interval', amountMinor: '200' },
+            ],
+            [{ botTickets: '10', realTickets: '20' }],
+            [
+                {
+                    roomId: 'r1',
+                    createdAt: '2026-08-01T00:00:00.000Z',
+                    realPlayers: '2',
+                    bots: '3',
+                },
+            ],
+            [
+                {
+                    day: '2026-08-01',
+                    realStakeMinor: '1000',
+                    realPayoutMinor: '400',
+                    botPayoutMinor: '500',
+                },
+            ],
+            [
+                {
+                    agentId: 'a1',
+                    agentName: 'Agent A',
+                    realStakeMinor: '1000',
+                    realPayoutMinor: '600',
+                },
+            ],
+        ]);
+
+        const result = await service.getGameTransactionsDashboard();
+
+        expect(query).toHaveBeenCalledTimes(6);
+        // Bot win = ticket-tied win (500) + the unconditional bonus faucet (200).
+        expect(result.winSplit).toEqual({ botWinMinor: 700, realWinMinor: 300 });
+        expect(result.botWinBySource).toEqual([
+            { source: 'bingo_ticket', amountMinor: 500 },
+            { source: 'bingo_bot_win_interval', amountMinor: 200 },
+        ]);
+        expect(result.ticketSplit).toEqual({ botTickets: 10, realTickets: 20 });
+        expect(result.roomParticipationTrend).toEqual([
+            { roomId: 'r1', createdAt: '2026-08-01T00:00:00.000Z', realPlayers: 2, bots: 3 },
+        ]);
+        expect(result.dailyTrend).toEqual([
+            { day: '2026-08-01', realStakeMinor: 1000, realPayoutMinor: 400, botPayoutMinor: 500 },
+        ]);
+        expect(result.revenueByAgent).toEqual([
+            {
+                agentId: 'a1',
+                agentName: 'Agent A',
+                realStakeMinor: 1000,
+                realPayoutMinor: 600,
+                realEmoneyEarnedMinor: 400,
+            },
+        ]);
+    });
+
+    it('does not add a faucet amount to winSplit.botWinMinor when no bonus-faucet row exists', async () => {
+        const { service } = makeDashboardService([
+            [{ botTicketWin: '500', realTicketWin: '300' }],
+            [{ source: 'bingo_ticket', amountMinor: '500' }], // no bingo_bot_win_interval row
+            [{ botTickets: '10', realTickets: '20' }],
+            [],
+            [],
+            [],
+        ]);
+
+        const result = await service.getGameTransactionsDashboard();
+
+        expect(result.winSplit).toEqual({ botWinMinor: 500, realWinMinor: 300 });
+    });
+
+    it('returns empty sections gracefully when there is no data at all', async () => {
+        const { service } = makeDashboardService([[], [], [], [], [], []]);
+
+        const result = await service.getGameTransactionsDashboard();
+
+        expect(result.winSplit).toEqual({ botWinMinor: 0, realWinMinor: 0 });
+        expect(result.botWinBySource).toEqual([]);
+        expect(result.ticketSplit).toEqual({ botTickets: 0, realTickets: 0 });
+        expect(result.roomParticipationTrend).toEqual([]);
+        expect(result.dailyTrend).toEqual([]);
+        expect(result.revenueByAgent).toEqual([]);
     });
 });

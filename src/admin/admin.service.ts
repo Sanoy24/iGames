@@ -635,6 +635,171 @@ export class AdminService implements OnApplicationBootstrap {
     }
 
     /**
+     * Dashboard aggregates for the Game Transactions page  all-time/recent
+     * summaries, distinct from the paginated room-by-room table above. Scoped
+     * to Bingo only (the only game this page covers). Every query is a single
+     * grouped aggregate, not a per-room loop, so this stays cheap regardless of
+     * how many rooms have completed.
+     */
+    async getGameTransactionsDashboard(): Promise<{
+        winSplit: { botWinMinor: number; realWinMinor: number };
+        botWinBySource: Array<{ source: string; amountMinor: number }>;
+        ticketSplit: { botTickets: number; realTickets: number };
+        roomParticipationTrend: Array<{
+            roomId: string;
+            createdAt: string;
+            realPlayers: number;
+            bots: number;
+        }>;
+        dailyTrend: Array<{
+            day: string;
+            realStakeMinor: number;
+            realPayoutMinor: number;
+            botPayoutMinor: number;
+        }>;
+        revenueByAgent: Array<{
+            agentId: string;
+            agentName: string;
+            realStakeMinor: number;
+            realPayoutMinor: number;
+            realEmoneyEarnedMinor: number;
+        }>;
+    }> {
+        const BOT_FILTER = "JSON_EXTRACT(u.productMetadata, '$.botPolicy')";
+
+        const [
+            [ticketWinRow],
+            botWinBySourceRows,
+            [ticketCountRow],
+            roomParticipationRows,
+            dailyTrendRows,
+            revenueByAgentRows,
+        ] = await Promise.all([
+            // Ticket-settlement wins (natural + cartel-dual-redirected), split bot/real.
+            this.dataSource.query(
+                `SELECT
+             COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NOT NULL THEN t.payoutMinor ELSE 0 END), 0) botTicketWin,
+             COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NULL THEN t.payoutMinor ELSE 0 END), 0) realTicketWin
+           FROM bingo_tickets t
+           JOIN users u ON u.id = t.userId
+          WHERE t.status <> 'cancelled'`,
+            ),
+            // Bot win credits grouped by source  separates the unconditional
+            // "bot win bonus" faucet (bingo_bot_win_interval, no ticket/stake
+            // behind it) from ticket-tied wins, so the two are never conflated.
+            this.dataSource.query(
+                `SELECT le.sourceType source, COALESCE(SUM(le.amountMinor), 0) amountMinor
+               FROM ledger_entries le
+               JOIN users u ON u.id = le.userId
+              WHERE le.entryType = 'win' AND ${BOT_FILTER} IS NOT NULL
+                AND le.sourceType IN ('bingo_ticket', 'bingo_bot_win_interval')
+              GROUP BY le.sourceType`,
+            ),
+            this.dataSource.query(
+                `SELECT
+             COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NOT NULL THEN 1 ELSE 0 END), 0) botTickets,
+             COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NULL THEN 1 ELSE 0 END), 0) realTickets
+           FROM bingo_tickets t
+           JOIN users u ON u.id = t.userId
+          WHERE t.status <> 'cancelled'`,
+            ),
+            // Last 30 completed rooms: real-player vs bot participation, oldest first.
+            this.dataSource.query(
+                `SELECT * FROM (
+             SELECT t.roomId, r.createdAt,
+                    COUNT(DISTINCT CASE WHEN ${BOT_FILTER} IS NULL THEN t.userId END) realPlayers,
+                    COUNT(DISTINCT CASE WHEN ${BOT_FILTER} IS NOT NULL THEN t.userId END) bots
+               FROM bingo_tickets t
+               JOIN users u ON u.id = t.userId
+               JOIN bingo_rooms r ON r.id = t.roomId
+              WHERE r.status = 'completed' AND t.status <> 'cancelled'
+              GROUP BY t.roomId, r.createdAt
+              ORDER BY r.createdAt DESC
+              LIMIT 30
+           ) recent ORDER BY createdAt ASC`,
+            ),
+            // Last 14 days: real stake/payout vs bot payout (ticket wins + bonus faucet).
+            this.dataSource.query(
+                `SELECT * FROM (
+             SELECT DATE(r.createdAt) day,
+                    COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NULL THEN t.stakeMinor ELSE 0 END), 0) realStakeMinor,
+                    COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NULL THEN t.payoutMinor ELSE 0 END), 0) realPayoutMinor,
+                    COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NOT NULL THEN t.payoutMinor ELSE 0 END), 0) botPayoutMinor
+               FROM bingo_tickets t
+               JOIN users u ON u.id = t.userId
+               JOIN bingo_rooms r ON r.id = t.roomId
+              WHERE r.status = 'completed' AND t.status <> 'cancelled'
+              GROUP BY DATE(r.createdAt)
+              ORDER BY day DESC
+              LIMIT 14
+           ) recent ORDER BY day ASC`,
+            ),
+            // Real-player-only revenue per agent (mirrors realEmoneyEarned per room above).
+            this.dataSource.query(
+                `SELECT t.agentId, a.displayName agentName,
+                    COALESCE(SUM(t.stakeMinor), 0) realStakeMinor,
+                    COALESCE(SUM(t.payoutMinor), 0) realPayoutMinor
+               FROM bingo_tickets t
+               JOIN users u ON u.id = t.userId
+               JOIN users a ON a.id = t.agentId
+              WHERE t.status <> 'cancelled' AND t.agentId IS NOT NULL AND ${BOT_FILTER} IS NULL
+              GROUP BY t.agentId, a.displayName
+              ORDER BY (SUM(t.stakeMinor) - SUM(t.payoutMinor)) DESC
+              LIMIT 20`,
+            ),
+        ]);
+
+        const botWinBySource = botWinBySourceRows.map(
+            (r: { source: string; amountMinor: string }) => ({
+                source: r.source,
+                amountMinor: Number(r.amountMinor ?? 0),
+            }),
+        );
+        // "Bot win" for the pie is TOTAL bot liability (ticket-tied wins + the
+        // unconditional bonus faucet)  botWinBySource is what breaks that total
+        // back down into its two components.
+        const botFaucetMinor =
+            botWinBySource.find(
+                (s: { source: string }) => s.source === 'bingo_bot_win_interval',
+            )?.amountMinor ?? 0;
+
+        return {
+            winSplit: {
+                botWinMinor: Number(ticketWinRow?.botTicketWin ?? 0) + botFaucetMinor,
+                realWinMinor: Number(ticketWinRow?.realTicketWin ?? 0),
+            },
+            botWinBySource,
+            ticketSplit: {
+                botTickets: Number(ticketCountRow?.botTickets ?? 0),
+                realTickets: Number(ticketCountRow?.realTickets ?? 0),
+            },
+            roomParticipationTrend: roomParticipationRows.map((r: any) => ({
+                roomId: r.roomId,
+                createdAt: r.createdAt,
+                realPlayers: Number(r.realPlayers ?? 0),
+                bots: Number(r.bots ?? 0),
+            })),
+            dailyTrend: dailyTrendRows.map((r: any) => ({
+                day:
+                    r.day instanceof Date
+                        ? r.day.toISOString().slice(0, 10)
+                        : String(r.day),
+                realStakeMinor: Number(r.realStakeMinor ?? 0),
+                realPayoutMinor: Number(r.realPayoutMinor ?? 0),
+                botPayoutMinor: Number(r.botPayoutMinor ?? 0),
+            })),
+            revenueByAgent: revenueByAgentRows.map((r: any) => ({
+                agentId: r.agentId,
+                agentName: r.agentName,
+                realStakeMinor: Number(r.realStakeMinor ?? 0),
+                realPayoutMinor: Number(r.realPayoutMinor ?? 0),
+                realEmoneyEarnedMinor:
+                    Number(r.realStakeMinor ?? 0) - Number(r.realPayoutMinor ?? 0),
+            })),
+        };
+    }
+
+    /**
      * Paginated deposit history for one provider at a time (Telebirr or M-PESA),
      * covering credited AND rejected rows so admins can see exactly which agent
      * or the Master Wallet funded a deposit, or why it was rejected  the

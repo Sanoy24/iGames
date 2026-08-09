@@ -93,6 +93,7 @@ import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
 import { DepositsAdmin } from '../components/DepositsAdmin';
 import { SettlementsAdmin } from '../components/SettlementsAdmin';
+import { Donut, Bar } from '../components/AdminCharts';
 
 type AdminTab =
     | 'overview'
@@ -195,102 +196,6 @@ function Kpi({
     );
 }
 
-/** Lightweight SVG donut chart  no external deps. */
-function Donut({
-    segments,
-    size = 150,
-    thickness = 22,
-}: {
-    segments: Array<{ label: string; value: number; color: string }>;
-    size?: number;
-    thickness?: number;
-}) {
-    const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0);
-    const r = (size - thickness) / 2;
-    const c = 2 * Math.PI * r;
-    let offset = 0;
-    return (
-        <svg
-            width={size}
-            height={size}
-            viewBox={`0 0 ${size} ${size}`}
-            className='adm-donut'
-        >
-            <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-                <circle
-                    cx={size / 2}
-                    cy={size / 2}
-                    r={r}
-                    fill='none'
-                    stroke='rgba(255,255,255,0.05)'
-                    strokeWidth={thickness}
-                />
-                {total > 0 &&
-                    segments.map((seg, i) => {
-                        const frac = Math.max(0, seg.value) / total;
-                        const dash = frac * c;
-                        const el = (
-                            <circle
-                                key={i}
-                                cx={size / 2}
-                                cy={size / 2}
-                                r={r}
-                                fill='none'
-                                stroke={seg.color}
-                                strokeWidth={thickness}
-                                strokeDasharray={`${dash} ${c - dash}`}
-                                strokeDashoffset={-offset}
-                            />
-                        );
-                        offset += dash;
-                        return el;
-                    })}
-            </g>
-            <text
-                x='50%'
-                y='47%'
-                textAnchor='middle'
-                fontSize='11'
-                fill='var(--text-muted)'
-                fontWeight='700'
-                style={{ textTransform: 'uppercase', letterSpacing: '0.5px' }}
-            >
-                Total
-            </text>
-            <text
-                x='50%'
-                y='62%'
-                textAnchor='middle'
-                fontSize='15'
-                fill='var(--text-primary)'
-                fontWeight='800'
-                fontFamily='var(--font-display)'
-            >
-                {formatCredits(total)}
-            </text>
-        </svg>
-    );
-}
-
-function Bar({
-    value,
-    max,
-    color = '#3b82f6',
-}: {
-    value: number;
-    max: number;
-    color?: string;
-}) {
-    const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-    return (
-        <div className='adm-bar'>
-            <div
-                className='adm-bar-fill'
-                style={{ width: `${pct.toFixed(1)}%`, background: color }}
-            />
-        </div>
-    );
-}
 
 function SectionHead({
     title,

@@ -335,7 +335,8 @@ export type BingoConfig = {
         | 'statistical'
         | 'guaranteed'
         | 'hybrid'
-        | 'cartel-dual';
+        | 'cartel-dual'
+        | 'ranked-bot';
     botBonusWinEnabled?: boolean;
     botBonusWinMode?: 'interval' | 'random';
     botBonusWinEveryNRounds?: number;

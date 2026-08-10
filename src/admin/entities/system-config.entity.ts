@@ -43,6 +43,10 @@ export class SystemConfig {
     @Column({ type: 'int', default: 0 })
     withdrawalMaxAmountMinor: number;
 
+    /** Minimum balance a user's wallet must retain; withdrawals cannot drop below it. 0 = no floor. */
+    @Column({ type: 'int', default: 0 })
+    minWalletBalanceMinor: number;
+
     @Column({ type: 'int', default: 1 })
     maxPendingWithdrawalsPerUser: number;
 

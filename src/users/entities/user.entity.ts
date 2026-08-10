@@ -118,6 +118,15 @@ export class User {
     referralCode?: string | null;
 
     /**
+     * How many times this agent's referral link (`t.me/<bot>?start=ref_<code>`)
+     * has been opened  every `/start` with this code increments it, regardless
+     * of whether the visitor already has an account or attribution succeeds.
+     * Not deduped (see UsersService.recordReferralLinkClick).
+     */
+    @Column({ type: 'int', default: 0 })
+    referralClickCount: number;
+
+    /**
      * AGENT-specific override of the global `SystemConfig.referralCommissionPct`
      * the % of a referred player's Bingo GGR this agent earns. Null = no override,
      * use the global default; this doubles as the enable/disable toggle from the

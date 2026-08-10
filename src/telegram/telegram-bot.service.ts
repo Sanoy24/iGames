@@ -337,6 +337,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         if (!code) return;
 
         try {
+            await this.usersService.recordReferralLinkClick(code);
+
             const existing = await this.usersService.findByTelegramUserId(
                 String(telegramUserId),
             );

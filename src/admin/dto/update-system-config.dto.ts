@@ -27,6 +27,12 @@ export class UpdateSystemConfigDto {
   @Min(0)
   withdrawalMaxAmountMinor?: number;
 
+  /** Minimum balance a user's wallet must retain; withdrawals cannot drop below it. 0 = no floor. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minWalletBalanceMinor?: number;
+
   @IsOptional()
   @IsInt()
   @Min(0)

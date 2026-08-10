@@ -1042,6 +1042,21 @@ export class UsersService {
     }
 
     /**
+     * Record a referral link open (every `/start` with this code, no dedup).
+     * No-op, never throws, if the code doesn't match any agent.
+     */
+    async recordReferralLinkClick(rawCode: string): Promise<void> {
+        const code = normalizeReferralCode(rawCode);
+        if (!code) return;
+        await this.userRepository
+            .createQueryBuilder()
+            .update(User)
+            .set({ referralClickCount: () => 'referralClickCount + 1' })
+            .where('referralCode = :code', { code })
+            .execute();
+    }
+
+    /**
      * Attribute a player to the agent owning `code`. Returns the agent's display
      * name on success, or null when the code is unknown, the agent is not an
      * active agent, the player is the agent themselves, or the player is ALREADY

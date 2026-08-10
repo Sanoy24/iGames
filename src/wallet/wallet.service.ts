@@ -657,6 +657,8 @@ export class WalletService {
                 (systemConfig?.withdrawalMaxAmountMinor as number) ?? 0;
             const maxPending =
                 (systemConfig?.maxPendingWithdrawalsPerUser as number) ?? 1;
+            const minWalletBalance =
+                (systemConfig?.minWalletBalanceMinor as number) ?? 0;
 
             if (minAmount > 0 && amountMinor < minAmount) {
                 throw new BadRequestException(
@@ -700,6 +702,15 @@ export class WalletService {
 
             if (wallet.availableMinor < amountMinor) {
                 throw new ConflictException('Insufficient available balance');
+            }
+
+            if (
+                minWalletBalance > 0 &&
+                wallet.availableMinor - amountMinor < minWalletBalance
+            ) {
+                throw new ConflictException(
+                    `Withdrawal would drop your balance below the required minimum of ${minWalletBalance} credits`,
+                );
             }
 
             wallet.availableMinor -= amountMinor;

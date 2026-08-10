@@ -568,6 +568,8 @@ export type SystemConfig = {
     minDepositMinor: number;
     withdrawalMinAmountMinor: number;
     withdrawalMaxAmountMinor: number;
+    /** Minimum balance a user's wallet must retain; withdrawals cannot drop below it. 0 = no floor. */
+    minWalletBalanceMinor: number;
     maxPendingWithdrawalsPerUser: number;
     /** Approach B: per-agent Bingo rooms on/off. */
     agentRoomsEnabled?: boolean;
@@ -611,6 +613,8 @@ export type AgentPerformance = {
     agentId: string;
     displayName: string;
     customersBrought: number;
+    /** How many times this agent's referral link has been opened (not deduped). */
+    referralClicks: number;
     tickets: number;
     players: number;
     stakedMinor: number;

@@ -3066,6 +3066,7 @@ function AgentsAdmin() {
                             <tr>
                                 <th>Agent</th>
                                 <th>Referred Players</th>
+                                <th>Link Clicks</th>
                                 <th>Total Earnings</th>
                                 <th>Settled</th>
                                 <th>Remaining</th>
@@ -3079,6 +3080,9 @@ function AgentsAdmin() {
                                     </td>
                                     <td className='adm-td-muted'>
                                         {p.customersBrought}
+                                    </td>
+                                    <td className='adm-td-muted'>
+                                        {p.referralClicks}
                                     </td>
                                     <td>
                                         <strong>
@@ -3328,6 +3332,7 @@ function ConfigAdmin() {
         minDepositMinor: 0,
         withdrawalMinAmountMinor: 0,
         withdrawalMaxAmountMinor: 0,
+        minWalletBalanceMinor: 0,
         maxPendingWithdrawalsPerUser: 1,
         agentRoomsEnabled: false,
         referralCommissionPct: 0,
@@ -3345,6 +3350,7 @@ function ConfigAdmin() {
         minDepositMinor: c.minDepositMinor ?? 0,
         withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
         withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
+        minWalletBalanceMinor: c.minWalletBalanceMinor ?? 0,
         maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
         agentRoomsEnabled: c.agentRoomsEnabled ?? false,
         referralCommissionPct: c.referralCommissionPct ?? 0,
@@ -3494,6 +3500,11 @@ function ConfigAdmin() {
                         '0 = no limit',
                     )}
                     {field(
+                        'minWalletBalanceMinor',
+                        'Minimum Wallet Balance (ETB)',
+                        '0 = no minimum',
+                    )}
+                    {field(
                         'maxPendingWithdrawalsPerUser',
                         'Max Pending per User',
                     )}
@@ -3619,6 +3630,7 @@ function ConfigAdmin() {
                                 <tr className='adm-tr'>
                                     <th>Agent</th>
                                     <th>Customers</th>
+                                    <th>Link Clicks</th>
                                     <th>Tickets</th>
                                     <th>Players</th>
                                     <th>Staked</th>
@@ -3642,6 +3654,9 @@ function ConfigAdmin() {
                                         </td>
                                         <td className='adm-td-muted'>
                                             {p.customersBrought}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {p.referralClicks}
                                         </td>
                                         <td>{p.tickets}</td>
                                         <td className='adm-td-muted'>

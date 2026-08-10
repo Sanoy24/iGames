@@ -1319,6 +1319,7 @@ export class AdminService implements OnApplicationBootstrap {
             agentId: string;
             displayName: string;
             customersBrought: number;
+            referralClicks: number;
             tickets: number;
             players: number;
             stakedMinor: number;
@@ -1347,6 +1348,7 @@ export class AdminService implements OnApplicationBootstrap {
             id: string;
             displayName: string;
             customers: string | number;
+            referralClicks: string | number;
             tickets: string | number;
             players: string | number;
             staked: string | number;
@@ -1361,7 +1363,7 @@ export class AdminService implements OnApplicationBootstrap {
             settledMinor: string | number;
             claimedMinor: string | number;
         }> = await this.dataSource.query(
-            `SELECT u.id, u.displayName,
+            `SELECT u.id, u.displayName, u.referralClickCount referralClicks,
               COALESCE(c.customers, 0) customers,
               COALESCE(t.tickets, 0) tickets,
               COALESCE(t.players, 0) players,
@@ -1450,6 +1452,7 @@ export class AdminService implements OnApplicationBootstrap {
                 agentId: r.id,
                 displayName: r.displayName,
                 customersBrought: Number(r.customers ?? 0),
+                referralClicks: Number(r.referralClicks ?? 0),
                 tickets: Number(r.tickets ?? 0),
                 players: Number(r.players ?? 0),
                 stakedMinor,

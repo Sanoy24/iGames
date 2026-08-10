@@ -87,7 +87,7 @@ export class UpdateBingoConfigDto {
   botMaxRealPlayers?: number;
 
   /** How bots steer a below-threshold room. */
-  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid', 'cartel-dual'])
+  @IsOptional() @IsIn(['off', 'statistical', 'guaranteed', 'hybrid', 'cartel-dual', 'ranked-bot'])
   botWinMode?: string;
 
   @IsOptional() @IsBoolean()

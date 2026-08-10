@@ -5858,7 +5858,8 @@ function BingoAdmin() {
             | 'statistical'
             | 'guaranteed'
             | 'hybrid'
-            | 'cartel-dual',
+            | 'cartel-dual'
+            | 'ranked-bot',
         botBonusWinEnabled: true,
         botBonusWinMode: 'interval' as 'interval' | 'random',
         botBonusWinEveryNRounds: 0,
@@ -5928,7 +5929,8 @@ function BingoAdmin() {
                     | 'statistical'
                     | 'guaranteed'
                     | 'hybrid'
-                    | 'cartel-dual',
+                    | 'cartel-dual'
+                    | 'ranked-bot',
                 botBonusWinEnabled: c.botBonusWinEnabled ?? true,
                 botBonusWinMode: (c.botBonusWinMode ?? 'interval') as
                     | 'interval'
@@ -6086,6 +6088,17 @@ function BingoAdmin() {
                 addToast(
                     'error',
                     `Cartel Dual requires at least 2 active Bingo-enabled bot accounts. Current active bot accounts: ${reservedCartelActiveBingoBots}.`,
+                );
+                return;
+            }
+            if (
+                payload.botWinMode === 'ranked-bot' &&
+                reservedCartelActiveBingoBots !== null &&
+                reservedCartelActiveBingoBots < 3
+            ) {
+                addToast(
+                    'error',
+                    `Ranked Cartel requires at least 3 active Bingo-enabled bot accounts. Current active bot accounts: ${reservedCartelActiveBingoBots}.`,
                 );
                 return;
             }
@@ -7908,7 +7921,8 @@ function BingoAdmin() {
                                             | 'statistical'
                                             | 'guaranteed'
                                             | 'hybrid'
-                                            | 'cartel-dual',
+                                            | 'cartel-dual'
+                                            | 'ranked-bot',
                                     }))
                                 }
                             >
@@ -7934,6 +7948,10 @@ function BingoAdmin() {
                                     Cartel Dual - cartel wins 1st AND 2nd place
                                     under different alias names (most concealed)
                                 </option>
+                                <option value='ranked-bot'>
+                                    Ranked Cartel - cartel wins 1st-3rd place,
+                                    real users win 4th-5th (no threshold)
+                                </option>
                             </select>
                             {cfgForm.botWinMode === 'cartel-dual' &&
                                 reservedCartelActiveBingoBots !== null && (
@@ -7950,6 +7968,23 @@ function BingoAdmin() {
                                         {reservedCartelActiveBingoBots < 2
                                             ? `Cartel Dual needs at least 2 active Bingo-enabled bot accounts. Current bot accounts: ${reservedCartelActiveBingoBots}. Active alias names: ${reservedCartelActiveAliasNames ?? 'unknown'}.`
                                             : `Cartel Dual ready: ${reservedCartelActiveBingoBots} active Bingo bot accounts available. Active alias names: ${reservedCartelActiveAliasNames ?? 'unknown'}.`}
+                                    </span>
+                                )}
+                            {cfgForm.botWinMode === 'ranked-bot' &&
+                                reservedCartelActiveBingoBots !== null && (
+                                    <span
+                                        className='adm-field-hint'
+                                        style={{
+                                            color:
+                                                reservedCartelActiveBingoBots <
+                                                3
+                                                    ? '#f87171'
+                                                    : '#86efac',
+                                        }}
+                                    >
+                                        {reservedCartelActiveBingoBots < 3
+                                            ? `Ranked Cartel needs at least 3 active Bingo-enabled bot accounts. Current bot accounts: ${reservedCartelActiveBingoBots}. Active alias names: ${reservedCartelActiveAliasNames ?? 'unknown'}.`
+                                            : `Ranked Cartel ready: ${reservedCartelActiveBingoBots} active Bingo bot accounts available. Active alias names: ${reservedCartelActiveAliasNames ?? 'unknown'}.`}
                                     </span>
                                 )}
                             <span className='adm-field-hint'>

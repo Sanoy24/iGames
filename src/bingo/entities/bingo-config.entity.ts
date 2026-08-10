@@ -206,6 +206,8 @@ export class BingoConfig {
      *  - `guaranteed`   if a real user would win, the win is redirected to a bot
      *                    (deterministic house retention; overrides a fair result).
      *  - `hybrid`       statistical flooding PLUS the real-user→bot win redirect.
+     *  - `ranked-bot`   rank-keyed, threshold-independent: places 1st-3rd always go
+     *                    to a bot, places 4th-5th always go to a real player.
      */
     @Column({ type: 'varchar', length: 20, default: 'statistical' })
     botWinMode: string;

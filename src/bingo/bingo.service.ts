@@ -1223,6 +1223,10 @@ export class BingoService implements OnModuleInit {
         // both currently cooling down) would block every unrelated config save
         // for as long as it lasts.
         const wasCartelDual = cfg.botWinMode === 'cartel-dual';
+        // Same transition-only rationale as wasCartelDual above, but tracked
+        // independently: ranked-bot has its own (higher) bot-count requirement and
+        // must not share state with the cartel-dual guard below.
+        const wasRankedBot = cfg.botWinMode === 'ranked-bot';
         Object.assign(cfg, dto);
         // A stale/typo'd pattern id here is otherwise invisible until draw time, where
         // resolvePrefilledPlacePattern silently skips the place forever (no log, no
@@ -1258,6 +1262,16 @@ export class BingoService implements OnModuleInit {
             if (activeBingoBots.size < 2) {
                 throw new BadRequestException(
                     `Cartel Dual requires at least 2 active Bingo-enabled bots. Current active Bingo bots: ${activeBingoBots.size}.`,
+                );
+            }
+        }
+        if (cfg.botWinMode === 'ranked-bot' && !wasRankedBot) {
+            const activeBingoBots = await this.getActiveBotUserIds(
+                this.bingoRoomRepository.manager,
+            );
+            if (activeBingoBots.size < 3) {
+                throw new BadRequestException(
+                    `Ranked Bot Win requires at least 3 active Bingo-enabled bots. Current active Bingo bots: ${activeBingoBots.size}.`,
                 );
             }
         }
@@ -3702,6 +3716,14 @@ export class BingoService implements OnModuleInit {
             (cfg.botWinMode === 'guaranteed' ||
                 cfg.botWinMode === 'hybrid' ||
                 cfg.botWinMode === 'cartel-dual');
+        // Rank-keyed, threshold-independent win steering: ranks 1st-3rd always go to
+        // a bot, ranks 4th-5th always go to a real player. Kept fully separate from
+        // the threshold-driven variables above (never true at the same time, since
+        // botWinMode is a single field) so the existing cartel-dual/guaranteed/hybrid
+        // logic paths above are never touched by this mode.
+        const rankedBotWinActive = cfg.botWinMode === 'ranked-bot';
+        const rankedBotPlaces = new Set<PrefilledPlace>(['1st', '2nd', '3rd']);
+        const rankedHumanPlaces = new Set<PrefilledPlace>(['4th', '5th']);
 
         // Each ENABLED, still-open place is an INDEPENDENT "first card to complete this
         // place's pattern" race, evaluated every draw. Independent → not blocked by an
@@ -3755,6 +3777,34 @@ export class BingoService implements OnModuleInit {
                             awardedBotUserIds.add(finalBotAwardee.userId);
                     }
                 }
+                if (
+                    rankedBotWinActive &&
+                    rankedBotPlaces.has(place) &&
+                    finalDerashDraw
+                ) {
+                    const finalBotAwardee = this.pickBotRedirectWinner(
+                        winnerEligibleTickets,
+                        botGroups.bingoEnabledBotIds,
+                        pattern,
+                        room.drawnNumbers,
+                        room.numberRange ?? 75,
+                        { awardedBotUserIds, recentBotWinnerUserIds },
+                    );
+                    if (finalBotAwardee) {
+                        const awarded = await this.awardDerashPlace({
+                            room,
+                            winner: finalBotAwardee,
+                            place,
+                            pattern,
+                            totalPotMinor,
+                            houseEdgePct,
+                            cfg,
+                            manager,
+                        });
+                        if (awarded)
+                            awardedBotUserIds.add(finalBotAwardee.userId);
+                    }
+                }
                 continue;
             }
 
@@ -3783,6 +3833,36 @@ export class BingoService implements OnModuleInit {
                         );
                         continue;
                     }
+                }
+
+                if (
+                    rankedBotWinActive &&
+                    rankedHumanPlaces.has(place) &&
+                    botIds.has(awardee.userId)
+                ) {
+                    // Ranks 4th/5th must go to a real player under ranked-bot mode.
+                    // Never fabricate a completion for a human (unlike bots below)
+                    // just try the next candidate, or leave the place open this draw.
+                    continue;
+                }
+                if (
+                    rankedBotWinActive &&
+                    rankedBotPlaces.has(place) &&
+                    !botIds.has(awardee.userId)
+                ) {
+                    const botAwardee = this.pickBotRedirectWinner(
+                        winnerEligibleTickets,
+                        botGroups.bingoEnabledBotIds,
+                        pattern,
+                        room.drawnNumbers,
+                        room.numberRange ?? 75,
+                        { awardedBotUserIds, recentBotWinnerUserIds },
+                    );
+                    if (!botAwardee) continue;
+                    awardee = botAwardee;
+                    this.logger.log(
+                        `Bot win-steer (ranked-bot): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
+                    );
                 }
 
                 const awarded = await this.awardDerashPlace({
@@ -4741,6 +4821,73 @@ export class BingoService implements OnModuleInit {
                 return cartelDualContext;
             };
 
+            // Fully independent counterpart to getCartelDualContext above, built the
+            // same way but keyed off ranked-bot instead of cartel-dual  never shares
+            // state or triggers with it, since botWinMode is a single field and the
+            // two modes are mutually exclusive.
+            let rankedBotContext:
+                | {
+                      botIds: Set<string>;
+                      bingoEnabledBotIds: Set<string>;
+                      winnerEligibleTickets: BingoTicket[];
+                      awardedBotUserIds: Set<string>;
+                      recentBotWinnerUserIds: Set<string>;
+                  }
+                | null
+                | undefined;
+            const getRankedBotContext = async () => {
+                if (rankedBotContext !== undefined) return rankedBotContext;
+                if (cfg.botWinMode !== 'ranked-bot') {
+                    rankedBotContext = null;
+                    return rankedBotContext;
+                }
+
+                const inPlayTickets = await manager.find(BingoTicket, {
+                    where: { roomId: room.id, status: In(['active', 'won']) },
+                    order: { createdAt: 'ASC' },
+                });
+                for (const inPlayTicket of inPlayTickets) {
+                    inPlayTicket.markedNumbers = inPlayTicket.grid
+                        .flat()
+                        .filter((v): v is number => v !== null && drawn.has(v))
+                        .sort((a, b) => a - b);
+                    await manager.save(inPlayTicket);
+                }
+                const botGroups = await this.getBotUserGroupsForTickets(
+                    inPlayTickets,
+                    manager,
+                );
+                const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
+                rankedBotContext = {
+                    botIds: botGroups.botIds,
+                    bingoEnabledBotIds: botGroups.bingoEnabledBotIds,
+                    winnerEligibleTickets: inPlayTickets.filter(
+                        (candidate) =>
+                            !botGroups.nonBingoBotIds.has(candidate.userId),
+                    ),
+                    awardedBotUserIds: this.awardedBotUserIdsForTickets(
+                        inPlayTickets,
+                        botGroups.botIds,
+                    ),
+                    recentBotWinnerUserIds:
+                        await this.getPreviousBingoBotWinnerUserIds(
+                            room,
+                            manager,
+                            cooldownRooms,
+                        ),
+                };
+                return rankedBotContext;
+            };
+            const rankedBotPlacesForClaim = new Set<PrefilledPlace>([
+                '1st',
+                '2nd',
+                '3rd',
+            ]);
+            const rankedHumanPlacesForClaim = new Set<PrefilledPlace>([
+                '4th',
+                '5th',
+            ]);
+
             let awardedAny = false;
             let callerWonAny = false;
             let heldByCartelDual = false;
@@ -4779,6 +4926,44 @@ export class BingoService implements OnModuleInit {
                         `Bot win-steer (cartel-dual manual claim): room ${room.id} place ${place} redirected from real user ${ticket.userId} to bot ${botAwardee.userId}`,
                     );
                 }
+
+                const rankedContext = await getRankedBotContext();
+                if (rankedContext) {
+                    const isBotCaller = rankedContext.botIds.has(
+                        awardee.userId,
+                    );
+                    if (
+                        rankedHumanPlacesForClaim.has(place) &&
+                        isBotCaller
+                    ) {
+                        // Bots may not claim 4th/5th under ranked-bot mode.
+                        continue;
+                    }
+                    if (
+                        rankedBotPlacesForClaim.has(place) &&
+                        !isBotCaller
+                    ) {
+                        const botAwardee = this.pickBotRedirectWinner(
+                            rankedContext.winnerEligibleTickets,
+                            rankedContext.bingoEnabledBotIds,
+                            pattern as BingoPattern,
+                            room.drawnNumbers,
+                            room.numberRange ?? 75,
+                            {
+                                awardedBotUserIds:
+                                    rankedContext.awardedBotUserIds,
+                                recentBotWinnerUserIds:
+                                    rankedContext.recentBotWinnerUserIds,
+                            },
+                        );
+                        if (!botAwardee) continue;
+                        awardee = botAwardee;
+                        this.logger.log(
+                            `Bot win-steer (ranked-bot manual claim): room ${room.id} place ${place} redirected from real user ${ticket.userId} to bot ${botAwardee.userId}`,
+                        );
+                    }
+                }
+
                 const soldTickets = await this.countSoldTickets(
                     roomId,
                     manager,
@@ -4800,6 +4985,9 @@ export class BingoService implements OnModuleInit {
                     callerWonAny || (awarded && awardee.id === ticket.id);
                 if (awarded && cartelContext?.botIds.has(awardee.userId)) {
                     cartelContext.awardedBotUserIds.add(awardee.userId);
+                }
+                if (awarded && rankedContext?.botIds.has(awardee.userId)) {
+                    rankedContext.awardedBotUserIds.add(awardee.userId);
                 }
             }
 
@@ -5571,7 +5759,12 @@ export class BingoService implements OnModuleInit {
                                     2,
                                     this.enabledPrefilledPlacesCount(cfg),
                                 )
-                              : 0,
+                              : cfg.botWinMode === 'ranked-bot'
+                                // Ranks 1st-3rd each need a distinct bot cartela to
+                                // redirect to in the same room (see awardedBotUserIds
+                                // exclusion in pickBotRedirectWinner).
+                                ? 3
+                                : 0,
                   })
                 : 0;
 
@@ -5611,6 +5804,13 @@ export class BingoService implements OnModuleInit {
                 }),
             );
             if (cfg.botWinMode === 'cartel-dual') {
+                shuffledBotIds = [...shuffledBotIds].sort(
+                    (a, b) =>
+                        (botHeldCounts.get(a) ?? 0) -
+                        (botHeldCounts.get(b) ?? 0),
+                );
+            }
+            if (cfg.botWinMode === 'ranked-bot') {
                 shuffledBotIds = [...shuffledBotIds].sort(
                     (a, b) =>
                         (botHeldCounts.get(a) ?? 0) -

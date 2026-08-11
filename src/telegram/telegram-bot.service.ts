@@ -482,19 +482,22 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         );
     }
 
-    /** Confirm the recorded location and hand the player the Play button. */
+    /**
+     * Confirm the recorded location and hand the player the Play button.
+     * Both reply keyboards used earlier in onboarding (`contactRequestKeyboard`,
+     * `locationRequestKeyboard`) are `.oneTime()`, so Telegram already hides them
+     * after use  merging `remove_keyboard` into this InlineKeyboardMarkup instead
+     * produced an invalid reply_markup (mixing ReplyKeyboardRemove with
+     * InlineKeyboardMarkup), which made ctx.reply() throw and silently swallowed
+     * the Play button behind the deferred task's catch-and-log.
+     */
     private async finishLocationStep(
         ctx: Context,
         miniAppUrl: string,
         confirmation: string,
     ): Promise<void> {
         const keyboard = this.getPlayKeyboard('🎮 አሁን ተጫወት', miniAppUrl);
-        await ctx.reply(confirmation, {
-            reply_markup: {
-                remove_keyboard: true,
-                ...keyboard,
-            },
-        });
+        await ctx.reply(confirmation, { reply_markup: keyboard });
     }
 
     /** Resolve the internal user id behind the Telegram account, if linked. */

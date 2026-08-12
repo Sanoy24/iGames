@@ -130,6 +130,19 @@ export function getErrorMessage(error: unknown): string {
     return 'Something went wrong';
 }
 
+/**
+ * True for a transient/infrastructure failure where retrying the exact same
+ * request could plausibly succeed  no response at all (network/timeout) or a
+ * 503 from the backend (e.g. TelebirrReceiptClientService/MpesaReceiptClientService
+ * couldn't reach their upstream proxy). False for a validation/business
+ * rejection (400/409/etc), where the same input will just fail again.
+ */
+export function isRetryableInfraError(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) return false;
+    if (!error.response) return true;
+    return error.response.status === 503;
+}
+
 function sanitizeServerMessage(msg: string): string {
     const lower = msg.toLowerCase();
     const indicators = [

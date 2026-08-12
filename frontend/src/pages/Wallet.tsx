@@ -31,6 +31,7 @@ import {
     formatCreditsFull,
     formatDateTimeFull,
     getErrorMessage,
+    isRetryableInfraError,
 } from '../lib/utils';
 import { authApi, walletApi, paymentsApi, type ActiveAgent } from '../lib/api';
 import { consumeOpenDepositRequest } from '../lib/walletIntent';
@@ -108,6 +109,46 @@ function AnimatedBalance({ value }: { value: number }) {
     );
 
     return <>{new Intl.NumberFormat().format(display)}</>;
+}
+
+// Shown when we couldn't reach the Telebirr/M-Pesa verification proxy (as
+// opposed to the receipt itself being rejected) — the same input is worth
+// trying again, so this offers a direct retry instead of a dead-end error.
+function RetryBanner({
+    busy,
+    onRetry,
+}: {
+    busy: boolean;
+    onRetry: () => void;
+}) {
+    return (
+        <div
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                marginTop: 10,
+                borderRadius: 10,
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.25)',
+            }}
+        >
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', flex: 1 }}>
+                We couldn't reach the verification service. This is usually
+                temporary — check your connection and try again.
+            </span>
+            <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={onRetry}
+                disabled={busy}
+                style={{ flexShrink: 0 }}
+            >
+                {busy ? 'Retrying…' : 'Retry'}
+            </button>
+        </div>
+    );
 }
 
 function DevTopup({ onSuccess }: { onSuccess: () => Promise<void> }) {
@@ -205,6 +246,21 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
     const [preview, setPreview] = useState<NormalizedPreview | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Set when the LAST preview/submit/screenshot attempt failed because we
+    // couldn't reach the Telebirr/M-Pesa verification proxy (or got no usable
+    // data back)  as opposed to the receipt itself being rejected. Only this
+    // case gets a "Retry" affordance, since retrying a rejected receipt with
+    // the same input would just fail again.
+    const [infraRetry, setInfraRetry] = useState<
+        'preview' | 'submit' | 'screenshot' | null
+    >(null);
+    // Kept so a screenshot retry can re-run OCR on the same file without
+    // making the user re-open the file picker (the input itself is cleared
+    // right after each selection).
+    const [lastScreenshotFile, setLastScreenshotFile] = useState<File | null>(
+        null,
+    );
+
     // Telebirr-only alternative to pasting SMS text: upload a screenshot of the
     // app's "Successful" screen and let server-side OCR find the transaction
     // number. `ocrReceiptNo`/`ocrFileUrl` carry that result into Step 2 so submit
@@ -300,6 +356,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         if (!receiptInput.trim()) return;
         setIsPreviewing(true);
         setPreview(null);
+        setInfraRetry(null);
         try {
             if (provider === 'mpesa') {
                 const r = await paymentsApi.previewMpesaSms(
@@ -326,13 +383,22 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                 });
             }
         } catch (e) {
-            addToast('error', getErrorMessage(e));
+            if (isRetryableInfraError(e)) {
+                setInfraRetry('preview');
+                addToast(
+                    'error',
+                    "Couldn't reach the verification service  this is usually temporary. Tap Retry below.",
+                );
+            } else {
+                addToast('error', getErrorMessage(e));
+            }
         } finally {
             setIsPreviewing(false);
         }
     };
 
     const handleTopup = async () => {
+        setInfraRetry(null);
         // Screenshot flow already has a verified receiptNo + saved fileUrl from
         // handleScreenshotSelect  submit that directly, no text to re-parse.
         if (depositMode === 'screenshot') {
@@ -351,7 +417,15 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                 setShowTopup(false);
                 await loadWallet();
             } catch (e) {
-                addToast('error', getErrorMessage(e));
+                if (isRetryableInfraError(e)) {
+                    setInfraRetry('submit');
+                    addToast(
+                        'error',
+                        "Couldn't reach the verification service  this is usually temporary. Tap Retry below.",
+                    );
+                } else {
+                    addToast('error', getErrorMessage(e));
+                }
             } finally {
                 setIsSubmitting(false);
             }
@@ -391,7 +465,15 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
             setShowTopup(false);
             await loadWallet();
         } catch (e) {
-            addToast('error', getErrorMessage(e));
+            if (isRetryableInfraError(e)) {
+                setInfraRetry('submit');
+                addToast(
+                    'error',
+                    "Couldn't reach the verification service  this is usually temporary. Tap Retry below.",
+                );
+            } else {
+                addToast('error', getErrorMessage(e));
+            }
         } finally {
             setIsSubmitting(false);
         }
@@ -404,7 +486,9 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         setPreview(null);
         setOcrReceiptNo(null);
         setOcrFileUrl(null);
+        setInfraRetry(null);
         if (!file) return;
+        setLastScreenshotFile(file);
         setIsOcrProcessing(true);
         try {
             const r = await paymentsApi.previewTelebirrScreenshot(file);
@@ -419,10 +503,22 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                 date: r.date,
             });
         } catch (e) {
-            addToast('error', getErrorMessage(e));
+            if (isRetryableInfraError(e)) {
+                setInfraRetry('screenshot');
+                addToast(
+                    'error',
+                    "Couldn't reach the verification service  this is usually temporary. Tap Retry below.",
+                );
+            } else {
+                addToast('error', getErrorMessage(e));
+            }
         } finally {
             setIsOcrProcessing(false);
         }
+    };
+
+    const retryScreenshot = () => {
+        if (lastScreenshotFile) void handleScreenshotSelect(lastScreenshotFile);
     };
 
     // Switching provider clears any in-progress paste/preview so the two flows
@@ -436,6 +532,8 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         setOcrReceiptNo(null);
         setOcrFileUrl(null);
         setPreview(null);
+        setInfraRetry(null);
+        setLastScreenshotFile(null);
     };
 
     const switchDepositMode = (next: 'sms' | 'screenshot') => {
@@ -446,6 +544,8 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         setOcrReceiptNo(null);
         setOcrFileUrl(null);
         setPreview(null);
+        setInfraRetry(null);
+        setLastScreenshotFile(null);
     };
 
     const resetTopup = () => {
@@ -454,6 +554,8 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
         setOcrReceiptNo(null);
         setOcrFileUrl(null);
         setPreview(null);
+        setInfraRetry(null);
+        setLastScreenshotFile(null);
     };
 
     const toggleWithdraw = () => {
@@ -1154,6 +1256,12 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                     Paste the SMS instead
                                                 </button>
                                             </p>
+                                            {infraRetry === 'screenshot' && (
+                                                <RetryBanner
+                                                    busy={isOcrProcessing}
+                                                    onRetry={retryScreenshot}
+                                                />
+                                            )}
                                         </>
                                     )}
 
@@ -1211,6 +1319,12 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                     </>
                                                 )}
                                             </button>
+                                            {infraRetry === 'preview' && (
+                                                <RetryBanner
+                                                    busy={isPreviewing}
+                                                    onRetry={handlePreview}
+                                                />
+                                            )}
                                         </>
                                     )}
 
@@ -1481,6 +1595,12 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                 )}
                                             </button>
                                         </div>
+                                        {infraRetry === 'submit' && (
+                                            <RetryBanner
+                                                busy={isSubmitting}
+                                                onRetry={handleTopup}
+                                            />
+                                        )}
                                     </motion.div>
                                 )}
                             </div>

@@ -107,6 +107,15 @@ export class KenoScheduler
             this.logger.log(`Keno draw ${result.id} settled`);
             this.gameEventsGateway.emitKenoDrawCompleted(result);
 
+            void this.kenoService
+                .settleReferralCommission(result.id)
+                .catch((err) =>
+                    this.logger.error(
+                        'Keno referral commission failed',
+                        err instanceof Error ? err.stack : err,
+                    ),
+                );
+
             // Fire-and-forget Telegram win notifications
             this.kenoService
                 .getDrawWinners(result.id)

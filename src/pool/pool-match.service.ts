@@ -31,6 +31,7 @@ import {
 } from './pool-physics';
 import { GameState, Seat, ShotOutcome } from './rules/rules-types';
 import { newGame, otherSeat, resolveShot } from './rules/rules';
+import { settleGameReferralCommission } from '../agents/game-referral-commission.util';
 
 export interface CreateMatchInput {
     mode: PoolMode;
@@ -442,6 +443,12 @@ export class PoolMatchService {
                             `Tournament advance failed: ${e?.message ?? e}`,
                         ),
                     );
+            } else {
+                void this.settleReferralCommission(matchId).catch((e) =>
+                    this.logger.error(
+                        `Pool referral commission failed: ${e?.message ?? e}`,
+                    ),
+                );
             }
         }
         return { outcome, match: fresh };
@@ -496,6 +503,60 @@ export class PoolMatchService {
             manager,
         );
         return true;
+    }
+
+    /**
+     * Credit each real player's commission-eligible agent their commission on
+     * that player's per-seat stake in this casual match (flat % of stake, no
+     * house-edge multiplier  Pool has no per-round edge figure). Tournament
+     * matches are excluded here: their stake is a bracket-advancement
+     * mechanic, not player spend  tournament entry-fee commission is settled
+     * once per tournament instead (`PoolTournamentService.settleReferralCommission`).
+     * Mirrors `BingoService.settleReferralCommission`; called fire-and-forget
+     * after a casual match completes.
+     */
+    async settleReferralCommission(matchId: string): Promise<void> {
+        const match = await this.matchRepo.findOneBy({ id: matchId });
+        if (!match || match.tournamentId || match.stakeMinor <= 0) return;
+
+        const seatUserIds = [match.seatAUserId, match.seatBUserId].filter(
+            (id): id is string => !!id,
+        );
+        if (seatUserIds.length === 0) return;
+
+        const placeholders = seatUserIds.map(() => '?').join(',');
+        const rows: Array<{ agentId: string }> = await this.dataSource.query(
+            `SELECT COALESCE(u.referredByAgentId, u.assignedAgentId) AS agentId
+               FROM users u
+              WHERE u.id IN (${placeholders})
+                AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+                AND COALESCE(u.referredByAgentId, u.assignedAgentId) IS NOT NULL`,
+            seatUserIds,
+        );
+
+        // Two seats can resolve to the same agent (e.g. both players referred by
+        // the same agent)  aggregate so the shared settlement helper only sees
+        // one row per agent (it idempotency-keys per agent, not per seat).
+        const stakedByAgent = new Map<string, number>();
+        for (const row of rows) {
+            stakedByAgent.set(
+                row.agentId,
+                (stakedByAgent.get(row.agentId) ?? 0) + match.stakeMinor,
+            );
+        }
+
+        await settleGameReferralCommission({
+            dataSource: this.dataSource,
+            walletService: this.walletService,
+            game: 'pool',
+            referenceId: matchId,
+            agentStakes: [...stakedByAgent.entries()].map(
+                ([agentId, stakedMinor]) => ({ agentId, stakedMinor }),
+            ),
+            houseEdgePct: null,
+            sourceType: 'pool_referral_commission',
+            logger: this.logger,
+        });
     }
 
     /**

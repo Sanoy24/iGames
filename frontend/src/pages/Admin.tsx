@@ -2268,6 +2268,9 @@ function AgentsAdmin() {
         withdraw: true,
         status: 'active',
         referralCommissionPct: '' as string,
+        referralCommissionPctByGame: {} as Partial<
+            Record<'keno' | 'crash' | 'pool' | 'werk', string>
+        >,
     });
 
     const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -2392,6 +2395,11 @@ function AgentsAdmin() {
                 agent.referralCommissionPct != null
                     ? String(agent.referralCommissionPct)
                     : '',
+            referralCommissionPctByGame: Object.fromEntries(
+                Object.entries(agent.referralCommissionPctByGame ?? {}).map(
+                    ([game, pct]) => [game, String(pct)],
+                ),
+            ),
         });
     };
 
@@ -2424,6 +2432,11 @@ function AgentsAdmin() {
                     editForm.referralCommissionPct.trim() === ''
                         ? null
                         : Number(editForm.referralCommissionPct),
+                referralCommissionPctByGame: Object.fromEntries(
+                    Object.entries(editForm.referralCommissionPctByGame)
+                        .filter(([, v]) => v.trim() !== '')
+                        .map(([game, v]) => [game, Number(v)]),
+                ),
             };
             if (editForm.password.trim() !== '') {
                 payload.password = editForm.password;
@@ -2990,6 +3003,69 @@ function AgentsAdmin() {
                                 )}
                             </div>
                         </label>
+                        <div className='adm-field'>
+                            <span>
+                                Per-game Commission % Overrides{' '}
+                                <em className='adm-field-hint'>
+                                    {' '}
+                                    blank = use that game's global default
+                                </em>
+                            </span>
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    gap: 8,
+                                    flexWrap: 'wrap',
+                                }}
+                            >
+                                {(
+                                    ['keno', 'crash', 'pool', 'werk'] as const
+                                ).map((game) => (
+                                    <label
+                                        key={game}
+                                        style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 4,
+                                        }}
+                                    >
+                                        <span
+                                            style={{
+                                                fontSize: 12,
+                                                textTransform: 'capitalize',
+                                            }}
+                                        >
+                                            {game}
+                                        </span>
+                                        <input
+                                            className='input'
+                                            type='number'
+                                            min={0}
+                                            max={100}
+                                            placeholder='Default'
+                                            style={{ width: 100 }}
+                                            value={
+                                                editForm
+                                                    .referralCommissionPctByGame[
+                                                    game
+                                                ] ?? ''
+                                            }
+                                            onChange={(e) =>
+                                                setEditForm((f) => ({
+                                                    ...f,
+                                                    referralCommissionPctByGame:
+                                                        {
+                                                            ...f.referralCommissionPctByGame,
+                                                            [game]: e.target
+                                                                .value,
+                                                        },
+                                                }))
+                                            }
+                                        />
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                     <div
                         className='adm-panel-footer'
@@ -3336,6 +3412,7 @@ function ConfigAdmin() {
         maxPendingWithdrawalsPerUser: 1,
         agentRoomsEnabled: false,
         referralCommissionPct: 0,
+        referralCommissionPctByGame: {},
         agentSettlementCooldownHours: 0,
         leaderboardEnabled: false,
         recentWinsEnabled: false,
@@ -3354,6 +3431,7 @@ function ConfigAdmin() {
         maxPendingWithdrawalsPerUser: c.maxPendingWithdrawalsPerUser,
         agentRoomsEnabled: c.agentRoomsEnabled ?? false,
         referralCommissionPct: c.referralCommissionPct ?? 0,
+        referralCommissionPctByGame: c.referralCommissionPctByGame ?? {},
         agentSettlementCooldownHours: c.agentSettlementCooldownHours ?? 0,
         leaderboardEnabled: c.leaderboardEnabled ?? false,
         recentWinsEnabled: c.recentWinsEnabled ?? false,
@@ -3401,6 +3479,39 @@ function ConfigAdmin() {
                 value={Number(form[key] ?? 0)}
                 onChange={(e) =>
                     setForm((f) => ({ ...f, [key]: Number(e.target.value) }))
+                }
+            />
+        </label>
+    );
+
+    const GAME_LABEL: Record<'keno' | 'crash' | 'pool' | 'werk', string> = {
+        keno: 'Keno',
+        crash: 'Crash',
+        pool: 'Pool',
+        werk: 'Werk',
+    };
+
+    // Per-game commission %  Bingo keeps using the plain `referralCommissionPct`
+    // field above; these four write into the referralCommissionPctByGame map.
+    const gameCommissionField = (
+        game: 'keno' | 'crash' | 'pool' | 'werk',
+    ) => (
+        <label className='adm-field' key={game}>
+            <span>{GAME_LABEL[game]}</span>
+            <input
+                className='input'
+                type='number'
+                min={0}
+                max={100}
+                value={Number(form.referralCommissionPctByGame?.[game] ?? 0)}
+                onChange={(e) =>
+                    setForm((f) => ({
+                        ...f,
+                        referralCommissionPctByGame: {
+                            ...f.referralCommissionPctByGame,
+                            [game]: Number(e.target.value),
+                        },
+                    }))
                 }
             />
         </label>
@@ -3523,9 +3634,20 @@ function ConfigAdmin() {
                 <div className='adm-field-grid'>
                     {field(
                         'referralCommissionPct',
-                        'Global Default Commission %',
-                        "paid to a player's referring agent, on that player's Bingo GGR. An agent's own override (set on their agent profile) takes priority over this default.",
+                        'Bingo Commission %',
+                        "paid to a player's referring agent, on that player's Bingo GGR (stake × house edge). An agent's own override (set on their agent profile) takes priority over this default.",
                     )}
+                </div>
+                <p className='adm-field-hint' style={{ margin: '4px 16px' }}>
+                    Other games (flat % of stake  no house-edge multiplier).
+                    Same override precedence: an agent's own per-game override
+                    beats these defaults.
+                </p>
+                <div className='adm-field-grid'>
+                    {gameCommissionField('keno')}
+                    {gameCommissionField('crash')}
+                    {gameCommissionField('pool')}
+                    {gameCommissionField('werk')}
                 </div>
             </div>
 
@@ -4129,6 +4251,10 @@ function ConfigHistoryAdmin() {
     const CONFIG_TYPE_LABEL: Record<ConfigChangeLog['configType'], string> = {
         global_referral_commission: 'Global referral commission %',
         agent_referral_commission: 'Agent referral commission override',
+        global_referral_commission_by_game:
+            'Global per-game referral commission %',
+        agent_referral_commission_by_game:
+            'Agent per-game referral commission override',
         withdrawal_fee_range: 'Withdrawal fee range',
     };
 

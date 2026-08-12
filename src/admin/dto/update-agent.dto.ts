@@ -66,4 +66,11 @@ export class UpdateAgentDto {
   @Min(0)
   @Max(100)
   referralCommissionPct?: number | null;
+
+  /** This agent's per-game referral-commission % overrides (keno/crash/pool/werk). Missing key = no override for that game. */
+  @IsOptional()
+  @IsObject()
+  referralCommissionPctByGame?: Partial<
+    Record<'keno' | 'crash' | 'pool' | 'werk', number>
+  >;
 }

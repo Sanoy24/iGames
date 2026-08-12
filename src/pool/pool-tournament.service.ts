@@ -17,6 +17,7 @@ import { PoolTournament } from './entities/pool-tournament.entity';
 import { PoolTournamentPlayer } from './entities/pool-tournament-player.entity';
 import { PoolMatch } from './entities/pool-match.entity';
 import { mulberry32 } from './engine/rack';
+import { settleGameReferralCommission } from '../agents/game-referral-commission.util';
 
 const log2 = (n: number) => Math.round(Math.log2(n));
 const winnerUserIdOf = (m: PoolMatch): string | null =>
@@ -359,6 +360,58 @@ export class PoolTournamentService {
             );
         });
         this.logger.log(`Tournament ${t.id} won by ${winnerId}`);
+
+        void this.settleReferralCommission(t.id).catch((err) =>
+            this.logger.error(
+                'Pool tournament referral commission failed',
+                err instanceof Error ? err.stack : err,
+            ),
+        );
+    }
+
+    /**
+     * Credit each real entrant's commission-eligible agent their commission on
+     * that entrant's flat entry fee (every entrant pays the same
+     * `entryFeeMinor` regardless of how far they got  flat % of stake, no
+     * house-edge multiplier). Shares the `pool_referral_commission` source
+     * type with casual-match commission (see `PoolMatchService.settleReferralCommission`)
+     * since both represent the same "pool" commission bucket; they never
+     * collide because each is keyed by a different `referenceId`
+     * (tournamentId here vs matchId there). Mirrors
+     * `BingoService.settleReferralCommission`.
+     */
+    async settleReferralCommission(tournamentId: string): Promise<void> {
+        const tournament = await this.tournamentRepo.findOneBy({
+            id: tournamentId,
+        });
+        if (!tournament || tournament.entryFeeMinor <= 0) return;
+
+        const rows: Array<{ agentId: string; entrants: number | string }> =
+            await this.dataSource.query(
+                `SELECT COALESCE(u.referredByAgentId, u.assignedAgentId) AS agentId,
+                        COUNT(*) entrants
+                   FROM pool_tournament_players p
+                   JOIN users u ON u.id = p.userId
+                  WHERE p.tournamentId = ?
+                    AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+                    AND COALESCE(u.referredByAgentId, u.assignedAgentId) IS NOT NULL
+                  GROUP BY COALESCE(u.referredByAgentId, u.assignedAgentId)`,
+                [tournamentId],
+            );
+
+        await settleGameReferralCommission({
+            dataSource: this.dataSource,
+            walletService: this.walletService,
+            game: 'pool',
+            referenceId: tournamentId,
+            agentStakes: rows.map((r) => ({
+                agentId: r.agentId,
+                stakedMinor: Number(r.entrants) * tournament.entryFeeMinor,
+            })),
+            houseEdgePct: null,
+            sourceType: 'pool_referral_commission',
+            logger: this.logger,
+        });
     }
 }
 

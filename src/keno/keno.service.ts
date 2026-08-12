@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ConflictException,
     Injectable,
+    Logger,
     NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -17,6 +18,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { GamesService } from '../games/games.service';
 import { User } from '../users/entities/user.entity';
+import { settleGameReferralCommission } from '../agents/game-referral-commission.util';
 import { CreateKenoConfigDto } from './dto/create-keno-config.dto';
 import { KenoRulesService } from './keno-rules.service';
 import { KenoConfig } from './entities/keno-config.entity';
@@ -56,6 +58,8 @@ export type KenoDrawResponse = {
 
 @Injectable()
 export class KenoService {
+    private readonly logger = new Logger(KenoService.name);
+
     constructor(
         private readonly dataSource: DataSource,
         @InjectRepository(KenoConfig)
@@ -559,6 +563,42 @@ export class KenoService {
             }
 
             return this.toDrawResponse(draw);
+        });
+    }
+
+    /**
+     * Credit each real player's commission-eligible agent their commission on
+     * that player's stake in this draw (flat % of stake  Keno has no
+     * house-edge field to multiply by, unlike Bingo/Crash). Mirrors
+     * `BingoService.settleReferralCommission`; called fire-and-forget from
+     * `KenoScheduler` after a draw settles.
+     */
+    async settleReferralCommission(drawId: string): Promise<void> {
+        const rows: Array<{ agentId: string; staked: number | string }> =
+            await this.dataSource.query(
+                `SELECT COALESCE(u.referredByAgentId, u.assignedAgentId) AS agentId,
+                        COALESCE(SUM(t.stakeMinor),0) staked
+                   FROM keno_tickets t
+                   JOIN users u ON u.id = t.userId
+                  WHERE t.drawId = ? AND t.status <> 'cancelled'
+                    AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+                    AND COALESCE(u.referredByAgentId, u.assignedAgentId) IS NOT NULL
+                  GROUP BY COALESCE(u.referredByAgentId, u.assignedAgentId)`,
+                [drawId],
+            );
+
+        await settleGameReferralCommission({
+            dataSource: this.dataSource,
+            walletService: this.walletService,
+            game: 'keno',
+            referenceId: drawId,
+            agentStakes: rows.map((r) => ({
+                agentId: r.agentId,
+                stakedMinor: Number(r.staked),
+            })),
+            houseEdgePct: null,
+            sourceType: 'keno_referral_commission',
+            logger: this.logger,
         });
     }
 

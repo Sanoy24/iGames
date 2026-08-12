@@ -136,6 +136,17 @@ export class User {
     referralCommissionPct?: number | null;
 
     /**
+     * AGENT-specific per-game overrides of `SystemConfig.referralCommissionPctByGame`,
+     * for the games introduced after Bingo (which keeps using the scalar
+     * `referralCommissionPct` above). A missing key = no override for that game,
+     * falls back to the global default for that game.
+     */
+    @Column({ type: 'json', nullable: true })
+    referralCommissionPctByGame?: Partial<
+        Record<'keno' | 'crash' | 'pool' | 'werk', number>
+    > | null;
+
+    /**
      * AGENT-specific PERSISTENT label for their auto-managed Bingo room (per-agent
      * room mode  see BingoService.ensureAgentRooms). Null = no override, the
      * room falls back to the default "<displayName> · Bingo" name. Unlike a

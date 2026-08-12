@@ -30,6 +30,9 @@ function harness(opts: {
   const dataSource = {
     transaction: async (cb: (m: any) => unknown) =>
       cb({ getRepository: (E: any) => (E === PoolTournament ? tRepoTx : {}) }),
+    // No entrants seeded by default (empty rows)  referral-commission settlement
+    // then short-circuits before doing anything, same as "nothing to do".
+    query: jest.fn().mockResolvedValue([]),
   } as unknown as DataSource;
 
   const poolService = {

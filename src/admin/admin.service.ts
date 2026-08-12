@@ -24,7 +24,10 @@ import {
     assertNoOverlap,
     computeCoverageGaps,
 } from '../wallet/withdrawal-fee-range.util';
-import { AgentsService } from '../agents/agents.service';
+import {
+    AgentsService,
+    REFERRAL_COMMISSION_SOURCE_TYPES,
+} from '../agents/agents.service';
 import { CreateShiftDto } from '../agents/dto/create-shift.dto';
 import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -103,6 +106,8 @@ export class AdminService implements OnApplicationBootstrap {
             key: 'global',
         });
         const previousReferralPct = config?.referralCommissionPct ?? 0;
+        const previousReferralPctByGame =
+            config?.referralCommissionPctByGame ?? null;
         if (!config) {
             config = this.systemConfigRepository.create({
                 key: 'global',
@@ -122,6 +127,19 @@ export class AdminService implements OnApplicationBootstrap {
                 entityId: null,
                 previousValue: previousReferralPct,
                 newValue: saved.referralCommissionPct,
+                changedByAdminId: adminUserId,
+            });
+        }
+        if (
+            update.referralCommissionPctByGame !== undefined &&
+            JSON.stringify(update.referralCommissionPctByGame) !==
+                JSON.stringify(previousReferralPctByGame)
+        ) {
+            await this.logConfigChange({
+                configType: 'global_referral_commission_by_game',
+                entityId: null,
+                previousValue: previousReferralPctByGame,
+                newValue: saved.referralCommissionPctByGame ?? null,
                 changedByAdminId: adminUserId,
             });
         }
@@ -187,6 +205,7 @@ export class AdminService implements OnApplicationBootstrap {
     ): Promise<User> {
         const before = await this.usersService.findById(agentId);
         const previousPct = before?.referralCommissionPct ?? null;
+        const previousPctByGame = before?.referralCommissionPctByGame ?? null;
         const updated = await this.usersService.updateAgentUser(agentId, dto);
         if (
             dto.referralCommissionPct !== undefined &&
@@ -197,6 +216,19 @@ export class AdminService implements OnApplicationBootstrap {
                 entityId: agentId,
                 previousValue: previousPct,
                 newValue: updated.referralCommissionPct ?? null,
+                changedByAdminId: adminUserId,
+            });
+        }
+        if (
+            dto.referralCommissionPctByGame !== undefined &&
+            JSON.stringify(dto.referralCommissionPctByGame) !==
+                JSON.stringify(previousPctByGame)
+        ) {
+            await this.logConfigChange({
+                configType: 'agent_referral_commission_by_game',
+                entityId: agentId,
+                previousValue: previousPctByGame,
+                newValue: updated.referralCommissionPctByGame ?? null,
                 changedByAdminId: adminUserId,
             });
         }
@@ -1337,13 +1369,17 @@ export class AdminService implements OnApplicationBootstrap {
         }>
     > {
         // Bots are excluded from tickets/players/GGR  bot stakes aren't real revenue.
-        // "Game commission" is the referral commission (bingo_referral_commission
-        // % of referred players' service fee). There is no room-owner commission
-        // (removed); any pre-existing bingo_room_commission rows are historical and
-        // still folded into the amount total below so past real earnings aren't
-        // dropped from the lifetime figure, but they don't grow going forward.
-        // Withdrawal fees are tracked separately  payout_custody is deliberately
-        // excluded everywhere below, it reimburses cash already paid out, not earnings.
+        // "Game commission" is referral commission across every game that pays it
+        // (see REFERRAL_COMMISSION_SOURCE_TYPES  Bingo, Keno, Crash, Pool, Werk).
+        // There is no room-owner commission (removed); any pre-existing
+        // bingo_room_commission rows are historical and still folded into the
+        // amount total below so past real earnings aren't dropped from the
+        // lifetime figure, but they don't grow going forward. Withdrawal fees are
+        // tracked separately  payout_custody is deliberately excluded everywhere
+        // below, it reimburses cash already paid out, not earnings.
+        const referralSourceTypesSql = REFERRAL_COMMISSION_SOURCE_TYPES.map(
+            (t) => `'${t}'`,
+        ).join(', ');
         const rows: Array<{
             id: string;
             displayName: string;
@@ -1397,7 +1433,7 @@ export class AdminService implements OnApplicationBootstrap {
          LEFT JOIN (
            SELECT userId, SUM(amountMinor) commission, COUNT(*) commissionCount
              FROM ledger_entries
-            WHERE entryType = 'agent_receipt' AND sourceType IN ('bingo_room_commission', 'bingo_referral_commission')
+            WHERE entryType = 'agent_receipt' AND sourceType IN ('bingo_room_commission', ${referralSourceTypesSql})
             GROUP BY userId
          ) cm ON cm.userId = u.id
          LEFT JOIN (
@@ -1422,7 +1458,7 @@ export class AdminService implements OnApplicationBootstrap {
          LEFT JOIN (
            SELECT userId, SUM(amountMinor) referralCommission
              FROM ledger_entries
-            WHERE entryType = 'agent_receipt' AND sourceType = 'bingo_referral_commission'
+            WHERE entryType = 'agent_receipt' AND sourceType IN (${referralSourceTypesSql})
             GROUP BY userId
          ) rc ON rc.userId = u.id
          LEFT JOIN (

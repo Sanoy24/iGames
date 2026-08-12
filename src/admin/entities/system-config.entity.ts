@@ -69,6 +69,18 @@ export class SystemConfig {
     referralCommissionPct: number;
 
     /**
+     * Per-game referral-commission % defaults for the games introduced after
+     * Bingo (which keeps using the scalar column above for backward
+     * compatibility). Keys: 'keno' | 'crash' | 'pool' | 'werk'. A missing key
+     * means 0%  no commission  for that game. Same override precedence as
+     * Bingo: an agent's own `User.referralCommissionPctByGame` entry wins when set.
+     */
+    @Column({ type: 'json', nullable: true })
+    referralCommissionPctByGame?: Partial<
+        Record<'keno' | 'crash' | 'pool' | 'werk', number>
+    > | null;
+
+    /**
      * Minimum hours an agent must wait between their own self-service settlement
      * requests (see AgentsService.requestSettlement). 0 = no cooldown. Does not
      * apply to settlements an admin creates directly.

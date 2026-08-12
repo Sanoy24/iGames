@@ -39,6 +39,10 @@ export type User = {
     referralCode?: string | null;
     /** This agent's referral-commission % override. Null = use the global default. */
     referralCommissionPct?: number | null;
+    /** This agent's per-game referral-commission % overrides (keno/crash/pool/werk). Missing key = no override for that game. */
+    referralCommissionPctByGame?: Partial<
+        Record<'keno' | 'crash' | 'pool' | 'werk', number>
+    > | null;
     createdAt?: string;
     updatedAt?: string;
 };

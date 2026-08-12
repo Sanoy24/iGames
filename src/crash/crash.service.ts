@@ -17,6 +17,7 @@ import { CrashConfig } from './entities/crash-config.entity';
 import { CrashRound } from './entities/crash-round.entity';
 import { CrashBet } from './entities/crash-bet.entity';
 import { PlaceCrashBetDto } from './dto/place-crash-bet.dto';
+import { settleGameReferralCommission } from '../agents/game-referral-commission.util';
 
 export type CrashRoundResponse = {
     id: string;
@@ -372,6 +373,45 @@ export class CrashService {
                 `Crash round ${round.id} settled. ${activeBets.length} bets lost, ${wonBets.length} won.`,
             );
             return this.toRoundResponse(round, true);
+        });
+    }
+
+    /**
+     * Credit each real player's commission-eligible agent their commission on
+     * that player's stake in this round, using the same "expected house
+     * margin" formula Bingo uses: stake × houseEdgePct%. Crash's edge isn't a
+     * literal deducted fee (it shapes the crash-point RNG curve instead), but
+     * it's still the correct expected-margin figure over volume. Mirrors
+     * `BingoService.settleReferralCommission`; called fire-and-forget from
+     * `CrashScheduler` after a round crashes and settles.
+     */
+    async settleReferralCommission(roundId: string): Promise<void> {
+        const cfg = await this.configRepo.findOneBy({ key: 'default' });
+        const rows: Array<{ agentId: string; staked: number | string }> =
+            await this.dataSource.query(
+                `SELECT COALESCE(u.referredByAgentId, u.assignedAgentId) AS agentId,
+                        COALESCE(SUM(b.stakeMinor),0) staked
+                   FROM crash_bets b
+                   JOIN users u ON u.id = b.userId
+                  WHERE b.roundId = ?
+                    AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+                    AND COALESCE(u.referredByAgentId, u.assignedAgentId) IS NOT NULL
+                  GROUP BY COALESCE(u.referredByAgentId, u.assignedAgentId)`,
+                [roundId],
+            );
+
+        await settleGameReferralCommission({
+            dataSource: this.dataSource,
+            walletService: this.walletService,
+            game: 'crash',
+            referenceId: roundId,
+            agentStakes: rows.map((r) => ({
+                agentId: r.agentId,
+                stakedMinor: Number(r.staked),
+            })),
+            houseEdgePct: cfg?.houseEdgePct ?? 0,
+            sourceType: 'crash_referral_commission',
+            logger: this.logger,
         });
     }
 

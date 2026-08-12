@@ -232,6 +232,15 @@ export class CrashScheduler
             this.logger.log(
                 `Crash round ${roundId} crashed at ${((round.crashPointX100 ?? 0) / 100).toFixed(2)}× after ${elapsedMs}ms`,
             );
+
+            void this.crashService
+                .settleReferralCommission(roundId)
+                .catch((err) =>
+                    this.logger.error(
+                        'Crash referral commission failed',
+                        err instanceof Error ? err.stack : err,
+                    ),
+                );
         } catch (err) {
             this.logger.error(
                 `Failed to settle crash round ${roundId}`,

@@ -575,6 +575,10 @@ export type SystemConfig = {
     agentRoomsEnabled?: boolean;
     /** Global default % of a referred player's Bingo GGR paid to the referring agent. */
     referralCommissionPct?: number;
+    /** Global default referral-commission % per non-Bingo game (flat % of stake). */
+    referralCommissionPctByGame?: Partial<
+        Record<'keno' | 'crash' | 'pool' | 'werk', number>
+    >;
     /** Minimum hours between an agent's own self-service settlement requests. 0 = no cooldown. */
     agentSettlementCooldownHours?: number;
     /** Player-facing Leaderboard tab. Off shows a Coming Soon placeholder to everyone. */
@@ -601,6 +605,8 @@ export type ConfigChangeLog = {
     configType:
         | 'global_referral_commission'
         | 'agent_referral_commission'
+        | 'global_referral_commission_by_game'
+        | 'agent_referral_commission_by_game'
         | 'withdrawal_fee_range';
     entityId: string | null;
     previousValue: string | null;

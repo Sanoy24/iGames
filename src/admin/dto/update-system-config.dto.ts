@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsObject, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -50,6 +50,13 @@ export class UpdateSystemConfigDto {
   @Min(0)
   @Max(100)
   referralCommissionPct?: number;
+
+  /** Global default referral-commission % per game (keno/crash/pool/werk). Bingo uses referralCommissionPct above. */
+  @IsOptional()
+  @IsObject()
+  referralCommissionPctByGame?: Partial<
+    Record<'keno' | 'crash' | 'pool' | 'werk', number>
+  >;
 
   /** Minimum hours between an agent's own self-service settlement requests. 0 = no cooldown. */
   @IsOptional()

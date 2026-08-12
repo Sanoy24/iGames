@@ -9,6 +9,8 @@ import {
 export type ConfigChangeType =
     | 'global_referral_commission'
     | 'agent_referral_commission'
+    | 'global_referral_commission_by_game'
+    | 'agent_referral_commission_by_game'
     | 'withdrawal_fee_range';
 
 /**

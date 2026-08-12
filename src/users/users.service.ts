@@ -658,6 +658,9 @@ export class UsersService {
             agentPermissions?: { deposit: boolean; withdraw: boolean };
             status?: 'active' | 'suspended' | 'closed';
             referralCommissionPct?: number | null;
+            referralCommissionPctByGame?: Partial<
+                Record<'keno' | 'crash' | 'pool' | 'werk', number>
+            >;
         },
     ): Promise<User> {
         const user = await this.userRepository.findOneBy({ id: agentId });
@@ -702,6 +705,9 @@ export class UsersService {
             user.agentPermissions = update.agentPermissions;
         if (update.referralCommissionPct !== undefined)
             user.referralCommissionPct = update.referralCommissionPct;
+        if (update.referralCommissionPctByGame !== undefined)
+            user.referralCommissionPctByGame =
+                update.referralCommissionPctByGame;
 
         await this.userRepository.save(user);
         return user;

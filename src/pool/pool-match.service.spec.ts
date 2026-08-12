@@ -71,6 +71,9 @@ function harness() {
                         ? { insert: insertShot }
                         : { update: updateMatch },
             }),
+        // No agent-eligible seats seeded by default (empty rows)  referral-commission
+        // settlement then short-circuits before doing anything.
+        query: jest.fn().mockResolvedValue([]),
     } as unknown as DataSource;
 
     const rng = {

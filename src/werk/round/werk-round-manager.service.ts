@@ -21,6 +21,7 @@ import { WerkParticipant } from '../entities/werk-participant.entity';
 import { WerkConfig } from '../entities/werk-config.entity';
 import { User } from '../../users/entities/user.entity';
 import { WerkService } from '../werk.service';
+import { settleGameReferralCommission } from '../../agents/game-referral-commission.util';
 import { buildBotRoster, type WerkBotDescriptor } from '../werk-bots';
 import {
     buildLayout,
@@ -842,6 +843,13 @@ export class WerkRoundManager
                     this.roundView(result.round),
                 );
                 this.logger.log(`Werk round ${result.round.id} settled`);
+
+                void this.settleReferralCommission(result.round.id).catch(
+                    (err) =>
+                        this.logger.error(
+                            `Werk referral commission failed: ${err instanceof Error ? err.message : err}`,
+                        ),
+                );
             }
         } catch (err) {
             this.logger.error(
@@ -852,6 +860,43 @@ export class WerkRoundManager
         } finally {
             live.settling = false;
         }
+    }
+
+    /**
+     * Credit each real player's commission-eligible agent their commission on
+     * that player's stake in this round (flat % of stake  Werk has no
+     * house-edge field to multiply by). Only `settled` participants count
+     * (excludes `refunded` rows  a refund isn't spend). Mirrors
+     * `BingoService.settleReferralCommission`; called fire-and-forget right
+     * after a round settles.
+     */
+    private async settleReferralCommission(roundId: string): Promise<void> {
+        const rows: Array<{ agentId: string; staked: number | string }> =
+            await this.dataSource.query(
+                `SELECT COALESCE(u.referredByAgentId, u.assignedAgentId) AS agentId,
+                        COALESCE(SUM(p.stakeMinor),0) staked
+                   FROM werk_participants p
+                   JOIN users u ON u.id = p.userId
+                  WHERE p.roundId = ? AND p.status = 'settled'
+                    AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+                    AND COALESCE(u.referredByAgentId, u.assignedAgentId) IS NOT NULL
+                  GROUP BY COALESCE(u.referredByAgentId, u.assignedAgentId)`,
+                [roundId],
+            );
+
+        await settleGameReferralCommission({
+            dataSource: this.dataSource,
+            walletService: this.walletService,
+            game: 'werk',
+            referenceId: roundId,
+            agentStakes: rows.map((r) => ({
+                agentId: r.agentId,
+                stakedMinor: Number(r.staked),
+            })),
+            houseEdgePct: null,
+            sourceType: 'werk_referral_commission',
+            logger: this.logger,
+        });
     }
 
     // ── Player actions (REST + socket) ───────────────────────────────────────────

@@ -2958,7 +2958,7 @@ function AgentsAdmin() {
                         </div>
                         <label className='adm-field'>
                             <span>
-                                Referral Commission % Override{' '}
+                                Bingo Commission % Override{' '}
                                 <em className='adm-field-hint'>
                                     {' '}
                                     blank = use the global default

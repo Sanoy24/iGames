@@ -46,6 +46,11 @@ export class RedisLockService implements OnModuleDestroy {
         }
     }
 
+    /** Current ioredis connection status (e.g. "ready", "connecting", "reconnecting"). */
+    getStatus(): string {
+        return this.redis.status;
+    }
+
     async releaseLock(lock: Lock): Promise<void> {
         if (this.redis.status !== 'ready') {
             return;

@@ -6,7 +6,9 @@ import {
     PrimaryGeneratedColumn,
 } from 'typeorm';
 
-export type BingoOperationalAlertKind = 'pattern_resolution_failed';
+export type BingoOperationalAlertKind =
+    | 'pattern_resolution_failed'
+    | 'redis_lock_unavailable';
 
 /**
  * DB-visible trail of operational failures in the Bingo draw/settlement path

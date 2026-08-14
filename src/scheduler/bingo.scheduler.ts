@@ -107,6 +107,14 @@ export class BingoScheduler
         );
         if (!lock) {
             this.isRunning = false;
+            // Distinguish "Redis unreachable" (nothing anywhere is drawing
+            // needs an operator) from normal cross-instance lock contention
+            // (another instance already has it this tick  expected, not alert-worthy).
+            if (this.lockService.getStatus() !== 'ready') {
+                await this.bingoService
+                    .logRedisLockUnavailable(this.lockService.getStatus())
+                    .catch(() => undefined);
+            }
             return;
         }
 

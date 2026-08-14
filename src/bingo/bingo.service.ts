@@ -269,6 +269,11 @@ export class BingoService implements OnModuleInit {
         number
     >();
 
+    // Redis being unreachable stalls every running room identically (the draw
+    // lock can never be acquired), so throttle globally rather than per-room
+    // otherwise it'd log/alert on every failed scheduler tick (every 250ms).
+    private redisLockAlertLastLoggedAt = 0;
+
     async onModuleInit(): Promise<void> {
         try {
             await this.seedBuiltInPatterns();
@@ -1990,6 +1995,31 @@ export class BingoService implements OnModuleInit {
             ...r,
             stalledSeconds: Number(r.stalledSeconds),
         }));
+    }
+
+    /**
+     * Records that the Bingo draw scheduler couldn't acquire its Redis lock
+     * because Redis itself is unreachable (as opposed to the lock being held
+     * by another instance, which is normal contention and not alert-worthy).
+     * While this persists, no room anywhere draws, starts, or completes  the
+     * whole game is silently frozen from a player's perspective, so this needs
+     * to surface somewhere an operator will see it. Throttled to once every 2
+     * minutes so a prolonged outage doesn't flood the alerts table/log.
+     */
+    async logRedisLockUnavailable(redisStatus: string): Promise<void> {
+        const now = Date.now();
+        if (now - this.redisLockAlertLastLoggedAt < 2 * 60 * 1000) return;
+        this.redisLockAlertLastLoggedAt = now;
+        const message = `Bingo draw scheduler is stalled: Redis is unreachable (status="${redisStatus}"). No numbers are being drawn and no rooms will start or complete until Redis reconnects.`;
+        this.logger.error(message);
+        await this.bingoOperationalAlertRepository
+            .save(
+                this.bingoOperationalAlertRepository.create({
+                    kind: 'redis_lock_unavailable',
+                    message,
+                }),
+            )
+            .catch(() => undefined);
     }
 
     /** Recent operational alerts (see BingoOperationalAlert), most-recent-first. */

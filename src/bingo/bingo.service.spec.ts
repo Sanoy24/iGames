@@ -2417,7 +2417,123 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
     });
 
-    it('refuses the same cartela ticket from winning two visible Derash places', async () => {
+    it('allows the same ticket to also win a different Derash place it independently qualifies for', async () => {
+        // A card that completes two lines on one draw satisfies both 1st (Any
+        // Two Lines) and 2nd (Any Line) at once  it should collect both, not
+        // just the one the settlement loop happens to check first.
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-18',
+                    winnerUserId: 'player-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '9812',
+                    winnerCartelaNumber: 18,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-18'] },
+        });
+        const winner = {
+            id: 'ticket-18',
+            userId: 'player-1',
+            cartelaNumber: 18,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: ['1st'],
+            payoutMinor: 60,
+            status: 'won',
+            settlementStatus: 'settled',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue({
+                id: 'player-1',
+                displayName: 'Hana',
+                phoneNumber: '+251912349812',
+                productMetadata: null,
+            }),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 120,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
+            manager,
+        });
+
+        expect(awarded).toBe(true);
+        expect(room.winnersByTier['2nd']).toEqual(['ticket-18']);
+        expect((room.settlementSummary ?? {})['2nd']).toBeDefined();
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('allows a card re-issued under a different ticket id (same cartela) to also win a different place', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 1,
+                    winnerId: 'ticket-original-18',
+                    winnerUserId: 'bot-1',
+                    winnerDisplayName: 'Hana',
+                    winnerPhoneLast4: '9812',
+                    winnerIsBot: true,
+                    winnerCartelaNumber: 18,
+                },
+            },
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-original-18'] },
+        });
+        const duplicateCartelaWinner = {
+            id: 'ticket-duplicate-18',
+            userId: 'player-2',
+            cartelaNumber: 18,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue({
+                id: 'player-2',
+                displayName: 'Samuel',
+                phoneNumber: '+251912346023',
+                productMetadata: null,
+            }),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winner: duplicateCartelaWinner,
+            place: '2nd',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 120,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
+            manager,
+        });
+
+        expect(awarded).toBe(true);
+        expect(room.winnersByTier['2nd']).toEqual(['ticket-duplicate-18']);
+        expect((room.settlementSummary ?? {})['2nd']).toBeDefined();
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('still refuses re-awarding the SAME place a second time to a ticket that already won it', async () => {
         const { service, walletService } = makeService({ rooms: [] });
         const room = makeRoom({
             winMode: 'prefilled',
@@ -2451,11 +2567,13 @@ describe('BingoService cartela lifecycle guards', () => {
             save: jest.fn().mockImplementation(async (value) => value),
         };
 
+        // Re-evaluating '1st'  the same place this ticket already won  must
+        // still be blocked; only a DIFFERENT place should be allowed through.
         const awarded = await (service as any).awardDerashPlace({
             room,
             winner,
-            place: '2nd',
-            pattern: { id: 'pattern-1', name: 'Any Line' },
+            place: '1st',
+            pattern: { id: 'pattern-1', name: 'Any Two Lines' },
             totalPotMinor: 120,
             houseEdgePct: 20,
             cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
@@ -2464,59 +2582,6 @@ describe('BingoService cartela lifecycle guards', () => {
 
         expect(awarded).toBe(false);
         expect(manager.findOne).not.toHaveBeenCalled();
-        expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
-        expect(walletService.creditInSession).not.toHaveBeenCalled();
-    });
-
-    it('refuses a duplicate cartela number from winning two visible Derash places', async () => {
-        const { service, walletService } = makeService({ rooms: [] });
-        const room = makeRoom({
-            winMode: 'prefilled',
-            settlementSummary: {
-                '1st': {
-                    winnerCount: 1,
-                    winnerId: 'ticket-original-18',
-                    winnerUserId: 'bot-1',
-                    winnerDisplayName: 'Hana',
-                    winnerPhoneLast4: '9812',
-                    winnerIsBot: true,
-                    winnerCartelaNumber: 18,
-                },
-            },
-            settledTiers: ['1st'],
-            winnersByTier: { '1st': ['ticket-original-18'] },
-        });
-        const duplicateCartelaWinner = {
-            id: 'ticket-duplicate-18',
-            userId: 'bot-1',
-            cartelaNumber: 18,
-            grid: [[1]],
-            markedNumbers: [1],
-            wonTiers: [],
-            payoutMinor: 0,
-            status: 'active',
-            settlementStatus: 'pending',
-            walletCredits: [],
-        };
-        const manager = {
-            findOne: jest.fn(),
-            save: jest.fn().mockImplementation(async (value) => value),
-        };
-
-        const awarded = await (service as any).awardDerashPlace({
-            room,
-            winner: duplicateCartelaWinner,
-            place: '2nd',
-            pattern: { id: 'pattern-1', name: 'Any Line' },
-            totalPotMinor: 120,
-            houseEdgePct: 20,
-            cfg: { prefilledFirstPlacePct: 60, prefilledSecondPlacePct: 40 },
-            manager,
-        });
-
-        expect(awarded).toBe(false);
-        expect(manager.findOne).not.toHaveBeenCalled();
-        expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
         expect(walletService.creditInSession).not.toHaveBeenCalled();
     });
 

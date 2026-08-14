@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt, Max, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class PurchaseKenoTicketDto {
   @IsArray()
@@ -8,4 +8,9 @@ export class PurchaseKenoTicketDto {
   @Min(1, { each: true })
   @Max(80, { each: true })
   selectedNumbers: number[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  stakeMinor?: number;
 }

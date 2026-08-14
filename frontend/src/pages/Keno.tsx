@@ -85,6 +85,7 @@ function useCountdown(targetIso: string | null | undefined) {
 const DEFAULT_ALLOWED_SPOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 const DEFAULT_KENO_INTERVAL_SECONDS = 40;
 const KENO_REVEAL_DELAY_MS = 120;
+const MAX_TICKETS_PER_DRAW = 5;
 
 function getKenoIntervalSeconds(cfg: KenoConfig) {
     if (cfg.autoScheduleIntervalSeconds !== undefined)
@@ -106,9 +107,25 @@ function formatKenoInterval(cfg: KenoConfig, t: TFunction) {
 type KenoDrawCompletedPayload = { drawId?: string; drawnNumbers?: number[] };
 type KenoProps = { onBack: () => void };
 
+/** A locally-built ticket not yet purchased  lives in the cart until START. */
+type DraftTicket = {
+    localId: string;
+    selectedNumbers: number[];
+    stakeMinor: number;
+};
+
+/** Normalized shape shared by cart drafts and purchased tickets, for rendering. */
+type TicketRow = {
+    key: string;
+    selectedNumbers: number[];
+    stakeMinor: number;
+    removable: boolean;
+    localId?: string;
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-type TileState = 'idle' | 'selected' | 'drawn' | 'hit' | 'miss';
+type TileState = 'idle' | 'selected' | 'drawn' | 'drawnMiss' | 'hit' | 'miss';
 
 function getTileState(
     value: number,
@@ -119,6 +136,7 @@ function getTileState(
     const isSel = selected.includes(value);
     const isRev = revealed.includes(value);
     if (isSel && isRev) return 'hit';
+    if (isRev && drawComplete) return 'drawnMiss';
     if (isRev) return 'drawn';
     if (isSel && drawComplete) return 'miss';
     if (isSel) return 'selected';
@@ -133,7 +151,8 @@ const TILE_CLS: Record<TileState, string> = {
     selected: 'bg-[var(--gold)] border-[var(--gold)] text-black',
     drawn: 'bg-violet-950/70 border-violet-500/50 text-violet-300',
     hit: 'bg-emerald-500 border-emerald-400 text-black',
-    miss: 'bg-transparent border-white/[0.04] text-white/20',
+    miss: 'bg-[var(--gold)]/10 border-[var(--gold)]/40 text-amber-300',
+    drawnMiss: 'bg-red-950/30 border-red-500/20 text-red-400/50',
 };
 
 const KenoTile = memo(
@@ -179,10 +198,23 @@ const KenoTile = memo(
             transition={{ type: 'spring', stiffness: 420, damping: 22 }}
             onClick={onClick}
             disabled={disabled}
-            aria-pressed={state === 'selected' || state === 'hit'}
+            aria-pressed={
+                state === 'selected' || state === 'hit' || state === 'miss'
+            }
             className={`${TILE_BASE} ${TILE_CLS[state]}`}
         >
-            {value}
+            {state === 'drawnMiss' ? (
+                <>
+                    <span className='opacity-30'>{value}</span>
+                    <X
+                        size={14}
+                        strokeWidth={3}
+                        className='absolute inset-0 m-auto text-red-400/80 pointer-events-none'
+                    />
+                </>
+            ) : (
+                value
+            )}
             {state === 'hit' && (
                 <motion.span
                     initial={{ scale: 0, opacity: 0.8 }}
@@ -331,7 +363,8 @@ export function Keno({ onBack }: KenoProps) {
     const [tickets, setTickets] = useState<KenoTicket[]>([]);
     const [activeDraw, setActiveDraw] = useState<KenoDraw | null>(null);
     const [selectedNumbers, setSelectedNumbers] = useState<number[]>([]);
-    const [spotTarget, setSpotTarget] = useState(4);
+    const [cart, setCart] = useState<DraftTicket[]>([]);
+    const [betAmount, setBetAmount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
 
@@ -360,16 +393,10 @@ export function Keno({ onBack }: KenoProps) {
         netProfit: 0,
     });
 
-    // Pay-first-then-pick: the grid stays locked until the player has paid for the
-    // active draw. After paying we hold the ticket id and PATCH number edits to it.
-    const [paidTicketId, setPaidTicketId] = useState<string | null>(null);
-    const [savingPicks, setSavingPicks] = useState(false);
     const [bottomTab, setBottomTab] = useState<'draws' | 'tickets'>('draws');
 
     const ticketsRef = useRef<KenoTicket[]>([]);
-    const lastPurchasedDrawId = useRef<string | null>(null);
-    const syncedTicketRef = useRef<string | null>(null);
-    const patchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const betAmountInitialized = useRef(false);
 
     const scheduledAt =
         activeDraw?.status === 'open' ? activeDraw.scheduledAt : null;
@@ -383,18 +410,27 @@ export function Keno({ onBack }: KenoProps) {
     const allowedSpots = config?.allowedSpots?.length
         ? config.allowedSpots
         : DEFAULT_ALLOWED_SPOTS;
+    const maxSpot = useMemo(
+        () => Math.max(1, ...allowedSpots),
+        [allowedSpots],
+    );
     const numbers = useMemo(() => {
         const min = config?.numberMin ?? 1;
         const max = config?.numberMax ?? 80;
         return Array.from({ length: max - min + 1 }, (_, i) => min + i);
     }, [config]);
 
+    const minStake = config?.minStakeMinor ?? 1;
+    const maxStakeConfig = config?.maxStakeMinor ?? 100_000;
+    const defaultStake = config?.ticketPriceMinor ?? 10;
+    const betStep = Math.max(1, defaultStake);
+
     const ticketsByDrawId = useMemo(() => {
         const map = new Map<string, KenoTicket[]>();
-        for (const t of tickets) {
-            const list = map.get(t.drawId) ?? [];
-            list.push(t);
-            map.set(t.drawId, list);
+        for (const tk of tickets) {
+            const list = map.get(tk.drawId) ?? [];
+            list.push(tk);
+            map.set(tk.drawId, list);
         }
         return map;
     }, [tickets]);
@@ -406,6 +442,22 @@ export function Keno({ onBack }: KenoProps) {
     const drawComplete =
         revealedNumbers.length >= (config?.drawSize ?? 20) &&
         revealedNumbers.length > 0;
+
+    const currentDrawTickets = useMemo(
+        () =>
+            activeDraw
+                ? tickets.filter((tk) => tk.drawId === activeDraw.id)
+                : [],
+        [tickets, activeDraw],
+    );
+    const hasSubmittedForDraw = currentDrawTickets.length > 0;
+
+    const highlightNumbers = useMemo(() => {
+        if (!hasSubmittedForDraw) return selectedNumbers;
+        return [
+            ...new Set(currentDrawTickets.flatMap((tk) => tk.selectedNumbers)),
+        ];
+    }, [hasSubmittedForDraw, currentDrawTickets, selectedNumbers]);
 
     const loadKeno = useCallback(async () => {
         try {
@@ -420,11 +472,10 @@ export function Keno({ onBack }: KenoProps) {
             setDraws(nextDraws);
             setTickets(nextTickets);
             setActiveDraw(nextActiveDraw);
-            setSpotTarget((cur) =>
-                nextConfig.allowedSpots.includes(cur)
-                    ? cur
-                    : (nextConfig.allowedSpots[0] ?? 4),
-            );
+            if (!betAmountInitialized.current) {
+                betAmountInitialized.current = true;
+                setBetAmount(nextConfig.ticketPriceMinor);
+            }
         } catch (err) {
             addToast('error', getErrorMessage(err));
         } finally {
@@ -432,10 +483,23 @@ export function Keno({ onBack }: KenoProps) {
         }
     }, [addToast]);
 
+    const quickPickNumbers = useCallback(
+        (count: number) => {
+            const pool = [...numbers];
+            const picked: number[] = [];
+            for (let i = 0; i < count && pool.length > 0; i++) {
+                const idx = Math.floor(Math.random() * pool.length);
+                picked.push(pool.splice(idx, 1)[0]);
+            }
+            return picked.sort((a, b) => a - b);
+        },
+        [numbers],
+    );
+
     const attemptAutoPlayPurchase = useCallback(
         async (drawId: string) => {
             if (!config || !wallet) return;
-            if (wallet.availableMinor < config.ticketPriceMinor) {
+            if (wallet.availableMinor < betAmount) {
                 addToast('error', t('keno.autoStoppedBalance'));
                 setAutoPlayEnabled(false);
                 return;
@@ -460,21 +524,19 @@ export function Keno({ onBack }: KenoProps) {
             setSubmitting(true);
             try {
                 let picks = [...selectedNumbers];
-                if (picks.length !== spotTarget) {
-                    const pool = [...numbers];
-                    const randoms: number[] = [];
-                    for (let i = 0; i < spotTarget; i++) {
-                        const idx = Math.floor(Math.random() * pool.length);
-                        randoms.push(pool.splice(idx, 1)[0]);
-                    }
-                    picks = randoms.sort((a, b) => a - b);
+                if (picks.length === 0) {
+                    const count =
+                        allowedSpots[
+                            Math.floor(Math.random() * allowedSpots.length)
+                        ] ?? 4;
+                    picks = quickPickNumbers(count);
                     setSelectedNumbers(picks);
                 }
                 await kenoApi.purchaseTicket(
                     picks,
                     createIdempotencyKey('keno'),
+                    betAmount,
                 );
-                lastPurchasedDrawId.current = drawId;
                 const [nextWallet] = await Promise.all([
                     walletApi.getWallet(),
                     loadKeno(),
@@ -507,8 +569,9 @@ export function Keno({ onBack }: KenoProps) {
             config,
             wallet,
             selectedNumbers,
-            spotTarget,
-            numbers,
+            betAmount,
+            allowedSpots,
+            quickPickNumbers,
             addToast,
             loadKeno,
             setWallet,
@@ -537,7 +600,7 @@ export function Keno({ onBack }: KenoProps) {
             const drawn = payload.drawnNumbers ?? [];
             const drawId = payload.drawId ?? '';
             const hasTicket = ticketsRef.current.some(
-                (t) => t.drawId === drawId,
+                (tk) => tk.drawId === drawId,
             );
 
             setAnimatingDrawId(drawId);
@@ -547,12 +610,10 @@ export function Keno({ onBack }: KenoProps) {
             drawn.forEach((num, idx) => {
                 setTimeout(() => {
                     if (hasTicket) {
-                        const myTicket = ticketsRef.current.find(
-                            (t) => t.drawId === drawId,
-                        );
-                        soundEngine.reveal(
-                            myTicket?.selectedNumbers.includes(num),
-                        );
+                        const myNumbers = ticketsRef.current
+                            .filter((tk) => tk.drawId === drawId)
+                            .flatMap((tk) => tk.selectedNumbers);
+                        soundEngine.reveal(myNumbers.includes(num));
                     } else {
                         soundEngine.pop();
                     }
@@ -577,11 +638,18 @@ export function Keno({ onBack }: KenoProps) {
         if (
             autoPlayEnabled &&
             activeDraw?.status === 'open' &&
-            lastPurchasedDrawId.current !== activeDraw.id
+            currentDrawTickets.length === 0 &&
+            !submitting
         ) {
             void attemptAutoPlayPurchase(activeDraw.id);
         }
-    }, [autoPlayEnabled, activeDraw, attemptAutoPlayPurchase]);
+    }, [
+        autoPlayEnabled,
+        activeDraw,
+        currentDrawTickets.length,
+        submitting,
+        attemptAutoPlayPurchase,
+    ]);
 
     useEffect(() => {
         if (
@@ -591,13 +659,13 @@ export function Keno({ onBack }: KenoProps) {
         )
             return;
         const relevant = tickets.filter(
-            (t) =>
-                t.drawId === animatingDrawId &&
-                t.settlementStatus === 'settled',
+            (tk) =>
+                tk.drawId === animatingDrawId &&
+                tk.settlementStatus === 'settled',
         );
         const resultDraw = draws.find((d) => d.id === animatingDrawId);
         if (!resultDraw?.drawnNumbers.length) return;
-        const totalPayout = relevant.reduce((s, t) => s + t.payoutMinor, 0);
+        const totalPayout = relevant.reduce((s, tk) => s + tk.payoutMinor, 0);
 
         setGameState(totalPayout > 0 ? 'celebrating' : 'finished');
         const timer = setTimeout(() => {
@@ -622,7 +690,8 @@ export function Keno({ onBack }: KenoProps) {
                     roundsPlayed: prev.roundsPlayed + 1,
                     netProfit:
                         prev.netProfit +
-                        (totalPayout - (relevant[0]?.stakeMinor ?? 0)),
+                        (totalPayout -
+                            relevant.reduce((s, tk) => s + tk.stakeMinor, 0)),
                 }));
             }
             setAnimatingDrawId(null);
@@ -651,71 +720,47 @@ export function Keno({ onBack }: KenoProps) {
         return () => clearInterval(id);
     }, [countdownExpired, activeDraw]);
 
-    const drawOpen = !!activeDraw && activeDraw.status === 'open';
-    // The number grid is interactive only after the player has paid for the
-    // current open draw (and not while the draw is being revealed).
-    const gridLocked = !paidTicketId || !drawOpen || gameState === 'drawing';
-
-    const quickPickNumbers = useCallback(
-        (count: number) => {
-            const pool = [...numbers];
-            const picked: number[] = [];
-            for (let i = 0; i < count && pool.length > 0; i++) {
-                const idx = Math.floor(Math.random() * pool.length);
-                picked.push(pool.splice(idx, 1)[0]);
-            }
-            return picked.sort((a, b) => a - b);
-        },
-        [numbers],
-    );
-
-    // Debounced save of edited picks to the already-paid ticket.
-    const savePicks = useCallback(
-        (ticketId: string, picks: number[]) => {
-            if (patchTimerRef.current) clearTimeout(patchTimerRef.current);
-            patchTimerRef.current = setTimeout(async () => {
-                try {
-                    setSavingPicks(true);
-                    await kenoApi.updateTicketNumbers(ticketId, picks);
-                    const fresh = await kenoApi.listTickets(15);
-                    setTickets(fresh);
-                } catch (err) {
-                    addToast('error', getErrorMessage(err));
-                } finally {
-                    setSavingPicks(false);
-                }
-            }, 600);
-        },
-        [addToast],
-    );
-
-    // Sync local selection from the player's ticket once per ticket, so paying
-    // pre-fills the grid without clobbering subsequent in-progress edits.
+    // New draw opened  clear the cart, and clear the draft pick too unless
+    // Auto Play is running (it reuses the same numbers round after round).
     useEffect(() => {
-        if (!activeDraw) {
-            syncedTicketRef.current = null;
-            setPaidTicketId(null);
-            return;
-        }
-        const mine = tickets.find((t) => t.drawId === activeDraw.id);
-        if (mine && syncedTicketRef.current !== mine.id) {
-            syncedTicketRef.current = mine.id;
-            setPaidTicketId(mine.id);
-            setSpotTarget(mine.selectedNumbers.length);
-            setSelectedNumbers([...mine.selectedNumbers].sort((a, b) => a - b));
-        } else if (!mine && syncedTicketRef.current !== null) {
-            syncedTicketRef.current = null;
-            setPaidTicketId(null);
-            setSelectedNumbers([]);
-        }
-    }, [activeDraw, tickets]);
+        setCart([]);
+        if (!autoPlayEnabled) setSelectedNumbers([]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeDraw?.id]);
+
+    const drawOpen = !!activeDraw && activeDraw.status === 'open';
+    const gridLocked =
+        hasSubmittedForDraw || !drawOpen || gameState === 'drawing';
+
+    const clampBet = useCallback(
+        (v: number) => Math.min(maxStakeConfig, Math.max(minStake, Math.round(v))),
+        [minStake, maxStakeConfig],
+    );
+
+    const adjustBet = (delta: number) => {
+        if (gridLocked) return;
+        soundEngine.click();
+        setBetAmount((v) => clampBet(v + delta));
+    };
+    const doubleBet = () => {
+        if (gridLocked) return;
+        soundEngine.click();
+        setBetAmount((v) => clampBet(v * 2));
+    };
+    const maxBet = () => {
+        if (gridLocked) return;
+        soundEngine.click();
+        const walletCap = wallet ? Math.floor(wallet.availableMinor) : maxStakeConfig;
+        setBetAmount(clampBet(Math.min(maxStakeConfig, walletCap || maxStakeConfig)));
+    };
 
     const handleQuickPick = () => {
-        if (gridLocked || !paidTicketId) return;
+        if (gridLocked) return;
         soundEngine.click();
-        const picks = quickPickNumbers(spotTarget);
-        setSelectedNumbers(picks);
-        savePicks(paidTicketId, picks);
+        const count =
+            allowedSpots[Math.floor(Math.random() * allowedSpots.length)] ??
+            4;
+        setSelectedNumbers(quickPickNumbers(Math.min(count, maxSpot)));
     };
 
     const handleClearSelection = () => {
@@ -725,62 +770,98 @@ export function Keno({ onBack }: KenoProps) {
     };
 
     const toggleNumber = (value: number) => {
-        if (gridLocked || !paidTicketId) return;
+        if (gridLocked) return;
         soundEngine.click();
         const cur = selectedNumbers;
         let next: number[];
         if (cur.includes(value)) {
             next = cur.filter((n) => n !== value);
         } else {
-            if (cur.length >= spotTarget) return;
+            if (cur.length >= maxSpot) return;
             next = [...cur, value].sort((a, b) => a - b);
         }
         setSelectedNumbers(next);
-        if (next.length === spotTarget) savePicks(paidTicketId, next);
     };
 
-    // Pay first  buys a ticket (with a quick-pick) for the open draw. The grid
-    // then unlocks so the player can adjust the specific numbers.
-    const handleBuyIn = async () => {
-        if (!drawOpen) {
-            addToast('info', t('keno.waitForNextDraw'));
+    const handleAddToCart = () => {
+        if (gridLocked) return;
+        if (selectedNumbers.length === 0) {
+            addToast('info', t('keno.pickAtLeastOne'));
+            return;
+        }
+        if (!allowedSpots.includes(selectedNumbers.length)) {
+            addToast(
+                'info',
+                t('keno.spotCountNotOffered', {
+                    count: selectedNumbers.length,
+                }),
+            );
+            return;
+        }
+        if (cart.length >= MAX_TICKETS_PER_DRAW) {
+            addToast(
+                'info',
+                t('keno.maxTicketsReached', { max: MAX_TICKETS_PER_DRAW }),
+            );
+            return;
+        }
+        soundEngine.click();
+        setCart((prev) => [
+            ...prev,
+            {
+                localId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                selectedNumbers: [...selectedNumbers],
+                stakeMinor: betAmount,
+            },
+        ]);
+        setSelectedNumbers([]);
+    };
+
+    const handleRemoveCartItem = (localId: string) => {
+        soundEngine.click();
+        setCart((prev) => prev.filter((c) => c.localId !== localId));
+    };
+
+    const totalCartStake = cart.reduce((s, c) => s + c.stakeMinor, 0);
+    const insufficientForCart = !!wallet && wallet.availableMinor < totalCartStake;
+
+    const handleStart = async () => {
+        if (cart.length === 0 || !drawOpen || submitting) return;
+        if (insufficientForCart) {
+            addToast('error', t('keno.insufficientBalance'));
             return;
         }
         setSubmitting(true);
+        let purchasedCount = 0;
         try {
-            const picks = quickPickNumbers(spotTarget);
-            const ticket = await kenoApi.purchaseTicket(
-                picks,
-                createIdempotencyKey('keno'),
-            );
-            const [nextWallet] = await Promise.all([
-                walletApi.getWallet(),
-                loadKeno(),
-            ]);
-            setWallet(nextWallet);
-            syncedTicketRef.current = ticket.id;
-            setPaidTicketId(ticket.id);
-            setSelectedNumbers(
-                [...ticket.selectedNumbers].sort((a, b) => a - b),
-            );
+            for (const item of cart) {
+                await kenoApi.purchaseTicket(
+                    item.selectedNumbers,
+                    createIdempotencyKey('keno'),
+                    item.stakeMinor,
+                );
+                purchasedCount++;
+            }
+            setCart([]);
             setGameState('waiting');
             soundEngine.cashout();
-            addToast('success', t('keno.paidPickNumbers'));
+            addToast('success', t('keno.betsPlaced', { count: purchasedCount }));
         } catch (err) {
             addToast('error', getErrorMessage(err));
+            setCart((prev) => prev.slice(purchasedCount));
         } finally {
+            try {
+                const nextWallet = await walletApi.getWallet();
+                setWallet(nextWallet);
+            } catch {
+                /* ignore */
+            }
+            await loadKeno();
             setSubmitting(false);
         }
     };
 
     const handleStartAutoPlay = () => {
-        if (
-            selectedNumbers.length > 0 &&
-            selectedNumbers.length !== spotTarget
-        ) {
-            addToast('info', t('keno.pickExactly', { count: spotTarget }));
-            return;
-        }
         if (!wallet) return;
         soundEngine.click();
         setAutoPlayStartBalance(wallet.availableMinor);
@@ -799,10 +880,70 @@ export function Keno({ onBack }: KenoProps) {
     const intervalSecs = config
         ? getKenoIntervalSeconds(config)
         : DEFAULT_KENO_INTERVAL_SECONDS;
-    const paytableEntries =
-        config?.paytable
-            ?.filter((e) => e.spots === spotTarget && e.payoutMultiplier > 0)
-            .sort((a, b) => a.matches - b.matches) ?? [];
+
+    // Spot count driving the paytable card: the draft in progress, else the
+    // last thing added to the cart, else the round's purchased tickets.
+    const currentSpots =
+        selectedNumbers.length ||
+        cart[cart.length - 1]?.selectedNumbers.length ||
+        currentDrawTickets[0]?.selectedNumbers.length ||
+        0;
+    const representativeStake =
+        currentDrawTickets[0]?.stakeMinor ??
+        cart[cart.length - 1]?.stakeMinor ??
+        betAmount;
+
+    const paytableRows = useMemo(() => {
+        if (!config || currentSpots === 0) return [];
+        const rows: { matches: number; multiplier: number | null }[] = [];
+        for (let m = currentSpots; m >= 0; m--) {
+            const entry = config.paytable?.find(
+                (e) => e.spots === currentSpots && e.matches === m,
+            );
+            rows.push({ matches: m, multiplier: entry?.payoutMultiplier ?? null });
+        }
+        return rows;
+    }, [config, currentSpots]);
+
+    const isDrawingOrSettled =
+        gameState === 'drawing' ||
+        gameState === 'celebrating' ||
+        gameState === 'finished';
+
+    const bestMultiplier =
+        currentSpots > 0
+            ? Math.max(
+                  0,
+                  ...(config?.paytable
+                      ?.filter((e) => e.spots === currentSpots)
+                      .map((e) => e.payoutMultiplier) ?? [0]),
+              )
+            : 0;
+    const bestPayout = bestMultiplier * representativeStake;
+    const nowPayout = currentDrawTickets.reduce((sum, tk) => {
+        const matchesSoFar = tk.selectedNumbers.filter((n) =>
+            revealedNumbers.includes(n),
+        ).length;
+        const entry = config?.paytable?.find(
+            (e) => e.spots === tk.selectedNumbers.length && e.matches === matchesSoFar,
+        );
+        return sum + (entry ? entry.payoutMultiplier * tk.stakeMinor : 0);
+    }, 0);
+
+    const ticketRows: TicketRow[] = hasSubmittedForDraw
+        ? currentDrawTickets.map((tk) => ({
+              key: tk.id,
+              selectedNumbers: tk.selectedNumbers,
+              stakeMinor: tk.stakeMinor,
+              removable: false,
+          }))
+        : cart.map((c) => ({
+              key: c.localId,
+              selectedNumbers: c.selectedNumbers,
+              stakeMinor: c.stakeMinor,
+              removable: true,
+              localId: c.localId,
+          }));
 
     // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -904,7 +1045,7 @@ export function Keno({ onBack }: KenoProps) {
                     />
                 )}
 
-                {/* Drawing reveal strip */}
+                {/* Drawing reveal  big current ball + smaller history */}
                 <AnimatePresence>
                     {gameState === 'drawing' && revealedNumbers.length > 0 && (
                         <motion.div
@@ -919,37 +1060,76 @@ export function Keno({ onBack }: KenoProps) {
                                     max: config?.drawSize ?? 20,
                                 })}
                             </div>
-                            <div className='flex flex-wrap gap-1 justify-center'>
-                                {revealedNumbers.map((num) => {
-                                    const hit = selectedNumbers.includes(num);
-                                    return (
-                                        <motion.span
-                                            key={num}
-                                            initial={{
-                                                y: -16,
-                                                opacity: 0,
-                                                scale: 0.5,
-                                            }}
-                                            animate={{
-                                                y: 0,
-                                                opacity: 1,
-                                                scale: 1,
-                                            }}
-                                            transition={{
-                                                type: 'spring',
-                                                stiffness: 300,
-                                                damping: 18,
-                                            }}
-                                            className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black font-mono border flex-shrink-0 ${
-                                                hit
-                                                    ? 'bg-emerald-500 border-emerald-400 text-black'
-                                                    : 'bg-violet-950/80 border-violet-500/40 text-violet-300'
-                                            }`}
-                                        >
-                                            {num}
-                                        </motion.span>
-                                    );
-                                })}
+                            <div className='flex flex-col items-center gap-3'>
+                                <AnimatePresence mode='wait'>
+                                    <motion.div
+                                        key={
+                                            revealedNumbers[
+                                                revealedNumbers.length - 1
+                                            ]
+                                        }
+                                        initial={{
+                                            scale: 0.4,
+                                            opacity: 0,
+                                            y: -20,
+                                        }}
+                                        animate={{ scale: 1, opacity: 1, y: 0 }}
+                                        exit={{ scale: 0.6, opacity: 0 }}
+                                        transition={{
+                                            type: 'spring',
+                                            stiffness: 260,
+                                            damping: 16,
+                                        }}
+                                        className={`w-16 h-16 rounded-full flex items-center justify-center text-xl font-black font-mono border-2 shadow-lg ${
+                                            highlightNumbers.includes(
+                                                revealedNumbers[
+                                                    revealedNumbers.length - 1
+                                                ],
+                                            )
+                                                ? 'bg-emerald-500 border-emerald-300 text-black'
+                                                : 'bg-violet-950 border-violet-500/60 text-violet-200'
+                                        }`}
+                                    >
+                                        {
+                                            revealedNumbers[
+                                                revealedNumbers.length - 1
+                                            ]
+                                        }
+                                    </motion.div>
+                                </AnimatePresence>
+                                <div className='flex flex-wrap gap-1 justify-center max-w-xs'>
+                                    {revealedNumbers
+                                        .slice(0, -1)
+                                        .map((num) => {
+                                            const hit =
+                                                highlightNumbers.includes(num);
+                                            return (
+                                                <motion.span
+                                                    key={num}
+                                                    initial={{
+                                                        opacity: 0,
+                                                        scale: 0.5,
+                                                    }}
+                                                    animate={{
+                                                        opacity: 1,
+                                                        scale: 1,
+                                                    }}
+                                                    transition={{
+                                                        type: 'spring',
+                                                        stiffness: 300,
+                                                        damping: 18,
+                                                    }}
+                                                    className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black font-mono border flex-shrink-0 ${
+                                                        hit
+                                                            ? 'bg-emerald-500 border-emerald-400 text-black'
+                                                            : 'bg-violet-950/80 border-violet-500/40 text-violet-300'
+                                                    }`}
+                                                >
+                                                    {num}
+                                                </motion.span>
+                                            );
+                                        })}
+                                </div>
                             </div>
                         </motion.div>
                     )}
@@ -960,9 +1140,9 @@ export function Keno({ onBack }: KenoProps) {
                     <div className='grid grid-cols-3 gap-2 mt-4'>
                         {[
                             {
-                                key: 'price',
-                                label: t('keno.price'),
-                                value: `${formatCredits(config.ticketPriceMinor)} ETB`,
+                                key: 'stakeRange',
+                                label: t('keno.stakeRange'),
+                                value: `${formatCredits(minStake)}-${formatCredits(maxStakeConfig)}`,
                                 color: 'text-amber-400',
                             },
                             {
@@ -1057,12 +1237,14 @@ export function Keno({ onBack }: KenoProps) {
                                 >
                                     {drawResult.totalPayout > 0
                                         ? t('keno.youWon')
-                                        : t('keno.youLost')}
+                                        : t('keno.noLuck')}
                                 </h2>
                                 <p className='text-[11px] text-slate-500 mt-0.5'>
-                                    {t('keno.drawHash', {
-                                        id: drawResult.drawId.slice(-6),
-                                    })}
+                                    {drawResult.totalPayout > 0
+                                        ? t('keno.drawHash', {
+                                              id: drawResult.drawId.slice(-6),
+                                          })
+                                        : t('keno.betterLuckNextTime')}
                                 </p>
                                 {drawResult.totalPayout > 0 && (
                                     <div className='mt-3 inline-block bg-emerald-500/10 border border-emerald-500/25 rounded-2xl px-5 py-2'>
@@ -1142,6 +1324,163 @@ export function Keno({ onBack }: KenoProps) {
                 )}
             </AnimatePresence>
 
+            {/* Paytable + Tickets  side by side, like the reference layout */}
+            <div className='grid grid-cols-2 gap-3'>
+                <div className='card'>
+                    <div className='flex items-center justify-between mb-2'>
+                        <span className='text-[10px] font-black uppercase tracking-widest text-indigo-400'>
+                            {t('keno.paytable')}
+                        </span>
+                        {currentSpots > 0 && (
+                            <span className='badge badge-violet'>
+                                {currentSpots}P
+                            </span>
+                        )}
+                    </div>
+                    {isDrawingOrSettled ? (
+                        <div className='space-y-2'>
+                            <div className='flex justify-between items-center'>
+                                <span className='text-[10px] font-bold text-slate-500 uppercase'>
+                                    {t('keno.best')}
+                                </span>
+                                <span className='text-sm font-black text-amber-400 font-mono'>
+                                    {formatCredits(bestPayout)}
+                                </span>
+                            </div>
+                            <div className='flex justify-between items-center'>
+                                <span className='text-[10px] font-bold text-slate-500 uppercase'>
+                                    {t('keno.now')}
+                                </span>
+                                <span
+                                    className={`text-sm font-black font-mono ${nowPayout > 0 ? 'text-emerald-400' : 'text-slate-500'}`}
+                                >
+                                    +{formatCredits(nowPayout)}
+                                </span>
+                            </div>
+                        </div>
+                    ) : paytableRows.length === 0 ? (
+                        <div className='text-center text-slate-500 text-xs py-6'>
+                            {t('keno.selectNumbersHint')}
+                        </div>
+                    ) : (
+                        <div className='space-y-1 max-h-40 overflow-y-auto pr-1'>
+                            {paytableRows.map((row) => (
+                                <div
+                                    key={row.matches}
+                                    className='flex justify-between text-[11px]'
+                                >
+                                    <span className='text-slate-400'>
+                                        {t('keno.hitsLabel', {
+                                            count: row.matches,
+                                        })}
+                                    </span>
+                                    <span
+                                        className={
+                                            row.multiplier
+                                                ? 'text-amber-400 font-black'
+                                                : 'text-slate-600'
+                                        }
+                                    >
+                                        {row.multiplier
+                                            ? formatCredits(
+                                                  row.multiplier *
+                                                      representativeStake,
+                                              )
+                                            : '—'}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className='card'>
+                    <div className='flex items-center justify-between mb-2'>
+                        <span className='text-[10px] font-black uppercase tracking-widest text-indigo-400'>
+                            {t('keno.ticketsLabel')}
+                        </span>
+                        <span className='badge badge-violet'>
+                            {ticketRows.length}/{MAX_TICKETS_PER_DRAW}
+                        </span>
+                    </div>
+                    {ticketRows.length === 0 ? (
+                        <div className='text-center text-slate-500 text-xs py-6'>
+                            {t('keno.addPicksHint')}
+                        </div>
+                    ) : (
+                        <div className='space-y-1.5 max-h-40 overflow-y-auto pr-1'>
+                            {ticketRows.map((row, idx) => (
+                                <div
+                                    key={row.key}
+                                    className='flex items-center gap-1 rounded-lg bg-white/[0.03] border border-white/[0.06] px-1.5 py-1'
+                                >
+                                    <span className='text-[9px] font-black text-slate-500 w-3.5 flex-shrink-0'>
+                                        {idx + 1}
+                                    </span>
+                                    <div className='flex flex-wrap gap-0.5 flex-1 min-w-0'>
+                                        {row.selectedNumbers.map((n) => (
+                                            <span
+                                                key={n}
+                                                className='inline-flex items-center justify-center w-4 h-4 rounded-full bg-[var(--gold)]/15 text-amber-300 text-[8px] font-black'
+                                            >
+                                                {n}
+                                            </span>
+                                        ))}
+                                    </div>
+                                    <span className='text-[9px] font-black text-amber-400 flex-shrink-0'>
+                                        {formatCredits(row.stakeMinor)}
+                                    </span>
+                                    {row.removable && row.localId && (
+                                        <button
+                                            onClick={() =>
+                                                handleRemoveCartItem(
+                                                    row.localId!,
+                                                )
+                                            }
+                                            className='text-slate-500 hover:text-red-400 flex-shrink-0'
+                                            aria-label={t('keno.removeTicket')}
+                                        >
+                                            <X size={11} />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <div className='flex justify-between items-center mt-2 pt-2 border-t border-white/[0.06] text-[11px]'>
+                        <span className='text-slate-500 font-bold'>
+                            {gameState === 'celebrating' ||
+                            gameState === 'finished'
+                                ? t('keno.totalWin')
+                                : t('keno.totalBet')}
+                        </span>
+                        <span
+                            className={`font-black font-mono ${
+                                gameState === 'celebrating' ||
+                                gameState === 'finished'
+                                    ? drawResult && drawResult.totalPayout > 0
+                                        ? 'text-emerald-400'
+                                        : 'text-slate-400'
+                                    : 'text-amber-400'
+                            }`}
+                        >
+                            {formatCredits(
+                                gameState === 'celebrating' ||
+                                    gameState === 'finished'
+                                    ? (drawResult?.totalPayout ?? 0)
+                                    : hasSubmittedForDraw
+                                      ? currentDrawTickets.reduce(
+                                            (s, tk) => s + tk.stakeMinor,
+                                            0,
+                                        )
+                                      : totalCartStake,
+                            )}{' '}
+                            ETB
+                        </span>
+                    </div>
+                </div>
+            </div>
+
             {/* Number grid card */}
             <motion.div
                 initial={{ opacity: 0 }}
@@ -1156,48 +1495,45 @@ export function Keno({ onBack }: KenoProps) {
                     }}
                 />
 
-                {/* Spot selector  chooses the stake tier; locked once the player has paid */}
-                <div className='mb-3'>
-                    <label className='text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-2'>
-                        {paidTicketId
-                            ? t('keno.pickYourNumbers', {
+                <div className='mb-3 flex items-center justify-between'>
+                    <label className='text-[10px] font-black uppercase tracking-widest text-slate-400'>
+                        {hasSubmittedForDraw
+                            ? t('keno.ticketsLockedLabel')
+                            : t('keno.pickNumbersLabel', {
                                   count: selectedNumbers.length,
-                                  max: spotTarget,
-                              })
-                            : t('keno.chooseSpots')}
+                                  max: maxSpot,
+                              })}
                     </label>
-                    <div className='grid grid-cols-6 gap-1.5'>
-                        {allowedSpots.map((spots) => (
-                            <motion.button
-                                key={spots}
-                                whileTap={
-                                    paidTicketId ? undefined : { scale: 0.9 }
-                                }
-                                disabled={!!paidTicketId}
-                                onClick={() => {
-                                    if (paidTicketId) return;
-                                    soundEngine.click();
-                                    setSpotTarget(spots);
-                                    setSelectedNumbers([]);
-                                }}
-                                className={`py-1.5 text-xs font-black rounded-xl border transition-all ${
-                                    spots === spotTarget
-                                        ? 'bg-[var(--gold)] border-[var(--gold)] text-black shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                                        : paidTicketId
-                                          ? 'bg-white/[0.02] border-white/[0.04] text-slate-700 cursor-not-allowed'
-                                          : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:border-amber-500/40 hover:text-amber-400'
-                                }`}
-                            >
-                                {spots}
-                            </motion.button>
-                        ))}
-                    </div>
                 </div>
 
-                {/* Grid  locked until the player has paid for this draw */}
+                {/* Result banner  inline over the grid, mirrors the reference app */}
+                <AnimatePresence>
+                    {drawResult && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                            className='mb-3 text-center'
+                        >
+                            <span
+                                className={`inline-block text-lg font-black uppercase tracking-widest ${
+                                    drawResult.totalPayout > 0
+                                        ? 'text-emerald-400'
+                                        : 'text-red-400/90'
+                                }`}
+                            >
+                                {drawResult.totalPayout > 0
+                                    ? t('keno.youWon')
+                                    : t('keno.noLuck')}
+                            </span>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                {/* Grid */}
                 <div className='relative'>
                     <div
-                        className={`grid grid-cols-10 gap-1 sm:gap-1.5 mb-4 ${gridLocked ? 'opacity-50' : ''}`}
+                        className={`grid grid-cols-10 gap-1 sm:gap-1.5 mb-4 ${gridLocked && !drawResult ? 'opacity-90' : ''}`}
                     >
                         {numbers.map((value) => (
                             <KenoTile
@@ -1205,7 +1541,7 @@ export function Keno({ onBack }: KenoProps) {
                                 value={value}
                                 state={getTileState(
                                     value,
-                                    selectedNumbers,
+                                    highlightNumbers,
                                     revealedNumbers,
                                     drawComplete,
                                 )}
@@ -1214,25 +1550,59 @@ export function Keno({ onBack }: KenoProps) {
                             />
                         ))}
                     </div>
-                    {!paidTicketId && (
-                        <div className='absolute inset-0 flex items-center justify-center pointer-events-none mb-4'>
-                            <span className='text-[11px] font-black uppercase tracking-wider text-amber-400/90 bg-black/60 border border-amber-500/30 rounded-lg px-3 py-1.5'>
-                                {t('keno.buyInToPick')}
-                            </span>
-                        </div>
-                    )}
                 </div>
 
-                {/* Action bar  only meaningful once unlocked */}
-                {paidTicketId && (
-                    <div className='flex gap-2 mb-4 items-center'>
+                {/* Bet stepper */}
+                {!hasSubmittedForDraw && !autoPlayEnabled && (
+                    <div className='flex items-center gap-2 mb-3'>
+                        <div className='flex-1 flex items-center gap-2 rounded-xl bg-black/30 border border-white/[0.07] px-2 py-1.5'>
+                            <button
+                                type='button'
+                                onClick={() => adjustBet(-betStep)}
+                                disabled={gridLocked}
+                                className='w-7 h-7 rounded-lg bg-white/[0.05] text-slate-300 font-black text-lg flex items-center justify-center disabled:opacity-40'
+                                aria-label='decrease'
+                            >
+                                −
+                            </button>
+                            <div className='flex-1 text-center'>
+                                <div className='text-lg font-black text-white font-mono leading-none'>
+                                    {betAmount}
+                                </div>
+                                <div className='text-[8px] text-slate-500 tracking-widest'>
+                                    ETB
+                                </div>
+                            </div>
+                            <button
+                                type='button'
+                                onClick={() => adjustBet(betStep)}
+                                disabled={gridLocked}
+                                className='w-7 h-7 rounded-lg bg-white/[0.05] text-slate-300 font-black text-lg flex items-center justify-center disabled:opacity-40'
+                                aria-label='increase'
+                            >
+                                +
+                            </button>
+                        </div>
                         <button
-                            onClick={handleQuickPick}
+                            onClick={doubleBet}
                             disabled={gridLocked}
-                            className='btn btn-ghost btn-sm flex-1'
+                            className='btn btn-ghost btn-sm px-3 disabled:opacity-40'
                         >
-                            <Zap size={13} /> {t('keno.quickPick')}
+                            X2
                         </button>
+                        <button
+                            onClick={maxBet}
+                            disabled={gridLocked}
+                            className='btn btn-ghost btn-sm px-3 disabled:opacity-40'
+                        >
+                            {t('keno.max')}
+                        </button>
+                    </div>
+                )}
+
+                {/* Action row  Clear / Quick Pick / +Bet */}
+                {!hasSubmittedForDraw && !autoPlayEnabled && (
+                    <div className='flex gap-2 mb-3'>
                         <button
                             onClick={handleClearSelection}
                             disabled={
@@ -1242,51 +1612,77 @@ export function Keno({ onBack }: KenoProps) {
                         >
                             <Trash2 size={13} /> {t('keno.clear')}
                         </button>
-                        <span className='text-[10px] font-bold text-slate-500 min-w-[52px] text-right'>
-                            {savingPicks
-                                ? t('keno.savingEllipsis')
-                                : selectedNumbers.length === spotTarget
-                                  ? t('keno.savedCheck')
-                                  : `${selectedNumbers.length}/${spotTarget}`}
-                        </span>
+                        <button
+                            onClick={handleQuickPick}
+                            disabled={gridLocked}
+                            className='btn btn-ghost btn-sm flex-1'
+                        >
+                            <Zap size={13} /> {t('keno.quickPick')}
+                        </button>
+                        <button
+                            onClick={handleAddToCart}
+                            disabled={
+                                gridLocked ||
+                                selectedNumbers.length === 0 ||
+                                cart.length >= MAX_TICKETS_PER_DRAW
+                            }
+                            className='btn btn-primary btn-sm flex-1'
+                        >
+                            {t('keno.addBet')}
+                        </button>
                     </div>
                 )}
 
-                {/* Buy in / Auto play status */}
+                {/* Start / Auto-play status */}
                 {!autoPlayEnabled ? (
-                    paidTicketId ? (
+                    hasSubmittedForDraw ? (
                         <div className='rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-center'>
                             <p className='text-sm font-black text-emerald-400'>
-                                {t('keno.paidTicketActive', {
-                                    count: spotTarget,
+                                {t('keno.ticketsActive', {
+                                    count: currentDrawTickets.length,
                                 })}
                             </p>
                             <p className='text-[11px] text-slate-400 mt-0.5'>
                                 {drawOpen
-                                    ? t('keno.adjustNumbers')
+                                    ? t('keno.waitingForDraw')
                                     : t('keno.numbersLocked')}
                             </p>
                         </div>
                     ) : (
                         <motion.button
-                            whileHover={drawOpen ? { scale: 1.02 } : {}}
+                            whileHover={
+                                cart.length > 0 && drawOpen
+                                    ? { scale: 1.02 }
+                                    : {}
+                            }
                             whileTap={{ scale: 0.97 }}
-                            onClick={handleBuyIn}
-                            disabled={submitting || !drawOpen}
-                            className={`btn btn-full ${drawOpen ? 'btn-primary' : 'btn-secondary opacity-50'}`}
+                            onClick={handleStart}
+                            disabled={
+                                submitting ||
+                                !drawOpen ||
+                                cart.length === 0 ||
+                                insufficientForCart
+                            }
+                            className={`btn btn-full ${
+                                cart.length > 0 && drawOpen && !insufficientForCart
+                                    ? 'btn-primary'
+                                    : 'btn-secondary opacity-50'
+                            }`}
                         >
                             {submitting
                                 ? t('keno.processingLabel')
                                 : !drawOpen
                                   ? t('keno.drawLockedRunning')
-                                  : t('keno.buyInSpot', {
-                                        count: spotTarget,
-                                        amount: config
-                                            ? formatCredits(
-                                                  config.ticketPriceMinor,
-                                              )
-                                            : '',
-                                    })}
+                                  : insufficientForCart
+                                    ? t('keno.lowBalance')
+                                    : cart.length === 0
+                                      ? t('keno.start')
+                                      : t('keno.startWithCount', {
+                                            count: cart.length,
+                                            amount: formatCredits(
+                                                totalCartStake,
+                                            ),
+                                        })}
                         </motion.button>
                     )
                 ) : (
@@ -1314,33 +1710,6 @@ export function Keno({ onBack }: KenoProps) {
                     </div>
                 )}
             </motion.div>
-
-            {/* Paytable  collapsible */}
-            {paytableEntries.length > 0 && (
-                <CollapsibleSection
-                    title={t('keno.paytableSpot', { count: spotTarget })}
-                >
-                    <div className='rounded-xl bg-black/30 border border-white/[0.05] text-xs overflow-hidden'>
-                        <div className='flex justify-between items-center px-3 py-2 border-b border-white/[0.05] text-slate-400 font-bold text-[10px] uppercase tracking-wider'>
-                            <span>{t('keno.matches')}</span>
-                            <span>{t('keno.multiplier')}</span>
-                        </div>
-                        <div className='divide-y divide-white/[0.04]'>
-                            {paytableEntries.map((e) => (
-                                <div
-                                    key={`${e.spots}-${e.matches}`}
-                                    className='flex justify-between items-center px-3 py-2 text-slate-400'
-                                >
-                                    <span>{e.matches}×</span>
-                                    <span className='font-black text-amber-400'>
-                                        {e.payoutMultiplier}×
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </CollapsibleSection>
-            )}
 
             {/* Auto Play  collapsible */}
             <CollapsibleSection title={t('keno.autoPlayTitle')}>
@@ -1453,7 +1822,7 @@ export function Keno({ onBack }: KenoProps) {
                                 const userPicks = [
                                     ...new Set(
                                         drawTickets.flatMap(
-                                            (t) => t.selectedNumbers,
+                                            (tk) => tk.selectedNumbers,
                                         ),
                                     ),
                                 ].sort((a, b) => a - b);

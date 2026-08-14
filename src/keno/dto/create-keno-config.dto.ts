@@ -59,6 +59,16 @@ export class CreateKenoConfigDto {
   @Min(1)
   ticketPriceMinor: number;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minStakeMinor?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxStakeMinor?: number;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

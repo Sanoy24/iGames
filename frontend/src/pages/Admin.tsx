@@ -5084,6 +5084,8 @@ function WithdrawalsAdmin() {
 // ══════════════════════════════════════════════════════════════════
 type KenoConfigForm = {
     ticketPriceMinor: number;
+    minStakeMinor: number;
+    maxStakeMinor: number;
     globalBotWinInterval: number;
     autoScheduleIntervalSeconds: number;
     maxWinnersPerDraw: number;
@@ -5093,6 +5095,8 @@ type KenoConfigForm = {
 
 const DEFAULT_KENO_CONFIG_FORM: KenoConfigForm = {
     ticketPriceMinor: 100,
+    minStakeMinor: 10,
+    maxStakeMinor: 5000,
     globalBotWinInterval: 0,
     autoScheduleIntervalSeconds: 40,
     maxWinnersPerDraw: 0,
@@ -5139,18 +5143,22 @@ function KenoAdmin() {
                 setConfig(c);
                 setCfgForm({
                     ticketPriceMinor: c.ticketPriceMinor,
+                    minStakeMinor: c.minStakeMinor ?? 10,
+                    maxStakeMinor: c.maxStakeMinor ?? 5000,
                     globalBotWinInterval: c.globalBotWinInterval || 0,
                     autoScheduleIntervalSeconds: getKenoIntervalSeconds(c),
                     maxWinnersPerDraw: c.maxWinnersPerDraw ?? 0,
                     paytable: (c.paytable ?? []).map((entry) => ({ ...entry })),
                     winChancePct: c.winChancePct ?? 100,
                 });
-            } catch (err) {
+            } catch {
                 // If config is not found (404), we leave it as null
                 setConfig(null);
                 // Pre-populate with standard Keno default values to make initialization easy
                 setCfgForm({
                     ticketPriceMinor: 100,
+                    minStakeMinor: 10,
+                    maxStakeMinor: 5000,
                     globalBotWinInterval: 0,
                     autoScheduleIntervalSeconds: 40,
                     maxWinnersPerDraw: 0,
@@ -5192,6 +5200,8 @@ function KenoAdmin() {
                     ? config.allowedSpots
                     : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
                 ticketPriceMinor: cfgForm.ticketPriceMinor,
+                minStakeMinor: cfgForm.minStakeMinor,
+                maxStakeMinor: cfgForm.maxStakeMinor,
                 globalBotWinInterval: cfgForm.globalBotWinInterval,
                 autoScheduleIntervalSeconds:
                     cfgForm.autoScheduleIntervalSeconds,
@@ -5303,6 +5313,10 @@ function KenoAdmin() {
                         {formatCredits(config.ticketPriceMinor)} ETB/ticket
                     </span>
                     <span>
+                        Stake: {formatCredits(config.minStakeMinor ?? 1)}–
+                        {formatCredits(config.maxStakeMinor ?? 100000)} ETB
+                    </span>
+                    <span>
                         {config.numberMin}–{config.numberMax}, draw{' '}
                         {config.drawSize}
                     </span>
@@ -5323,7 +5337,7 @@ function KenoAdmin() {
                     </div>
                     <div className='adm-field-grid'>
                         <label className='adm-field'>
-                            <span>Ticket Price (ETB)</span>
+                            <span>Default Ticket Price (ETB)</span>
                             <input
                                 className='input'
                                 type='number'
@@ -5334,6 +5348,36 @@ function KenoAdmin() {
                                         ticketPriceMinor: Number(
                                             e.target.value,
                                         ),
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label className='adm-field'>
+                            <span>Min Stake (ETB)</span>
+                            <input
+                                className='input'
+                                type='number'
+                                min={1}
+                                value={cfgForm.minStakeMinor}
+                                onChange={(e) =>
+                                    setCfgForm((f) => ({
+                                        ...f,
+                                        minStakeMinor: Number(e.target.value),
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label className='adm-field'>
+                            <span>Max Stake (ETB)</span>
+                            <input
+                                className='input'
+                                type='number'
+                                min={1}
+                                value={cfgForm.maxStakeMinor}
+                                onChange={(e) =>
+                                    setCfgForm((f) => ({
+                                        ...f,
+                                        maxStakeMinor: Number(e.target.value),
                                     }))
                                 }
                             />

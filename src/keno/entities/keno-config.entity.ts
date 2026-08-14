@@ -38,6 +38,12 @@ export class KenoConfig {
   @Column({ type: 'int' })
   ticketPriceMinor: number;
 
+  @Column({ type: 'int', default: 1 })
+  minStakeMinor: number;
+
+  @Column({ type: 'int', default: 100_000 })
+  maxStakeMinor: number;
+
   @Column({ type: 'json' })
   paytable: KenoPaytableEntry[];
 

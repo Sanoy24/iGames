@@ -341,11 +341,15 @@ export const kenoApi = {
     getConfig: () => api.get<KenoConfig>('/keno/config').then((r) => r.data),
     getActiveDraw: () =>
         api.get<KenoDraw | null>('/keno/active-draw').then((r) => r.data),
-    purchaseTicket: (selectedNumbers: number[], idempotencyKey: string) =>
+    purchaseTicket: (
+        selectedNumbers: number[],
+        idempotencyKey: string,
+        stakeMinor?: number,
+    ) =>
         api
             .post<KenoTicket>(
                 '/keno/tickets',
-                { selectedNumbers },
+                { selectedNumbers, stakeMinor },
                 { headers: { 'Idempotency-Key': idempotencyKey } },
             )
             .then((r) => r.data),

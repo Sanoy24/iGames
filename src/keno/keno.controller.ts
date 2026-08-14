@@ -72,6 +72,7 @@ export class KenoController {
     return this.kenoService.purchaseTicket({
       userId: user.id,
       selectedNumbers: dto.selectedNumbers,
+      stakeMinor: dto.stakeMinor,
       idempotencyKey
     });
   }

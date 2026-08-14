@@ -22,6 +22,14 @@ export class KenoRulesService {
     }
   }
 
+  validateStake(stakeMinor: number, config: KenoConfig): void {
+    const min = config.minStakeMinor ?? 1;
+    const max = config.maxStakeMinor ?? Number.MAX_SAFE_INTEGER;
+    if (!Number.isInteger(stakeMinor) || stakeMinor < min || stakeMinor > max) {
+      throw new BadRequestException(`Keno stake must be between ${min} and ${max}`);
+    }
+  }
+
   countMatches(selectedNumbers: number[], drawnNumbers: number[]): number {
     const drawn = new Set(drawnNumbers);
     return selectedNumbers.filter((number) => drawn.has(number)).length;

@@ -111,6 +111,8 @@ export class KenoService {
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
                 ],
                 ticketPriceMinor: dto.ticketPriceMinor,
+                minStakeMinor: dto.minStakeMinor ?? 1,
+                maxStakeMinor: dto.maxStakeMinor ?? 100_000,
                 paytable: dto.paytable,
                 globalBotWinInterval: dto.globalBotWinInterval ?? 0,
                 autoScheduleIntervalMinutes: Math.floor(
@@ -131,10 +133,12 @@ export class KenoService {
         selectedNumbers: number[];
         idempotencyKey: string;
         isForcedWin?: boolean;
+        stakeMinor?: number;
     }): Promise<KenoTicketResponse> {
         return this.purchaseTicket({
             userId: input.userId,
             selectedNumbers: input.selectedNumbers,
+            stakeMinor: input.stakeMinor,
             idempotencyKey: input.idempotencyKey,
             overrideDrawId: input.drawId,
             isForcedWin: input.isForcedWin,
@@ -147,6 +151,7 @@ export class KenoService {
         idempotencyKey: string;
         overrideDrawId?: string;
         isForcedWin?: boolean;
+        stakeMinor?: number;
     }): Promise<KenoTicketResponse> {
         await this.gamesService.assertPlayable('keno');
         return this.dataSource.transaction(async (manager) => {
@@ -166,6 +171,9 @@ export class KenoService {
                 config,
             );
 
+            const stakeMinor = input.stakeMinor ?? config.ticketPriceMinor;
+            this.kenoRulesService.validateStake(stakeMinor, config);
+
             const draw = input.overrideDrawId
                 ? await this.getOpenDrawById(input.overrideDrawId, manager)
                 : await this.getOrCreateOpenDraw(config, manager);
@@ -178,7 +186,7 @@ export class KenoService {
                 selectedNumbers: [...input.selectedNumbers].sort(
                     (left, right) => left - right,
                 ),
-                stakeMinor: config.ticketPriceMinor,
+                stakeMinor,
                 matches: 0,
                 payoutMinor: 0,
                 status: 'pending',
@@ -191,7 +199,7 @@ export class KenoService {
             const walletDebit = await this.walletService.debitInSession(
                 {
                     userId: input.userId,
-                    amountMinor: config.ticketPriceMinor,
+                    amountMinor: stakeMinor,
                     entryType: 'stake',
                     sourceType: 'keno_ticket',
                     sourceId: ticket.id,
@@ -906,6 +914,21 @@ export class KenoService {
         if (drawSize > numberMax - numberMin + 1) {
             throw new BadRequestException(
                 'Keno drawSize cannot exceed number range',
+            );
+        }
+        const minStakeMinor = dto.minStakeMinor ?? 1;
+        const maxStakeMinor = dto.maxStakeMinor ?? 100_000;
+        if (maxStakeMinor <= minStakeMinor) {
+            throw new BadRequestException(
+                'Keno maxStakeMinor must be greater than minStakeMinor',
+            );
+        }
+        if (
+            dto.ticketPriceMinor < minStakeMinor ||
+            dto.ticketPriceMinor > maxStakeMinor
+        ) {
+            throw new BadRequestException(
+                'Keno ticketPriceMinor must be within the min/max stake bounds',
             );
         }
         const allowedSpots = dto.allowedSpots ?? [

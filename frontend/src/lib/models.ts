@@ -130,6 +130,8 @@ export type KenoConfig = {
     drawSize: number;
     allowedSpots: number[];
     ticketPriceMinor: number;
+    minStakeMinor?: number;
+    maxStakeMinor?: number;
     globalBotWinInterval: number;
     autoScheduleIntervalMinutes?: number;
     autoScheduleIntervalSeconds?: number;

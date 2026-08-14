@@ -738,40 +738,39 @@ export class BingoService implements OnModuleInit {
         ]);
     }
 
-    /**
-     * Idempotency guard for re-evaluating THIS SPECIFIC place  not a
-     * cross-place exclusivity check. A card is allowed to hold multiple places
-     * at once (e.g. win 2nd with one line, then also win 1st with two lines
-     * later, or both on the same draw if one number completes both patterns
-     * simultaneously); this only stops the same place from being paid twice
-     * to the same ticket.
-     */
     private hasTicketAlreadyWonDerashPlace(
         room: BingoRoom,
-        place: PrefilledPlace,
         ticketId: string,
     ): boolean {
-        return (room.winnersByTier[place] ?? []).includes(ticketId);
+        return this.derashWinnerTicketIds(room).has(ticketId);
     }
 
-    /**
-     * Same idempotency scoping as `hasTicketAlreadyWonDerashPlace`, but keyed
-     * by cartela number instead of ticket id (a card can be re-issued as a new
-     * ticket row across a room reset in some flows, so both guards exist).
-     * Place-scoped, not cross-place  a cartela winning 2nd doesn't block it
-     * from also winning 1st.
-     */
+    private derashWinnerCartelaNumbers(room: BingoRoom): Set<number> {
+        return new Set(
+            Object.values(room.settlementSummary ?? {})
+                .map((entry) => {
+                    if (!entry || typeof entry !== 'object') return null;
+                    const cartelaNumber = (entry as Record<string, unknown>)
+                        .winnerCartelaNumber;
+                    return typeof cartelaNumber === 'number' &&
+                        Number.isInteger(cartelaNumber)
+                        ? cartelaNumber
+                        : null;
+                })
+                .filter(
+                    (cartelaNumber): cartelaNumber is number =>
+                        cartelaNumber !== null,
+                ),
+        );
+    }
+
     private hasCartelaAlreadyWonDerashPlace(
         room: BingoRoom,
-        place: PrefilledPlace,
         cartelaNumber?: number | null,
     ): boolean {
-        if (typeof cartelaNumber !== 'number') return false;
-        const entry = (room.settlementSummary ?? {})[place];
-        if (!entry || typeof entry !== 'object') return false;
         return (
-            (entry as Record<string, unknown>).winnerCartelaNumber ===
-            cartelaNumber
+            typeof cartelaNumber === 'number' &&
+            this.derashWinnerCartelaNumbers(room).has(cartelaNumber)
         );
     }
 
@@ -3639,14 +3638,10 @@ export class BingoService implements OnModuleInit {
      * completing THAT place's configured winning pattern (places may each require a
      * different pattern  e.g. 1st = Any Line, 2nd = Any Two Lines, 3rd = L Shape).
      * On every draw all active cards are re-marked, then each still-open place
-     * (1st → 2nd → 3rd → 4th → 5th, only the enabled ones) is awarded to a card
-     * that completes that place's pattern  at most one card per place, but a
-     * single card CAN hold multiple places (e.g. a card that completes two
-     * lines on one draw wins both 1st and 2nd on that same draw, since two
-     * lines implies one line; see `hasTicketAlreadyWonDerashPlace`, which is
-     * scoped per-place, not cross-place). When only 1st is enabled there is
-     * exactly one winner and the room ends. Each place pays a configured % of
-     * the pot.
+     * (1st → 2nd → 3rd → 4th → 5th, only the enabled ones) is awarded to the
+     * earliest-purchased active card that completes that place's pattern  one card
+     * per place, one place per card. When only 1st is enabled there is exactly one
+     * winner and the room ends. Each place pays a configured % of the pot.
      */
     private async evaluateAndSettleDerash(
         room: BingoRoom,
@@ -4204,19 +4199,13 @@ export class BingoService implements OnModuleInit {
             cfg,
         );
         const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
-        if (this.hasTicketAlreadyWonDerashPlace(room, place, winner.id)) {
+        if (this.hasTicketAlreadyWonDerashPlace(room, winner.id)) {
             this.logger.warn(
                 `Skipped duplicate Bingo place ${place} for already-awarded ticket ${winner.id} in room ${room.id}`,
             );
             return false;
         }
-        if (
-            this.hasCartelaAlreadyWonDerashPlace(
-                room,
-                place,
-                winner.cartelaNumber,
-            )
-        ) {
+        if (this.hasCartelaAlreadyWonDerashPlace(room, winner.cartelaNumber)) {
             this.logger.warn(
                 `Skipped duplicate Bingo place ${place} for already-awarded cartela #${winner.cartelaNumber} in room ${room.id}`,
             );

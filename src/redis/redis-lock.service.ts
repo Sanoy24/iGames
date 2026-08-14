@@ -7,7 +7,6 @@ import { REDIS_CLIENT } from './redis.constants';
 export class RedisLockService implements OnModuleDestroy {
     private readonly logger = new Logger(RedisLockService.name);
     private readonly redlock: Redlock;
-    private readonly inMemoryLocks = new Map<string, { expiresAt: number }>();
 
     constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {
         this.redlock = new Redlock([redis], {
@@ -31,18 +30,13 @@ export class RedisLockService implements OnModuleDestroy {
      * Returns null if lock could not be acquired (another instance holds it).
      */
     async acquireLock(resource: string, ttlMs: number): Promise<Lock | null> {
+        // A per-process fallback lock here would be worse than no lock: on a
+        // multi-process host, every worker gets its own empty map and each
+        // would believe it holds the only lock, defeating the whole point of
+        // a *distributed* lock. Fail closed instead  skip this tick and let
+        // a later one (once Redis is ready again) do the work exclusively.
         if (this.redis.status !== 'ready') {
-            const now = Date.now();
-            const existing = this.inMemoryLocks.get(resource);
-            if (existing && existing.expiresAt > now) {
-                return null;
-            }
-            this.inMemoryLocks.set(resource, { expiresAt: now + ttlMs });
-            return {
-                resources: [resource],
-                expiration: now + ttlMs,
-                value: 'mock-value',
-            } as any;
+            return null;
         }
 
         try {
@@ -54,9 +48,6 @@ export class RedisLockService implements OnModuleDestroy {
 
     async releaseLock(lock: Lock): Promise<void> {
         if (this.redis.status !== 'ready') {
-            if (lock && lock.resources && lock.resources[0]) {
-                this.inMemoryLocks.delete(lock.resources[0]);
-            }
             return;
         }
 

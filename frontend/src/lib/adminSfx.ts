@@ -1,9 +1,11 @@
 /**
- * Synthesized "player joined" chime for the admin panel  no audio assets, all
- * generated with the Web Audio API. Best-effort: no-ops silently if audio is
- * unavailable. Call `resumeAdminAudio()` from a user gesture (the header
- * toggle) so the browser allows the context to start. Mirrors the approach in
- * werkSfx.ts/poolSfx.ts.
+ * Synthesized "player joined" alert for the admin panel  no audio assets, all
+ * generated with the Web Audio API. Deliberately loud/sharp (square wave, high
+ * gain) rather than a soft UI chime, since the whole point is to grab an
+ * admin's attention away from whatever they're looking at. Best-effort: no-ops
+ * silently if audio is unavailable. Call `resumeAdminAudio()` from a user
+ * gesture (the header toggle) so the browser allows the context to start.
+ * Mirrors the approach in werkSfx.ts/poolSfx.ts.
  */
 let ctx: AudioContext | null = null;
 
@@ -33,24 +35,36 @@ export function resumeAdminAudio(): void {
     if (c && c.state === 'suspended') c.resume().catch(() => {});
 }
 
-function tone(freq: number, dur: number, gain: number, delay = 0): void {
+function tone(
+    freq: number,
+    dur: number,
+    gain: number,
+    delay = 0,
+    type: OscillatorType = 'sine',
+): void {
     const c = ac();
     if (!c) return;
     const o = c.createOscillator();
     const g = c.createGain();
-    o.type = 'sine';
+    o.type = type;
     const start = c.currentTime + delay;
     o.frequency.setValueAtTime(freq, start);
     g.gain.setValueAtTime(0.0001, start);
-    g.gain.exponentialRampToValueAtTime(gain, start + 0.01);
+    g.gain.exponentialRampToValueAtTime(gain, start + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
     o.connect(g).connect(c.destination);
     o.start(start);
     o.stop(start + dur + 0.02);
 }
 
-/** Two-note doorbell-style chime, played when a player opens the Mini App. */
+/**
+ * Sharp, loud triple-beep alert  played when a player opens the Mini App.
+ * Square wave (brighter/buzzier than a sine, cuts through background noise)
+ * at a much higher gain than a passive UI chime, with a rising final beep so
+ * it reads as urgent rather than a soft "ding".
+ */
 export function playerJoinedChime(): void {
-    tone(880, 0.18, 0.14);
-    tone(659, 0.22, 0.12, 0.14);
+    tone(1046.5, 0.11, 0.5, 0, 'square');
+    tone(1046.5, 0.11, 0.5, 0.15, 'square');
+    tone(1318.5, 0.18, 0.55, 0.32, 'square');
 }

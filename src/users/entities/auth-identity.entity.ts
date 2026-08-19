@@ -24,6 +24,15 @@ export class AuthIdentity {
   @Column({ type: 'varchar', length: 255, nullable: true })
   providerUsername?: string;
 
+  /**
+   * Set when Telegram tells us delivery is permanently impossible (bot blocked,
+   * account deactivated, etc — HTTP 403). Broadcasts exclude these recipients so
+   * a dead chat isn't retried on every scheduled run forever; cleared again if
+   * the user ever re-authenticates (proving the chat is live again).
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  telegramBlockedAt?: Date | null;
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   normalizedEmail?: string;
 

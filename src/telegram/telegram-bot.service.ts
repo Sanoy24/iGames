@@ -183,7 +183,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         onProgress?: (sent: number, failed: number) => void;
         progressEvery?: number;
         isCancelled?: () => boolean;
-    }): Promise<{ sent: number; failed: number; lastError?: string }> {
+    }): Promise<{
+        sent: number;
+        failed: number;
+        lastError?: string;
+        blockedChatIds: string[];
+    }> {
         if (!this.bot)
             throw new Error(
                 'Telegram bot is not initialized (TELEGRAM_BOT_TOKEN missing)',
@@ -203,6 +208,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         let sent = 0;
         let failed = 0;
         let lastError: string | undefined;
+        const blockedChatIds: string[] = [];
         let photoRef: string | InputFile | undefined = opts.imageAbsolutePath
             ? new InputFile(opts.imageAbsolutePath)
             : undefined;
@@ -248,6 +254,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                     parameters?: { retry_after?: number };
                 };
                 lastError = e.description ?? e.message ?? 'send failed';
+                // 403 means Telegram itself has permanently cut off delivery (bot
+                // blocked, account deactivated, bot kicked)  retrying on the next
+                // scheduled run can never succeed, so mark it instead of resending
+                // forever.
+                if (e.error_code === 403) blockedChatIds.push(chatId);
                 // Respect Telegram flood control before continuing.
                 if (e.error_code === 429 && e.parameters?.retry_after) {
                     await this.sleep((e.parameters.retry_after + 1) * 1000);
@@ -260,7 +271,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         }
 
         opts.onProgress?.(sent, failed);
-        return { sent, failed, lastError };
+        return { sent, failed, lastError, blockedChatIds };
     }
 
     private buildInlineButtons(

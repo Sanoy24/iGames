@@ -8,7 +8,7 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { In, IsNull, LessThan, Repository } from 'typeorm';
 import { AuthIdentity } from '../users/entities/auth-identity.entity';
 import { TelegramBotService } from '../telegram/telegram-bot.service';
 import { CreateBroadcastDto } from './dto/create-broadcast.dto';
@@ -251,7 +251,7 @@ export class BroadcastService {
             const imageAbsolutePath = row.imagePath
                 ? join(UPLOADS_ROOT, row.imagePath)
                 : null;
-            const { sent, failed, lastError } =
+            const { sent, failed, lastError, blockedChatIds } =
                 await this.telegramBotService.sendBroadcastMessage({
                     chatIds,
                     text: row.text,
@@ -266,6 +266,9 @@ export class BroadcastService {
                         });
                     },
                 });
+
+            if (blockedChatIds.length > 0)
+                await this.markTelegramBlocked(blockedChatIds);
 
             await this.finalize(row, sent, failed, lastError ?? null);
         } catch (err) {
@@ -319,10 +322,15 @@ export class BroadcastService {
         );
     }
 
-    /** Every distinct Telegram chat id we can message (private chat id == user id). */
+    /**
+     * Every distinct Telegram chat id we can message (private chat id == user id).
+     * Excludes chats Telegram has already told us are permanently unreachable
+     * (see `markTelegramBlocked`)  otherwise the same dead handful gets retried,
+     * and counted as "failed", on every scheduled run forever.
+     */
     private async getTelegramChatIds(): Promise<string[]> {
         const rows = await this.authIdentityRepo.find({
-            where: { provider: 'telegram' },
+            where: { provider: 'telegram', telegramBlockedAt: IsNull() },
             select: { providerUserId: true },
         });
         const seen = new Set<string>();
@@ -330,6 +338,14 @@ export class BroadcastService {
             if (r.providerUserId) seen.add(r.providerUserId);
         }
         return [...seen];
+    }
+
+    /** Record chat ids Telegram returned a 403 (blocked/deactivated) for. */
+    private async markTelegramBlocked(chatIds: string[]): Promise<void> {
+        await this.authIdentityRepo.update(
+            { provider: 'telegram', providerUserId: In(chatIds) },
+            { telegramBlockedAt: new Date() },
+        );
     }
 
     // ── Image helpers ───────────────────────────────────────────────────────────

@@ -60,12 +60,10 @@ import {
 import type {
     AdminLocation,
     BingoConfig,
-    BingoOperationalAlert,
     BingoPattern,
     BingoRoom,
     BingoRoomSlot,
     BingoCustomRoomSlot,
-    BingoStalledRoom,
     KenoConfig,
     KenoDraw,
     KenoPaytableEntry,
@@ -5675,13 +5673,6 @@ function BingoAdmin() {
     const [totalPages, setTotalPages] = useState(1);
     const [cfg, setCfg] = useState<BingoConfig | null>(null);
     const [patterns, setPatterns] = useState<BingoPattern[]>([]);
-    // Operational health  rooms stuck mid-draw and misconfiguration alerts that
-    // would otherwise only be visible in server logs. Polled independently of the
-    // room list so this stays current without depending on a manual refresh.
-    const [stalledRooms, setStalledRooms] = useState<BingoStalledRoom[]>([]);
-    const [operationalAlerts, setOperationalAlerts] = useState<
-        BingoOperationalAlert[]
-    >([]);
     const [roomsLoading, setRoomsLoading] = useState(true);
     const [busy, setBusy] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
@@ -6218,25 +6209,6 @@ function BingoAdmin() {
         loadReservedCartelBots,
     ]);
 
-    // Silent (no toast)  this is a background health check, not a user action.
-    const loadOperationalHealth = useCallback(async () => {
-        try {
-            const [stalled, alerts] = await Promise.all([
-                adminBingoApi.listStalledRooms(),
-                adminBingoApi.listAlerts(),
-            ]);
-            setStalledRooms(stalled);
-            setOperationalAlerts(alerts);
-        } catch {
-            // Best-effort  a failed health check shouldn't itself raise an alert.
-        }
-    }, []);
-
-    useEffect(() => {
-        void loadOperationalHealth();
-        const id = setInterval(() => void loadOperationalHealth(), 30_000);
-        return () => clearInterval(id);
-    }, [loadOperationalHealth]);
 
     const goToRoomPage = async (nextPage: number) => {
         if (nextPage === page) return;
@@ -6473,79 +6445,6 @@ function BingoAdmin() {
                     {showCreate ? 'Cancel' : 'New Room'}
                 </button>
             </SectionHead>
-
-            {/* Operational health  rooms stuck mid-draw / silent misconfiguration
-          traces. Empty and hidden when nothing is wrong; polled every 30s. */}
-            {(stalledRooms.length > 0 || operationalAlerts.length > 0) && (
-                <div
-                    className='adm-panel'
-                    style={{
-                        borderColor: 'var(--danger, #ef4444)',
-                        background: 'rgba(239,68,68,0.08)',
-                    }}
-                >
-                    <div
-                        className='adm-panel-head'
-                        style={{ color: 'var(--danger, #ef4444)' }}
-                    >
-                        ⚠ Bingo operational alerts
-                    </div>
-                    <div
-                        style={{
-                            padding: '0 16px 12px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 6,
-                        }}
-                    >
-                        {stalledRooms.map((r) => (
-                            <div
-                                key={r.id}
-                                className='adm-td-muted'
-                                style={{
-                                    fontSize: 12,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                }}
-                            >
-                                <span className='badge badge-red'>Stalled</span>
-                                <span>
-                                    <strong>{r.name}</strong> hasn't drawn in{' '}
-                                    {r.stalledSeconds}s
-                                </span>
-                                <button
-                                    className='adm-btn adm-btn-secondary'
-                                    style={{ padding: '2px 8px', fontSize: 11 }}
-                                    onClick={() => void openDetails(r.id)}
-                                >
-                                    View
-                                </button>
-                            </div>
-                        ))}
-                        {operationalAlerts.map((a) => (
-                            <div
-                                key={a.id}
-                                className='adm-td-muted'
-                                style={{
-                                    fontSize: 12,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                }}
-                            >
-                                <span className='badge badge-gold'>
-                                    {a.kind.replace(/_/g, ' ')}
-                                </span>
-                                <span>{a.message}</span>
-                                <span style={{ fontSize: 10 }}>
-                                    {new Date(a.createdAt).toLocaleString()}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* Config info strip */}
             {cfg && (
@@ -15106,12 +15005,11 @@ function BroadcastAdmin() {
                                                 />
                                             </div>
                                         )}
-                                        {b.status === 'failed' &&
-                                            b.lastError && (
-                                                <div className='text-[10px] text-red-400/80 mt-0.5 truncate'>
-                                                    {b.lastError}
-                                                </div>
-                                            )}
+                                        {b.failedCount > 0 && b.lastError && (
+                                            <div className='text-[10px] text-red-400/80 mt-0.5 truncate'>
+                                                {b.lastError}
+                                            </div>
+                                        )}
                                     </div>
                                     <div className='flex items-center gap-1.5 flex-shrink-0'>
                                         {(b.status === 'draft' ||

@@ -183,15 +183,15 @@ export class GameEventsGateway
             // every connect, including reconnects  deliberately not throttled, since
             // an admin who wants a quieter signal can just mute the alert client-side.
             if (Array.isArray(user.roles) && user.roles.includes('player')) {
-                this.server.to('admins').emit('admin.player_connected', {
+                // Cached on the socket so the app.opened re-foreground signal below
+                // (which fires without a fresh connect/DB lookup) can reuse it.
+                client.data.playerAlertInfo = {
                     userId: user.id,
                     displayName: user.displayName ?? 'Player',
                     phoneNumber: user.phoneNumber ?? null,
-                    isNewPlayer:
-                        Date.now() - new Date(user.createdAt).getTime() <
-                        60_000,
-                    timestamp: Date.now(),
-                });
+                    createdAt: user.createdAt,
+                };
+                this.emitPlayerOpenedAlert(client.data.playerAlertInfo);
             }
 
             this.logger.debug(
@@ -294,6 +294,46 @@ export class GameEventsGateway
     async broadcastLiveCounts() {
         const counts = await this.getLiveCountsWithBots();
         this.server?.emit('live.counts', counts);
+    }
+
+    private emitPlayerOpenedAlert(info: {
+        userId: string;
+        displayName: string;
+        phoneNumber: string | null;
+        createdAt: Date;
+    }): void {
+        this.server.to('admins').emit('admin.player_connected', {
+            userId: info.userId,
+            displayName: info.displayName,
+            phoneNumber: info.phoneNumber,
+            isNewPlayer:
+                Date.now() - new Date(info.createdAt).getTime() < 60_000,
+            timestamp: Date.now(),
+        });
+    }
+
+    /**
+     * Client-reported "the Mini App is back in front"  covers the case where
+     * Telegram freezes rather than destroys the WebView on close, so the
+     * underlying socket transport can still look connected to the client when
+     * the player reopens (handleConnection above never re-fires because there
+     * is no new connection). See useSocketConnection.ts's onForeground, which
+     * emits this only when it did NOT need to reconnect the socket  a real
+     * reconnect already re-triggers handleConnection's own alert, so emitting
+     * here too would double the ding.
+     */
+    @SubscribeMessage('player.app_opened')
+    handlePlayerAppOpened(client: Socket): void {
+        const info = client.data.playerAlertInfo as
+            | {
+                  userId: string;
+                  displayName: string;
+                  phoneNumber: string | null;
+                  createdAt: Date;
+              }
+            | undefined;
+        if (!info) return; // not a player connection, or not authenticated yet
+        this.emitPlayerOpenedAlert(info);
     }
 
     /**

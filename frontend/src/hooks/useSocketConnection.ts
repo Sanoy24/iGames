@@ -147,7 +147,18 @@ export function useSocketConnection() {
                 return;
             if (!socketInstance) return;
             socketInstance.auth = { token: currentToken() };
-            if (!socketInstance.connected) socketInstance.connect();
+            if (socketInstance.connected) {
+                // The transport never actually dropped, so the server's
+                // handleConnection won't re-fire on its own  tell it explicitly
+                // that the app is back in front (powers the admin "player opened
+                // the app" alert for this case; see game-events.gateway.ts).
+                socketInstance.emit('player.app_opened');
+            } else {
+                // A real reconnect already re-triggers handleConnection (and its
+                // own alert) once it completes, so don't also emit here  that
+                // would double it up.
+                socketInstance.connect();
+            }
             socketInstance.emit('request.counts');
         };
         document.addEventListener('visibilitychange', onForeground);

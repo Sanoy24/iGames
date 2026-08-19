@@ -864,3 +864,128 @@ describe('WalletService.getRecentPlatformWins', () => {
         );
     });
 });
+
+// ─── getAgentFloatRemaining  admin float delta, not raw wallet balance ──────
+// Self-contained mocks: only walletRepository.find (for getAvailableBalances)
+// and a LedgerEntry QueryBuilder are touched.
+
+function makeFloatRemainingService(input: {
+    wallets?: Array<{ userId: string; availableMinor: number }>;
+    rawRows?: unknown[];
+}) {
+    const qb = makeQueryBuilder(input.rawRows ?? []);
+    const mockDataSource = {
+        getRepository: jest.fn().mockReturnValue({
+            createQueryBuilder: jest.fn().mockReturnValue(qb),
+        }),
+    } as unknown as DataSource;
+
+    const walletRepository = {
+        find: jest.fn().mockResolvedValue(
+            (input.wallets ?? []).map((w) =>
+                makeWallet({ userId: w.userId, availableMinor: w.availableMinor }),
+            ),
+        ),
+    };
+
+    const service = new WalletService(
+        mockDataSource,
+        walletRepository as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+    );
+
+    return { service, qb, walletRepository };
+}
+
+describe('WalletService.getAgentFloatRemaining', () => {
+    it('returns an empty map for no agent ids without querying anything', async () => {
+        const { service, walletRepository } = makeFloatRemainingService({});
+        expect(await service.getAgentFloatRemaining([])).toEqual(new Map());
+        expect(walletRepository.find).not.toHaveBeenCalled();
+    });
+
+    it('excludes an agent whose wallet balance comes only from commission/receipt credits, not admin transfers', async () => {
+        // Regression for the "agent shows in the deposit list despite never being
+        // funded" bug: this agent's wallet is 5,000 purely from referral
+        // commission (bingo_referral_commission)  no admin_to_agent_transfer row
+        // exists at all, so float remaining must be 0 even though the raw wallet
+        // balance is positive.
+        const { service } = makeFloatRemainingService({
+            wallets: [{ userId: 'agent-1', availableMinor: 5_000 }],
+            rawRows: [],
+        });
+
+        const result = await service.getAgentFloatRemaining(['agent-1']);
+
+        expect(result.get('agent-1')).toBe(0);
+    });
+
+    it('returns the admin-funded amount minus what has already been spent funding deposits', async () => {
+        const { service } = makeFloatRemainingService({
+            wallets: [{ userId: 'agent-1', availableMinor: 10_000 }],
+            rawRows: [
+                {
+                    userId: 'agent-1',
+                    sourceType: 'admin_to_agent_transfer',
+                    direction: 'credit',
+                    total: '8000',
+                },
+                {
+                    userId: 'agent-1',
+                    sourceType: 'agent_deposit_funding',
+                    direction: 'debit',
+                    total: '3000',
+                },
+            ],
+        });
+
+        const result = await service.getAgentFloatRemaining(['agent-1']);
+
+        expect(result.get('agent-1')).toBe(5_000);
+    });
+
+    it('caps the float delta at the wallet actual balance', async () => {
+        // The agent was funded 8,000 and has only spent 1,000 on deposits (delta
+        // = 7,000 by the ledger math), but separately drained their own wallet via
+        // an unrelated debit (e.g. transferAgentToUser) down to 2,000. They can
+        // only ever hand out what they still hold.
+        const { service } = makeFloatRemainingService({
+            wallets: [{ userId: 'agent-1', availableMinor: 2_000 }],
+            rawRows: [
+                {
+                    userId: 'agent-1',
+                    sourceType: 'admin_to_agent_transfer',
+                    direction: 'credit',
+                    total: '8000',
+                },
+                {
+                    userId: 'agent-1',
+                    sourceType: 'agent_deposit_funding',
+                    direction: 'debit',
+                    total: '1000',
+                },
+            ],
+        });
+
+        const result = await service.getAgentFloatRemaining(['agent-1']);
+
+        expect(result.get('agent-1')).toBe(2_000);
+    });
+
+    it('treats an agent absent from both the wallet and ledger rows as zero', async () => {
+        const { service } = makeFloatRemainingService({
+            wallets: [],
+            rawRows: [],
+        });
+
+        const result = await service.getAgentFloatRemaining(['agent-1']);
+
+        expect(result.get('agent-1')).toBe(0);
+    });
+});

@@ -406,13 +406,16 @@ export class AgentsService {
         if (agent.agentPermissions && agent.agentPermissions.deposit === false)
             return null;
 
-        // An agent with a zero (or unfunded) wallet isn't shown as a deposit
-        // destination  the admin hasn't allocated them float yet, so treat them
-        // the same as not currently available.
-        const balances = await this.walletService.getAvailableBalances([
-            agent.id,
-        ]);
-        if ((balances.get(agent.id) ?? 0) <= 0) return null;
+        // An agent with no admin-allocated deposit float left isn't shown as a
+        // deposit destination  treat them the same as not currently available.
+        // Deliberately NOT the raw wallet balance: that also includes referral
+        // commission and withdrawal-payout reimbursement credits, which would
+        // let an unfunded agent pass this check just by having an active
+        // referred player (see WalletService.getAgentFloatRemaining).
+        const floatRemaining = await this.walletService.getAgentFloatRemaining(
+            [agent.id],
+        );
+        if ((floatRemaining.get(agent.id) ?? 0) <= 0) return null;
 
         return {
             displayName: agent.displayName,
@@ -426,7 +429,8 @@ export class AgentsService {
      * available. Returns public info only (id + name + Telebirr phone). Empty when
      * nobody is on duty. Deposit attribution is still driven by the receipt itself
      * (the verifier matches the recipient name/phone), so this is purely a chooser.
-     * An agent whose wallet balance is zero is excluded  same reasoning as above.
+     * An agent with no admin-allocated deposit float left is excluded  same
+     * reasoning as getActiveAgentDepositInfo above.
      */
     async getActiveAgentsDepositInfo(): Promise<
         Array<{ id: string; displayName: string; phoneNumber: string | null }>
@@ -438,11 +442,11 @@ export class AgentsService {
         );
         if (eligible.length === 0) return [];
 
-        const balances = await this.walletService.getAvailableBalances(
+        const floatRemaining = await this.walletService.getAgentFloatRemaining(
             eligible.map((a) => a.id),
         );
         return eligible
-            .filter((a) => (balances.get(a.id) ?? 0) > 0)
+            .filter((a) => (floatRemaining.get(a.id) ?? 0) > 0)
             .map((a) => ({
                 id: a.id,
                 displayName: a.displayName,

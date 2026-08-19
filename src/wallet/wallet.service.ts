@@ -142,6 +142,81 @@ export class WalletService {
         return new Map(wallets.map((w) => [w.userId, w.availableMinor]));
     }
 
+    /**
+     * How much of an agent's wallet is admin-allocated deposit float still
+     * unspent  NOT the same as the wallet's raw balance. An agent's wallet also
+     * receives money that was never allocated as deposit float: referral/
+     * assigned-player commission (BingoService.settleReferralCommission) and
+     * withdrawal-payout reimbursement (`agent_receipt`, see recordAgentAction
+     * callers above). Both count toward `availableMinor` but neither means an
+     * admin actually gave this agent cash to hand out for deposits  an agent
+     * who was never funded could otherwise still pass a raw-balance check just
+     * by having an active referred player. Computed from ledger history
+     * (`admin_to_agent_transfer` credits minus `agent_deposit_funding` debits,
+     * both already recorded verbatim by transferAdminToAgent/
+     * fundUserCreditFromAgent) rather than a separate tracked balance, so there
+     * is nothing to migrate or backfill. Capped at the wallet's actual
+     * available balance in case the agent separately drained it through an
+     * unrelated debit (e.g. transferAgentToUser)  the delta alone could then
+     * overstate what they can actually still hand out.
+     */
+    async getAgentFloatRemaining(
+        agentIds: string[],
+    ): Promise<Map<string, number>> {
+        if (agentIds.length === 0) return new Map();
+
+        const [balances, rows] = await Promise.all([
+            this.getAvailableBalances(agentIds),
+            this.dataSource
+                .getRepository(LedgerEntry)
+                .createQueryBuilder('le')
+                .select('le.userId', 'userId')
+                .addSelect('le.sourceType', 'sourceType')
+                .addSelect('le.direction', 'direction')
+                .addSelect('SUM(le.amountMinor)', 'total')
+                .where('le.userId IN (:...agentIds)', { agentIds })
+                .andWhere('le.sourceType IN (:...sourceTypes)', {
+                    sourceTypes: [
+                        'admin_to_agent_transfer',
+                        'agent_deposit_funding',
+                    ],
+                })
+                .groupBy('le.userId')
+                .addGroupBy('le.sourceType')
+                .addGroupBy('le.direction')
+                .getRawMany<{
+                    userId: string;
+                    sourceType: string;
+                    direction: string;
+                    total: string;
+                }>(),
+        ]);
+
+        const deltaByAgent = new Map<string, number>();
+        for (const row of rows) {
+            const signed =
+                row.sourceType === 'admin_to_agent_transfer' &&
+                row.direction === 'credit'
+                    ? Number(row.total)
+                    : row.sourceType === 'agent_deposit_funding' &&
+                        row.direction === 'debit'
+                      ? -Number(row.total)
+                      : 0;
+            deltaByAgent.set(
+                row.userId,
+                (deltaByAgent.get(row.userId) ?? 0) + signed,
+            );
+        }
+
+        const result = new Map<string, number>();
+        for (const agentId of agentIds) {
+            const delta = deltaByAgent.get(agentId) ?? 0;
+            const rawBalance = balances.get(agentId) ?? 0;
+            result.set(agentId, Math.max(0, Math.min(delta, rawBalance)));
+        }
+        return result;
+    }
+
     async getLedgerEntries(input: {
         userId: string;
         limit: number;

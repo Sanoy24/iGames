@@ -23,7 +23,7 @@ function makeAgent(
 function makeService(input: {
     onDutyAgent?: ReturnType<typeof makeAgent> | null;
     onDutyAgents?: Array<ReturnType<typeof makeAgent>>;
-    balances?: Map<string, number>;
+    floatRemaining?: Map<string, number>;
     listPlayersResult?: any;
     findByIdResult?: any;
     queryRows?: unknown[][];
@@ -65,9 +65,9 @@ function makeService(input: {
     } as unknown as UsersService;
 
     const walletService = {
-        getAvailableBalances: jest
+        getAgentFloatRemaining: jest
             .fn()
-            .mockResolvedValue(input.balances ?? new Map()),
+            .mockResolvedValue(input.floatRemaining ?? new Map()),
         getClaimedWithdrawalForAgent: jest
             .fn()
             .mockResolvedValue(input.claimedWithdrawal),
@@ -139,7 +139,7 @@ function makeService(input: {
     };
 }
 
-describe('AgentsService  deposit-agent listing excludes zero-balance agents', () => {
+describe('AgentsService  deposit-agent listing excludes agents with no float remaining', () => {
     describe('getActiveAgentDepositInfo', () => {
         it('returns null when no agent is on duty', async () => {
             const { service } = makeService({ onDutyAgent: null });
@@ -152,34 +152,34 @@ describe('AgentsService  deposit-agent listing excludes zero-balance agents', ()
             });
             const { service } = makeService({
                 onDutyAgent: agent,
-                balances: new Map([['agent-1', 1000]]),
+                floatRemaining: new Map([['agent-1', 1000]]),
             });
             expect(await service.getActiveAgentDepositInfo()).toBeNull();
         });
 
-        it('returns null when the agent wallet balance is exactly zero', async () => {
+        it('returns null when the agent has zero float remaining', async () => {
             const agent = makeAgent({});
             const { service } = makeService({
                 onDutyAgent: agent,
-                balances: new Map([['agent-1', 0]]),
+                floatRemaining: new Map([['agent-1', 0]]),
             });
             expect(await service.getActiveAgentDepositInfo()).toBeNull();
         });
 
-        it('returns null when the agent has no wallet row at all (absent from the balance map)', async () => {
+        it('returns null when the agent has no wallet row at all (absent from the float map)', async () => {
             const agent = makeAgent({});
             const { service } = makeService({
                 onDutyAgent: agent,
-                balances: new Map(),
+                floatRemaining: new Map(),
             });
             expect(await service.getActiveAgentDepositInfo()).toBeNull();
         });
 
-        it('returns the agent when funded (balance > 0)', async () => {
+        it('returns the agent when funded (float remaining > 0)', async () => {
             const agent = makeAgent({});
             const { service } = makeService({
                 onDutyAgent: agent,
-                balances: new Map([['agent-1', 500]]),
+                floatRemaining: new Map([['agent-1', 500]]),
             });
             const result = await service.getActiveAgentDepositInfo();
             expect(result).toEqual({
@@ -195,7 +195,7 @@ describe('AgentsService  deposit-agent listing excludes zero-balance agents', ()
             expect(await service.getActiveAgentsDepositInfo()).toEqual([]);
         });
 
-        it('excludes zero-balance agents but keeps funded ones', async () => {
+        it('excludes agents with no float remaining but keeps funded ones', async () => {
             const funded = makeAgent({
                 id: 'agent-funded',
                 displayName: 'Funded Agent',
@@ -207,10 +207,10 @@ describe('AgentsService  deposit-agent listing excludes zero-balance agents', ()
             const unfunded = makeAgent({
                 id: 'agent-unfunded',
                 displayName: 'Unfunded Agent',
-            }); // absent from balances
+            }); // absent from the float map
             const { service, walletService } = makeService({
                 onDutyAgents: [funded, zero, unfunded],
-                balances: new Map([
+                floatRemaining: new Map([
                     ['agent-funded', 1000],
                     ['agent-zero', 0],
                 ]),
@@ -225,14 +225,14 @@ describe('AgentsService  deposit-agent listing excludes zero-balance agents', ()
                     phoneNumber: '0912345678',
                 },
             ]);
-            expect(walletService.getAvailableBalances).toHaveBeenCalledWith([
+            expect(walletService.getAgentFloatRemaining).toHaveBeenCalledWith([
                 'agent-funded',
                 'agent-zero',
                 'agent-unfunded',
             ]);
         });
 
-        it('excludes agents without deposit permission before even checking balance', async () => {
+        it('excludes agents without deposit permission before even checking float', async () => {
             const noPermission = makeAgent({
                 id: 'agent-no-perm',
                 agentPermissions: { deposit: false, withdraw: true },
@@ -244,7 +244,7 @@ describe('AgentsService  deposit-agent listing excludes zero-balance agents', ()
             const result = await service.getActiveAgentsDepositInfo();
 
             expect(result).toEqual([]);
-            expect(walletService.getAvailableBalances).not.toHaveBeenCalled();
+            expect(walletService.getAgentFloatRemaining).not.toHaveBeenCalled();
         });
     });
 

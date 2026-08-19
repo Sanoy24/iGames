@@ -66,6 +66,12 @@ export function useSocketConnection() {
 
             socketInstance = io(SOCKET_URL, {
                 auth: { token },
+                // Try a real WebSocket first instead of socket.io's default
+                // "long-poll, then upgrade"  that extra polling round-trip before
+                // the upgrade is pure added latency once WebSocket is known to work
+                // (it already has to, for live game state), and it's what was
+                // delaying the admin "player opened the app" alert.
+                transports: ['websocket', 'polling'],
                 reconnection: true,
                 reconnectionAttempts: Infinity,
                 reconnectionDelay: 1000,

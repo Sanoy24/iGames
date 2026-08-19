@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import {
     Activity,
     Banknote,
+    Bell,
+    BellOff,
     Bot,
     ChevronDown,
     ChevronUp,
@@ -84,6 +86,8 @@ import {
     getErrorMessage,
 } from '../lib/utils';
 import { formatCredits, useStore } from '../store/useStore';
+import { getSocket } from '../hooks/useSocketConnection';
+import { playerJoinedChime, resumeAdminAudio } from '../lib/adminSfx';
 import { SupportConsole } from '../components/SupportConsole';
 import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
@@ -15063,6 +15067,104 @@ function BroadcastAdmin() {
     );
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Player-activity alert toggle  chimes + toasts every admin panel tab (via
+// the 'admins' socket room, see GameEventsGateway.handleConnection) when a
+// player opens the Mini App. Mounted once at the Admin() root so it survives
+// switching between tabs instead of living inside one specific page.
+// ══════════════════════════════════════════════════════════════════
+const PLAYER_ALERTS_STORAGE_KEY = 'admin_player_alerts_enabled';
+
+type AdminPlayerConnectedPayload = {
+    userId: string;
+    displayName: string;
+    phoneNumber: string | null;
+    isNewPlayer: boolean;
+    timestamp: number;
+};
+
+function AdminPlayerAlertsToggle() {
+    const addToast = useStore((s) => s.addToast);
+    const isSocketConnected = useStore((s) => s.isSocketConnected);
+    const [enabled, setEnabled] = useState(
+        () => localStorage.getItem(PLAYER_ALERTS_STORAGE_KEY) !== 'off',
+    );
+    const enabledRef = useRef(enabled);
+    enabledRef.current = enabled;
+
+    // First tap/click anywhere in the admin panel unlocks the audio context, so
+    // sound works even if the admin never touches the toggle itself (browsers
+    // block autoplay until a user gesture has happened on the page).
+    useEffect(() => {
+        const unlock = () => {
+            resumeAdminAudio();
+            document.removeEventListener('pointerdown', unlock);
+        };
+        document.addEventListener('pointerdown', unlock);
+        return () => document.removeEventListener('pointerdown', unlock);
+    }, []);
+
+    useEffect(() => {
+        const socket = getSocket();
+        if (!socket) return;
+        const onPlayerConnected = (payload: AdminPlayerConnectedPayload) => {
+            if (!enabledRef.current) return;
+            playerJoinedChime();
+            addToast(
+                'info',
+                payload.isNewPlayer
+                    ? `🆕 New player: ${payload.displayName} just joined`
+                    : `🎮 ${payload.displayName} opened the app`,
+            );
+        };
+        socket.on('admin.player_connected', onPlayerConnected);
+        return () => {
+            socket.off('admin.player_connected', onPlayerConnected);
+        };
+    }, [addToast, isSocketConnected]);
+
+    return (
+        <button
+            type='button'
+            onClick={() => {
+                resumeAdminAudio();
+                setEnabled((prev) => {
+                    const next = !prev;
+                    localStorage.setItem(
+                        PLAYER_ALERTS_STORAGE_KEY,
+                        next ? 'on' : 'off',
+                    );
+                    return next;
+                });
+            }}
+            title={
+                enabled
+                    ? 'Player activity alerts: on (click to mute)'
+                    : 'Player activity alerts: muted (click to enable)'
+            }
+            style={{
+                marginLeft: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: enabled
+                    ? 'rgba(16, 185, 129, 0.12)'
+                    : 'rgba(148, 163, 184, 0.12)',
+                border: `1px solid ${enabled ? 'rgba(16, 185, 129, 0.35)' : 'var(--border)'}`,
+                borderRadius: 999,
+                padding: '6px 12px',
+                color: enabled ? 'var(--green)' : 'var(--text-muted)',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+            }}
+        >
+            {enabled ? <Bell size={14} /> : <BellOff size={14} />}
+            {enabled ? 'Player alerts on' : 'Player alerts muted'}
+        </button>
+    );
+}
+
 export function Admin() {
     const { t } = useTranslation();
     const user = useStore((s) => s.user);
@@ -15116,6 +15218,7 @@ export function Admin() {
                     </span>
                     <span className='adm-header-sub'>iGames Platform</span>
                 </div>
+                <AdminPlayerAlertsToggle />
             </div>
 
             {/* Body: sidebar nav + content */}

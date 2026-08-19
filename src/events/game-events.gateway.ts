@@ -148,7 +148,14 @@ export class GameEventsGateway
 
             const user = await this.userRepository.findOne({
                 where: { id: payload.sub },
-                select: ['id', 'status', 'roles', 'displayName'],
+                select: [
+                    'id',
+                    'status',
+                    'roles',
+                    'displayName',
+                    'phoneNumber',
+                    'createdAt',
+                ],
             });
 
             if (!user || user.status !== 'active') {
@@ -162,6 +169,29 @@ export class GameEventsGateway
             // Agents join a shared room so withdrawal.pending broadcasts reach them all.
             if (Array.isArray(user.roles) && user.roles.includes('agent')) {
                 await client.join('agents');
+            }
+
+            // Admins join a shared room so player-activity alerts (below) reach every
+            // open admin panel tab at once, the same way agent broadcasts do above.
+            if (Array.isArray(user.roles) && user.roles.includes('admin')) {
+                await client.join('admins');
+            }
+
+            // A player (not an agent/admin backoffice login) opening the Mini App
+            // notify every connected admin panel in real time so an admin watching
+            // the dashboard can react live, not just from the players list. Fires on
+            // every connect, including reconnects  deliberately not throttled, since
+            // an admin who wants a quieter signal can just mute the alert client-side.
+            if (Array.isArray(user.roles) && user.roles.includes('player')) {
+                this.server.to('admins').emit('admin.player_connected', {
+                    userId: user.id,
+                    displayName: user.displayName ?? 'Player',
+                    phoneNumber: user.phoneNumber ?? null,
+                    isNewPlayer:
+                        Date.now() - new Date(user.createdAt).getTime() <
+                        60_000,
+                    timestamp: Date.now(),
+                });
             }
 
             this.logger.debug(

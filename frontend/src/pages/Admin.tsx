@@ -884,6 +884,7 @@ function PlayersAdmin() {
                                     <th>Wallet Balance</th>
                                     <th>Status</th>
                                     <th>Online</th>
+                                    <th>Registered</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -994,6 +995,9 @@ function PlayersAdmin() {
                                                         : 'Offline'}
                                                 </span>
                                             </td>
+                                            <td className='adm-td-muted'>
+                                                {formatDateTime(u.createdAt)}
+                                            </td>
                                             <td>
                                                 <div
                                                     style={{
@@ -1068,8 +1072,9 @@ function PlayersAdmin() {
                     </div>
                 )}
 
-                {/* Pagination */}
-                {totalPages > 1 && (
+                {/* Pagination  always visible (even at 1 page) so the total/paging
+                    UI is discoverable as soon as the list grows past `limit`. */}
+                {users.length > 0 && (
                     <div
                         style={{
                             display: 'flex',

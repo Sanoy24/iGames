@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ArrayMinSize, ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class UpdateBingoConfigDto {
   @IsOptional() @IsBoolean()
@@ -105,6 +105,14 @@ export class UpdateBingoConfigDto {
   /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
   @IsOptional() @IsInt() @Min(0)
   botWinnerCooldownRooms?: number;
+
+  /** Master on/off for the Win Sequence (repeating Bot/User pattern), independent of botWinMode. */
+  @IsOptional() @IsBoolean()
+  winSequenceEnabled?: boolean;
+
+  /** Exactly 4 slots, each 'bot' or 'user'. */
+  @IsOptional() @IsArray() @ArrayMinSize(4) @ArrayMaxSize(4) @IsIn(['bot', 'user'], { each: true })
+  winSequencePattern?: Array<'bot' | 'user'>;
 
   @IsOptional() @IsIn(['race', 'leaderboard'])
   prefilledRankingMode?: 'race' | 'leaderboard';

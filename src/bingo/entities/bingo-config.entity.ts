@@ -233,6 +233,25 @@ export class BingoConfig {
     botWinnerCooldownRooms: number;
 
     /**
+     * Win Sequence: an admin-defined repeating 4-slot Bot/User pattern applied
+     * to every newly created prefilled room, independent of botWinMode/threshold
+     * (see BingoRoom.winSequenceTarget, snapshotted per room at creation, and
+     * BingoService.evaluateAndSettleDerash / reconcileBotCartelasInRoom for how
+     * each slot is enforced). Master on/off switch, separate from the pattern
+     * itself so a configured sequence can be paused without losing it.
+     */
+    @Column({ type: 'boolean', default: false })
+    winSequenceEnabled: boolean;
+
+    /** Exactly 4 slots, each 'bot' or 'user'. Cycled in order, wrapping around. */
+    @Column({ type: 'json', nullable: true })
+    winSequencePattern: Array<'bot' | 'user'> | null;
+
+    /** Index into winSequencePattern the NEXT newly-created room will use. */
+    @Column({ type: 'int', default: 0 })
+    winSequencePosition: number;
+
+    /**
      * JSON-encoded array of alias names the reserved cartel rotates through.
      * e.g. `["Abrsh","Derash","Yonas","Tigist","Hailu"]`.
      * Null = use the bot's own displayName for every game.

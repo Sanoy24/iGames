@@ -133,6 +133,15 @@ export class BingoRoom {
     rankingMode: 'race' | 'leaderboard';
 
     /**
+     * Which slot of the admin's repeating Win Sequence (see BingoConfig.
+     * winSequence*) this room was pinned to at creation  snapshotted once, like
+     * rankingMode above, so a mid-round admin edit to the pattern can't shift the
+     * rules under an already-running room. NULL when the sequence is disabled.
+     */
+    @Column({ type: 'varchar', length: 4, nullable: true })
+    winSequenceTarget?: 'bot' | 'user' | null;
+
+    /**
      * DB-level "one active game at a time" guard. Set to 1 while the room is open
      * or running, and NULL once it completes or is cancelled. The UNIQUE index
      * lets MySQL hold at most one non-NULL row (multiple NULLs are allowed), so

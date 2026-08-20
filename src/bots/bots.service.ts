@@ -667,11 +667,14 @@ export class BotsService {
         );
         const realPlayers =
             await this.bingoService.countRealPlayersInRoom(roomId);
-        // A Scheduled Bot Play window suspends the zero-real-players cancel below
-        // too  bots are meant to be the only players in the room while it's active.
+        // A Scheduled Bot Play window, or this room being pinned to a Win
+        // Sequence 'bot' slot, both suspend the zero-real-players cancel below
+        // too  bots are meant to be the only players in the room in either case.
         const activeBotPlaySchedule =
             await this.bingoService.getActiveScheduledBotPlay();
-        if (realPlayers <= 0 && !activeBotPlaySchedule) {
+        const winSequenceForcesBot =
+            await this.bingoService.isRoomWinSequenceBotTarget(roomId);
+        if (realPlayers <= 0 && !activeBotPlaySchedule && !winSequenceForcesBot) {
             let cancelled = false;
             try {
                 await this.bingoService.cancelRoom(roomId);

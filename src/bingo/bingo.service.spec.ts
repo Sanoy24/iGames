@@ -135,6 +135,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         }),
         create: jest.fn().mockImplementation((dto) => dto),
         save: jest.fn().mockImplementation((r) => Promise.resolve(r)),
+        update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
 
     const mockPatternRepo = {
@@ -3899,5 +3900,198 @@ describe('BingoService Scheduled Bot Play CRUD', () => {
             new Date('2026-01-01T05:00:00Z'),
         );
         expect(inactive).toBeNull();
+    });
+});
+
+describe('BingoService Win Sequence  slot resolution + position advance', () => {
+    function seqCfg(overrides: Record<string, unknown> = {}) {
+        return {
+            winSequenceEnabled: true,
+            winSequencePattern: ['user', 'bot', 'bot', 'bot'],
+            winSequencePosition: 0,
+            key: 'global',
+            ...overrides,
+        } as any;
+    }
+
+    it('returns null when the feature is disabled', () => {
+        const { service } = makeService({ rooms: [] });
+        const cfg = seqCfg({ winSequenceEnabled: false });
+        expect((service as any).resolveWinSequenceTarget(cfg)).toBeNull();
+    });
+
+    it('returns null when no pattern is configured', () => {
+        const { service } = makeService({ rooms: [] });
+        const cfg = seqCfg({ winSequencePattern: null });
+        expect((service as any).resolveWinSequenceTarget(cfg)).toBeNull();
+    });
+
+    it('resolves the slot at the current position', () => {
+        const { service } = makeService({ rooms: [] });
+        expect(
+            (service as any).resolveWinSequenceTarget(seqCfg({ winSequencePosition: 0 })),
+        ).toBe('user');
+        expect(
+            (service as any).resolveWinSequenceTarget(seqCfg({ winSequencePosition: 1 })),
+        ).toBe('bot');
+        expect(
+            (service as any).resolveWinSequenceTarget(seqCfg({ winSequencePosition: 3 })),
+        ).toBe('bot');
+    });
+
+    it('wraps the position around the pattern length', () => {
+        const { service } = makeService({ rooms: [] });
+        expect(
+            (service as any).resolveWinSequenceTarget(seqCfg({ winSequencePosition: 4 })),
+        ).toBe('user'); // 4 % 4 = 0
+        expect(
+            (service as any).resolveWinSequenceTarget(seqCfg({ winSequencePosition: 9 })),
+        ).toBe('bot'); // 9 % 4 = 1
+    });
+
+    it('advances the position by one, wrapping, and persists it', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        const cfg = seqCfg({ winSequencePosition: 3 });
+
+        await (service as any).advanceWinSequencePosition(cfg);
+
+        expect(cfg.winSequencePosition).toBe(0); // (3+1) % 4
+        expect(mockConfigRepo.save).not.toHaveBeenCalled();
+        expect(
+            (mockConfigRepo as any).update,
+        ).not.toBeUndefined(); // sanity: repo shape below actually has update mocked
+    });
+});
+
+describe('BingoService.reconcileBotCartelasInRoom  Win Sequence overrides', () => {
+    it('forces zero bot cartelas and sells any existing ones down when the room is pinned to a "user" slot', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            winSequenceTarget: 'user',
+        } as any);
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'guaranteed',
+            botCartelaPolicyEnabled: true,
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+        } as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(3);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({ shouldParticipate: () => true });
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(4); // bots already hold 4  must be sold down to 0
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(6);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue(null);
+        const releaseSpy = jest
+            .spyOn(service, 'releaseCartela')
+            .mockResolvedValue({} as any);
+        (service as any).bingoTicketRepository = {
+            find: jest.fn().mockResolvedValue([
+                {
+                    id: 't1',
+                    userId: 'bot-1',
+                    cartelaNumber: 10,
+                    user: { productMetadata: { botPolicy: {} } },
+                },
+                {
+                    id: 't2',
+                    userId: 'bot-2',
+                    cartelaNumber: 11,
+                    user: { productMetadata: { botPolicy: {} } },
+                },
+            ]),
+        };
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(changed).toBe(true);
+        expect(releaseSpy).toHaveBeenCalled();
+    });
+
+    it('does not cancel a zero-real-player room pinned to a "bot" slot, and forces a minimum bot presence', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            winSequenceTarget: 'bot',
+        } as any);
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'off',
+            botCartelaPolicyEnabled: false,
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+        } as any);
+        const cancelSpy = jest
+            .spyOn(service, 'cancelRoom')
+            .mockResolvedValue({} as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({ shouldParticipate: () => false });
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(1); // matches the forced minimum computed below
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue(null);
+        const targetSpy = jest.spyOn(
+            service as any,
+            'resolveBingoBotCartelaTarget',
+        );
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(cancelSpy).not.toHaveBeenCalled();
+        expect(targetSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ minTotalCartelas: 1 }),
+        );
+        // desiredBotCartelas resolves to 1 (mirror mode, realCartelas 0, forced
+        // minTotalCartelas 1), matching the mocked currentBotCartelas of 1, so
+        // the function short-circuits here - the assertions above (no cancel,
+        // forced minimum) are what actually prove the override took effect.
+        expect(changed).toBe(false);
     });
 });

@@ -184,13 +184,23 @@ export class BingoScheduler
                     // While a Scheduled Bot Play window is active, also visit
                     // truly-idle rooms (no ticket sold yet) so bots can buy the
                     // very first cartela themselves instead of waiting on a real
-                    // player who may never show up during this window.
+                    // player who may never show up during this window. Same for
+                    // any idle room already pinned to a Win Sequence 'bot' slot
+                    // (see BingoRoom.winSequenceTarget)  it must be able to start
+                    // and play out on bots alone to make good on that slot.
                     const activeBotPlaySchedule =
                         await this.bingoService.getActiveScheduledBotPlay();
-                    if (activeBotPlaySchedule) {
+                    if (activeBotPlaySchedule || cfg.winSequenceEnabled) {
                         const idleRooms =
                             await this.bingoService.findIdleOpenRooms();
-                        openRooms.push(...idleRooms);
+                        for (const room of idleRooms) {
+                            if (
+                                activeBotPlaySchedule ||
+                                room.winSequenceTarget === 'bot'
+                            ) {
+                                openRooms.push(room);
+                            }
+                        }
                     }
                     for (const room of openRooms) {
                         if (this.shuttingDown) break;

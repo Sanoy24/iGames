@@ -1193,6 +1193,49 @@ export class BingoService implements OnModuleInit {
         );
     }
 
+    // ── Win Sequence ───────────────────────────────────────────────────────────
+    //
+    // A repeating 4-slot Bot/User pattern (BingoConfig.winSequence*) cycled one
+    // room at a time: each newly created prefilled room is snapshotted to the
+    // slot at the current position (BingoRoom.winSequenceTarget), and the
+    // position then advances, wrapping around. Enforcement lives in
+    // reconcileBotCartelasInRoom (bot participation) and evaluateAndSettleDerash
+    // (win-steering) - this section only decides + advances which slot a new
+    // room gets.
+
+    /** The slot the NEXT room should be pinned to, or null if the feature is off. */
+    private resolveWinSequenceTarget(
+        cfg: BingoConfig,
+    ): 'bot' | 'user' | null {
+        if (!cfg.winSequenceEnabled) return null;
+        const pattern = cfg.winSequencePattern;
+        if (!pattern || pattern.length === 0) return null;
+        const index =
+            ((cfg.winSequencePosition % pattern.length) + pattern.length) %
+            pattern.length;
+        return pattern[index];
+    }
+
+    /** Advances the shared position cursor by one slot, wrapping around. Call
+     * once per room actually created under the sequence (i.e. only when
+     * resolveWinSequenceTarget returned non-null for it). */
+    private async advanceWinSequencePosition(cfg: BingoConfig): Promise<void> {
+        const length = cfg.winSequencePattern?.length ?? 0;
+        if (length === 0) return;
+        const next = (cfg.winSequencePosition + 1) % length;
+        cfg.winSequencePosition = next;
+        await this.bingoConfigRepository.update(
+            { key: cfg.key },
+            { winSequencePosition: next },
+        );
+    }
+
+    /** Whether this specific room was snapshotted to a Win Sequence 'bot' slot. */
+    async isRoomWinSequenceBotTarget(roomId: string): Promise<boolean> {
+        const room = await this.bingoRoomRepository.findOneBy({ id: roomId });
+        return room?.winSequenceTarget === 'bot';
+    }
+
     // ── Config ──────────────────────────────────────────────────────────────────
 
     async getBingoConfig(): Promise<BingoConfig> {
@@ -2072,6 +2115,11 @@ export class BingoService implements OnModuleInit {
         // must not share state with the cartel-dual guard below.
         const wasRankedBot = cfg.botWinMode === 'ranked-bot';
         Object.assign(cfg, dto);
+        // Editing the pattern restarts the cycle cleanly from slot 1 rather than
+        // resuming at whatever position the OLD pattern happened to be at.
+        if (dto.winSequencePattern !== undefined) {
+            cfg.winSequencePosition = 0;
+        }
         // A stale/typo'd pattern id here is otherwise invisible until draw time, where
         // resolvePrefilledPlacePattern silently skips the place forever (no log, no
         // error)  catch it here instead, at the moment it's introduced.
@@ -2295,6 +2343,10 @@ export class BingoService implements OnModuleInit {
                 ? customTicketPriceMinor
                 : cfg.defaultTicketPriceMinor;
 
+        const winSequenceTarget =
+            winMode === 'prefilled' ? this.resolveWinSequenceTarget(cfg) : null;
+        if (winSequenceTarget) await this.advanceWinSequencePosition(cfg);
+
         const room = this.bingoRoomRepository.create({
             name,
             status: 'open',
@@ -2312,6 +2364,7 @@ export class BingoService implements OnModuleInit {
             patternPrizes: [],
             houseEdgePct: cfg.houseEdgePct ?? 20,
             rankingMode: cfg.prefilledRankingMode ?? 'race',
+            winSequenceTarget,
             cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
             scheduledStartAt: null,
             drawnNumbers: [],
@@ -2913,6 +2966,10 @@ export class BingoService implements OnModuleInit {
                 ? (dto.numberRange ?? cfg.defaultNumberRange ?? 75)
                 : this.ballPoolFor(winMode, cfg);
 
+        const winSequenceTarget =
+            winMode === 'prefilled' ? this.resolveWinSequenceTarget(cfg) : null;
+        if (winSequenceTarget) await this.advanceWinSequencePosition(cfg);
+
         const room = this.bingoRoomRepository.create({
             name: dto.name,
             status: 'open',
@@ -2925,6 +2982,7 @@ export class BingoService implements OnModuleInit {
             patternPrizes: dto.patternPrizes ?? [],
             houseEdgePct: cfg.houseEdgePct ?? 20,
             rankingMode: cfg.prefilledRankingMode ?? 'race',
+            winSequenceTarget,
             cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
             scheduledStartAt: dto.scheduledStartAt
                 ? new Date(dto.scheduledStartAt)
@@ -3454,6 +3512,10 @@ export class BingoService implements OnModuleInit {
                 ? (slot.numberRange ?? cfg.defaultNumberRange ?? 75)
                 : this.ballPoolFor(winMode, cfg);
 
+        const winSequenceTarget =
+            winMode === 'prefilled' ? this.resolveWinSequenceTarget(cfg) : null;
+        if (winSequenceTarget) await this.advanceWinSequencePosition(cfg);
+
         const room = this.bingoRoomRepository.create({
             name: slot.name,
             status: 'open',
@@ -3466,6 +3528,7 @@ export class BingoService implements OnModuleInit {
             patternPrizes: slot.patternPrizes ?? [],
             houseEdgePct: cfg.houseEdgePct ?? 20,
             rankingMode: cfg.prefilledRankingMode ?? 'race',
+            winSequenceTarget,
             cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
             scheduledStartAt: null,
             drawnNumbers: [],
@@ -4587,24 +4650,40 @@ export class BingoService implements OnModuleInit {
         const belowThreshold =
             participation.belowEnabled &&
             realPlayers < participation.belowThreshold;
+        // Win Sequence: this room was snapshotted at creation to a fixed slot in
+        // the admin's repeating Bot/User pattern (see BingoConfig.winSequence*),
+        // independent of every threshold/mode above. A 'user' slot vetoes every
+        // bot-forcing mechanism below outright (bots stand down entirely  see
+        // reconcileBotCartelasInRoom  so there's nothing to redirect to anyway).
+        // A 'bot' slot is folded into the SAME redirect/final-draw-synthesis
+        // machinery guaranteed/hybrid/cartel-dual already use, just unconditional
+        // (not gated on belowThreshold) and applied to every enabled place.
+        const winSequenceForcesUser = room.winSequenceTarget === 'user';
+        const winSequenceForcesBot =
+            !winSequenceForcesUser && room.winSequenceTarget === 'bot';
         const enforceCartelDualBotWin =
-            belowThreshold && cfg.botWinMode === 'cartel-dual';
+            !winSequenceForcesUser &&
+            (winSequenceForcesBot ||
+                (belowThreshold && cfg.botWinMode === 'cartel-dual'));
         // A full derash draw is the final settlement opportunity. Every valid card
         // has all of its numbers available by then, so Cartel Dual must not leave a
         // real-user place open and finish the room without a winner if the bot card
         // was not recognized during an earlier draw.
         const finalDerashDraw = room.drawnNumbers.length >= 75;
         const redirectRealWinsToBot =
-            belowThreshold &&
-            (cfg.botWinMode === 'guaranteed' ||
-                cfg.botWinMode === 'hybrid' ||
-                cfg.botWinMode === 'cartel-dual');
+            !winSequenceForcesUser &&
+            (winSequenceForcesBot ||
+                (belowThreshold &&
+                    (cfg.botWinMode === 'guaranteed' ||
+                        cfg.botWinMode === 'hybrid' ||
+                        cfg.botWinMode === 'cartel-dual')));
         // Rank-keyed, threshold-independent win steering: ranks 1st-3rd always go to
         // a bot, ranks 4th-5th always go to a real player. Kept fully separate from
         // the threshold-driven variables above (never true at the same time, since
         // botWinMode is a single field) so the existing cartel-dual/guaranteed/hybrid
         // logic paths above are never touched by this mode.
-        const rankedBotWinActive = cfg.botWinMode === 'ranked-bot';
+        const rankedBotWinActive =
+            !winSequenceForcesUser && cfg.botWinMode === 'ranked-bot';
         const rankedBotPlaces = new Set<PrefilledPlace>(['1st', '2nd', '3rd']);
         const rankedHumanPlaces = new Set<PrefilledPlace>(['4th', '5th']);
 
@@ -4722,13 +4801,13 @@ export class BingoService implements OnModuleInit {
                     if (awarded.length > 0) {
                         awardedBotUserIds.add(botAwardee.userId);
                         this.logger.log(
-                            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected ${realCandidates.length} tied real completion(s) to bot ${botAwardee.userId}`,
+                            `Bot win-steer (${winSequenceForcesBot ? 'win-sequence' : cfg.botWinMode}): room ${room.id} place ${place} redirected ${realCandidates.length} tied real completion(s) to bot ${botAwardee.userId}`,
                         );
                     }
                     continue;
                 } else if (enforceCartelDualBotWin) {
                     this.logger.warn(
-                        `Cartel Dual held room ${room.id} place ${place} open: ${realCandidates.length} real completion(s)  no bot cartela at all in the room to redirect to`,
+                        `${winSequenceForcesBot ? 'Win Sequence' : 'Cartel Dual'} held room ${room.id} place ${place} open: ${realCandidates.length} real completion(s)  no bot cartela at all in the room to redirect to`,
                     );
                     continue;
                 }
@@ -6747,8 +6826,18 @@ export class BingoService implements OnModuleInit {
         // behaviour is unchanged.
         const activeBotPlaySchedule =
             await this.getActiveScheduledBotPlay(new Date());
+        // A room snapshotted to a Win Sequence 'bot' slot (see BingoConfig.
+        // winSequence*) also suspends the cancellation safety net below, same as
+        // a Scheduled Bot Play window  the room must be able to start and play
+        // out on bots alone to make good on that slot's guarantee.
+        const winSequenceForcesBot = room.winSequenceTarget === 'bot';
+        const winSequenceForcesUser = room.winSequenceTarget === 'user';
         const realPlayers = await this.countRealPlayersInRoom(validRoomId);
-        if (realPlayers <= 0 && !activeBotPlaySchedule) {
+        if (
+            realPlayers <= 0 &&
+            !activeBotPlaySchedule &&
+            !winSequenceForcesBot
+        ) {
             await this.cancelRoom(validRoomId).catch(() => undefined);
             return false;
         }
@@ -6780,6 +6869,10 @@ export class BingoService implements OnModuleInit {
         const bonusBotOverride = activeCampaignForBotOverride?.botWinEnabled
             ? activeCampaignForBotOverride
             : null;
+        // A Win Sequence 'bot' slot forces the same kind of minimum bot presence
+        // as the bonus-win override above (at least 1 cartela, so there's always
+        // something for evaluateAndSettleDerash to redirect the place onto).
+        const forceMinBotPresence = !!bonusBotOverride || winSequenceForcesBot;
         const derashMinTotalCartelas =
             cfg.botWinMode === 'cartel-dual'
                 ? Math.max(2, this.enabledPrefilledPlacesCount(cfg))
@@ -6806,28 +6899,32 @@ export class BingoService implements OnModuleInit {
             : bonusBotOverride
               ? Math.max(1, bonusBotOverride.botMaxCartelasPerRoom)
               : cartelaPolicy.maxCartelasPerBotPerRoom;
-        const desiredBotCartelas = activeBotPlaySchedule
-            ? this.resolveBingoBotCartelaTarget({
-                  mode: 'fixed_cap',
-                  maxCartelasPerBotPerRoom: effectiveMaxCartelasPerBotPerRoom,
-                  realCartelas,
-                  botCount: scheduledBotIds!.length,
-              })
-            : (bonusBotOverride || shouldParticipate) &&
-                (bonusBotOverride || cartelaPolicy.enabled)
+        const desiredBotCartelas = winSequenceForcesUser
+            ? // 'user' slot: bots stand down entirely, regardless of every other
+              // setting, so the real player in the room gets an uncontested shot.
+              0
+            : activeBotPlaySchedule
               ? this.resolveBingoBotCartelaTarget({
-                    mode: cartelaPolicy.mode,
+                    mode: 'fixed_cap',
                     maxCartelasPerBotPerRoom: effectiveMaxCartelasPerBotPerRoom,
                     realCartelas,
-                    botCount: activeBotIds.size,
-                    // At least one bot cartela per enabled place: cartel-dual needs a
-                    // distinct bot available to redirect each place's win onto without
-                    // reusing one that already won earlier in the same room.
-                    minTotalCartelas: bonusBotOverride
-                        ? Math.max(1, derashMinTotalCartelas)
-                        : derashMinTotalCartelas,
+                    botCount: scheduledBotIds!.length,
                 })
-              : 0;
+              : (forceMinBotPresence || shouldParticipate) &&
+                  (forceMinBotPresence || cartelaPolicy.enabled)
+                ? this.resolveBingoBotCartelaTarget({
+                      mode: cartelaPolicy.mode,
+                      maxCartelasPerBotPerRoom: effectiveMaxCartelasPerBotPerRoom,
+                      realCartelas,
+                      botCount: activeBotIds.size,
+                      // At least one bot cartela per enabled place: cartel-dual needs a
+                      // distinct bot available to redirect each place's win onto without
+                      // reusing one that already won earlier in the same room.
+                      minTotalCartelas: forceMinBotPresence
+                          ? Math.max(1, derashMinTotalCartelas)
+                          : derashMinTotalCartelas,
+                  })
+                : 0;
 
         if (desiredBotCartelas === currentBotCartelas) return false;
 

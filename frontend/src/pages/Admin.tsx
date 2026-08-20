@@ -6105,6 +6105,10 @@ function BingoAdmin() {
         botBonusWinEveryNRounds: 0,
         botBonusWinChancePct: 0,
         botWinnerCooldownRooms: 25,
+        winSequenceEnabled: false,
+        winSequencePattern: ['user', 'user', 'user', 'user'] as Array<
+            'bot' | 'user'
+        >,
         prefilledRankingMode: 'race' as 'race' | 'leaderboard',
         prefilledFirstPlacePct: 80,
         prefilledSecondPlaceEnabled: false,
@@ -6185,6 +6189,13 @@ function BingoAdmin() {
                     0,
                 botBonusWinChancePct: c.botBonusWinChancePct ?? 0,
                 botWinnerCooldownRooms: c.botWinnerCooldownRooms ?? 25,
+                winSequenceEnabled: c.winSequenceEnabled ?? false,
+                winSequencePattern: (c.winSequencePattern ?? [
+                    'user',
+                    'user',
+                    'user',
+                    'user',
+                ]) as Array<'bot' | 'user'>,
                 prefilledRankingMode: (c.prefilledRankingMode ?? 'race') as
                     | 'race'
                     | 'leaderboard',
@@ -9249,6 +9260,131 @@ function BingoAdmin() {
                                 a different name from the alias pool below,
                                 making them look like two unrelated real
                                 players.
+                            </span>
+                        </label>
+                        <label
+                            className='adm-field'
+                            style={{ gridColumn: 'span 2' }}
+                        >
+                            <span>Win Sequence (repeating 4-round pattern)</span>
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 12,
+                                    marginBottom: 8,
+                                }}
+                            >
+                                <button
+                                    type='button'
+                                    role='switch'
+                                    aria-checked={cfgForm.winSequenceEnabled}
+                                    onClick={() =>
+                                        setCfgForm((f) => ({
+                                            ...f,
+                                            winSequenceEnabled:
+                                                !f.winSequenceEnabled,
+                                        }))
+                                    }
+                                    style={{
+                                        position: 'relative',
+                                        width: 44,
+                                        height: 24,
+                                        borderRadius: 999,
+                                        flexShrink: 0,
+                                        cursor: 'pointer',
+                                        background: cfgForm.winSequenceEnabled
+                                            ? 'var(--green, #10b981)'
+                                            : 'var(--border)',
+                                        border: 'none',
+                                        transition: 'background .15s',
+                                    }}
+                                >
+                                    <span
+                                        style={{
+                                            position: 'absolute',
+                                            top: 2,
+                                            left: cfgForm.winSequenceEnabled
+                                                ? 22
+                                                : 2,
+                                            width: 20,
+                                            height: 20,
+                                            borderRadius: '50%',
+                                            background: '#fff',
+                                            transition: 'left .15s',
+                                        }}
+                                    />
+                                </button>
+                                <strong>
+                                    {cfgForm.winSequenceEnabled
+                                        ? 'Enabled'
+                                        : 'Disabled'}
+                                </strong>
+                                {cfgForm.winSequenceEnabled && cfg && (
+                                    <span className='adm-td-muted'>
+                                        Next room uses slot{' '}
+                                        {(cfg.winSequencePosition ?? 0) + 1}
+                                    </span>
+                                )}
+                            </div>
+                            <div
+                                style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(4, 1fr)',
+                                    gap: 8,
+                                }}
+                            >
+                                {[0, 1, 2, 3].map((i) => (
+                                    <label
+                                        key={i}
+                                        className='adm-field'
+                                        style={{ margin: 0 }}
+                                    >
+                                        <span>Round {i + 1}</span>
+                                        <select
+                                            className='input'
+                                            value={cfgForm.winSequencePattern[i]}
+                                            onChange={(e) =>
+                                                setCfgForm((f) => {
+                                                    const next = [
+                                                        ...f.winSequencePattern,
+                                                    ] as Array<
+                                                        'bot' | 'user'
+                                                    >;
+                                                    next[i] = e.target
+                                                        .value as
+                                                        | 'bot'
+                                                        | 'user';
+                                                    return {
+                                                        ...f,
+                                                        winSequencePattern:
+                                                            next,
+                                                    };
+                                                })
+                                            }
+                                        >
+                                            <option value='user'>
+                                                Real User
+                                            </option>
+                                            <option value='bot'>
+                                                Cartel
+                                            </option>
+                                        </select>
+                                    </label>
+                                ))}
+                            </div>
+                            <span className='adm-field-hint'>
+                                Independent of the Reserved Cartel Win Mode
+                                above and every threshold setting  each new
+                                room is pinned to the next slot in this
+                                repeating pattern. A <b>Cartel</b> slot is a
+                                hard guarantee (redirects any real winner, or
+                                seeds a cartel win on the final ball if
+                                nobody's completed it yet). A <b>Real User</b>{' '}
+                                slot makes cartel members stand down entirely
+                                for that room so a real player gets an
+                                uncontested shot  it cannot force a real win
+                                if no real player shows up.
                             </span>
                         </label>
                         <label className='adm-field'>

@@ -409,6 +409,12 @@ export type BingoConfig = {
     botBonusWinChancePct?: number;
     /** Completed Bingo rooms a bot must sit out after winning. 0 = no cooldown. */
     botWinnerCooldownRooms?: number;
+    /** Master on/off for the Win Sequence (repeating Bot/User pattern), independent of botWinMode. */
+    winSequenceEnabled?: boolean;
+    /** Exactly 4 slots, each 'bot' or 'user', cycled in order per new room. */
+    winSequencePattern?: Array<'bot' | 'user'> | null;
+    /** Index into winSequencePattern the NEXT newly-created room will use (read-only display). */
+    winSequencePosition?: number;
     prefilledRankingMode?: 'race' | 'leaderboard';
     prefilledFirstPlacePct?: number;
     prefilledSecondPlaceEnabled?: boolean;

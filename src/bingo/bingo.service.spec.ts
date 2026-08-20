@@ -154,6 +154,14 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         remove: jest.fn().mockResolvedValue(undefined),
     };
 
+    const mockScheduledBotPlayRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findOneBy: jest.fn().mockResolvedValue(null),
+        save: jest.fn().mockImplementation((s) => Promise.resolve(s)),
+        create: jest.fn().mockImplementation((dto) => dto),
+        remove: jest.fn().mockResolvedValue(undefined),
+    };
+
     const mockCustomRoomSlotRepo = {
         find: jest.fn().mockResolvedValue([]),
         findBy: jest.fn().mockResolvedValue([]),
@@ -192,6 +200,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         mockOperationalAlertRepo as any,
         mockPatternRepo as any,
         mockBonusCampaignRepo as any,
+        mockScheduledBotPlayRepo as any,
         new (require('./bingo-rules.service').BingoRulesService)(),
         { drawUniqueNumbers: jest.fn() } as any,
         walletService as any,
@@ -211,6 +220,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         mockConfigRepo,
         mockPatternRepo,
         mockBonusCampaignRepo,
+        mockScheduledBotPlayRepo,
         mockOperationalAlertRepo,
         walletService,
         dataSource,
@@ -616,6 +626,13 @@ describe('BingoService.findRunningRoomIdsDue  unit', () => {
                 create: jest.fn().mockImplementation((dto: unknown) => dto),
                 remove: jest.fn().mockResolvedValue(undefined),
             } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn().mockResolvedValue(null),
+                save: jest.fn().mockImplementation((s: unknown) => s),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+                remove: jest.fn().mockResolvedValue(undefined),
+            } as any,
             new (require('./bingo-rules.service').BingoRulesService)(),
             { drawUniqueNumbers: jest.fn() } as any,
             { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
@@ -709,6 +726,13 @@ describe('BingoService.findRunningRoomIdsDue  unit', () => {
                 find: jest.fn().mockResolvedValue([]),
                 findOneBy: jest.fn().mockResolvedValue(null),
                 save: jest.fn().mockImplementation((c: unknown) => c),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+                remove: jest.fn().mockResolvedValue(undefined),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn().mockResolvedValue(null),
+                save: jest.fn().mockImplementation((s: unknown) => s),
                 create: jest.fn().mockImplementation((dto: unknown) => dto),
                 remove: jest.fn().mockResolvedValue(undefined),
             } as any,
@@ -3706,5 +3730,174 @@ describe('BingoService.reconcileBotCartelasInRoom  bonus bot-win cartela overrid
 
         expect(targetSpy).not.toHaveBeenCalled();
         expect(changed).toBe(false);
+    });
+});
+
+describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override', () => {
+    it('does not cancel a zero-real-player room and forces botCount*maxCartelasPerBot while a window is active', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'off',
+            botCartelaPolicyEnabled: false,
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+        } as any);
+        const cancelSpy = jest
+            .spyOn(service, 'cancelRoom')
+            .mockResolvedValue({} as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2', 'bot-3', 'bot-4']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 3,
+            maxCartelasPerBot: 2,
+        });
+        const targetSpy = jest.spyOn(
+            service as any,
+            'resolveBingoBotCartelaTarget',
+        );
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue([1, 2, 3, 4, 5, 6, 7, 8]);
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(cancelSpy).not.toHaveBeenCalled();
+        expect(targetSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                mode: 'fixed_cap',
+                maxCartelasPerBotPerRoom: 2,
+                botCount: 3, // pinned to the schedule's botCount, not all 4 active bots
+            }),
+        );
+        // desiredBotCartelas resolves to 3*2=6, vs currentBotCartelas 0.
+        expect(purchaseSpy).toHaveBeenCalledTimes(6);
+        const purchasingUserIds = new Set(
+            (purchaseSpy.mock.calls as any[]).map((call) => call[0].userId),
+        );
+        expect(purchasingUserIds.size).toBe(3); // exactly botCount distinct bots
+        expect(changed).toBe(true);
+    });
+
+    it('still cancels a zero-real-player room when no Scheduled Bot Play window is active', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({} as any);
+        const cancelSpy = jest
+            .spyOn(service, 'cancelRoom')
+            .mockResolvedValue({} as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue(null);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(cancelSpy).toHaveBeenCalledWith(room.id);
+        expect(changed).toBe(false);
+    });
+});
+
+describe('BingoService Scheduled Bot Play CRUD', () => {
+    it('rejects creating a schedule whose window overlaps an existing one', async () => {
+        const { service, mockScheduledBotPlayRepo } = makeService({
+            rooms: [],
+        });
+        mockScheduledBotPlayRepo.find.mockResolvedValue([
+            {
+                id: 'existing-1',
+                name: 'Existing Window',
+                scheduleType: 'once',
+                startAt: new Date('2026-01-01T10:00:00Z'),
+                endAt: new Date('2026-01-01T12:00:00Z'),
+                recurrence: null,
+            },
+        ]);
+
+        await expect(
+            service.createScheduledBotPlay({
+                name: 'New Window',
+                scheduleType: 'once',
+                startAt: '2026-01-01T13:00:00', // Addis local -> 10:00 UTC
+                endAt: '2026-01-01T15:00:00', // Addis local -> 12:00 UTC, overlaps
+                botCount: 5,
+                maxCartelasPerBot: 2,
+            } as any),
+        ).rejects.toThrow(/overlaps/i);
+    });
+
+    it('creates a non-overlapping schedule and getActiveScheduledBotPlay finds it when active', async () => {
+        const { service, mockScheduledBotPlayRepo } = makeService({
+            rooms: [],
+        });
+        mockScheduledBotPlayRepo.find.mockResolvedValue([]);
+
+        const created = await service.createScheduledBotPlay({
+            name: 'Overnight Activity',
+            enabled: true,
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '02:00:00',
+                endTime: '06:00:00',
+            },
+            botCount: 10,
+            maxCartelasPerBot: 3,
+        } as any);
+
+        expect(created.name).toBe('Overnight Activity');
+        expect(created.botCount).toBe(10);
+
+        // 04:00 Addis local = 01:00 UTC, inside the 02:00-06:00 window.
+        mockScheduledBotPlayRepo.find.mockResolvedValue([created]);
+        const active = await service.getActiveScheduledBotPlay(
+            new Date('2026-01-01T01:00:00Z'),
+        );
+        expect(active?.id).toBe(created.id);
+
+        // 08:00 Addis local = 05:00 UTC, outside the window.
+        const inactive = await service.getActiveScheduledBotPlay(
+            new Date('2026-01-01T05:00:00Z'),
+        );
+        expect(inactive).toBeNull();
     });
 });

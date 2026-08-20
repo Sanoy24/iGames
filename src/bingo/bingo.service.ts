@@ -36,12 +36,17 @@ import {
     CreateBingoBonusCampaignDto,
     UpdateBingoBonusCampaignDto,
 } from './dto/create-bingo-bonus-campaign.dto';
+import {
+    CreateBingoScheduledBotPlayDto,
+    UpdateBingoScheduledBotPlayDto,
+} from './dto/create-bingo-scheduled-bot-play.dto';
 import { BingoConfig } from './entities/bingo-config.entity';
 import {
     BingoBonusCampaign,
     BingoBonusRecurrence,
     BingoBonusScheduleType,
 } from './entities/bingo-bonus-campaign.entity';
+import { BingoScheduledBotPlay } from './entities/bingo-scheduled-bot-play.entity';
 import { BingoCustomRoomSlot } from './entities/bingo-custom-room-slot.entity';
 import { CommissionSettlementError } from './entities/commission-settlement-error.entity';
 import { BingoOperationalAlert } from './entities/bingo-operational-alert.entity';
@@ -274,6 +279,8 @@ export class BingoService implements OnModuleInit {
         private readonly bingoPatternRepository: Repository<BingoPattern>,
         @InjectRepository(BingoBonusCampaign)
         private readonly bingoBonusCampaignRepository: Repository<BingoBonusCampaign>,
+        @InjectRepository(BingoScheduledBotPlay)
+        private readonly bingoScheduledBotPlayRepository: Repository<BingoScheduledBotPlay>,
         private readonly bingoRulesService: BingoRulesService,
         private readonly rngService: RngService,
         private readonly walletService: WalletService,
@@ -472,8 +479,14 @@ export class BingoService implements OnModuleInit {
         };
     }
 
+    /** Generic Addis-time "is this window open right now" check  works for any
+     * schedule-shaped row (BingoBonusCampaign, BingoScheduledBotPlay, …), not
+     * just bonus campaigns, despite the name (kept to avoid a wider rename). */
     private isBonusCampaignActiveAt(
-        campaign: BingoBonusCampaign,
+        campaign: Pick<
+            BingoBonusCampaign,
+            'enabled' | 'scheduleType' | 'startAt' | 'endAt' | 'recurrence'
+        >,
         now: Date,
     ): boolean {
         if (!campaign.enabled) return false;
@@ -1018,6 +1031,166 @@ export class BingoService implements OnModuleInit {
             awardedAt: new Date().toISOString(),
         };
         await manager.save(room);
+    }
+
+    // ── Scheduled Bot Play ─────────────────────────────────────────────────────
+    //
+    // An admin-scheduled window during which the platform proactively starts and
+    // fills rooms using ONLY bots (see reconcileBotCartelasInRoom's override
+    // below and BotsService.topUpBotsForOpenRoom). Same schedule shape/overlap
+    // rules as Bonus Campaigns, reusing the same Addis-time window helpers above.
+
+    private async validateScheduledBotPlayPayload(input: {
+        scheduleType?: BingoBonusScheduleType;
+        startAt?: string;
+        endAt?: string;
+        recurrence?: BingoBonusRecurrence;
+    }): Promise<{
+        scheduleType?: BingoBonusScheduleType;
+        startAt?: Date | null;
+        endAt?: Date | null;
+        recurrence?: BingoBonusRecurrence | null;
+    }> {
+        // Reuses the exact same schedule-field validation as Bonus Campaigns
+        // (window math is identical; only the entity-specific fields differ).
+        const { patternId: _ignored, ...schedule } =
+            await this.validateBonusCampaignPayload({
+                ...input,
+                patternId: undefined,
+            });
+        void _ignored;
+        return schedule;
+    }
+
+    async listScheduledBotPlays(): Promise<BingoScheduledBotPlay[]> {
+        return this.bingoScheduledBotPlayRepository.find({
+            order: { createdAt: 'DESC' },
+        });
+    }
+
+    async createScheduledBotPlay(
+        dto: CreateBingoScheduledBotPlayDto,
+        createdBy?: string,
+    ): Promise<BingoScheduledBotPlay> {
+        const validated = await this.validateScheduledBotPlayPayload(dto);
+        const candidate = {
+            scheduleType: dto.scheduleType,
+            startAt: validated.startAt ?? null,
+            endAt: validated.endAt ?? null,
+            recurrence: validated.recurrence ?? null,
+        };
+        const existing = await this.bingoScheduledBotPlayRepository.find();
+        this.assertNoScheduledBotPlayOverlap(candidate, existing);
+
+        const schedule = this.bingoScheduledBotPlayRepository.create({
+            name: dto.name,
+            enabled: dto.enabled ?? false,
+            scheduleType: dto.scheduleType,
+            startAt: candidate.startAt,
+            endAt: candidate.endAt,
+            recurrence: candidate.recurrence,
+            botCount: dto.botCount,
+            maxCartelasPerBot: dto.maxCartelasPerBot,
+            createdBy: createdBy ?? null,
+        });
+        return this.bingoScheduledBotPlayRepository.save(schedule);
+    }
+
+    async updateScheduledBotPlay(
+        id: string,
+        dto: UpdateBingoScheduledBotPlayDto,
+    ): Promise<BingoScheduledBotPlay> {
+        const schedule = await this.bingoScheduledBotPlayRepository.findOneBy({
+            id,
+        });
+        if (!schedule)
+            throw new NotFoundException('Scheduled bot play not found');
+
+        const validated = await this.validateScheduledBotPlayPayload({
+            scheduleType: dto.scheduleType ?? schedule.scheduleType,
+            startAt: dto.startAt,
+            endAt: dto.endAt,
+            recurrence: dto.recurrence,
+        });
+
+        const merged = {
+            scheduleType: dto.scheduleType ?? schedule.scheduleType,
+            startAt:
+                validated.startAt !== undefined
+                    ? validated.startAt
+                    : schedule.startAt,
+            endAt:
+                validated.endAt !== undefined
+                    ? validated.endAt
+                    : schedule.endAt,
+            recurrence:
+                validated.recurrence !== undefined
+                    ? validated.recurrence
+                    : schedule.recurrence,
+        };
+        if (
+            dto.scheduleType !== undefined ||
+            dto.startAt !== undefined ||
+            dto.endAt !== undefined ||
+            dto.recurrence !== undefined
+        ) {
+            const others = (
+                await this.bingoScheduledBotPlayRepository.find()
+            ).filter((s) => s.id !== id);
+            this.assertNoScheduledBotPlayOverlap(merged, others);
+        }
+
+        Object.assign(schedule, {
+            name: dto.name ?? schedule.name,
+            enabled: dto.enabled ?? schedule.enabled,
+            scheduleType: merged.scheduleType,
+            startAt: merged.startAt,
+            endAt: merged.endAt,
+            recurrence: merged.recurrence,
+            botCount: dto.botCount ?? schedule.botCount,
+            maxCartelasPerBot:
+                dto.maxCartelasPerBot ?? schedule.maxCartelasPerBot,
+        });
+        return this.bingoScheduledBotPlayRepository.save(schedule);
+    }
+
+    async deleteScheduledBotPlay(id: string): Promise<void> {
+        const schedule = await this.bingoScheduledBotPlayRepository.findOneBy({
+            id,
+        });
+        if (!schedule)
+            throw new NotFoundException('Scheduled bot play not found');
+        await this.bingoScheduledBotPlayRepository.remove(schedule);
+    }
+
+    private assertNoScheduledBotPlayOverlap(
+        candidate: Pick<
+            BingoScheduledBotPlay,
+            'scheduleType' | 'startAt' | 'endAt' | 'recurrence'
+        >,
+        existing: BingoScheduledBotPlay[],
+    ): void {
+        for (const other of existing) {
+            if (this.bonusWindowsOverlap(candidate, other)) {
+                throw new BadRequestException(
+                    `This schedule overlaps existing bot-play window "${other.name}". Scheduled bot plays cannot overlap.`,
+                );
+            }
+        }
+    }
+
+    /** The active+enabled scheduled bot-play window right now, if any (at most
+     * one, since overlap is rejected at write time). */
+    async getActiveScheduledBotPlay(
+        now: Date = new Date(),
+    ): Promise<BingoScheduledBotPlay | null> {
+        const enabledSchedules = await this.bingoScheduledBotPlayRepository.find(
+            { where: { enabled: true } },
+        );
+        return (
+            enabledSchedules.find((s) => this.isBonusCampaignActiveAt(s, now)) ??
+            null
+        );
     }
 
     // ── Config ──────────────────────────────────────────────────────────────────
@@ -6538,6 +6711,22 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
+     * Truly-idle open rooms (no ticket sold yet, no countdown started). Normally
+     * nothing ever touches these until a real player buys in; the scheduler only
+     * calls this - and only acts on the result - while a Scheduled Bot Play
+     * window is active, so bots can buy the room's very first cartela(s) too.
+     */
+    async findIdleOpenRooms(): Promise<BingoRoom[]> {
+        return this.bingoRoomRepository.find({
+            where: {
+                status: 'open',
+                soldTickets: 0,
+                scheduledStartAt: IsNull(),
+            },
+        });
+    }
+
+    /**
      * Reconcile the room's bot cartelas to the current human demand.
      * Prefilled Bingo bots mirror the live human cartela count while the room is
      * open, and stand down entirely once the room has enough real players or none
@@ -6551,8 +6740,15 @@ export class BingoService implements OnModuleInit {
         if (!room || room.status !== 'open') return false;
 
         const cfg = await this.getBingoConfig();
+        // A Scheduled Bot Play window running right now suspends the "no real
+        // players -> cancel" safety net for this room: bots are meant to buy in
+        // and play entirely on their own during the window (see
+        // getActiveScheduledBotPlay's doc comment). Outside any active window,
+        // behaviour is unchanged.
+        const activeBotPlaySchedule =
+            await this.getActiveScheduledBotPlay(new Date());
         const realPlayers = await this.countRealPlayersInRoom(validRoomId);
-        if (realPlayers <= 0) {
+        if (realPlayers <= 0 && !activeBotPlaySchedule) {
             await this.cancelRoom(validRoomId).catch(() => undefined);
             return false;
         }
@@ -6590,24 +6786,48 @@ export class BingoService implements OnModuleInit {
                 : cfg.botWinMode === 'ranked-bot'
                   ? 3
                   : 0;
-        const desiredBotCartelas =
-            (bonusBotOverride || shouldParticipate) &&
-            (bonusBotOverride || cartelaPolicy.enabled)
-                ? this.resolveBingoBotCartelaTarget({
-                      mode: cartelaPolicy.mode,
-                      maxCartelasPerBotPerRoom: bonusBotOverride
-                          ? Math.max(1, bonusBotOverride.botMaxCartelasPerRoom)
-                          : cartelaPolicy.maxCartelasPerBotPerRoom,
-                      realCartelas,
-                      botCount: activeBotIds.size,
-                      // At least one bot cartela per enabled place: cartel-dual needs a
-                      // distinct bot available to redirect each place's win onto without
-                      // reusing one that already won earlier in the same room.
-                      minTotalCartelas: bonusBotOverride
-                          ? Math.max(1, derashMinTotalCartelas)
-                          : derashMinTotalCartelas,
-                  })
-                : 0;
+        // Which bots are eligible to buy this reconcile. Normally every active
+        // bot; a Scheduled Bot Play window instead pins it to exactly `botCount`
+        // distinct bots (shuffled once here, reused below) so the room is filled
+        // by precisely as many bots as the admin configured, not more.
+        const scheduledBotIds = activeBotPlaySchedule
+            ? this.shuffle([...activeBotIds]).slice(
+                  0,
+                  activeBotPlaySchedule.botCount,
+              )
+            : null;
+        // The per-bot cap actually enforced below (both here and in the purchase
+        // loop's `allAtCap`/`held >=` checks) must be THIS value, not the raw
+        // config default, whenever a schedule/bonus override is active - using
+        // the global default there instead would silently cut a higher override
+        // short (the loop's `allAtCap` breaks out before reaching the real target).
+        const effectiveMaxCartelasPerBotPerRoom = activeBotPlaySchedule
+            ? Math.max(1, activeBotPlaySchedule.maxCartelasPerBot)
+            : bonusBotOverride
+              ? Math.max(1, bonusBotOverride.botMaxCartelasPerRoom)
+              : cartelaPolicy.maxCartelasPerBotPerRoom;
+        const desiredBotCartelas = activeBotPlaySchedule
+            ? this.resolveBingoBotCartelaTarget({
+                  mode: 'fixed_cap',
+                  maxCartelasPerBotPerRoom: effectiveMaxCartelasPerBotPerRoom,
+                  realCartelas,
+                  botCount: scheduledBotIds!.length,
+              })
+            : (bonusBotOverride || shouldParticipate) &&
+                (bonusBotOverride || cartelaPolicy.enabled)
+              ? this.resolveBingoBotCartelaTarget({
+                    mode: cartelaPolicy.mode,
+                    maxCartelasPerBotPerRoom: effectiveMaxCartelasPerBotPerRoom,
+                    realCartelas,
+                    botCount: activeBotIds.size,
+                    // At least one bot cartela per enabled place: cartel-dual needs a
+                    // distinct bot available to redirect each place's win onto without
+                    // reusing one that already won earlier in the same room.
+                    minTotalCartelas: bonusBotOverride
+                        ? Math.max(1, derashMinTotalCartelas)
+                        : derashMinTotalCartelas,
+                })
+              : 0;
 
         if (desiredBotCartelas === currentBotCartelas) return false;
 
@@ -6617,7 +6837,7 @@ export class BingoService implements OnModuleInit {
         ) {
             return false;
         }
-        const botIdsForPurchase = [...activeBotIds];
+        const botIdsForPurchase = scheduledBotIds ?? [...activeBotIds];
         if (
             desiredBotCartelas > currentBotCartelas &&
             botIdsForPurchase.length > 0
@@ -6667,14 +6887,14 @@ export class BingoService implements OnModuleInit {
                 const allAtCap = shuffledBotIds.every(
                     (botId) =>
                         (botHeldCounts.get(botId) ?? 0) >=
-                        cartelaPolicy.maxCartelasPerBotPerRoom,
+                        effectiveMaxCartelasPerBotPerRoom,
                 );
                 if (allAtCap) break;
 
                 for (const botId of shuffledBotIds) {
                     if (remaining <= 0 || freeCartelas.length === 0) break;
                     const held = botHeldCounts.get(botId) ?? 0;
-                    if (held >= cartelaPolicy.maxCartelasPerBotPerRoom) {
+                    if (held >= effectiveMaxCartelasPerBotPerRoom) {
                         continue;
                     }
 

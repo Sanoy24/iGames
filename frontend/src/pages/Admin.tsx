@@ -63,6 +63,7 @@ import {
 import type {
     AdminLocation,
     BingoBonusCampaign,
+    BingoScheduledBotPlay,
     BingoConfig,
     BingoPattern,
     BingoRoom,
@@ -5720,6 +5721,29 @@ function BingoAdmin() {
     };
     const [bonusForm, setBonusForm] = useState(emptyBonusForm);
 
+    const [scheduledBotPlays, setScheduledBotPlays] = useState<
+        BingoScheduledBotPlay[]
+    >([]);
+    const [showScheduledBotPlays, setShowScheduledBotPlays] = useState(false);
+    const [showBotPlayForm, setShowBotPlayForm] = useState(false);
+    const [editingBotPlayId, setEditingBotPlayId] = useState<string | null>(
+        null,
+    );
+    const emptyBotPlayForm = {
+        name: '',
+        enabled: false,
+        scheduleType: 'once' as 'once' | 'recurring',
+        startAt: '',
+        endAt: '',
+        recurrenceFrequency: 'daily' as 'daily' | 'weekly',
+        recurrenceDayOfWeek: 0,
+        recurrenceStartTime: '02:00:00',
+        recurrenceEndTime: '06:00:00',
+        botCount: 10,
+        maxCartelasPerBot: 3,
+    };
+    const [botPlayForm, setBotPlayForm] = useState(emptyBotPlayForm);
+
     // Inline rename / restyle for an existing room (any room  agent-owned,
     // house, or admin-created; see BingoService.updateRoomDisplay).
     const [editingNameId, setEditingNameId] = useState<string | null>(null);
@@ -6102,14 +6126,16 @@ function BingoAdmin() {
 
     const loadMeta = useCallback(async () => {
         try {
-            const [c, p, b] = await Promise.all([
+            const [c, p, b, sbp] = await Promise.all([
                 adminBingoApi.getConfig(),
                 adminBingoApi.listPatterns(),
                 adminBingoApi.listBonusCampaigns(),
+                adminBingoApi.listScheduledBotPlays(),
             ]);
             setCfg(c);
             setPatterns(p);
             setBonusCampaigns(b);
+            setScheduledBotPlays(sbp);
             setCfgForm({
                 enabled: c.enabled,
                 autoRepeatIntervalMinutes: c.autoRepeatIntervalMinutes,
@@ -6517,7 +6543,9 @@ function BingoAdmin() {
         }
     };
 
-    const describeBonusSchedule = (c: BingoBonusCampaign): string => {
+    const describeBonusSchedule = (
+        c: Pick<BingoBonusCampaign, 'scheduleType' | 'startAt' | 'endAt' | 'recurrence'>,
+    ): string => {
         if (c.scheduleType === 'once') {
             const fmt = (s: string | null) =>
                 s ? new Date(s).toLocaleString() : '?';
@@ -6537,6 +6565,114 @@ function BingoAdmin() {
         const dayLabel =
             r.frequency === 'weekly' ? `${days[r.dayOfWeek ?? 0]} ` : 'Daily ';
         return `${dayLabel}${r.startTime}–${r.endTime} (Addis time)`;
+    };
+
+    const openNewBotPlaySchedule = () => {
+        setEditingBotPlayId(null);
+        setBotPlayForm(emptyBotPlayForm);
+        setShowBotPlayForm(true);
+    };
+
+    const openEditBotPlaySchedule = (s: BingoScheduledBotPlay) => {
+        setEditingBotPlayId(s.id);
+        setBotPlayForm({
+            name: s.name,
+            enabled: s.enabled,
+            scheduleType: s.scheduleType,
+            startAt: s.startAt ? s.startAt.slice(0, 19) : '',
+            endAt: s.endAt ? s.endAt.slice(0, 19) : '',
+            recurrenceFrequency: s.recurrence?.frequency ?? 'daily',
+            recurrenceDayOfWeek: s.recurrence?.dayOfWeek ?? 0,
+            recurrenceStartTime: s.recurrence?.startTime ?? '02:00:00',
+            recurrenceEndTime: s.recurrence?.endTime ?? '06:00:00',
+            botCount: s.botCount,
+            maxCartelasPerBot: s.maxCartelasPerBot,
+        });
+        setShowBotPlayForm(true);
+    };
+
+    const saveBotPlaySchedule = async () => {
+        if (!botPlayForm.name.trim()) {
+            addToast('error', 'Name is required.');
+            return;
+        }
+        setBusy('botplay-save');
+        try {
+            const dto = {
+                name: botPlayForm.name.trim(),
+                enabled: botPlayForm.enabled,
+                scheduleType: botPlayForm.scheduleType,
+                startAt:
+                    botPlayForm.scheduleType === 'once'
+                        ? botPlayForm.startAt
+                        : undefined,
+                endAt:
+                    botPlayForm.scheduleType === 'once'
+                        ? botPlayForm.endAt
+                        : undefined,
+                recurrence:
+                    botPlayForm.scheduleType === 'recurring'
+                        ? {
+                              frequency: botPlayForm.recurrenceFrequency,
+                              dayOfWeek:
+                                  botPlayForm.recurrenceFrequency === 'weekly'
+                                      ? botPlayForm.recurrenceDayOfWeek
+                                      : undefined,
+                              startTime: botPlayForm.recurrenceStartTime,
+                              endTime: botPlayForm.recurrenceEndTime,
+                          }
+                        : undefined,
+                botCount: botPlayForm.botCount,
+                maxCartelasPerBot: botPlayForm.maxCartelasPerBot,
+            };
+            if (editingBotPlayId) {
+                const updated = await adminBingoApi.updateScheduledBotPlay(
+                    editingBotPlayId,
+                    dto,
+                );
+                setScheduledBotPlays((prev) =>
+                    prev.map((s) => (s.id === updated.id ? updated : s)),
+                );
+            } else {
+                const created =
+                    await adminBingoApi.createScheduledBotPlay(dto);
+                setScheduledBotPlays((prev) => [created, ...prev]);
+            }
+            addToast('success', 'Scheduled bot play saved.');
+            setShowBotPlayForm(false);
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const toggleBotPlayEnabled = async (s: BingoScheduledBotPlay) => {
+        setBusy(`botplay-${s.id}`);
+        try {
+            const updated = await adminBingoApi.updateScheduledBotPlay(s.id, {
+                enabled: !s.enabled,
+            });
+            setScheduledBotPlays((prev) =>
+                prev.map((x) => (x.id === updated.id ? updated : x)),
+            );
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const deleteBotPlaySchedule = async (id: string) => {
+        setBusy(`botplay-del-${id}`);
+        try {
+            await adminBingoApi.deleteScheduledBotPlay(id);
+            setScheduledBotPlays((prev) => prev.filter((s) => s.id !== id));
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
     };
 
     const setPatternPrize = (
@@ -6603,6 +6739,15 @@ function BingoAdmin() {
                     {showBonusCampaigns
                         ? 'Hide Bonus Win'
                         : 'Bonus Win'}
+                </button>
+                <button
+                    className='adm-btn adm-btn-secondary'
+                    onClick={() => setShowScheduledBotPlays((v) => !v)}
+                >
+                    <Bot size={13} />
+                    {showScheduledBotPlays
+                        ? 'Hide Scheduled Bot Play'
+                        : 'Scheduled Bot Play'}
                 </button>
                 <button
                     className='adm-btn adm-btn-secondary'
@@ -7947,6 +8092,400 @@ function BingoAdmin() {
                                 <button
                                     className='adm-btn adm-btn-secondary'
                                     onClick={() => setShowBonusForm(false)}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Scheduled Bot Play panel */}
+            {showScheduledBotPlays && (
+                <div className='adm-panel'>
+                    <div
+                        className='adm-panel-head'
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                        }}
+                    >
+                        <span>
+                            Scheduled Bot Play ({scheduledBotPlays.length})
+                        </span>
+                        <button
+                            className='adm-btn adm-btn-primary adm-btn-xs'
+                            onClick={openNewBotPlaySchedule}
+                        >
+                            <Plus size={13} />
+                            New Window
+                        </button>
+                    </div>
+                    <div
+                        className='adm-td-muted'
+                        style={{ padding: '4px 12px', fontSize: 12 }}
+                    >
+                        While active, up to the configured number of bots buy
+                        into the room on their own (no real player needed) and
+                        play the round out normally. All schedules are Addis
+                        Ababa time. A round already running when a window
+                        closes finishes naturally.
+                    </div>
+                    {scheduledBotPlays.length === 0 ? (
+                        <div className='adm-empty'>
+                            No scheduled bot-play windows yet.
+                        </div>
+                    ) : (
+                        <table className='adm-table'>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Schedule</th>
+                                    <th>Bots</th>
+                                    <th>Max Cartelas/Bot</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {scheduledBotPlays.map((s) => (
+                                    <tr key={s.id} className='adm-tr'>
+                                        <td>
+                                            <strong>{s.name}</strong>
+                                        </td>
+                                        <td
+                                            className='adm-td-muted'
+                                            style={{ fontSize: 12 }}
+                                        >
+                                            {describeBonusSchedule(s)}
+                                        </td>
+                                        <td>{s.botCount}</td>
+                                        <td>{s.maxCartelasPerBot}</td>
+                                        <td>
+                                            <span
+                                                className={`badge ${s.enabled ? 'badge-green' : 'badge-red'}`}
+                                            >
+                                                {s.enabled
+                                                    ? 'Enabled'
+                                                    : 'Disabled'}
+                                            </span>
+                                        </td>
+                                        <td
+                                            style={{
+                                                display: 'flex',
+                                                gap: 6,
+                                            }}
+                                        >
+                                            <button
+                                                className='adm-btn adm-btn-secondary adm-btn-xs'
+                                                disabled={
+                                                    busy === `botplay-${s.id}`
+                                                }
+                                                onClick={() =>
+                                                    void toggleBotPlayEnabled(
+                                                        s,
+                                                    )
+                                                }
+                                            >
+                                                {s.enabled
+                                                    ? 'Disable'
+                                                    : 'Enable'}
+                                            </button>
+                                            <button
+                                                className='adm-btn adm-btn-secondary adm-btn-xs'
+                                                onClick={() =>
+                                                    openEditBotPlaySchedule(s)
+                                                }
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                className='adm-btn adm-btn-danger adm-btn-xs'
+                                                disabled={
+                                                    busy ===
+                                                    `botplay-del-${s.id}`
+                                                }
+                                                onClick={() =>
+                                                    void deleteBotPlaySchedule(
+                                                        s.id,
+                                                    )
+                                                }
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+
+                    {showBotPlayForm && (
+                        <div
+                            className='adm-panel'
+                            style={{ margin: 12, background: 'rgba(0,0,0,0.15)' }}
+                        >
+                            <div className='adm-panel-head'>
+                                {editingBotPlayId
+                                    ? 'Edit Scheduled Bot Play'
+                                    : 'New Scheduled Bot Play'}
+                            </div>
+                            <div className='adm-form-grid'>
+                                <label className='adm-field'>
+                                    <span>Name</span>
+                                    <input
+                                        className='input'
+                                        value={botPlayForm.name}
+                                        onChange={(e) =>
+                                            setBotPlayForm((f) => ({
+                                                ...f,
+                                                name: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field adm-field-checkbox'>
+                                    <input
+                                        type='checkbox'
+                                        checked={botPlayForm.enabled}
+                                        onChange={(e) =>
+                                            setBotPlayForm((f) => ({
+                                                ...f,
+                                                enabled: e.target.checked,
+                                            }))
+                                        }
+                                    />
+                                    <span>Enabled</span>
+                                </label>
+                                <label className='adm-field'>
+                                    <span>How Many Bots</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={1}
+                                        value={botPlayForm.botCount}
+                                        onChange={(e) =>
+                                            setBotPlayForm((f) => ({
+                                                ...f,
+                                                botCount: Number(
+                                                    e.target.value,
+                                                ),
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field'>
+                                    <span>Max Cartelas Per Bot</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={1}
+                                        value={botPlayForm.maxCartelasPerBot}
+                                        onChange={(e) =>
+                                            setBotPlayForm((f) => ({
+                                                ...f,
+                                                maxCartelasPerBot: Number(
+                                                    e.target.value,
+                                                ),
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field'>
+                                    <span>Schedule Type</span>
+                                    <select
+                                        className='input'
+                                        value={botPlayForm.scheduleType}
+                                        onChange={(e) =>
+                                            setBotPlayForm((f) => ({
+                                                ...f,
+                                                scheduleType: e.target
+                                                    .value as
+                                                    | 'once'
+                                                    | 'recurring',
+                                            }))
+                                        }
+                                    >
+                                        <option value='once'>
+                                            Once (specific date/time)
+                                        </option>
+                                        <option value='recurring'>
+                                            Recurring
+                                        </option>
+                                    </select>
+                                </label>
+
+                                {botPlayForm.scheduleType === 'once' ? (
+                                    <>
+                                        <label className='adm-field'>
+                                            <span>
+                                                Start (Addis Ababa time)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='datetime-local'
+                                                step={1}
+                                                value={botPlayForm.startAt}
+                                                onChange={(e) =>
+                                                    setBotPlayForm((f) => ({
+                                                        ...f,
+                                                        startAt:
+                                                            e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <label className='adm-field'>
+                                            <span>
+                                                End (Addis Ababa time)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='datetime-local'
+                                                step={1}
+                                                value={botPlayForm.endAt}
+                                                onChange={(e) =>
+                                                    setBotPlayForm((f) => ({
+                                                        ...f,
+                                                        endAt: e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                    </>
+                                ) : (
+                                    <>
+                                        <label className='adm-field'>
+                                            <span>Frequency</span>
+                                            <select
+                                                className='input'
+                                                value={
+                                                    botPlayForm.recurrenceFrequency
+                                                }
+                                                onChange={(e) =>
+                                                    setBotPlayForm((f) => ({
+                                                        ...f,
+                                                        recurrenceFrequency: e
+                                                            .target.value as
+                                                            | 'daily'
+                                                            | 'weekly',
+                                                    }))
+                                                }
+                                            >
+                                                <option value='daily'>
+                                                    Daily
+                                                </option>
+                                                <option value='weekly'>
+                                                    Weekly
+                                                </option>
+                                            </select>
+                                        </label>
+                                        {botPlayForm.recurrenceFrequency ===
+                                            'weekly' && (
+                                            <label className='adm-field'>
+                                                <span>Day of Week</span>
+                                                <select
+                                                    className='input'
+                                                    value={
+                                                        botPlayForm.recurrenceDayOfWeek
+                                                    }
+                                                    onChange={(e) =>
+                                                        setBotPlayForm(
+                                                            (f) => ({
+                                                                ...f,
+                                                                recurrenceDayOfWeek:
+                                                                    Number(
+                                                                        e
+                                                                            .target
+                                                                            .value,
+                                                                    ),
+                                                            }),
+                                                        )
+                                                    }
+                                                >
+                                                    {[
+                                                        'Sunday',
+                                                        'Monday',
+                                                        'Tuesday',
+                                                        'Wednesday',
+                                                        'Thursday',
+                                                        'Friday',
+                                                        'Saturday',
+                                                    ].map((d, i) => (
+                                                        <option
+                                                            key={i}
+                                                            value={i}
+                                                        >
+                                                            {d}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                        )}
+                                        <label className='adm-field'>
+                                            <span>
+                                                Start Time (Addis, HH:mm:ss)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='time'
+                                                step={1}
+                                                value={
+                                                    botPlayForm.recurrenceStartTime
+                                                }
+                                                onChange={(e) =>
+                                                    setBotPlayForm((f) => ({
+                                                        ...f,
+                                                        recurrenceStartTime:
+                                                            e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <label className='adm-field'>
+                                            <span>
+                                                End Time (Addis, HH:mm:ss)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='time'
+                                                step={1}
+                                                value={
+                                                    botPlayForm.recurrenceEndTime
+                                                }
+                                                onChange={(e) =>
+                                                    setBotPlayForm((f) => ({
+                                                        ...f,
+                                                        recurrenceEndTime:
+                                                            e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                    </>
+                                )}
+                            </div>
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    gap: 8,
+                                    padding: 12,
+                                }}
+                            >
+                                <button
+                                    className='adm-btn adm-btn-primary'
+                                    disabled={busy === 'botplay-save'}
+                                    onClick={() => void saveBotPlaySchedule()}
+                                >
+                                    {busy === 'botplay-save'
+                                        ? 'Saving…'
+                                        : 'Save Window'}
+                                </button>
+                                <button
+                                    className='adm-btn adm-btn-secondary'
+                                    onClick={() => setShowBotPlayForm(false)}
                                 >
                                     Cancel
                                 </button>

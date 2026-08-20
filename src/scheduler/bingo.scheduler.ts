@@ -181,6 +181,17 @@ export class BingoScheduler
                 try {
                     const openRooms =
                         await this.bingoService.findOpenRoomsWithCountdown();
+                    // While a Scheduled Bot Play window is active, also visit
+                    // truly-idle rooms (no ticket sold yet) so bots can buy the
+                    // very first cartela themselves instead of waiting on a real
+                    // player who may never show up during this window.
+                    const activeBotPlaySchedule =
+                        await this.bingoService.getActiveScheduledBotPlay();
+                    if (activeBotPlaySchedule) {
+                        const idleRooms =
+                            await this.bingoService.findIdleOpenRooms();
+                        openRooms.push(...idleRooms);
+                    }
                     for (const room of openRooms) {
                         if (this.shuttingDown) break;
                         const changed =

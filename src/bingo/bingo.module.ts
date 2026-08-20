@@ -22,6 +22,7 @@ import { BingoPattern } from './entities/bingo-pattern.entity';
 import { BingoRoom } from './entities/bingo-room.entity';
 import { BingoTicket } from './entities/bingo-ticket.entity';
 import { BingoBonusCampaign } from './entities/bingo-bonus-campaign.entity';
+import { BingoScheduledBotPlay } from './entities/bingo-scheduled-bot-play.entity';
 import { BotName } from '../bots/entities/bot-name.entity';
 
 @Module({
@@ -32,7 +33,7 @@ import { BotName } from '../bots/entities/bot-name.entity';
     WalletModule,
     GameEventsModule,
     NotificationsModule,
-    TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoCustomRoomSlot, CommissionSettlementError, BingoOperationalAlert, BingoPattern, BingoBonusCampaign, BotName])
+    TypeOrmModule.forFeature([BingoRoom, BingoTicket, BingoCard, BingoConfig, BingoCustomRoomSlot, CommissionSettlementError, BingoOperationalAlert, BingoPattern, BingoBonusCampaign, BingoScheduledBotPlay, BotName])
   ],
   controllers: [BingoController, BingoAdminController],
   providers: [BingoService, BingoRulesService, JwtAuthGuard, OptionalJwtAuthGuard, RolesGuard],

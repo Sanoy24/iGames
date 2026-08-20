@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
     AuthTokenResponse,
     BingoBonusCampaign,
+    BingoScheduledBotPlay,
     BingoConfig,
     BingoOperationalAlert,
     BingoPattern,
@@ -1159,6 +1160,35 @@ export const adminBingoApi = {
             .then((r) => r.data),
     deleteBonusCampaign: (id: string) =>
         api.delete(`/admin/bingo/bonus-campaigns/${id}`).then((r) => r.data),
+    listScheduledBotPlays: () =>
+        api
+            .get<BingoScheduledBotPlay[]>('/admin/bingo/scheduled-bot-plays')
+            .then((r) => r.data),
+    createScheduledBotPlay: (
+        dto: Omit<BingoScheduledBotPlay, 'id' | 'createdAt' | 'updatedAt'>,
+    ) =>
+        api
+            .post<BingoScheduledBotPlay>(
+                '/admin/bingo/scheduled-bot-plays',
+                dto,
+            )
+            .then((r) => r.data),
+    updateScheduledBotPlay: (
+        id: string,
+        dto: Partial<
+            Omit<BingoScheduledBotPlay, 'id' | 'createdAt' | 'updatedAt'>
+        >,
+    ) =>
+        api
+            .patch<BingoScheduledBotPlay>(
+                `/admin/bingo/scheduled-bot-plays/${id}`,
+                dto,
+            )
+            .then((r) => r.data),
+    deleteScheduledBotPlay: (id: string) =>
+        api
+            .delete(`/admin/bingo/scheduled-bot-plays/${id}`)
+            .then((r) => r.data),
 };
 
 // ── Admin: Bots ───────────────────────────────────────────────────

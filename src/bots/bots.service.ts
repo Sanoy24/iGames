@@ -667,7 +667,11 @@ export class BotsService {
         );
         const realPlayers =
             await this.bingoService.countRealPlayersInRoom(roomId);
-        if (realPlayers <= 0) {
+        // A Scheduled Bot Play window suspends the zero-real-players cancel below
+        // too  bots are meant to be the only players in the room while it's active.
+        const activeBotPlaySchedule =
+            await this.bingoService.getActiveScheduledBotPlay();
+        if (realPlayers <= 0 && !activeBotPlaySchedule) {
             let cancelled = false;
             try {
                 await this.bingoService.cancelRoom(roomId);

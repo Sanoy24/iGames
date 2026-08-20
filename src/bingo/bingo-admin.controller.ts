@@ -24,6 +24,10 @@ import {
     CreateBingoBonusCampaignDto,
     UpdateBingoBonusCampaignDto,
 } from './dto/create-bingo-bonus-campaign.dto';
+import {
+    CreateBingoScheduledBotPlayDto,
+    UpdateBingoScheduledBotPlayDto,
+} from './dto/create-bingo-scheduled-bot-play.dto';
 import { UpdateRoomSlotDto } from './dto/update-room-slot.dto';
 import { CreateCustomRoomSlotDto } from './dto/create-custom-room-slot.dto';
 import { UpdateCustomRoomSlotDto } from './dto/update-custom-room-slot.dto';
@@ -286,5 +290,42 @@ export class BingoAdminController {
     @ApiOkResponse({ description: 'Deletes a Bingo bonus win campaign.' })
     deleteBonusCampaign(@Param('id') id: string) {
         return this.bingoService.deleteBonusCampaign(id);
+    }
+
+    // ── Scheduled Bot Play ──────────────────────────────────────────────
+
+    @Get('scheduled-bot-plays')
+    @ApiOkResponse({
+        description: 'Returns all Bingo scheduled bot-only play windows.',
+    })
+    listScheduledBotPlays() {
+        return this.bingoService.listScheduledBotPlays();
+    }
+
+    @Post('scheduled-bot-plays')
+    @ApiOkResponse({
+        description: 'Creates a Bingo scheduled bot-only play window.',
+    })
+    createScheduledBotPlay(@Body() dto: CreateBingoScheduledBotPlayDto) {
+        return this.bingoService.createScheduledBotPlay(dto);
+    }
+
+    @Patch('scheduled-bot-plays/:id')
+    @ApiOkResponse({
+        description: 'Updates a Bingo scheduled bot-only play window.',
+    })
+    updateScheduledBotPlay(
+        @Param('id') id: string,
+        @Body() dto: UpdateBingoScheduledBotPlayDto,
+    ) {
+        return this.bingoService.updateScheduledBotPlay(id, dto);
+    }
+
+    @Delete('scheduled-bot-plays/:id')
+    @ApiOkResponse({
+        description: 'Deletes a Bingo scheduled bot-only play window.',
+    })
+    deleteScheduledBotPlay(@Param('id') id: string) {
+        return this.bingoService.deleteScheduledBotPlay(id);
     }
 }

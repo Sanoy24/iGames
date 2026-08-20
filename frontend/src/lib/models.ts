@@ -202,6 +202,26 @@ export type BingoBonusRecurrence = {
 };
 
 /**
+ * An admin-scheduled window during which the platform proactively starts and
+ * fills rooms using ONLY bots  no real player required. Up to `botCount`
+ * distinct bots each buy up to `maxCartelasPerBot` cartelas while active.
+ * Same once/recurring Addis Ababa (UTC+3) schedule shape as BingoBonusCampaign.
+ */
+export type BingoScheduledBotPlay = {
+    id: string;
+    name: string;
+    enabled: boolean;
+    scheduleType: 'once' | 'recurring';
+    startAt: string | null;
+    endAt: string | null;
+    recurrence: BingoBonusRecurrence | null;
+    botCount: number;
+    maxCartelasPerBot: number;
+    createdAt?: string;
+    updatedAt?: string;
+};
+
+/**
  * An admin-scheduled "Bonus Win" campaign: while active, any prefilled/derash
  * ticket that completes `patternId` earns `prizeMinor` on top of its normal
  * Derash placement winnings. Always interpreted in Addis Ababa (UTC+3) time.

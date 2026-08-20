@@ -517,6 +517,9 @@ describe('BotsService  Bingo room top-up guard', () => {
         (bingoService as any).cancelRoom = jest
             .fn()
             .mockResolvedValue(undefined);
+        (bingoService as any).getActiveScheduledBotPlay = jest
+            .fn()
+            .mockResolvedValue(null);
 
         const changed = await service.topUpBotsForOpenRoom(
             '550e8400-e29b-41d4-a716-446655440000',
@@ -526,5 +529,48 @@ describe('BotsService  Bingo room top-up guard', () => {
         expect((bingoService as any).cancelRoom).toHaveBeenCalledWith(
             '550e8400-e29b-41d4-a716-446655440000',
         );
+    });
+
+    it('does not cancel a bot-only room while a Scheduled Bot Play window is active', async () => {
+        const { service, bingoService } = makeService({});
+        (service as any).getActiveBots = jest
+            .fn()
+            .mockResolvedValue([
+                {
+                    id: 'bot-1',
+                    displayName: 'Bot One',
+                    productMetadata: { botPolicy: { ticketsPerRound: 1 } },
+                },
+            ]);
+        (bingoService as any).getBingoConfig = jest.fn().mockResolvedValue({
+            botMaxRealPlayers: 10,
+            botWinMode: 'statistical',
+        });
+        (bingoService as any).countRealPlayersInRoom = jest
+            .fn()
+            .mockResolvedValue(0);
+        (bingoService as any).cancelRoom = jest
+            .fn()
+            .mockResolvedValue(undefined);
+        (bingoService as any).getActiveScheduledBotPlay = jest
+            .fn()
+            .mockResolvedValue({
+                id: 'schedule-1',
+                botCount: 10,
+                maxCartelasPerBot: 3,
+            });
+        (bingoService as any).reconcileBotCartelasInRoom = jest
+            .fn()
+            .mockResolvedValue(true);
+
+        const changed = await service.topUpBotsForOpenRoom(
+            '550e8400-e29b-41d4-a716-446655440000',
+        );
+
+        expect(changed).toBe(true);
+        expect((bingoService as any).cancelRoom).not.toHaveBeenCalled();
+        expect(
+            (bingoService as any).reconcileBotCartelasInRoom,
+        ).toHaveBeenCalledWith('550e8400-e29b-41d4-a716-446655440000');
     });
 });

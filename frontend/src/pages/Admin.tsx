@@ -12,6 +12,7 @@ import {
     CircleDot,
     Coins,
     Dices,
+    Gift,
     Image as ImageIcon,
     LifeBuoy,
     MapPin,
@@ -61,6 +62,7 @@ import {
 } from '../lib/api';
 import type {
     AdminLocation,
+    BingoBonusCampaign,
     BingoConfig,
     BingoPattern,
     BingoRoom,
@@ -3411,7 +3413,8 @@ function ConfigAdmin() {
     const [config, setConfig] = useState<SystemConfig | null>(null);
     const [form, setForm] = useState<SystemConfig>({
         telebirrCreditMinorPerBirr: 1,
-        welcomeBonusMinor: 0,
+        welcomeBonusMinor: 20,
+        welcomeBonusEnabled: false,
         minDepositMinor: 0,
         withdrawalMinAmountMinor: 0,
         withdrawalMaxAmountMinor: 0,
@@ -3431,6 +3434,7 @@ function ConfigAdmin() {
     const toFormValues = (c: SystemConfig): SystemConfig => ({
         telebirrCreditMinorPerBirr: c.telebirrCreditMinorPerBirr,
         welcomeBonusMinor: c.welcomeBonusMinor,
+        welcomeBonusEnabled: c.welcomeBonusEnabled ?? false,
         minDepositMinor: c.minDepositMinor ?? 0,
         withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
         withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
@@ -3599,7 +3603,12 @@ function ConfigAdmin() {
                     {field(
                         'welcomeBonusMinor',
                         'Welcome Bonus (ETB)',
-                        '0 = disabled',
+                        'Amount credited once, on a new user’s first login',
+                    )}
+                    {toggleField(
+                        'welcomeBonusEnabled',
+                        'Welcome Bonus Active',
+                        'Off = no bonus is credited, regardless of the amount above',
                     )}
                 </div>
             </div>
@@ -5682,12 +5691,34 @@ function BingoAdmin() {
     const [totalPages, setTotalPages] = useState(1);
     const [cfg, setCfg] = useState<BingoConfig | null>(null);
     const [patterns, setPatterns] = useState<BingoPattern[]>([]);
+    const [bonusCampaigns, setBonusCampaigns] = useState<
+        BingoBonusCampaign[]
+    >([]);
     const [roomsLoading, setRoomsLoading] = useState(true);
     const [busy, setBusy] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showPatterns, setShowPatterns] = useState(false);
     const [showSlots, setShowSlots] = useState(false);
+    const [showBonusCampaigns, setShowBonusCampaigns] = useState(false);
+    const [showBonusForm, setShowBonusForm] = useState(false);
+    const [editingBonusId, setEditingBonusId] = useState<string | null>(null);
+    const emptyBonusForm = {
+        name: '',
+        patternId: '',
+        prizeMinor: 0,
+        enabled: false,
+        scheduleType: 'once' as 'once' | 'recurring',
+        startAt: '',
+        endAt: '',
+        recurrenceFrequency: 'daily' as 'daily' | 'weekly',
+        recurrenceDayOfWeek: 0,
+        recurrenceStartTime: '00:00:00',
+        recurrenceEndTime: '01:00:00',
+        botWinEnabled: false,
+        botMaxCartelasPerRoom: 1,
+    };
+    const [bonusForm, setBonusForm] = useState(emptyBonusForm);
 
     // Inline rename / restyle for an existing room (any room  agent-owned,
     // house, or admin-created; see BingoService.updateRoomDisplay).
@@ -6071,12 +6102,14 @@ function BingoAdmin() {
 
     const loadMeta = useCallback(async () => {
         try {
-            const [c, p] = await Promise.all([
+            const [c, p, b] = await Promise.all([
                 adminBingoApi.getConfig(),
                 adminBingoApi.listPatterns(),
+                adminBingoApi.listBonusCampaigns(),
             ]);
             setCfg(c);
             setPatterns(p);
+            setBonusCampaigns(b);
             setCfgForm({
                 enabled: c.enabled,
                 autoRepeatIntervalMinutes: c.autoRepeatIntervalMinutes,
@@ -6369,6 +6402,143 @@ function BingoAdmin() {
         }
     };
 
+    const openNewBonusCampaign = () => {
+        setEditingBonusId(null);
+        setBonusForm({
+            ...emptyBonusForm,
+            patternId: patterns[0]?.id ?? '',
+        });
+        setShowBonusForm(true);
+    };
+
+    const openEditBonusCampaign = (c: BingoBonusCampaign) => {
+        setEditingBonusId(c.id);
+        setBonusForm({
+            name: c.name,
+            patternId: c.patternId,
+            prizeMinor: c.prizeMinor,
+            enabled: c.enabled,
+            scheduleType: c.scheduleType,
+            startAt: c.startAt ? c.startAt.slice(0, 19) : '',
+            endAt: c.endAt ? c.endAt.slice(0, 19) : '',
+            recurrenceFrequency: c.recurrence?.frequency ?? 'daily',
+            recurrenceDayOfWeek: c.recurrence?.dayOfWeek ?? 0,
+            recurrenceStartTime: c.recurrence?.startTime ?? '00:00:00',
+            recurrenceEndTime: c.recurrence?.endTime ?? '01:00:00',
+            botWinEnabled: c.botWinEnabled,
+            botMaxCartelasPerRoom: c.botMaxCartelasPerRoom,
+        });
+        setShowBonusForm(true);
+    };
+
+    const saveBonusCampaign = async () => {
+        if (!bonusForm.name.trim() || !bonusForm.patternId) {
+            addToast('error', 'Name and pattern are required.');
+            return;
+        }
+        setBusy('bonus-save');
+        try {
+            const dto = {
+                name: bonusForm.name.trim(),
+                patternId: bonusForm.patternId,
+                prizeMinor: bonusForm.prizeMinor,
+                enabled: bonusForm.enabled,
+                scheduleType: bonusForm.scheduleType,
+                startAt:
+                    bonusForm.scheduleType === 'once'
+                        ? bonusForm.startAt
+                        : undefined,
+                endAt:
+                    bonusForm.scheduleType === 'once'
+                        ? bonusForm.endAt
+                        : undefined,
+                recurrence:
+                    bonusForm.scheduleType === 'recurring'
+                        ? {
+                              frequency: bonusForm.recurrenceFrequency,
+                              dayOfWeek:
+                                  bonusForm.recurrenceFrequency === 'weekly'
+                                      ? bonusForm.recurrenceDayOfWeek
+                                      : undefined,
+                              startTime: bonusForm.recurrenceStartTime,
+                              endTime: bonusForm.recurrenceEndTime,
+                          }
+                        : undefined,
+                botWinEnabled: bonusForm.botWinEnabled,
+                botMaxCartelasPerRoom: bonusForm.botMaxCartelasPerRoom,
+            };
+            if (editingBonusId) {
+                const updated = await adminBingoApi.updateBonusCampaign(
+                    editingBonusId,
+                    dto,
+                );
+                setBonusCampaigns((prev) =>
+                    prev.map((c) => (c.id === updated.id ? updated : c)),
+                );
+            } else {
+                const created =
+                    await adminBingoApi.createBonusCampaign(dto);
+                setBonusCampaigns((prev) => [created, ...prev]);
+            }
+            addToast('success', 'Bonus campaign saved.');
+            setShowBonusForm(false);
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const toggleBonusCampaignEnabled = async (c: BingoBonusCampaign) => {
+        setBusy(`bonus-${c.id}`);
+        try {
+            const updated = await adminBingoApi.updateBonusCampaign(c.id, {
+                enabled: !c.enabled,
+            });
+            setBonusCampaigns((prev) =>
+                prev.map((x) => (x.id === updated.id ? updated : x)),
+            );
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const deleteBonusCampaign = async (id: string) => {
+        setBusy(`bonus-del-${id}`);
+        try {
+            await adminBingoApi.deleteBonusCampaign(id);
+            setBonusCampaigns((prev) => prev.filter((c) => c.id !== id));
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const describeBonusSchedule = (c: BingoBonusCampaign): string => {
+        if (c.scheduleType === 'once') {
+            const fmt = (s: string | null) =>
+                s ? new Date(s).toLocaleString() : '?';
+            return `${fmt(c.startAt)} → ${fmt(c.endAt)} (Addis time)`;
+        }
+        const r = c.recurrence;
+        if (!r) return 'Recurring';
+        const days = [
+            'Sun',
+            'Mon',
+            'Tue',
+            'Wed',
+            'Thu',
+            'Fri',
+            'Sat',
+        ];
+        const dayLabel =
+            r.frequency === 'weekly' ? `${days[r.dayOfWeek ?? 0]} ` : 'Daily ';
+        return `${dayLabel}${r.startTime}–${r.endTime} (Addis time)`;
+    };
+
     const setPatternPrize = (
         patternId: string,
         name: string,
@@ -6424,6 +6594,15 @@ function BingoAdmin() {
                 >
                     <CircleDot size={13} />
                     {showPatterns ? 'Hide Patterns' : 'Patterns'}
+                </button>
+                <button
+                    className='adm-btn adm-btn-secondary'
+                    onClick={() => setShowBonusCampaigns((v) => !v)}
+                >
+                    <Gift size={13} />
+                    {showBonusCampaigns
+                        ? 'Hide Bonus Win'
+                        : 'Bonus Win'}
                 </button>
                 <button
                     className='adm-btn adm-btn-secondary'
@@ -7329,6 +7508,450 @@ function BingoAdmin() {
                                 ))}
                             </tbody>
                         </table>
+                    )}
+                </div>
+            )}
+
+            {/* Bonus Win Campaigns panel */}
+            {showBonusCampaigns && (
+                <div className='adm-panel'>
+                    <div
+                        className='adm-panel-head'
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                        }}
+                    >
+                        <span>Bonus Win Campaigns ({bonusCampaigns.length})</span>
+                        <button
+                            className='adm-btn adm-btn-primary adm-btn-xs'
+                            onClick={openNewBonusCampaign}
+                        >
+                            <Plus size={13} />
+                            New Campaign
+                        </button>
+                    </div>
+                    <div
+                        className='adm-td-muted'
+                        style={{ padding: '4px 12px', fontSize: 12 }}
+                    >
+                        While active, any prefilled/derash ticket that
+                        completes the chosen pattern wins the prize on top of
+                        its normal Derash placement. All schedules are Addis
+                        Ababa time.
+                    </div>
+                    {bonusCampaigns.length === 0 ? (
+                        <div className='adm-empty'>
+                            No bonus campaigns yet.
+                        </div>
+                    ) : (
+                        <table className='adm-table'>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Pattern</th>
+                                    <th>Prize (ETB)</th>
+                                    <th>Schedule</th>
+                                    <th>Bot Win</th>
+                                    <th>Status</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {bonusCampaigns.map((c) => (
+                                    <tr key={c.id} className='adm-tr'>
+                                        <td>
+                                            <strong>{c.name}</strong>
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {patterns.find(
+                                                (p) => p.id === c.patternId,
+                                            )?.name ?? 'Unknown pattern'}
+                                        </td>
+                                        <td>{c.prizeMinor.toLocaleString()}</td>
+                                        <td
+                                            className='adm-td-muted'
+                                            style={{ fontSize: 12 }}
+                                        >
+                                            {describeBonusSchedule(c)}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {c.botWinEnabled
+                                                ? `Bots (max ${c.botMaxCartelasPerRoom} cartelas)`
+                                                : 'Off'}
+                                        </td>
+                                        <td>
+                                            <span
+                                                className={`badge ${c.enabled ? 'badge-green' : 'badge-red'}`}
+                                            >
+                                                {c.enabled
+                                                    ? 'Enabled'
+                                                    : 'Disabled'}
+                                            </span>
+                                        </td>
+                                        <td
+                                            style={{
+                                                display: 'flex',
+                                                gap: 6,
+                                            }}
+                                        >
+                                            <button
+                                                className='adm-btn adm-btn-secondary adm-btn-xs'
+                                                disabled={
+                                                    busy === `bonus-${c.id}`
+                                                }
+                                                onClick={() =>
+                                                    void toggleBonusCampaignEnabled(
+                                                        c,
+                                                    )
+                                                }
+                                            >
+                                                {c.enabled
+                                                    ? 'Disable'
+                                                    : 'Enable'}
+                                            </button>
+                                            <button
+                                                className='adm-btn adm-btn-secondary adm-btn-xs'
+                                                onClick={() =>
+                                                    openEditBonusCampaign(c)
+                                                }
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                className='adm-btn adm-btn-danger adm-btn-xs'
+                                                disabled={
+                                                    busy ===
+                                                    `bonus-del-${c.id}`
+                                                }
+                                                onClick={() =>
+                                                    void deleteBonusCampaign(
+                                                        c.id,
+                                                    )
+                                                }
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+
+                    {showBonusForm && (
+                        <div
+                            className='adm-panel'
+                            style={{ margin: 12, background: 'rgba(0,0,0,0.15)' }}
+                        >
+                            <div className='adm-panel-head'>
+                                {editingBonusId
+                                    ? 'Edit Bonus Campaign'
+                                    : 'New Bonus Campaign'}
+                            </div>
+                            <div className='adm-form-grid'>
+                                <label className='adm-field'>
+                                    <span>Name</span>
+                                    <input
+                                        className='input'
+                                        value={bonusForm.name}
+                                        onChange={(e) =>
+                                            setBonusForm((f) => ({
+                                                ...f,
+                                                name: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field'>
+                                    <span>Pattern</span>
+                                    <select
+                                        className='input'
+                                        value={bonusForm.patternId}
+                                        onChange={(e) =>
+                                            setBonusForm((f) => ({
+                                                ...f,
+                                                patternId: e.target.value,
+                                            }))
+                                        }
+                                    >
+                                        <option value=''>Select a pattern…</option>
+                                        {patterns.map((p) => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className='adm-field'>
+                                    <span>Prize Amount (ETB)</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={1}
+                                        value={bonusForm.prizeMinor}
+                                        onChange={(e) =>
+                                            setBonusForm((f) => ({
+                                                ...f,
+                                                prizeMinor: Number(
+                                                    e.target.value,
+                                                ),
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field adm-field-checkbox'>
+                                    <input
+                                        type='checkbox'
+                                        checked={bonusForm.enabled}
+                                        onChange={(e) =>
+                                            setBonusForm((f) => ({
+                                                ...f,
+                                                enabled: e.target.checked,
+                                            }))
+                                        }
+                                    />
+                                    <span>Enabled</span>
+                                </label>
+                                <label className='adm-field'>
+                                    <span>Schedule Type</span>
+                                    <select
+                                        className='input'
+                                        value={bonusForm.scheduleType}
+                                        onChange={(e) =>
+                                            setBonusForm((f) => ({
+                                                ...f,
+                                                scheduleType: e.target
+                                                    .value as
+                                                    | 'once'
+                                                    | 'recurring',
+                                            }))
+                                        }
+                                    >
+                                        <option value='once'>
+                                            Once (specific date/time)
+                                        </option>
+                                        <option value='recurring'>
+                                            Recurring
+                                        </option>
+                                    </select>
+                                </label>
+
+                                {bonusForm.scheduleType === 'once' ? (
+                                    <>
+                                        <label className='adm-field'>
+                                            <span>
+                                                Start (Addis Ababa time)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='datetime-local'
+                                                step={1}
+                                                value={bonusForm.startAt}
+                                                onChange={(e) =>
+                                                    setBonusForm((f) => ({
+                                                        ...f,
+                                                        startAt:
+                                                            e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <label className='adm-field'>
+                                            <span>
+                                                End (Addis Ababa time)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='datetime-local'
+                                                step={1}
+                                                value={bonusForm.endAt}
+                                                onChange={(e) =>
+                                                    setBonusForm((f) => ({
+                                                        ...f,
+                                                        endAt: e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                    </>
+                                ) : (
+                                    <>
+                                        <label className='adm-field'>
+                                            <span>Frequency</span>
+                                            <select
+                                                className='input'
+                                                value={
+                                                    bonusForm.recurrenceFrequency
+                                                }
+                                                onChange={(e) =>
+                                                    setBonusForm((f) => ({
+                                                        ...f,
+                                                        recurrenceFrequency: e
+                                                            .target.value as
+                                                            | 'daily'
+                                                            | 'weekly',
+                                                    }))
+                                                }
+                                            >
+                                                <option value='daily'>
+                                                    Daily
+                                                </option>
+                                                <option value='weekly'>
+                                                    Weekly
+                                                </option>
+                                            </select>
+                                        </label>
+                                        {bonusForm.recurrenceFrequency ===
+                                            'weekly' && (
+                                            <label className='adm-field'>
+                                                <span>Day of Week</span>
+                                                <select
+                                                    className='input'
+                                                    value={
+                                                        bonusForm.recurrenceDayOfWeek
+                                                    }
+                                                    onChange={(e) =>
+                                                        setBonusForm((f) => ({
+                                                            ...f,
+                                                            recurrenceDayOfWeek:
+                                                                Number(
+                                                                    e.target
+                                                                        .value,
+                                                                ),
+                                                        }))
+                                                    }
+                                                >
+                                                    {[
+                                                        'Sunday',
+                                                        'Monday',
+                                                        'Tuesday',
+                                                        'Wednesday',
+                                                        'Thursday',
+                                                        'Friday',
+                                                        'Saturday',
+                                                    ].map((d, i) => (
+                                                        <option
+                                                            key={i}
+                                                            value={i}
+                                                        >
+                                                            {d}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                        )}
+                                        <label className='adm-field'>
+                                            <span>
+                                                Start Time (Addis, HH:mm:ss)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='time'
+                                                step={1}
+                                                value={
+                                                    bonusForm.recurrenceStartTime
+                                                }
+                                                onChange={(e) =>
+                                                    setBonusForm((f) => ({
+                                                        ...f,
+                                                        recurrenceStartTime:
+                                                            e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <label className='adm-field'>
+                                            <span>
+                                                End Time (Addis, HH:mm:ss)
+                                            </span>
+                                            <input
+                                                className='input'
+                                                type='time'
+                                                step={1}
+                                                value={
+                                                    bonusForm.recurrenceEndTime
+                                                }
+                                                onChange={(e) =>
+                                                    setBonusForm((f) => ({
+                                                        ...f,
+                                                        recurrenceEndTime:
+                                                            e.target.value,
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                    </>
+                                )}
+
+                                <label className='adm-field adm-field-checkbox'>
+                                    <input
+                                        type='checkbox'
+                                        checked={bonusForm.botWinEnabled}
+                                        onChange={(e) =>
+                                            setBonusForm((f) => ({
+                                                ...f,
+                                                botWinEnabled:
+                                                    e.target.checked,
+                                            }))
+                                        }
+                                    />
+                                    <span>
+                                        Bots win this bonus (real players
+                                        still win Derash normally)
+                                    </span>
+                                </label>
+                                {bonusForm.botWinEnabled && (
+                                    <label className='adm-field'>
+                                        <span>
+                                            Max Bot Cartelas Per Room (this
+                                            campaign only)
+                                        </span>
+                                        <input
+                                            className='input'
+                                            type='number'
+                                            min={1}
+                                            value={
+                                                bonusForm.botMaxCartelasPerRoom
+                                            }
+                                            onChange={(e) =>
+                                                setBonusForm((f) => ({
+                                                    ...f,
+                                                    botMaxCartelasPerRoom:
+                                                        Number(
+                                                            e.target.value,
+                                                        ),
+                                                }))
+                                            }
+                                        />
+                                    </label>
+                                )}
+                            </div>
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    gap: 8,
+                                    padding: 12,
+                                }}
+                            >
+                                <button
+                                    className='adm-btn adm-btn-primary'
+                                    disabled={busy === 'bonus-save'}
+                                    onClick={() => void saveBonusCampaign()}
+                                >
+                                    {busy === 'bonus-save'
+                                        ? 'Saving…'
+                                        : 'Save Campaign'}
+                                </button>
+                                <button
+                                    className='adm-btn adm-btn-secondary'
+                                    onClick={() => setShowBonusForm(false)}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
@@ -9878,6 +10501,75 @@ function BingoRoundDetailsModal({
                             )}
                         </div>
 
+                        {/* Bonus Win result for this round, if any campaign paid out */}
+                        {room.bonusSettlement && (
+                            <div>
+                                <div
+                                    className='adm-panel-head'
+                                    style={{
+                                        padding: 0,
+                                        marginBottom: 8,
+                                        background: 'none',
+                                    }}
+                                >
+                                    Bonus Win
+                                </div>
+                                <div
+                                    style={{
+                                        border: '1px solid rgba(245,158,11,0.4)',
+                                        borderRadius: 10,
+                                        padding: 12,
+                                        background: 'rgba(245,158,11,0.07)',
+                                        fontSize: 12,
+                                    }}
+                                >
+                                    <strong>
+                                        🎁{' '}
+                                        {String(
+                                            (room.bonusSettlement as any)
+                                                .campaignName ?? 'Bonus',
+                                        )}
+                                    </strong>{' '}
+                                    <span className='adm-td-muted'>
+                                        (
+                                        {String(
+                                            (room.bonusSettlement as any)
+                                                .patternName ?? '',
+                                        )}
+                                        )
+                                    </span>
+                                    <div style={{ marginTop: 6 }}>
+                                        {(
+                                            ((room.bonusSettlement as any)
+                                                .winners ?? []) as Array<{
+                                                winnerDisplayName?: string;
+                                                winnerPhoneLast4?: string;
+                                                shareMinor?: number;
+                                            }>
+                                        ).map((w, i) => (
+                                            <div key={i}>
+                                                {w.winnerDisplayName ??
+                                                    'Player'}
+                                                {w.winnerPhoneLast4
+                                                    ? ` (••${w.winnerPhoneLast4})`
+                                                    : ''}{' '}
+                                                —{' '}
+                                                <strong
+                                                    style={{
+                                                        color: '#fbbf24',
+                                                    }}
+                                                >
+                                                    {formatCredits(
+                                                        w.shareMinor ?? 0,
+                                                    )}
+                                                </strong>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* All cartelas */}
                         <div>
                             <div
@@ -9909,6 +10601,7 @@ function BingoRoundDetailsModal({
                                             <th>Stake</th>
                                             <th>Payout</th>
                                             <th>Won</th>
+                                            <th>Bonus</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -10030,11 +10723,27 @@ function BingoRoundDetailsModal({
                                                                       )
                                                                     : ''}
                                                             </td>
+                                                            <td>
+                                                                {t.bonusShareMinor ? (
+                                                                    <strong
+                                                                        style={{
+                                                                            color: '#fbbf24',
+                                                                        }}
+                                                                    >
+                                                                        🎁{' '}
+                                                                        {formatCredits(
+                                                                            t.bonusShareMinor,
+                                                                        )}
+                                                                    </strong>
+                                                                ) : (
+                                                                    <span className='adm-td-muted'></span>
+                                                                )}
+                                                            </td>
                                                         </tr>
                                                         {isOpen && (
                                                             <tr>
                                                                 <td
-                                                                    colSpan={8}
+                                                                    colSpan={9}
                                                                     style={{
                                                                         padding:
                                                                             '8px 12px 14px',

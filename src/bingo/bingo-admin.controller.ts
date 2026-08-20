@@ -20,6 +20,10 @@ import {
     CreateBingoPatternDto,
     UpdateBingoPatternDto,
 } from './dto/create-bingo-pattern.dto';
+import {
+    CreateBingoBonusCampaignDto,
+    UpdateBingoBonusCampaignDto,
+} from './dto/create-bingo-bonus-campaign.dto';
 import { UpdateRoomSlotDto } from './dto/update-room-slot.dto';
 import { CreateCustomRoomSlotDto } from './dto/create-custom-room-slot.dto';
 import { UpdateCustomRoomSlotDto } from './dto/update-custom-room-slot.dto';
@@ -253,5 +257,34 @@ export class BingoAdminController {
     @ApiOkResponse({ description: 'Seeds built-in bingo patterns.' })
     seedPatterns() {
         return this.bingoService.seedBuiltInPatterns();
+    }
+
+    // ── Bonus Campaigns ────────────────────────────────────────────────
+
+    @Get('bonus-campaigns')
+    @ApiOkResponse({ description: 'Returns all Bingo bonus win campaigns.' })
+    listBonusCampaigns() {
+        return this.bingoService.listBonusCampaigns();
+    }
+
+    @Post('bonus-campaigns')
+    @ApiOkResponse({ description: 'Creates a Bingo bonus win campaign.' })
+    createBonusCampaign(@Body() dto: CreateBingoBonusCampaignDto) {
+        return this.bingoService.createBonusCampaign(dto);
+    }
+
+    @Patch('bonus-campaigns/:id')
+    @ApiOkResponse({ description: 'Updates a Bingo bonus win campaign.' })
+    updateBonusCampaign(
+        @Param('id') id: string,
+        @Body() dto: UpdateBingoBonusCampaignDto,
+    ) {
+        return this.bingoService.updateBonusCampaign(id, dto);
+    }
+
+    @Delete('bonus-campaigns/:id')
+    @ApiOkResponse({ description: 'Deletes a Bingo bonus win campaign.' })
+    deleteBonusCampaign(@Param('id') id: string) {
+        return this.bingoService.deleteBonusCampaign(id);
     }
 }

@@ -192,6 +192,37 @@ export type BingoPatternPrize = {
     prizeMinor: number;
 };
 
+export type BingoBonusRecurrence = {
+    frequency: 'daily' | 'weekly';
+    /** 0 = Sunday … 6 = Saturday. Only used for weekly. */
+    dayOfWeek?: number;
+    /** Addis Ababa local wall-clock time, HH:mm:ss. */
+    startTime: string;
+    endTime: string;
+};
+
+/**
+ * An admin-scheduled "Bonus Win" campaign: while active, any prefilled/derash
+ * ticket that completes `patternId` earns `prizeMinor` on top of its normal
+ * Derash placement winnings. Always interpreted in Addis Ababa (UTC+3) time.
+ */
+export type BingoBonusCampaign = {
+    id: string;
+    name: string;
+    patternId: string;
+    prizeMinor: number;
+    enabled: boolean;
+    scheduleType: 'once' | 'recurring';
+    /** ISO datetime (UTC). Set when scheduleType = 'once'. */
+    startAt: string | null;
+    endAt: string | null;
+    recurrence: BingoBonusRecurrence | null;
+    botWinEnabled: boolean;
+    botMaxCartelasPerRoom: number;
+    createdAt?: string;
+    updatedAt?: string;
+};
+
 /** A 'running' room whose draw has stopped making progress  see
  * BingoService.findStalledRunningRooms on the backend for what this means. */
 export type BingoStalledRoom = {
@@ -229,6 +260,15 @@ export type BingoRoom = {
     settledTiers: string[];
     winnersByTier: Record<string, string[]>;
     settlementSummary: Record<string, unknown>;
+    bonusSettlement?: Record<string, unknown> | null;
+    activeBonusCampaign?: {
+        id: string;
+        name: string;
+        patternId: string;
+        patternName: string;
+        prizeMinor: number;
+        activeUntil: string | null;
+    } | null;
     houseEdgePct: number;
     prizeMinor: number;
     botIdentityMap?: Record<

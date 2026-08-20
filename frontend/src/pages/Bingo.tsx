@@ -1497,6 +1497,219 @@ function LivePlaceWinPopup({
     );
 }
 
+// ─── Bonus Win: live banner + live win popup ─────────────────────────────────
+// Independent of the Derash placements above: an admin-scheduled campaign that
+// pays an extra prize to whoever completes its own pattern while the campaign's
+// window is open (see BingoService.evaluateAndSettleBonus on the backend).
+
+function BingoBonusBanner({
+    campaign,
+}: {
+    campaign: NonNullable<BingoRoomState['activeBonusCampaign']>;
+}) {
+    const { t } = useTranslation();
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const id = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(id);
+    }, []);
+    const untilMs = campaign.activeUntil
+        ? new Date(campaign.activeUntil).getTime() - now
+        : null;
+    const countdown =
+        untilMs != null && untilMs > 0
+            ? (() => {
+                  const totalSec = Math.floor(untilMs / 1000);
+                  const m = Math.floor(totalSec / 60);
+                  const s = totalSec % 60;
+                  return `${m}:${String(s).padStart(2, '0')}`;
+              })()
+            : null;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{
+                opacity: 1,
+                y: 0,
+                boxShadow: [
+                    '0 0 14px rgba(245,158,11,0.45)',
+                    '0 0 26px rgba(245,158,11,0.75)',
+                    '0 0 14px rgba(245,158,11,0.45)',
+                ],
+            }}
+            transition={{
+                boxShadow: { duration: 1.8, repeat: Infinity },
+            }}
+            className='flex items-center justify-between gap-2 rounded-xl px-3 py-2 mb-2'
+            style={{
+                background: 'linear-gradient(90deg,#7c2d12,#92400e,#7c2d12)',
+                border: '1.5px solid rgba(245,158,11,0.85)',
+            }}
+        >
+            <div className='flex items-center gap-2 min-w-0'>
+                <span className='text-lg'>🎁</span>
+                <div className='min-w-0'>
+                    <div className='text-[11px] font-black uppercase tracking-wider text-amber-300 truncate'>
+                        {t('bingo.bonusActive')}
+                    </div>
+                    <div className='text-[12px] font-bold text-white truncate'>
+                        {t('bingo.bonusActiveDesc', {
+                            pattern: campaign.patternName,
+                            amount: formatCreditsFull(campaign.prizeMinor),
+                        })}
+                    </div>
+                </div>
+            </div>
+            {countdown && (
+                <div className='shrink-0 rounded-lg bg-black/30 px-2 py-1 text-[12px] font-black text-amber-200 tabular-nums'>
+                    {countdown}
+                </div>
+            )}
+        </motion.div>
+    );
+}
+
+function BingoBonusWinCard({
+    entry,
+    drawnNumbers,
+}: {
+    entry: Record<string, unknown>;
+    drawnNumbers: number[];
+}) {
+    const { t } = useTranslation();
+    const winners = getEntryWinners(entry);
+    const campaignName = (entry.campaignName as string | undefined) ?? '';
+    const lastCalled =
+        drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+    const splitWays = winners.length > 1;
+
+    return (
+        <motion.div
+            initial={{ scale: 0.82, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 21 }}
+            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5 max-h-[85vh] overflow-y-auto'
+            style={{
+                background: 'linear-gradient(160deg,#7c2d12,#3b1a05)',
+                border: '2px solid rgba(245,158,11,0.85)',
+                boxShadow: '0 0 34px rgba(245,158,11,0.55)',
+            }}
+        >
+            <div
+                className='rounded-xl py-2.5 px-4 text-center'
+                style={{ background: 'rgba(60,30,10,0.55)' }}
+            >
+                <div
+                    className='text-2xl font-black tracking-[0.12em] mb-1'
+                    style={{
+                        color: '#fff',
+                        textShadow: '0 0 22px rgba(245,158,11,0.8)',
+                    }}
+                >
+                    🎁 {t('bingo.bonusWinExclaim')}
+                </div>
+                <div className='text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1'>
+                    {campaignName}
+                    {splitWays
+                        ? ` · ${t('bingo.splitWays', { count: winners.length })}`
+                        : ''}
+                </div>
+                <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
+                    {winners.map((w, i) => (
+                        <span
+                            key={i}
+                            className='rounded-lg px-3 py-1 font-black text-white'
+                            style={{ background: '#b45309' }}
+                        >
+                            {w.winnerDisplayName ?? t('bingo.player')}
+                            {w.winnerPhoneLast4
+                                ? ` ( *${w.winnerPhoneLast4} )`
+                                : ''}
+                        </span>
+                    ))}
+                    <span>{t('bingo.winsBonus')}</span>
+                </p>
+            </div>
+
+            {winners.map((w, i) => {
+                const grid = w.winnerGrid;
+                if (!grid) return null;
+                const prize = w.shareMinor ?? 0;
+                return (
+                    <div
+                        key={i}
+                        className='rounded-xl p-1.5'
+                        style={{
+                            background: 'rgba(60,30,10,0.4)',
+                            border: '2px solid rgba(245,158,11,0.6)',
+                        }}
+                    >
+                        <div
+                            className='rounded-lg p-1.5'
+                            style={{
+                                border: '2px solid rgba(245,158,11,0.85)',
+                            }}
+                        >
+                            <WinnerBingoCard
+                                grid={grid}
+                                drawnNumbers={drawnNumbers}
+                                markedNumbers={w.winnerMarkedNumbers}
+                                winCells={w.winPatternCells}
+                                lastCalled={lastCalled}
+                            />
+                            <div className='flex items-center justify-between px-1 pt-1.5'>
+                                <span
+                                    className='text-[13px] font-black'
+                                    style={{ color: '#fbbf24' }}
+                                >
+                                    {t('bingo.prizeEtb', {
+                                        amount: formatCreditsFull(prize),
+                                    })}
+                                </span>
+                                {w.winnerCartelaNumber != null && (
+                                    <span className='text-[13px] font-black text-slate-100'>
+                                        {t('bingo.cardHash', {
+                                            n: w.winnerCartelaNumber,
+                                        })}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
+            })}
+        </motion.div>
+    );
+}
+
+function BingoBonusWinPopup({
+    entry,
+    drawnNumbers,
+    onDone,
+}: {
+    entry: Record<string, unknown>;
+    drawnNumbers: number[];
+    onDone: () => void;
+}) {
+    useEffect(() => {
+        const id = setTimeout(onDone, LIVE_PLACE_WIN_MS);
+        return () => clearTimeout(id);
+    }, [entry, onDone]);
+
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className='fixed inset-0 z-[61] flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-none'
+        >
+            <BingoBonusWinCard entry={entry} drawnNumbers={drawnNumbers} />
+        </motion.div>
+    );
+}
+
 function RoomResultOverlay({
     room,
     myTickets,
@@ -2137,6 +2350,16 @@ export function Bingo({ onBack }: BingoProps) {
         seeded: boolean;
     }>({ roomId: null, shown: new Set(), seeded: false });
 
+    // ── Live Bonus Win detection (mirrors the per-place mechanism above, but a
+    // room can only ever settle ONE bonus, so this is a single slot, not a queue) ──
+    const [liveBonusWin, setLiveBonusWin] =
+        useState<Record<string, unknown> | null>(null);
+    const shownBonusRef = useRef<{
+        roomId: string | null;
+        shown: boolean;
+        seeded: boolean;
+    }>({ roomId: null, shown: false, seeded: false });
+
     const roomIdRef = useRef<string | null>(null);
     const holdingResultRef = useRef(false);
     const victoryRoomRef = useRef<string | null>(null);
@@ -2231,6 +2454,25 @@ export function Bingo({ onBack }: BingoProps) {
             );
             setLivePlaceQueue((q) => [...q, ...newly]);
         }
+    }, [room]);
+
+    // Same "seed on first pass, only pop up for a genuinely NEW event" logic as
+    // the per-place watcher above, applied to the room's single Bonus Win slot.
+    useEffect(() => {
+        const roomId = room?.id ?? null;
+        const ref = shownBonusRef.current;
+        if (ref.roomId !== roomId) {
+            ref.roomId = roomId;
+            ref.shown = false;
+            ref.seeded = false;
+        }
+        const bonus = room?.bonusSettlement;
+        if (!roomId || !bonus) return;
+        if (!ref.shown) {
+            ref.shown = true;
+            if (ref.seeded) setLiveBonusWin(bonus);
+        }
+        ref.seeded = true;
     }, [room]);
 
     // ── Load ────────────────────────────────────────────────────────────────────
@@ -3344,6 +3586,20 @@ export function Bingo({ onBack }: BingoProps) {
                 )}
             </AnimatePresence>
 
+            {/* Live Bonus Win window  independent of the per-place queue above,
+          since a Bonus campaign pays out on its own pattern, separate from any
+          Derash placement. */}
+            <AnimatePresence>
+                {liveBonusWin && room && (
+                    <BingoBonusWinPopup
+                        key='bonus'
+                        entry={liveBonusWin}
+                        drawnNumbers={room.drawnNumbers}
+                        onDone={() => setLiveBonusWin(null)}
+                    />
+                )}
+            </AnimatePresence>
+
             {/* ── Top bar ── */}
             <div className='flex items-center justify-between'>
                 <button
@@ -3409,6 +3665,9 @@ export function Bingo({ onBack }: BingoProps) {
                     transition={{ type: 'spring', stiffness: 300, damping: 28 }}
                     className='space-y-2'
                 >
+                    {room.activeBonusCampaign && (
+                        <BingoBonusBanner campaign={room.activeBonusCampaign} />
+                    )}
                     {/* ── Stats bar ── */}
                     <div className='grid grid-cols-4 gap-1.5'>
                         {[

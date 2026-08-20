@@ -21,6 +21,11 @@ export class SystemConfig {
     @Column({ type: 'int', default: 0 })
     welcomeBonusMinor: number;
 
+    /** Master on/off switch for the welcome bonus, independent of the amount above
+     * so an admin can disable it without losing the configured value. */
+    @Column({ type: 'boolean', default: false })
+    welcomeBonusEnabled: boolean;
+
     /**
      * Internal user id of the Master Wallet  a dedicated system account (no
      * login, no Telegram/password identity, roles: []) that is NOT any individual

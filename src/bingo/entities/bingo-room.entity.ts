@@ -92,6 +92,14 @@ export class BingoRoom {
     @Column({ type: 'json', nullable: true })
     settlementSummary?: Record<string, unknown>;
 
+    /**
+     * Set once a BingoBonusCampaign pays out in this room (see
+     * BingoService.evaluateAndSettleBonus) so a later draw in the same room never
+     * re-evaluates/re-pays it. NULL until (and unless) a bonus is won here.
+     */
+    @Column({ type: 'json', nullable: true })
+    bonusSettlement?: Record<string, unknown> | null;
+
     /** 'line' = 90-ball 3x9, 'pattern' = 5x5 pattern card, 'prefilled' = numbered grid lottery. */
     @Column({ type: 'varchar', length: 10, default: 'prefilled' })
     winMode: BingoWinMode;

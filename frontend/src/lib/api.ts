@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
     AuthTokenResponse,
+    BingoBonusCampaign,
     BingoConfig,
     BingoOperationalAlert,
     BingoPattern,
@@ -569,6 +570,8 @@ export type PlatformStats = {
 export type SystemConfig = {
     telebirrCreditMinorPerBirr: number;
     welcomeBonusMinor: number;
+    /** Master on/off switch for the welcome bonus, independent of the amount. */
+    welcomeBonusEnabled: boolean;
     minDepositMinor: number;
     withdrawalMinAmountMinor: number;
     withdrawalMaxAmountMinor: number;
@@ -954,6 +957,7 @@ export type BingoRoundTicket = {
     stakeMinor: number;
     payoutMinor: number;
     wonTiers: string[];
+    bonusShareMinor?: number | null;
     grid: Array<Array<number | null>>;
     markedNumbers: number[];
     createdAt: string;
@@ -1131,6 +1135,30 @@ export const adminBingoApi = {
         api
             .get<BingoOperationalAlert[]>('/admin/bingo/alerts')
             .then((r) => r.data),
+    listBonusCampaigns: () =>
+        api
+            .get<BingoBonusCampaign[]>('/admin/bingo/bonus-campaigns')
+            .then((r) => r.data),
+    createBonusCampaign: (
+        dto: Omit<BingoBonusCampaign, 'id' | 'createdAt' | 'updatedAt'>,
+    ) =>
+        api
+            .post<BingoBonusCampaign>('/admin/bingo/bonus-campaigns', dto)
+            .then((r) => r.data),
+    updateBonusCampaign: (
+        id: string,
+        dto: Partial<
+            Omit<BingoBonusCampaign, 'id' | 'createdAt' | 'updatedAt'>
+        >,
+    ) =>
+        api
+            .patch<BingoBonusCampaign>(
+                `/admin/bingo/bonus-campaigns/${id}`,
+                dto,
+            )
+            .then((r) => r.data),
+    deleteBonusCampaign: (id: string) =>
+        api.delete(`/admin/bingo/bonus-campaigns/${id}`).then((r) => r.data),
 };
 
 // ── Admin: Bots ───────────────────────────────────────────────────

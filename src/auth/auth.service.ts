@@ -120,7 +120,7 @@ export class AuthService {
             )?.welcomeBonusGranted;
             if (!alreadyGranted) {
                 const config = await this.adminService.getSystemConfig();
-                if (config.welcomeBonusMinor > 0) {
+                if (config.welcomeBonusEnabled && config.welcomeBonusMinor > 0) {
                     try {
                         // Funded from the Master Wallet like every other credit. The
                         // surrounding try/catch already covers a shortfall there too  a

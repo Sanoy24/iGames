@@ -146,6 +146,14 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         remove: jest.fn().mockResolvedValue(undefined),
     };
 
+    const mockBonusCampaignRepo = {
+        find: jest.fn().mockResolvedValue([]),
+        findOneBy: jest.fn().mockResolvedValue(null),
+        save: jest.fn().mockImplementation((c) => Promise.resolve(c)),
+        create: jest.fn().mockImplementation((dto) => dto),
+        remove: jest.fn().mockResolvedValue(undefined),
+    };
+
     const mockCustomRoomSlotRepo = {
         find: jest.fn().mockResolvedValue([]),
         findBy: jest.fn().mockResolvedValue([]),
@@ -183,6 +191,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         mockCommissionSettlementErrorRepo as any,
         mockOperationalAlertRepo as any,
         mockPatternRepo as any,
+        mockBonusCampaignRepo as any,
         new (require('./bingo-rules.service').BingoRulesService)(),
         { drawUniqueNumbers: jest.fn() } as any,
         walletService as any,
@@ -201,6 +210,7 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
         mockCardRepo,
         mockConfigRepo,
         mockPatternRepo,
+        mockBonusCampaignRepo,
         mockOperationalAlertRepo,
         walletService,
         dataSource,
@@ -599,6 +609,13 @@ describe('BingoService.findRunningRoomIdsDue  unit', () => {
                 save: jest.fn(),
                 create: jest.fn(),
             } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn().mockResolvedValue(null),
+                save: jest.fn().mockImplementation((c: unknown) => c),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+                remove: jest.fn().mockResolvedValue(undefined),
+            } as any,
             new (require('./bingo-rules.service').BingoRulesService)(),
             { drawUniqueNumbers: jest.fn() } as any,
             { debitInSession: jest.fn(), creditInSession: jest.fn() } as any,
@@ -687,6 +704,13 @@ describe('BingoService.findRunningRoomIdsDue  unit', () => {
                 findOneBy: jest.fn(),
                 save: jest.fn(),
                 create: jest.fn(),
+            } as any,
+            {
+                find: jest.fn().mockResolvedValue([]),
+                findOneBy: jest.fn().mockResolvedValue(null),
+                save: jest.fn().mockImplementation((c: unknown) => c),
+                create: jest.fn().mockImplementation((dto: unknown) => dto),
+                remove: jest.fn().mockResolvedValue(undefined),
             } as any,
             new (require('./bingo-rules.service').BingoRulesService)(),
             { drawUniqueNumbers: jest.fn() } as any,
@@ -3181,5 +3205,506 @@ describe('BingoService  operational observability', () => {
             expect.objectContaining({ order: { createdAt: 'DESC' } }),
         );
         expect(result).toBe(rows);
+    });
+});
+
+describe('BingoService bonus campaigns  Addis-time window math', () => {
+    function campaign(overrides: Record<string, unknown> = {}) {
+        return {
+            id: 'campaign-1',
+            name: 'Evening Bonus',
+            patternId: 'pattern-1',
+            prizeMinor: 10000,
+            enabled: true,
+            scheduleType: 'once',
+            startAt: null,
+            endAt: null,
+            recurrence: null,
+            botWinEnabled: false,
+            botMaxCartelasPerRoom: 1,
+            ...overrides,
+        } as any;
+    }
+
+    it('a disabled campaign is never active regardless of its window', () => {
+        const { service } = makeService({ rooms: [] });
+        const c = campaign({
+            enabled: false,
+            startAt: new Date('2026-01-01T00:00:00Z'),
+            endAt: new Date('2026-01-02T00:00:00Z'),
+        });
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-01T12:00:00Z'),
+            ),
+        ).toBe(false);
+    });
+
+    it('a "once" campaign is active only strictly within its UTC window', () => {
+        const { service } = makeService({ rooms: [] });
+        const c = campaign({
+            startAt: new Date('2026-01-01T10:00:00Z'),
+            endAt: new Date('2026-01-01T11:00:00Z'),
+        });
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-01T10:30:00Z'),
+            ),
+        ).toBe(true);
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-01T09:59:00Z'),
+            ),
+        ).toBe(false);
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-01T11:00:01Z'),
+            ),
+        ).toBe(false);
+    });
+
+    it('interprets a daily-local admin string as Addis Ababa (UTC+3) time', () => {
+        const { service } = makeService({ rooms: [] });
+        // "14:00:00" Addis local = 11:00:00 UTC.
+        const utc = (service as any).addisLocalStringToUtcDate(
+            '2026-01-01T14:00:00',
+        );
+        expect(utc.toISOString()).toBe('2026-01-01T11:00:00.000Z');
+    });
+
+    it('a "recurring" daily campaign is active only inside its Addis-local time-of-day window', () => {
+        const { service } = makeService({ rooms: [] });
+        const c = campaign({
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '14:00:00',
+                endTime: '15:00:00',
+            },
+        });
+        // 14:30:00 Addis local = 11:30:00 UTC  inside the window.
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-01T11:30:00Z'),
+            ),
+        ).toBe(true);
+        // 13:00:00 Addis local = 10:00:00 UTC  outside the window.
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-01T10:00:00Z'),
+            ),
+        ).toBe(false);
+    });
+
+    it('a "recurring" weekly campaign only fires on its configured weekday', () => {
+        const { service } = makeService({ rooms: [] });
+        const c = campaign({
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'weekly',
+                dayOfWeek: 5, // Friday
+                startTime: '14:00:00',
+                endTime: '15:00:00',
+            },
+        });
+        // 2026-01-02 is a Friday; 14:30 Addis = 11:30 UTC.
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-02T11:30:00Z'),
+            ),
+        ).toBe(true);
+        // 2026-01-03 is a Saturday, same time-of-day.
+        expect(
+            (service as any).isBonusCampaignActiveAt(
+                c,
+                new Date('2026-01-03T11:30:00Z'),
+            ),
+        ).toBe(false);
+    });
+
+    it('rejects two overlapping "once" campaigns', () => {
+        const { service } = makeService({ rooms: [] });
+        const a = campaign({
+            startAt: new Date('2026-01-01T10:00:00Z'),
+            endAt: new Date('2026-01-01T12:00:00Z'),
+        });
+        const b = campaign({
+            id: 'campaign-2',
+            startAt: new Date('2026-01-01T11:00:00Z'),
+            endAt: new Date('2026-01-01T13:00:00Z'),
+        });
+        expect(() =>
+            (service as any).assertNoBonusCampaignOverlap(a, [b]),
+        ).toThrow(/overlaps/i);
+    });
+
+    it('allows two back-to-back "once" campaigns that do not overlap', () => {
+        const { service } = makeService({ rooms: [] });
+        const a = campaign({
+            startAt: new Date('2026-01-01T10:00:00Z'),
+            endAt: new Date('2026-01-01T11:00:00Z'),
+        });
+        const b = campaign({
+            id: 'campaign-2',
+            startAt: new Date('2026-01-01T11:00:00Z'),
+            endAt: new Date('2026-01-01T12:00:00Z'),
+        });
+        expect(() =>
+            (service as any).assertNoBonusCampaignOverlap(a, [b]),
+        ).not.toThrow();
+    });
+
+    it('rejects two daily recurring campaigns whose Addis-local time windows overlap', () => {
+        const { service } = makeService({ rooms: [] });
+        const a = campaign({
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '14:00:00',
+                endTime: '15:00:00',
+            },
+        });
+        const b = campaign({
+            id: 'campaign-2',
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '14:30:00',
+                endTime: '16:00:00',
+            },
+        });
+        expect(() =>
+            (service as any).assertNoBonusCampaignOverlap(a, [b]),
+        ).toThrow(/overlaps/i);
+    });
+
+    it('rejects a "once" window that falls inside a recurring campaign\'s daily slot', () => {
+        const { service } = makeService({ rooms: [] });
+        const recurring = campaign({
+            id: 'campaign-2',
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '14:00:00',
+                endTime: '15:00:00',
+            },
+        });
+        // 2026-03-10T14:30:00 Addis local = 11:30:00 UTC, inside the daily slot.
+        const once = campaign({
+            startAt: new Date('2026-03-10T11:30:00Z'),
+            endAt: new Date('2026-03-10T11:45:00Z'),
+        });
+        expect(() =>
+            (service as any).assertNoBonusCampaignOverlap(once, [recurring]),
+        ).toThrow(/overlaps/i);
+    });
+});
+
+describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
+    function ticket(overrides: Record<string, unknown> = {}) {
+        return {
+            id: 'ticket-1',
+            userId: 'player-1',
+            cartelaNumber: 3,
+            grid: [[1]],
+            markedNumbers: [1],
+            status: 'active',
+            payoutMinor: 0,
+            walletCredits: [],
+            ...overrides,
+        } as any;
+    }
+
+    it('does nothing when no bonus campaign is active', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', bonusSettlement: null });
+        const manager = {
+            find: jest.fn().mockResolvedValue([]),
+            save: jest.fn(),
+        };
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+
+        await (service as any).evaluateAndSettleBonus(room, manager);
+
+        expect(walletService.creditInSession).not.toHaveBeenCalled();
+        expect(room.bonusSettlement).toBeFalsy();
+    });
+
+    it('never re-evaluates a room that already paid its bonus', async () => {
+        const { service } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            bonusSettlement: { campaignId: 'campaign-1' },
+        });
+        const spy = jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        );
+
+        await (service as any).evaluateAndSettleBonus(
+            room,
+            { find: jest.fn(), save: jest.fn() } as any,
+        );
+
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('splits the bonus evenly between two tickets that complete the pattern in the same draw', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            bonusSettlement: null,
+        });
+        const winnerA = ticket({ id: 'ticket-a', userId: 'player-a' });
+        const winnerB = ticket({ id: 'ticket-b', userId: 'player-b' });
+        const pattern = { id: 'pattern-1', name: 'Any Line' };
+        const users: Record<string, unknown> = {
+            'player-a': { id: 'player-a', displayName: 'Amanuel' },
+            'player-b': { id: 'player-b', displayName: 'Betelhem' },
+        };
+        const manager = {
+            find: jest.fn().mockResolvedValue([winnerA, winnerB]),
+            findOne: jest
+                .fn()
+                .mockImplementation((_entity: unknown, options: any) =>
+                    Promise.resolve(users[options?.where?.id] ?? null),
+                ),
+            save: jest.fn().mockImplementation(async (v: unknown) => v),
+        };
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue({
+            id: 'campaign-1',
+            name: 'Evening Bonus',
+            patternId: 'pattern-1',
+            prizeMinor: 101,
+            botWinEnabled: false,
+        });
+        (manager as any).findOne = jest
+            .fn()
+            .mockImplementation((entity: unknown, options: any) => {
+                if (options?.where?.id === 'pattern-1')
+                    return Promise.resolve(pattern);
+                return Promise.resolve(users[options?.where?.id] ?? null);
+            });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(),
+            bingoEnabledBotIds: new Set(),
+            nonBingoBotIds: new Set(),
+        });
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        await (service as any).evaluateAndSettleBonus(room, manager);
+
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
+        expect(walletService.creditInSession).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ userId: 'player-a', amountMinor: 51 }),
+            manager,
+        );
+        expect(walletService.creditInSession).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ userId: 'player-b', amountMinor: 50 }),
+            manager,
+        );
+        expect(winnerA.payoutMinor).toBe(51);
+        expect(winnerB.payoutMinor).toBe(50);
+        expect(room.bonusSettlement).toMatchObject({
+            campaignId: 'campaign-1',
+            winnerCount: 2,
+        });
+    });
+
+    it('redirects the bonus to a bot when botWinEnabled and a real ticket would otherwise win it', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            bonusSettlement: null,
+        });
+        const realWinner = ticket({ id: 'ticket-real', userId: 'player-real' });
+        const botTicket = ticket({ id: 'ticket-bot', userId: 'bot-1' });
+        const pattern = { id: 'pattern-1', name: 'Any Line' };
+        const manager = {
+            find: jest.fn().mockResolvedValue([realWinner, botTicket]),
+            findOne: jest.fn().mockImplementation((_entity: unknown, options: any) => {
+                if (options?.where?.id === 'pattern-1')
+                    return Promise.resolve(pattern);
+                if (options?.where?.id === 'bot-1')
+                    return Promise.resolve({
+                        id: 'bot-1',
+                        productMetadata: { botPolicy: { active: true } },
+                    });
+                return Promise.resolve(null);
+            }),
+            save: jest.fn().mockImplementation(async (v: unknown) => v),
+        };
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue({
+            id: 'campaign-1',
+            name: 'Evening Bonus',
+            patternId: 'pattern-1',
+            prizeMinor: 5000,
+            botWinEnabled: true,
+        });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(['bot-1']),
+            bingoEnabledBotIds: new Set(['bot-1']),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(
+            botTicket,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveDisplayedNameForUser',
+        ).mockResolvedValue({
+            displayName: 'Bot Player',
+            phoneLast4: '',
+            isBot: true,
+        });
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        await (service as any).evaluateAndSettleBonus(room, manager);
+
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+        expect(walletService.creditInSession).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: 'bot-1', amountMinor: 5000 }),
+            manager,
+        );
+    });
+});
+
+describe('BingoService.reconcileBotCartelasInRoom  bonus bot-win cartela override', () => {
+    it('forces bot participation and overrides the max/min cartela targets while a bot-win bonus campaign is active', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'off',
+            botCartelaPolicyEnabled: false, // disabled at the global level
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+        } as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(500); // way above any normal participation threshold
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({ shouldParticipate: () => false });
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(1);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue({
+            id: 'campaign-1',
+            botWinEnabled: true,
+            botMaxCartelasPerRoom: 2,
+        });
+        const targetSpy = jest.spyOn(
+            service as any,
+            'resolveBingoBotCartelaTarget',
+        );
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(targetSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                maxCartelasPerBotPerRoom: 2,
+                minTotalCartelas: 1,
+                botCount: 2,
+            }),
+        );
+        // desiredBotCartelas resolves to 1 (see resolveBingoBotCartelaTarget:
+        // mirror mode, realCartelas 0, minTotalCartelas 1), matching the mocked
+        // currentBotCartelas of 1, so the function short-circuits here - the
+        // assertion above is what actually proves the override took effect.
+        expect(changed).toBe(false);
+    });
+
+    it('never calls resolveBingoBotCartelaTarget when no bonus campaign is active and normal participation is off', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'off',
+            botCartelaPolicyEnabled: false,
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+        } as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(500);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({ shouldParticipate: () => false });
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+        const targetSpy = jest.spyOn(
+            service as any,
+            'resolveBingoBotCartelaTarget',
+        );
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(targetSpy).not.toHaveBeenCalled();
+        expect(changed).toBe(false);
     });
 });

@@ -91,7 +91,8 @@ export class AdminService implements OnApplicationBootstrap {
             config = this.systemConfigRepository.create({
                 key: 'global',
                 telebirrCreditMinorPerBirr: 1, // flat 1:1  1 Birr deposited = 1 ETB credited
-                welcomeBonusMinor: 0,
+                welcomeBonusMinor: 20,
+                welcomeBonusEnabled: false,
             });
             await this.systemConfigRepository.save(config);
         }

@@ -32,7 +32,16 @@ import {
     CreateBingoPatternDto,
     UpdateBingoPatternDto,
 } from './dto/create-bingo-pattern.dto';
+import {
+    CreateBingoBonusCampaignDto,
+    UpdateBingoBonusCampaignDto,
+} from './dto/create-bingo-bonus-campaign.dto';
 import { BingoConfig } from './entities/bingo-config.entity';
+import {
+    BingoBonusCampaign,
+    BingoBonusRecurrence,
+    BingoBonusScheduleType,
+} from './entities/bingo-bonus-campaign.entity';
 import { BingoCustomRoomSlot } from './entities/bingo-custom-room-slot.entity';
 import { CommissionSettlementError } from './entities/commission-settlement-error.entity';
 import { BingoOperationalAlert } from './entities/bingo-operational-alert.entity';
@@ -188,6 +197,15 @@ export type BingoRoomResponse = {
     settledTiers: string[];
     winnersByTier: Record<string, string[]>;
     settlementSummary: Record<string, unknown>;
+    bonusSettlement: Record<string, unknown> | null;
+    activeBonusCampaign: {
+        id: string;
+        name: string;
+        patternId: string;
+        patternName: string;
+        prizeMinor: number;
+        activeUntil: string | null;
+    } | null;
     houseEdgePct: number;
     prizeMinor: number;
     takenSpots?: number[];
@@ -254,6 +272,8 @@ export class BingoService implements OnModuleInit {
         private readonly bingoOperationalAlertRepository: Repository<BingoOperationalAlert>,
         @InjectRepository(BingoPattern)
         private readonly bingoPatternRepository: Repository<BingoPattern>,
+        @InjectRepository(BingoBonusCampaign)
+        private readonly bingoBonusCampaignRepository: Repository<BingoBonusCampaign>,
         private readonly bingoRulesService: BingoRulesService,
         private readonly rngService: RngService,
         private readonly walletService: WalletService,
@@ -374,6 +394,630 @@ export class BingoService implements OnModuleInit {
         );
         this.logger.log(`Seeded ${created.length} built-in bingo patterns`);
         return [...existing, ...created];
+    }
+
+    // ── Bonus Campaigns ────────────────────────────────────────────────────────
+    //
+    // A "Bonus Win" campaign is an admin-scheduled extra prize layered on top of
+    // normal Derash placements: while active, whichever prefilled-mode ticket(s)
+    // complete the campaign's pattern earn its prizeMinor, split evenly on a tie.
+    // Always evaluated in fixed Addis Ababa time (UTC+3, no DST). Overlapping
+    // campaigns are rejected at write time, so at most one is ever active at once
+    // -this.activeBonusCampaignCache below relies on that to stay a single value.
+
+    private static readonly ADDIS_ABABA_OFFSET_MINUTES = 180;
+
+    /**
+     * Global "what bonus campaign is active right now" snapshot, refreshed at the
+     * top of drawNextNumber/getRoomState (every few seconds, matching draw
+     * cadence) and read synchronously by toRoomResponse. It's safe to share across
+     * every room/request because it isn't room-scoped - only one campaign can be
+     * active platform-wide at any instant (overlap is blocked at write time).
+     */
+    private activeBonusCampaignCache: {
+        data: BingoRoomResponse['activeBonusCampaign'];
+        expiresAt: number;
+    } = { data: null, expiresAt: 0 };
+
+    /** Interprets a "YYYY-MM-DDTHH:mm:ss"-style string as Addis Ababa local wall-clock time and returns the equivalent UTC instant. */
+    private addisLocalStringToUtcDate(value: string): Date {
+        const normalized = /Z|[+-]\d\d:\d\d$/.test(value)
+            ? value
+            : `${value}Z`;
+        const asIfUtc = new Date(normalized);
+        if (Number.isNaN(asIfUtc.getTime())) {
+            throw new BadRequestException(`Invalid date/time: ${value}`);
+        }
+        return new Date(
+            asIfUtc.getTime() -
+                BingoService.ADDIS_ABABA_OFFSET_MINUTES * 60_000,
+        );
+    }
+
+    /** Addis Ababa local wall-clock components for a given UTC instant. */
+    private addisLocalParts(now: Date): {
+        weekday: number;
+        secondsSinceMidnight: number;
+    } {
+        const shifted = new Date(
+            now.getTime() +
+                BingoService.ADDIS_ABABA_OFFSET_MINUTES * 60_000,
+        );
+        return {
+            weekday: shifted.getUTCDay(),
+            secondsSinceMidnight:
+                shifted.getUTCHours() * 3600 +
+                shifted.getUTCMinutes() * 60 +
+                shifted.getUTCSeconds(),
+        };
+    }
+
+    private hhmmssToSeconds(value: string): number {
+        const [h, m, s] = value.split(':').map((n) => parseInt(n, 10));
+        return h * 3600 + m * 60 + (s || 0);
+    }
+
+    /**
+     * The recurring window's boundaries, as Addis-local seconds-since-midnight.
+     * Overnight-spanning windows (endTime <= startTime) aren't supported - rejected
+     * at creation (see assertNoBonusCampaignOverlap's sibling validation below).
+     */
+    private recurrenceBoundsSeconds(recurrence: BingoBonusRecurrence): {
+        start: number;
+        end: number;
+    } {
+        return {
+            start: this.hhmmssToSeconds(recurrence.startTime),
+            end: this.hhmmssToSeconds(recurrence.endTime),
+        };
+    }
+
+    private isBonusCampaignActiveAt(
+        campaign: BingoBonusCampaign,
+        now: Date,
+    ): boolean {
+        if (!campaign.enabled) return false;
+        if (campaign.scheduleType === 'once') {
+            if (!campaign.startAt || !campaign.endAt) return false;
+            return (
+                now.getTime() >= campaign.startAt.getTime() &&
+                now.getTime() <= campaign.endAt.getTime()
+            );
+        }
+        const recurrence = campaign.recurrence;
+        if (!recurrence) return false;
+        const { weekday, secondsSinceMidnight } = this.addisLocalParts(now);
+        if (
+            recurrence.frequency === 'weekly' &&
+            recurrence.dayOfWeek !== undefined &&
+            recurrence.dayOfWeek !== weekday
+        ) {
+            return false;
+        }
+        const { start, end } = this.recurrenceBoundsSeconds(recurrence);
+        return secondsSinceMidnight >= start && secondsSinceMidnight <= end;
+    }
+
+    /** The UTC instant this campaign's CURRENT (or next, if not active yet today) active window ends, for display purposes. */
+    private bonusCampaignActiveUntil(
+        campaign: BingoBonusCampaign,
+        now: Date,
+    ): Date | null {
+        if (campaign.scheduleType === 'once') return campaign.endAt;
+        const recurrence = campaign.recurrence;
+        if (!recurrence) return null;
+        const { end } = this.recurrenceBoundsSeconds(recurrence);
+        const addisNow = new Date(
+            now.getTime() + BingoService.ADDIS_ABABA_OFFSET_MINUTES * 60_000,
+        );
+        const endOfWindowAddisLocal = new Date(
+            Date.UTC(
+                addisNow.getUTCFullYear(),
+                addisNow.getUTCMonth(),
+                addisNow.getUTCDate(),
+                0,
+                0,
+                0,
+            ) + end * 1000,
+        );
+        return new Date(
+            endOfWindowAddisLocal.getTime() -
+                BingoService.ADDIS_ABABA_OFFSET_MINUTES * 60_000,
+        );
+    }
+
+    /**
+     * Rejects a candidate campaign whose active window would ever overlap another
+     * existing (any enabled state) campaign's, since a bot-cartela override and a
+     * pattern's bonus payout are both meaningless with two campaigns live at once.
+     * `once` windows are checked day-by-day against `recurring` patterns, capped at
+     * 370 days - comfortably more than a one-off promo period should ever span.
+     */
+    private assertNoBonusCampaignOverlap(
+        candidate: Pick<
+            BingoBonusCampaign,
+            'scheduleType' | 'startAt' | 'endAt' | 'recurrence'
+        >,
+        existing: BingoBonusCampaign[],
+    ): void {
+        for (const other of existing) {
+            if (this.bonusWindowsOverlap(candidate, other)) {
+                throw new BadRequestException(
+                    `This schedule overlaps existing campaign "${other.name}". Bonus campaigns cannot overlap.`,
+                );
+            }
+        }
+    }
+
+    private bonusWindowsOverlap(
+        a: Pick<
+            BingoBonusCampaign,
+            'scheduleType' | 'startAt' | 'endAt' | 'recurrence'
+        >,
+        b: Pick<
+            BingoBonusCampaign,
+            'scheduleType' | 'startAt' | 'endAt' | 'recurrence'
+        >,
+    ): boolean {
+        if (a.scheduleType === 'once' && b.scheduleType === 'once') {
+            if (!a.startAt || !a.endAt || !b.startAt || !b.endAt) return false;
+            return (
+                a.startAt.getTime() < b.endAt.getTime() &&
+                b.startAt.getTime() < a.endAt.getTime()
+            );
+        }
+        if (a.scheduleType === 'recurring' && b.scheduleType === 'recurring') {
+            if (!a.recurrence || !b.recurrence) return false;
+            const sameDay =
+                a.recurrence.frequency === 'daily' ||
+                b.recurrence.frequency === 'daily' ||
+                a.recurrence.dayOfWeek === b.recurrence.dayOfWeek;
+            if (!sameDay) return false;
+            const A = this.recurrenceBoundsSeconds(a.recurrence);
+            const B = this.recurrenceBoundsSeconds(b.recurrence);
+            return A.start < B.end && B.start < A.end;
+        }
+        // once vs recurring: walk each Addis-local calendar day the `once` window
+        // touches and check whether that day's recurring occurrence (if any)
+        // overlaps it.
+        const once = a.scheduleType === 'once' ? a : b;
+        const recurring = a.scheduleType === 'recurring' ? a : b;
+        if (!once.startAt || !once.endAt || !recurring.recurrence)
+            return false;
+        const MAX_DAYS = 370;
+        const dayMs = 24 * 60 * 60 * 1000;
+        const startDay =
+            Math.floor(once.startAt.getTime() / dayMs) * dayMs;
+        const endDay = Math.floor(once.endAt.getTime() / dayMs) * dayMs;
+        for (
+            let dayStart = startDay, i = 0;
+            dayStart <= endDay && i < MAX_DAYS;
+            dayStart += dayMs, i++
+        ) {
+            const probe = new Date(dayStart + 12 * 60 * 60 * 1000); // midday, safely inside the day regardless of offset
+            const { weekday } = this.addisLocalParts(probe);
+            if (
+                recurring.recurrence.frequency === 'weekly' &&
+                recurring.recurrence.dayOfWeek !== undefined &&
+                recurring.recurrence.dayOfWeek !== weekday
+            ) {
+                continue;
+            }
+            const { start, end } = this.recurrenceBoundsSeconds(
+                recurring.recurrence,
+            );
+            const addisMidnightUtc =
+                Date.UTC(
+                    probe.getUTCFullYear(),
+                    probe.getUTCMonth(),
+                    probe.getUTCDate(),
+                ) -
+                BingoService.ADDIS_ABABA_OFFSET_MINUTES * 60_000;
+            const occStart = addisMidnightUtc + start * 1000;
+            const occEnd = addisMidnightUtc + end * 1000;
+            if (
+                once.startAt.getTime() < occEnd &&
+                occStart < once.endAt.getTime()
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private async validateBonusCampaignPayload(input: {
+        patternId?: string;
+        scheduleType?: BingoBonusScheduleType;
+        startAt?: string;
+        endAt?: string;
+        recurrence?: BingoBonusRecurrence;
+    }): Promise<{
+        patternId?: string;
+        scheduleType?: BingoBonusScheduleType;
+        startAt?: Date | null;
+        endAt?: Date | null;
+        recurrence?: BingoBonusRecurrence | null;
+    }> {
+        const out: {
+            patternId?: string;
+            scheduleType?: BingoBonusScheduleType;
+            startAt?: Date | null;
+            endAt?: Date | null;
+            recurrence?: BingoBonusRecurrence | null;
+        } = {};
+
+        if (input.patternId !== undefined) {
+            const pattern = await this.bingoPatternRepository.findOneBy({
+                id: input.patternId,
+            });
+            if (!pattern)
+                throw new BadRequestException('Bonus pattern not found');
+            out.patternId = input.patternId;
+        }
+
+        if (input.scheduleType === 'once') {
+            if (!input.startAt || !input.endAt) {
+                throw new BadRequestException(
+                    'startAt and endAt are required for a one-time schedule',
+                );
+            }
+            out.startAt = this.addisLocalStringToUtcDate(input.startAt);
+            out.endAt = this.addisLocalStringToUtcDate(input.endAt);
+            if (out.startAt.getTime() >= out.endAt.getTime()) {
+                throw new BadRequestException('endAt must be after startAt');
+            }
+            out.scheduleType = 'once';
+            out.recurrence = null;
+        } else if (input.scheduleType === 'recurring') {
+            if (!input.recurrence) {
+                throw new BadRequestException(
+                    'recurrence is required for a recurring schedule',
+                );
+            }
+            const startSec = this.hhmmssToSeconds(input.recurrence.startTime);
+            const endSec = this.hhmmssToSeconds(input.recurrence.endTime);
+            if (startSec >= endSec) {
+                throw new BadRequestException(
+                    'recurrence.endTime must be after startTime (overnight-spanning windows are not supported)',
+                );
+            }
+            if (
+                input.recurrence.frequency === 'weekly' &&
+                input.recurrence.dayOfWeek === undefined
+            ) {
+                throw new BadRequestException(
+                    'recurrence.dayOfWeek is required when frequency is weekly',
+                );
+            }
+            out.scheduleType = 'recurring';
+            out.recurrence = input.recurrence;
+            out.startAt = null;
+            out.endAt = null;
+        }
+
+        return out;
+    }
+
+    async listBonusCampaigns(): Promise<BingoBonusCampaign[]> {
+        return this.bingoBonusCampaignRepository.find({
+            order: { createdAt: 'DESC' },
+        });
+    }
+
+    async createBonusCampaign(
+        dto: CreateBingoBonusCampaignDto,
+        createdBy?: string,
+    ): Promise<BingoBonusCampaign> {
+        const validated = await this.validateBonusCampaignPayload(dto);
+        const candidate = {
+            scheduleType: dto.scheduleType,
+            startAt: validated.startAt ?? null,
+            endAt: validated.endAt ?? null,
+            recurrence: validated.recurrence ?? null,
+        };
+        const existing = await this.bingoBonusCampaignRepository.find();
+        this.assertNoBonusCampaignOverlap(candidate, existing);
+
+        const campaign = this.bingoBonusCampaignRepository.create({
+            name: dto.name,
+            patternId: validated.patternId ?? dto.patternId,
+            prizeMinor: dto.prizeMinor,
+            enabled: dto.enabled ?? false,
+            scheduleType: dto.scheduleType,
+            startAt: candidate.startAt,
+            endAt: candidate.endAt,
+            recurrence: candidate.recurrence,
+            botWinEnabled: dto.botWinEnabled ?? false,
+            botMaxCartelasPerRoom: dto.botMaxCartelasPerRoom ?? 1,
+            createdBy: createdBy ?? null,
+        });
+        return this.bingoBonusCampaignRepository.save(campaign);
+    }
+
+    async updateBonusCampaign(
+        id: string,
+        dto: UpdateBingoBonusCampaignDto,
+    ): Promise<BingoBonusCampaign> {
+        const campaign = await this.bingoBonusCampaignRepository.findOneBy({
+            id,
+        });
+        if (!campaign)
+            throw new NotFoundException('Bonus campaign not found');
+
+        const validated = await this.validateBonusCampaignPayload({
+            patternId: dto.patternId,
+            scheduleType: dto.scheduleType ?? campaign.scheduleType,
+            startAt: dto.startAt,
+            endAt: dto.endAt,
+            recurrence: dto.recurrence,
+        });
+
+        const merged = {
+            scheduleType: dto.scheduleType ?? campaign.scheduleType,
+            startAt:
+                validated.startAt !== undefined
+                    ? validated.startAt
+                    : campaign.startAt,
+            endAt:
+                validated.endAt !== undefined
+                    ? validated.endAt
+                    : campaign.endAt,
+            recurrence:
+                validated.recurrence !== undefined
+                    ? validated.recurrence
+                    : campaign.recurrence,
+        };
+        // Only re-validate schedule fields when the schedule itself changed -
+        // editing just the name/prize of an already-valid campaign shouldn't be
+        // able to fail because some OTHER campaign now technically "overlaps" a
+        // schedule that never changed.
+        if (
+            dto.scheduleType !== undefined ||
+            dto.startAt !== undefined ||
+            dto.endAt !== undefined ||
+            dto.recurrence !== undefined
+        ) {
+            const others = (
+                await this.bingoBonusCampaignRepository.find()
+            ).filter((c) => c.id !== id);
+            this.assertNoBonusCampaignOverlap(merged, others);
+        }
+
+        Object.assign(campaign, {
+            name: dto.name ?? campaign.name,
+            patternId: validated.patternId ?? campaign.patternId,
+            prizeMinor: dto.prizeMinor ?? campaign.prizeMinor,
+            enabled: dto.enabled ?? campaign.enabled,
+            scheduleType: merged.scheduleType,
+            startAt: merged.startAt,
+            endAt: merged.endAt,
+            recurrence: merged.recurrence,
+            botWinEnabled: dto.botWinEnabled ?? campaign.botWinEnabled,
+            botMaxCartelasPerRoom:
+                dto.botMaxCartelasPerRoom ?? campaign.botMaxCartelasPerRoom,
+        });
+        return this.bingoBonusCampaignRepository.save(campaign);
+    }
+
+    async deleteBonusCampaign(id: string): Promise<void> {
+        const campaign = await this.bingoBonusCampaignRepository.findOneBy({
+            id,
+        });
+        if (!campaign)
+            throw new NotFoundException('Bonus campaign not found');
+        await this.bingoBonusCampaignRepository.remove(campaign);
+    }
+
+    private async getActiveEnabledBonusCampaign(
+        now: Date,
+        manager?: EntityManager,
+    ): Promise<BingoBonusCampaign | null> {
+        const repo = manager
+            ? manager.getRepository(BingoBonusCampaign)
+            : this.bingoBonusCampaignRepository;
+        const enabledCampaigns = await repo.find({ where: { enabled: true } });
+        return (
+            enabledCampaigns.find((c) => this.isBonusCampaignActiveAt(c, now)) ??
+            null
+        );
+    }
+
+    private async computeActiveBonusCampaignInfo(
+        now: Date,
+    ): Promise<BingoRoomResponse['activeBonusCampaign']> {
+        const active = await this.getActiveEnabledBonusCampaign(now);
+        if (!active) return null;
+        const pattern = await this.bingoPatternRepository.findOneBy({
+            id: active.patternId,
+        });
+        const activeUntil = this.bonusCampaignActiveUntil(active, now);
+        return {
+            id: active.id,
+            name: active.name,
+            patternId: active.patternId,
+            patternName: pattern?.name ?? 'Bonus Pattern',
+            prizeMinor: active.prizeMinor,
+            activeUntil: activeUntil ? activeUntil.toISOString() : null,
+        };
+    }
+
+    /** Refreshes the shared active-campaign snapshot at most once every 2s. */
+    private async refreshActiveBonusCampaignCache(): Promise<void> {
+        const now = Date.now();
+        if (now < this.activeBonusCampaignCache.expiresAt) return;
+        const data = await this.computeActiveBonusCampaignInfo(new Date());
+        this.activeBonusCampaignCache = { data, expiresAt: now + 2000 };
+    }
+
+    /**
+     * The one currently-active+enabled bonus campaign (if any) whose pattern
+     * tickets should be evaluated against, with its BingoPattern preloaded.
+     * Separate from the cache above (which only carries display fields) since
+     * settlement needs the full pattern mask/type to evaluate tickets against.
+     */
+    private async getActiveBonusCampaignForSettlement(
+        manager: EntityManager,
+        now: Date,
+    ): Promise<{ campaign: BingoBonusCampaign; pattern: BingoPattern } | null> {
+        const active = await this.getActiveEnabledBonusCampaign(now, manager);
+        if (!active) return null;
+        const pattern = await manager.findOne(BingoPattern, {
+            where: { id: active.patternId },
+        });
+        if (!pattern) return null;
+        return { campaign: active, pattern };
+    }
+
+    /**
+     * Evaluates the active Bonus Win campaign (if any) against every in-play
+     * ticket in the room, once per room (guarded by room.bonusSettlement). Fully
+     * independent of Derash placements - a real player can win 1st place while
+     * the bonus goes to someone else entirely, including a bot when the
+     * campaign's botWinEnabled steers it there. Only applies to prefilled/derash
+     * race-mode rooms, matching where the bot-cartela override in
+     * reconcileBotCartelasInRoom applies.
+     */
+    private async evaluateAndSettleBonus(
+        room: BingoRoom,
+        manager: EntityManager,
+    ): Promise<void> {
+        if (room.bonusSettlement) return;
+        if (room.winMode !== 'prefilled' || room.rankingMode === 'leaderboard')
+            return;
+
+        const active = await this.getActiveBonusCampaignForSettlement(
+            manager,
+            new Date(),
+        );
+        if (!active) return;
+        const { campaign, pattern } = active;
+
+        const inPlayTickets = await manager.find(BingoTicket, {
+            where: { roomId: room.id, status: In(['active', 'won']) },
+            order: { createdAt: 'ASC' },
+        });
+        if (inPlayTickets.length === 0) return;
+
+        const naturalWinners = inPlayTickets.filter((t) =>
+            this.bingoRulesService
+                .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
+                .completedPatternIds.includes(pattern.id),
+        );
+
+        const botGroups = await this.getBotUserGroupsForTickets(
+            inPlayTickets,
+            manager,
+        );
+        const finalDraw = room.drawnNumbers.length >= 75;
+
+        let winners: BingoTicket[] = naturalWinners;
+        if (campaign.botWinEnabled) {
+            const realNaturalWinners = naturalWinners.filter(
+                (t) => !botGroups.botIds.has(t.userId),
+            );
+            if (naturalWinners.length > 0 && realNaturalWinners.length > 0) {
+                // A real ticket would otherwise take the bonus - redirect it to a
+                // bot, the same house-liquidity mechanism Derash places use.
+                const botAwardee = this.pickBotRedirectWinner(
+                    inPlayTickets,
+                    botGroups.bingoEnabledBotIds,
+                    pattern,
+                    room.drawnNumbers,
+                    room.numberRange ?? 75,
+                );
+                winners = botAwardee ? [botAwardee] : naturalWinners;
+            } else if (naturalWinners.length === 0 && finalDraw) {
+                // Nobody has completed it naturally and the room is out of balls -
+                // last chance to force a bot completion before it goes unclaimed.
+                const botAwardee = this.pickBotRedirectWinner(
+                    inPlayTickets,
+                    botGroups.bingoEnabledBotIds,
+                    pattern,
+                    room.drawnNumbers,
+                    room.numberRange ?? 75,
+                );
+                winners = botAwardee ? [botAwardee] : [];
+            }
+        }
+
+        if (winners.length === 0) return;
+
+        const shares = this.bingoRulesService.splitPrizeMinor(
+            campaign.prizeMinor,
+            winners.length,
+        );
+        const winnerRecords: Record<string, unknown>[] = [];
+        for (const [index, ticket] of winners.entries()) {
+            const share = shares[index];
+            if (share <= 0) continue;
+
+            const winnerUser = await manager.findOne(User, {
+                where: { id: ticket.userId },
+                select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
+            });
+            const display = winnerUser
+                ? await this.resolveDisplayedNameForUser(
+                      room,
+                      winnerUser,
+                      manager,
+                  )
+                : {
+                      displayName: 'Player',
+                      phoneLast4: '',
+                      isBot: false,
+                  };
+
+            const credit = await this.walletService.creditInSession(
+                {
+                    userId: ticket.userId,
+                    amountMinor: share,
+                    entryType: 'bonus',
+                    sourceType: 'bingo_bonus_win',
+                    sourceId: ticket.id,
+                    idempotencyKey: `bingo-bonus:${campaign.id}:${room.id}:${ticket.id}`,
+                    metadata: {
+                        roomId: room.id,
+                        campaignId: campaign.id,
+                        campaignName: campaign.name,
+                        patternId: pattern.id,
+                        patternName: pattern.name,
+                        prizeMinor: campaign.prizeMinor,
+                        shareMinor: share,
+                        winnerCount: winners.length,
+                        displayName: display.displayName,
+                    },
+                },
+                manager,
+            );
+            ticket.payoutMinor += share;
+            ticket.walletCredits = [...(ticket.walletCredits ?? []), credit];
+            await manager.save(ticket);
+
+            winnerRecords.push({
+                winnerId: ticket.id,
+                winnerUserId: ticket.userId,
+                winnerDisplayName: display.displayName,
+                winnerPhoneLast4: display.phoneLast4,
+                winnerIsBot: display.isBot,
+                winnerCartelaNumber: ticket.cartelaNumber,
+                winnerGrid: ticket.grid,
+                winnerMarkedNumbers: ticket.markedNumbers,
+                shareMinor: share,
+            });
+        }
+        if (winnerRecords.length === 0) return;
+
+        room.bonusSettlement = {
+            campaignId: campaign.id,
+            campaignName: campaign.name,
+            patternId: pattern.id,
+            patternName: pattern.name,
+            prizeMinor: campaign.prizeMinor,
+            winnerCount: winnerRecords.length,
+            winners: winnerRecords,
+            awardedAt: new Date().toISOString(),
+        };
+        await manager.save(room);
     }
 
     // ── Config ──────────────────────────────────────────────────────────────────
@@ -2797,6 +3441,7 @@ export class BingoService implements OnModuleInit {
         this.validateUuid(input.roomId, 'roomId');
         const room = await this.findRoom(input.roomId);
         const soldTickets = await this.countSoldTickets(room.id);
+        await this.refreshActiveBonusCampaignCache();
 
         let takenSpots: number[] | undefined;
         if (room.winMode === 'prefilled') {
@@ -2868,6 +3513,15 @@ export class BingoService implements OnModuleInit {
             (sum, t) => sum + Number(t.payoutMinor),
             0,
         );
+        const bonusWinnersByTicketId = new Map<string, number>();
+        const bonusSettlement = room.bonusSettlement as
+            | { winners?: Array<{ winnerId?: string; shareMinor?: number }> }
+            | null
+            | undefined;
+        for (const w of bonusSettlement?.winners ?? []) {
+            if (w.winnerId) bonusWinnersByTicketId.set(w.winnerId, w.shareMinor ?? 0);
+        }
+
         const ticketRows = await Promise.all(
             tickets.map(async (t) => {
                 const display = t.user
@@ -2902,6 +3556,7 @@ export class BingoService implements OnModuleInit {
                     disqualifiedWonRound: t.disqualifiedWonRound ?? false,
                     forfeitedWinMinor: Number(t.forfeitedWinMinor ?? 0),
                     forfeitedPlaces: t.forfeitedPlaces ?? [],
+                    bonusShareMinor: bonusWinnersByTicketId.get(t.id) ?? null,
                     grid: t.grid,
                     markedNumbers: t.markedNumbers ?? [],
                     createdAt: t.createdAt,
@@ -3396,6 +4051,7 @@ export class BingoService implements OnModuleInit {
         const validRoomId = this.validateUuid(roomId, 'roomId');
         const cfg = await this.getBingoConfig();
         const minDrawsBeforeWin = cfg.minDrawsBeforeWin ?? 0;
+        await this.refreshActiveBonusCampaignCache();
 
         return await this.dataSource.transaction(async (manager) => {
             const room = await manager.findOne(BingoRoom, {
@@ -3508,6 +4164,7 @@ export class BingoService implements OnModuleInit {
                                 manager,
                             );
                             await this.reconcileDerashPool(room, cfg, manager);
+                            await this.evaluateAndSettleBonus(room, manager);
                         }
                     } else if (room.winMode === 'pattern') {
                         const patternIds = (room.patternPrizes ?? []).map(
@@ -3584,6 +4241,7 @@ export class BingoService implements OnModuleInit {
                 } else {
                     if (room.drawnNumbers.length >= minDrawsBeforeWin) {
                         await this.evaluateAndSettleDerash(room, cfg, manager);
+                        await this.evaluateAndSettleBonus(room, manager);
                     }
                     await this.finalizeDerashIfDone(
                         room,
@@ -5916,29 +6574,38 @@ export class BingoService implements OnModuleInit {
             this.bingoRoomRepository.manager,
         );
         const shouldParticipate = participation.shouldParticipate(realPlayers);
+        // Active "Bonus Win" campaign with bot-steering on overrides every other
+        // bot-participation/cartela setting for this room only, for as long as the
+        // campaign's window is open: bots must join (regardless of the real-player
+        // threshold) and hold at least 1 cartela, up to the campaign's own cap,
+        // so there's always a bot ticket to steer the bonus onto.
+        const activeCampaignForBotOverride =
+            await this.getActiveEnabledBonusCampaign(new Date());
+        const bonusBotOverride = activeCampaignForBotOverride?.botWinEnabled
+            ? activeCampaignForBotOverride
+            : null;
+        const derashMinTotalCartelas =
+            cfg.botWinMode === 'cartel-dual'
+                ? Math.max(2, this.enabledPrefilledPlacesCount(cfg))
+                : cfg.botWinMode === 'ranked-bot'
+                  ? 3
+                  : 0;
         const desiredBotCartelas =
-            shouldParticipate && cartelaPolicy.enabled
+            (bonusBotOverride || shouldParticipate) &&
+            (bonusBotOverride || cartelaPolicy.enabled)
                 ? this.resolveBingoBotCartelaTarget({
                       mode: cartelaPolicy.mode,
-                      maxCartelasPerBotPerRoom:
-                          cartelaPolicy.maxCartelasPerBotPerRoom,
+                      maxCartelasPerBotPerRoom: bonusBotOverride
+                          ? Math.max(1, bonusBotOverride.botMaxCartelasPerRoom)
+                          : cartelaPolicy.maxCartelasPerBotPerRoom,
                       realCartelas,
                       botCount: activeBotIds.size,
                       // At least one bot cartela per enabled place: cartel-dual needs a
                       // distinct bot available to redirect each place's win onto without
                       // reusing one that already won earlier in the same room.
-                      minTotalCartelas:
-                          cfg.botWinMode === 'cartel-dual'
-                              ? Math.max(
-                                    2,
-                                    this.enabledPrefilledPlacesCount(cfg),
-                                )
-                              : cfg.botWinMode === 'ranked-bot'
-                                // Ranks 1st-3rd each need a distinct bot cartela to
-                                // redirect to in the same room (see awardedBotUserIds
-                                // exclusion in pickBotRedirectWinner).
-                                ? 3
-                                : 0,
+                      minTotalCartelas: bonusBotOverride
+                          ? Math.max(1, derashMinTotalCartelas)
+                          : derashMinTotalCartelas,
                   })
                 : 0;
 
@@ -6201,6 +6868,11 @@ export class BingoService implements OnModuleInit {
             settledTiers: room.settledTiers,
             winnersByTier: room.winnersByTier,
             settlementSummary: room.settlementSummary || {},
+            bonusSettlement: room.bonusSettlement ?? null,
+            activeBonusCampaign:
+                room.winMode === 'prefilled'
+                    ? this.activeBonusCampaignCache.data
+                    : null,
             houseEdgePct,
             prizeMinor,
             takenSpots:

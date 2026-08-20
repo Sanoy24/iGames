@@ -11,6 +11,11 @@ export class UpdateSystemConfigDto {
   @Min(0)
   welcomeBonusMinor?: number;
 
+  /** Master on/off switch for the welcome bonus, independent of the amount. */
+  @IsOptional()
+  @IsBoolean()
+  welcomeBonusEnabled?: boolean;
+
   /** Minimum accepted Telebirr deposit (minor units). 0 = no minimum. */
   @IsOptional()
   @IsInt()

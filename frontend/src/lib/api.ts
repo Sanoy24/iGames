@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
     AuthTokenResponse,
     BingoBonusCampaign,
+    BingoBonusRecurrence,
     BingoScheduledBotPlay,
     BingoConfig,
     BingoOperationalAlert,
@@ -1140,9 +1141,18 @@ export const adminBingoApi = {
         api
             .get<BingoBonusCampaign[]>('/admin/bingo/bonus-campaigns')
             .then((r) => r.data),
-    createBonusCampaign: (
-        dto: Omit<BingoBonusCampaign, 'id' | 'createdAt' | 'updatedAt'>,
-    ) =>
+    createBonusCampaign: (dto: {
+        name: string;
+        patternId: string;
+        prizeMinor: number;
+        enabled?: boolean;
+        scheduleType: 'once' | 'recurring';
+        startAt?: string;
+        endAt?: string;
+        recurrence?: BingoBonusRecurrence;
+        botWinEnabled?: boolean;
+        botMaxCartelasPerRoom?: number;
+    }) =>
         api
             .post<BingoBonusCampaign>('/admin/bingo/bonus-campaigns', dto)
             .then((r) => r.data),
@@ -1164,9 +1174,16 @@ export const adminBingoApi = {
         api
             .get<BingoScheduledBotPlay[]>('/admin/bingo/scheduled-bot-plays')
             .then((r) => r.data),
-    createScheduledBotPlay: (
-        dto: Omit<BingoScheduledBotPlay, 'id' | 'createdAt' | 'updatedAt'>,
-    ) =>
+    createScheduledBotPlay: (dto: {
+        name: string;
+        enabled?: boolean;
+        scheduleType: 'once' | 'recurring';
+        startAt?: string;
+        endAt?: string;
+        recurrence?: BingoBonusRecurrence;
+        botCount: number;
+        maxCartelasPerBot: number;
+    }) =>
         api
             .post<BingoScheduledBotPlay>(
                 '/admin/bingo/scheduled-bot-plays',

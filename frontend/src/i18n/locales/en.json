@@ -427,6 +427,7 @@
         "bingoExclaim": "BINGO!",
         "placeOrdinal": "{{place}} place",
         "winsThisPlace": "wins this place",
+        "splitWays": "split {{count}} ways",
         "disqualifiedHouseWins": "called early  disqualified, House wins",
         "toHouse": "to House",
         "prizeEtb": "Prize: {{amount}} ETB",

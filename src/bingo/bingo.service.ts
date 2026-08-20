@@ -629,16 +629,10 @@ export class BingoService implements OnModuleInit {
             .filter((summary): summary is Record<string, unknown> => !!summary);
         if (previousSummaries.length === 0) return new Set();
 
-        const winnerTicketIds = previousSummaries.flatMap((summary) =>
-            Object.values(summary)
-                .map((entry) => {
-                    if (!entry || typeof entry !== 'object') return null;
-                    const winnerId = (entry as Record<string, unknown>)
-                        .winnerId;
-                    return typeof winnerId === 'string' ? winnerId : null;
-                })
-                .filter((id): id is string => !!id),
-        );
+        const winnerTicketIds = previousSummaries
+            .flatMap((summary) => BingoService.summaryWinnerRecords(summary))
+            .map((entry) => entry.winnerId)
+            .filter((id): id is string => typeof id === 'string');
         if (winnerTicketIds.length === 0) return new Set();
 
         const tickets = await manager.getRepository(BingoTicket).find({
@@ -728,14 +722,35 @@ export class BingoService implements OnModuleInit {
         return this.pickDerashAutoWinnerCandidates(input)[0] ?? null;
     }
 
+    /**
+     * Flatten every per-place settlement entry into its individual winner
+     * records, regardless of shape: a place with several simultaneous
+     * completers stores `winners: [...]` (one record each), while a place
+     * with exactly one winner (or an older, already-completed room) may still
+     * have the winner fields directly on the entry itself. Callers that need
+     * to scan "every winner in this room/summary" go through this so both
+     * shapes read the same way.
+     */
+    private static summaryWinnerRecords(
+        summary: Record<string, unknown> | null | undefined,
+    ): Record<string, unknown>[] {
+        return Object.values(summary ?? {}).flatMap((entry) => {
+            if (!entry || typeof entry !== 'object') return [];
+            const record = entry as Record<string, unknown>;
+            const winners = record.winners;
+            if (Array.isArray(winners)) {
+                return winners as Record<string, unknown>[];
+            }
+            return typeof record.winnerId === 'string' ? [record] : [];
+        });
+    }
+
     private derashWinnerTicketIds(room: BingoRoom): Set<string> {
-        const summaryTicketIds = Object.values(room.settlementSummary ?? {})
-            .map((entry) => {
-                if (!entry || typeof entry !== 'object') return null;
-                const winnerId = (entry as Record<string, unknown>).winnerId;
-                return typeof winnerId === 'string' ? winnerId : null;
-            })
-            .filter((id): id is string => !!id);
+        const summaryTicketIds = BingoService.summaryWinnerRecords(
+            room.settlementSummary,
+        )
+            .map((entry) => entry.winnerId)
+            .filter((id): id is string => typeof id === 'string');
 
         return new Set([
             ...Object.values(room.winnersByTier ?? {}).flat(),
@@ -752,19 +767,12 @@ export class BingoService implements OnModuleInit {
 
     private derashWinnerCartelaNumbers(room: BingoRoom): Set<number> {
         return new Set(
-            Object.values(room.settlementSummary ?? {})
-                .map((entry) => {
-                    if (!entry || typeof entry !== 'object') return null;
-                    const cartelaNumber = (entry as Record<string, unknown>)
-                        .winnerCartelaNumber;
-                    return typeof cartelaNumber === 'number' &&
-                        Number.isInteger(cartelaNumber)
-                        ? cartelaNumber
-                        : null;
-                })
+            BingoService.summaryWinnerRecords(room.settlementSummary)
+                .map((entry) => entry.winnerCartelaNumber)
                 .filter(
                     (cartelaNumber): cartelaNumber is number =>
-                        cartelaNumber !== null,
+                        typeof cartelaNumber === 'number' &&
+                        Number.isInteger(cartelaNumber),
                 ),
         );
     }
@@ -785,14 +793,11 @@ export class BingoService implements OnModuleInit {
         manager: EntityManager,
         visibleIdentity?: { displayName: string; phoneLast4: string },
     ): Promise<boolean> {
-        const summaryEntries = Object.values(
-            room.settlementSummary ?? {},
-        ).filter(
-            (entry): entry is Record<string, unknown> =>
-                !!entry && typeof entry === 'object',
+        const winnerRecords = BingoService.summaryWinnerRecords(
+            room.settlementSummary,
         );
         if (
-            summaryEntries.some(
+            winnerRecords.some(
                 (entry) =>
                     entry.winnerUserId === userId ||
                     entry.winnerBotAccountId === userId,
@@ -802,7 +807,7 @@ export class BingoService implements OnModuleInit {
         }
         if (
             visibleIdentity &&
-            summaryEntries.some(
+            winnerRecords.some(
                 (entry) =>
                     entry.winnerIsBot === true &&
                     entry.winnerDisplayName === visibleIdentity.displayName &&
@@ -1029,17 +1034,30 @@ export class BingoService implements OnModuleInit {
         const cfg = await this.getBingoConfig();
         const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
         const summary = room.settlementSummary ?? {};
-        const entries = Object.values(summary).filter(
-            (entry): entry is Record<string, unknown> =>
-                !!entry &&
-                typeof entry === 'object' &&
-                typeof (entry as Record<string, unknown>).winnerId === 'string',
-        );
-        if (entries.length === 0) return;
 
-        const ticketIds = [
-            ...new Set(entries.map((entry) => entry.winnerId as string)),
-        ];
+        // Locate every winner record across every place, remembering whether it
+        // lives in the new `winners[]` array (and at what index) or directly on
+        // the legacy single-winner entry, so it can be rewritten in place below.
+        type WinnerRef = { place: string; index: number | null; winnerId: string };
+        const refs: WinnerRef[] = [];
+        for (const [place, rawEntry] of Object.entries(summary)) {
+            if (!rawEntry || typeof rawEntry !== 'object') continue;
+            const entry = rawEntry as Record<string, unknown>;
+            if (Array.isArray(entry.winners)) {
+                (entry.winners as Record<string, unknown>[]).forEach(
+                    (w, index) => {
+                        if (typeof w.winnerId === 'string') {
+                            refs.push({ place, index, winnerId: w.winnerId });
+                        }
+                    },
+                );
+            } else if (typeof entry.winnerId === 'string') {
+                refs.push({ place, index: null, winnerId: entry.winnerId });
+            }
+        }
+        if (refs.length === 0) return;
+
+        const ticketIds = [...new Set(refs.map((ref) => ref.winnerId))];
         const tickets = await manager.getRepository(BingoTicket).find({
             where: { id: In(ticketIds) },
             relations: ['user'],
@@ -1050,13 +1068,8 @@ export class BingoService implements OnModuleInit {
 
         let changed = false;
         const nextSummary = { ...summary };
-        for (const [place, rawEntry] of Object.entries(summary)) {
-            if (!rawEntry || typeof rawEntry !== 'object') continue;
-            const entry = rawEntry as Record<string, unknown>;
-            const winnerId = entry.winnerId;
-            if (typeof winnerId !== 'string') continue;
-
-            const ticket = ticketsById.get(winnerId);
+        for (const ref of refs) {
+            const ticket = ticketsById.get(ref.winnerId);
             if (!ticket?.user || !this.isBotUser(ticket.user)) continue;
 
             const display = await this.resolveDisplayedNameForUser(
@@ -1064,32 +1077,41 @@ export class BingoService implements OnModuleInit {
                 ticket.user,
                 manager,
             );
-            if (
-                entry.winnerDisplayName !== display.displayName ||
-                entry.winnerPhoneLast4 !== display.phoneLast4 ||
-                entry.winnerIsBot !== true ||
-                entry.winnerUserId !== ticket.userId ||
-                entry.winnerBotAccountId !== ticket.userId ||
-                entry.winnerIdentitySource !== 'bingo_bot_name_pool' ||
-                entry.winnerMaskedPhone !==
-                    this.formatBotPhoneSuffix(display.phoneLast4) ||
-                entry.botWinnerCooldownRooms !== cooldownRooms
-            ) {
-                nextSummary[place] = {
-                    ...entry,
-                    winnerUserId: ticket.userId,
-                    winnerDisplayName: display.displayName,
-                    winnerPhoneLast4: display.phoneLast4,
-                    winnerIsBot: true,
-                    winnerBotAccountId: ticket.userId,
-                    winnerIdentitySource: 'bingo_bot_name_pool',
-                    winnerMaskedPhone: this.formatBotPhoneSuffix(
-                        display.phoneLast4,
-                    ),
-                    botWinnerCooldownRooms: cooldownRooms,
-                };
-                changed = true;
+            const freshFields: Record<string, unknown> = {
+                winnerUserId: ticket.userId,
+                winnerDisplayName: display.displayName,
+                winnerPhoneLast4: display.phoneLast4,
+                winnerIsBot: true,
+                winnerBotAccountId: ticket.userId,
+                winnerIdentitySource: 'bingo_bot_name_pool',
+                winnerMaskedPhone: this.formatBotPhoneSuffix(
+                    display.phoneLast4,
+                ),
+                botWinnerCooldownRooms: cooldownRooms,
+            };
+
+            const entry = {
+                ...(nextSummary[ref.place] as Record<string, unknown>),
+            };
+            if (ref.index === null) {
+                const isStale = Object.entries(freshFields).some(
+                    ([key, value]) => entry[key] !== value,
+                );
+                if (!isStale) continue;
+                nextSummary[ref.place] = { ...entry, ...freshFields };
+            } else {
+                const winners = [
+                    ...(entry.winners as Record<string, unknown>[]),
+                ];
+                const current = winners[ref.index];
+                const isStale = Object.entries(freshFields).some(
+                    ([key, value]) => current[key] !== value,
+                );
+                if (!isStale) continue;
+                winners[ref.index] = { ...current, ...freshFields };
+                nextSummary[ref.place] = { ...entry, winners };
             }
+            changed = true;
         }
 
         if (changed) {
@@ -3795,7 +3817,7 @@ export class BingoService implements OnModuleInit {
                     if (finalBotAwardee) {
                         const awarded = await this.awardDerashPlace({
                             room,
-                            winner: finalBotAwardee,
+                            winners: [finalBotAwardee],
                             place,
                             pattern,
                             totalPotMinor,
@@ -3803,7 +3825,7 @@ export class BingoService implements OnModuleInit {
                             cfg,
                             manager,
                         });
-                        if (awarded)
+                        if (awarded.length > 0)
                             awardedBotUserIds.add(finalBotAwardee.userId);
                     }
                 }
@@ -3823,7 +3845,7 @@ export class BingoService implements OnModuleInit {
                     if (finalBotAwardee) {
                         const awarded = await this.awardDerashPlace({
                             room,
-                            winner: finalBotAwardee,
+                            winners: [finalBotAwardee],
                             place,
                             pattern,
                             totalPotMinor,
@@ -3831,55 +3853,73 @@ export class BingoService implements OnModuleInit {
                             cfg,
                             manager,
                         });
-                        if (awarded)
+                        if (awarded.length > 0)
                             awardedBotUserIds.add(finalBotAwardee.userId);
                     }
                 }
                 continue;
             }
 
-            // House-retention redirect: if the natural winner is a REAL player and the
-            // mode calls for it, hand the place to a bot instead (prefer a bot whose
-            // card also completes the pattern so the revealed winner looks legitimate).
-            for (const winner of winnerCandidates) {
-                let awardee = winner;
-                if (redirectRealWinsToBot && !botIds.has(winner.userId)) {
-                    const botAwardee = this.pickBotRedirectWinner(
-                        winnerEligibleTickets,
-                        botGroups.bingoEnabledBotIds,
-                        pattern,
-                        room.drawnNumbers,
-                        room.numberRange ?? 75,
-                        { awardedBotUserIds, recentBotWinnerUserIds },
-                    );
-                    if (botAwardee) {
-                        awardee = botAwardee;
-                        this.logger.log(
-                            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
-                        );
-                    } else if (enforceCartelDualBotWin) {
-                        this.logger.warn(
-                            `Cartel Dual held room ${room.id} place ${place} open: real user ${winner.userId} completed  no bot cartela at all in the room to redirect to`,
-                        );
-                        continue;
-                    }
-                }
+            const realCandidates = winnerCandidates.filter(
+                (t) => !botIds.has(t.userId),
+            );
 
-                if (
-                    rankedBotWinActive &&
-                    rankedHumanPlaces.has(place) &&
-                    botIds.has(awardee.userId)
-                ) {
-                    // Ranks 4th/5th must go to a real player under ranked-bot mode.
-                    // Never fabricate a completion for a human (unlike bots below)
-                    // just try the next candidate, or leave the place open this draw.
+            // House-retention redirect: below threshold, redirect the WHOLE place to
+            // a single bot instead of the real card(s) that completed it  a
+            // house-liquidity mechanic, not a player tie, so it always stays
+            // single-winner regardless of how many real cards tied this draw.
+            if (redirectRealWinsToBot && realCandidates.length > 0) {
+                const botAwardee = this.pickBotRedirectWinner(
+                    winnerEligibleTickets,
+                    botGroups.bingoEnabledBotIds,
+                    pattern,
+                    room.drawnNumbers,
+                    room.numberRange ?? 75,
+                    { awardedBotUserIds, recentBotWinnerUserIds },
+                );
+                if (botAwardee) {
+                    const awarded = await this.awardDerashPlace({
+                        room,
+                        winners: [botAwardee],
+                        place,
+                        pattern,
+                        totalPotMinor,
+                        houseEdgePct,
+                        cfg,
+                        manager,
+                    });
+                    if (awarded.length > 0) {
+                        awardedBotUserIds.add(botAwardee.userId);
+                        this.logger.log(
+                            `Bot win-steer (${cfg.botWinMode}): room ${room.id} place ${place} redirected ${realCandidates.length} tied real completion(s) to bot ${botAwardee.userId}`,
+                        );
+                    }
+                    continue;
+                } else if (enforceCartelDualBotWin) {
+                    this.logger.warn(
+                        `Cartel Dual held room ${room.id} place ${place} open: ${realCandidates.length} real completion(s)  no bot cartela at all in the room to redirect to`,
+                    );
                     continue;
                 }
-                if (
-                    rankedBotWinActive &&
-                    rankedBotPlaces.has(place) &&
-                    !botIds.has(awardee.userId)
-                ) {
+                // No bot found and cartel-dual isn't enforced  fall through and
+                // let the real winner(s) have it honestly below.
+            }
+
+            // ranked-bot: bots may never take 4th/5th; 1st-3rd must always go to a
+            // bot (redirecting a single one in if none of the tied cards is
+            // already bot-owned, otherwise keeping only the bot-owned ties).
+            let eligibleForAward = winnerCandidates;
+            if (rankedBotWinActive && rankedHumanPlaces.has(place)) {
+                eligibleForAward = eligibleForAward.filter(
+                    (t) => !botIds.has(t.userId),
+                );
+                if (eligibleForAward.length === 0) continue;
+            }
+            if (rankedBotWinActive && rankedBotPlaces.has(place)) {
+                const hasBotCandidate = eligibleForAward.some((t) =>
+                    botIds.has(t.userId),
+                );
+                if (!hasBotCandidate) {
                     const botAwardee = this.pickBotRedirectWinner(
                         winnerEligibleTickets,
                         botGroups.bingoEnabledBotIds,
@@ -3889,28 +3929,45 @@ export class BingoService implements OnModuleInit {
                         { awardedBotUserIds, recentBotWinnerUserIds },
                     );
                     if (!botAwardee) continue;
-                    awardee = botAwardee;
-                    this.logger.log(
-                        `Bot win-steer (ranked-bot): room ${room.id} place ${place} redirected from real user ${winner.userId} to bot ${botAwardee.userId}`,
-                    );
+                    const awarded = await this.awardDerashPlace({
+                        room,
+                        winners: [botAwardee],
+                        place,
+                        pattern,
+                        totalPotMinor,
+                        houseEdgePct,
+                        cfg,
+                        manager,
+                    });
+                    if (awarded.length > 0) {
+                        awardedBotUserIds.add(botAwardee.userId);
+                        this.logger.log(
+                            `Bot win-steer (ranked-bot): room ${room.id} place ${place} redirected to bot ${botAwardee.userId}`,
+                        );
+                    }
+                    continue;
                 }
+                eligibleForAward = eligibleForAward.filter((t) =>
+                    botIds.has(t.userId),
+                );
+                if (eligibleForAward.length === 0) continue;
+            }
 
-                const awarded = await this.awardDerashPlace({
-                    room,
-                    winner: awardee,
-                    place,
-                    pattern,
-                    totalPotMinor,
-                    houseEdgePct,
-                    cfg,
-                    manager,
-                });
-                if (botIds.has(awardee.userId)) {
-                    awardedBotUserIds.add(awardee.userId);
-                }
-                if (awarded) {
-                    break;
-                }
+            // Honest case  including natural ties among several cards that were
+            // not redirect-forced: everyone who completed this place's pattern in
+            // this exact draw splits it evenly.
+            const awarded = await this.awardDerashPlace({
+                room,
+                winners: eligibleForAward,
+                place,
+                pattern,
+                totalPotMinor,
+                houseEdgePct,
+                cfg,
+                manager,
+            });
+            for (const t of awarded) {
+                if (botIds.has(t.userId)) awardedBotUserIds.add(t.userId);
             }
         }
 
@@ -4138,7 +4195,7 @@ export class BingoService implements OnModuleInit {
 
                 const awarded = await this.awardDerashPlace({
                     room,
-                    winner: candidate,
+                    winners: [candidate],
                     place,
                     pattern,
                     totalPotMinor,
@@ -4149,7 +4206,7 @@ export class BingoService implements OnModuleInit {
                 if (botIds.has(candidate.userId)) {
                     awardedBotUserIds.add(candidate.userId);
                 }
-                if (awarded) {
+                if (awarded.length > 0) {
                     awardedPlace = true;
                     break;
                 }
@@ -4190,27 +4247,33 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
-     * Award a single derash place to a winning card: pays the place's prize into
-     * the winner's wallet (with an idempotent ledger credit), flips the ticket to
-     * `won`/`settled`, and records the winner on the room so every client can
-     * render the result. Shared by the settlement tick (auto) and the manual
-     * "Bingo" claim (claimBingo) so both paths pay identically.
+     * Award a derash place, jointly if several cards completed it in the very
+     * same draw: pays the place's prize into each winner's wallet (split evenly
+     * via `splitPrizeMinor`, with an idempotent ledger credit per winner),
+     * flips each ticket to `won`/`settled`, and records every winner on the
+     * room so every client can render the result. Shared by the settlement
+     * tick (auto, where several tickets legitimately tie) and the manual
+     * "Bingo" claim (claimBingo, always a single winner) so both paths pay
+     * identically. Returns the tickets actually awarded  a candidate is
+     * silently dropped (not the whole call aborted) if it turns out to already
+     * hold this place/cartela, or is a bot that isn't eligible right now, so
+     * the remaining tied winners still get their share.
      */
     private async awardDerashPlace(input: {
         room: BingoRoom;
-        winner: BingoTicket;
+        winners: BingoTicket[];
         place: PrefilledPlace;
         pattern: BingoPattern;
         totalPotMinor: number;
         houseEdgePct: number;
         cfg: BingoConfig;
         manager: EntityManager;
-        /** Optional alias to display instead of the bot's real displayName. */
+        /** Optional alias to display instead of the bot's real displayName. Only applied when there's exactly one winner. */
         overrideDisplayName?: string;
-    }): Promise<boolean> {
+    }): Promise<BingoTicket[]> {
         const {
             room,
-            winner,
+            winners,
             place,
             pattern,
             totalPotMinor,
@@ -4229,133 +4292,182 @@ export class BingoService implements OnModuleInit {
             cfg,
         );
         const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
-        if (this.hasTicketAlreadyWonDerashPlace(room, winner.id)) {
-            this.logger.warn(
-                `Skipped duplicate Bingo place ${place} for already-awarded ticket ${winner.id} in room ${room.id}`,
-            );
-            return false;
-        }
-        if (this.hasCartelaAlreadyWonDerashPlace(room, winner.cartelaNumber)) {
-            this.logger.warn(
-                `Skipped duplicate Bingo place ${place} for already-awarded cartela #${winner.cartelaNumber} in room ${room.id}`,
-            );
-            return false;
-        }
 
-        const winnerUser = await manager.findOne(User, {
-            where: { id: winner.userId },
-            select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
-        });
-        const display = winnerUser
-            ? await this.resolveDisplayedNameForUser(room, winnerUser, manager)
-            : {
-                  displayName: 'Player',
-                  phoneLast4: '',
-                  phoneSuffix: undefined,
-                  isBot: false,
-              };
-        const displayedName = overrideDisplayName ?? display.displayName;
-        const phoneLast4 = display.phoneLast4;
-        if (winnerUser && display.isBot) {
-            if (!this.isBingoEnabledBotUser(winnerUser)) {
+        // Resolve + validate each candidate independently  a dupe or an
+        // ineligible bot among the tied set doesn't disqualify the others.
+        const eligible: Array<{
+            ticket: BingoTicket;
+            displayedName: string;
+            phoneLast4: string;
+            isBot: boolean;
+        }> = [];
+        for (const winner of winners) {
+            if (this.hasTicketAlreadyWonDerashPlace(room, winner.id)) {
                 this.logger.warn(
-                    `Skipped Bingo place ${place} for non-Bingo-enabled bot ${winner.userId} in room ${room.id}`,
+                    `Skipped duplicate Bingo place ${place} for already-awarded ticket ${winner.id} in room ${room.id}`,
                 );
-                return false;
+                continue;
             }
             if (
-                await this.hasBotAlreadyWonDerashPlace(
-                    room,
-                    winner.userId,
-                    manager,
-                    { displayName: displayedName, phoneLast4 },
-                )
+                this.hasCartelaAlreadyWonDerashPlace(room, winner.cartelaNumber)
             ) {
                 this.logger.warn(
-                    `Skipped duplicate Bingo place ${place} for bot ${winner.userId} in room ${room.id}`,
+                    `Skipped duplicate Bingo place ${place} for already-awarded cartela #${winner.cartelaNumber} in room ${room.id}`,
                 );
-                return false;
+                continue;
             }
+
+            const winnerUser = await manager.findOne(User, {
+                where: { id: winner.userId },
+                select: ['id', 'displayName', 'phoneNumber', 'productMetadata'],
+            });
+            const display = winnerUser
+                ? await this.resolveDisplayedNameForUser(
+                      room,
+                      winnerUser,
+                      manager,
+                  )
+                : {
+                      displayName: 'Player',
+                      phoneLast4: '',
+                      phoneSuffix: undefined,
+                      isBot: false,
+                  };
+            const displayedName =
+                (winners.length === 1 ? overrideDisplayName : undefined) ??
+                display.displayName;
+            const phoneLast4 = display.phoneLast4;
+            if (winnerUser && display.isBot) {
+                if (!this.isBingoEnabledBotUser(winnerUser)) {
+                    this.logger.warn(
+                        `Skipped Bingo place ${place} for non-Bingo-enabled bot ${winner.userId} in room ${room.id}`,
+                    );
+                    continue;
+                }
+                if (
+                    await this.hasBotAlreadyWonDerashPlace(
+                        room,
+                        winner.userId,
+                        manager,
+                        { displayName: displayedName, phoneLast4 },
+                    )
+                ) {
+                    this.logger.warn(
+                        `Skipped duplicate Bingo place ${place} for bot ${winner.userId} in room ${room.id}`,
+                    );
+                    continue;
+                }
+            }
+
+            eligible.push({
+                ticket: winner,
+                displayedName,
+                phoneLast4,
+                isBot: display.isBot,
+            });
         }
 
-        winner.wonTiers = [...(winner.wonTiers ?? []), place];
-        winner.payoutMinor += prizeMinor;
-        winner.status = 'won';
-        winner.settlementStatus = 'settled';
+        if (eligible.length === 0) return [];
 
-        if (prizeMinor > 0) {
-            const winCredit = await this.walletService.creditInSession(
-                {
-                    userId: winner.userId,
-                    amountMinor: prizeMinor,
-                    entryType: 'win',
-                    sourceType: 'bingo_ticket',
-                    sourceId: winner.id,
-                    idempotencyKey: `bingo-settlement:${place}:${winner.id}`,
-                    metadata: {
-                        roomId: room.id,
-                        place,
-                        cartelaNumber: winner.cartelaNumber,
-                        patternId: pattern.id,
-                        totalPotMinor,
-                        prizePoolMinor,
-                        displayName: displayedName,
-                    },
-                },
-                manager,
-            );
-            winner.walletCredits = [...(winner.walletCredits ?? []), winCredit];
-        }
-
-        await manager.save(winner);
-
-        // The MINIMAL cells that actually satisfied the pattern  not every line
-        // that happens to also be complete on the card (a card can have more
-        // marked lines than the place required, by pure chance). The client
-        // highlights exactly this, so a 1-line place never renders as if it took
-        // 2+ lines to win. Null only if resolution genuinely can't reproduce the
-        // completion (shouldn't happen since the caller already verified it).
-        const winPatternCells = this.bingoRulesService.explainPatternCompletion(
-            winner.grid,
-            room.drawnNumbers,
-            pattern,
+        const shares = this.bingoRulesService.splitPrizeMinor(
+            prizeMinor,
+            eligible.length,
         );
 
-        room.settledTiers = [...room.settledTiers, place];
-        room.winnersByTier = { ...room.winnersByTier, [place]: [winner.id] };
-        room.settlementSummary = {
-            ...room.settlementSummary,
-            [place]: {
-                winnerCount: 1,
+        const winnerRecords: Record<string, unknown>[] = [];
+        for (const [index, { ticket: winner, displayedName, phoneLast4, isBot }] of eligible.entries()) {
+            const share = shares[index];
+            winner.wonTiers = [...(winner.wonTiers ?? []), place];
+            winner.payoutMinor += share;
+            winner.status = 'won';
+            winner.settlementStatus = 'settled';
+
+            if (share > 0) {
+                const winCredit = await this.walletService.creditInSession(
+                    {
+                        userId: winner.userId,
+                        amountMinor: share,
+                        entryType: 'win',
+                        sourceType: 'bingo_ticket',
+                        sourceId: winner.id,
+                        idempotencyKey: `bingo-settlement:${place}:${winner.id}`,
+                        metadata: {
+                            roomId: room.id,
+                            place,
+                            cartelaNumber: winner.cartelaNumber,
+                            patternId: pattern.id,
+                            totalPotMinor,
+                            prizePoolMinor,
+                            displayName: displayedName,
+                            winnerCount: eligible.length,
+                        },
+                    },
+                    manager,
+                );
+                winner.walletCredits = [
+                    ...(winner.walletCredits ?? []),
+                    winCredit,
+                ];
+            }
+
+            await manager.save(winner);
+
+            // The MINIMAL cells that actually satisfied the pattern  not every
+            // line that happens to also be complete on the card (a card can have
+            // more marked lines than the place required, by pure chance). The
+            // client highlights exactly this, so a 1-line place never renders as
+            // if it took 2+ lines to win. Null only if resolution genuinely can't
+            // reproduce the completion (shouldn't happen since the caller
+            // already verified it).
+            const winPatternCells =
+                this.bingoRulesService.explainPatternCompletion(
+                    winner.grid,
+                    room.drawnNumbers,
+                    pattern,
+                );
+
+            winnerRecords.push({
                 winnerId: winner.id,
                 winnerUserId: winner.userId,
                 winnerDisplayName: displayedName,
                 winnerPhoneLast4: phoneLast4,
-                winnerIsBot: display.isBot,
-                winnerBotAccountId: display.isBot ? winner.userId : undefined,
-                winnerIdentitySource: display.isBot
+                winnerIsBot: isBot,
+                winnerBotAccountId: isBot ? winner.userId : undefined,
+                winnerIdentitySource: isBot
                     ? 'bingo_bot_name_pool'
                     : 'player_profile',
-                winnerMaskedPhone: display.isBot
+                winnerMaskedPhone: isBot
                     ? this.formatBotPhoneSuffix(phoneLast4)
                     : phoneLast4
                       ? `••${phoneLast4}`
                       : '',
-                botWinnerCooldownRooms: display.isBot
-                    ? cooldownRooms
-                    : undefined,
+                botWinnerCooldownRooms: isBot ? cooldownRooms : undefined,
                 winnerCartelaNumber: winner.cartelaNumber,
                 // Winner card so every client in the room can render the result.
                 winnerGrid: winner.grid,
                 winnerMarkedNumbers: winner.markedNumbers,
                 winPatternCells,
+                shareMinor: share,
+            });
+        }
+
+        room.settledTiers = [...room.settledTiers, place];
+        room.winnersByTier = {
+            ...room.winnersByTier,
+            [place]: eligible.map(({ ticket }) => ticket.id),
+        };
+        room.settlementSummary = {
+            ...room.settlementSummary,
+            [place]: {
+                winnerCount: eligible.length,
+                winners: winnerRecords,
                 patternName: pattern.name,
                 prizeMinor,
                 totalPotMinor,
                 prizePoolMinor,
             },
         };
-        return true;
+        return eligible.map(({ ticket }) => ticket);
     }
 
     /**
@@ -4571,62 +4683,93 @@ export class BingoService implements OnModuleInit {
                 houseEdgePct,
                 cfg,
             );
-            const topUpMinor = finalPrize - progressivePrize;
-
-            // Reflect the FINAL amount in the summary the clients read at completion.
-            this.setDerashSummaryPrize(room, place, finalPrize);
-
-            const winnerId = room.winnersByTier[place]?.[0];
-            if (!winnerId || topUpMinor <= 0) continue;
-
-            const ticket = await manager.findOne(BingoTicket, {
-                where: { id: winnerId },
-            });
-            if (!ticket) continue;
-
-            const topUpCredit = await this.walletService.creditInSession(
-                {
-                    userId: ticket.userId,
-                    amountMinor: topUpMinor,
-                    entryType: 'win',
-                    sourceType: 'bingo_ticket',
-                    sourceId: ticket.id,
-                    idempotencyKey: `bingo-reconcile:${place}:${ticket.id}`,
-                    metadata: {
-                        roomId: room.id,
-                        place,
-                        kind: 'pool_redistribution',
-                        progressivePrizeMinor: progressivePrize,
-                        finalPrizeMinor: finalPrize,
-                    },
-                },
-                manager,
+            // Winners of this place split it evenly (awardDerashPlace already paid
+            // them their PROGRESSIVE share this same way), so the top-up to the
+            // FINAL amount is split the same way too, winner by winner.
+            const winnerIds = room.winnersByTier[place] ?? [];
+            const finalShares = this.bingoRulesService.splitPrizeMinor(
+                finalPrize,
+                winnerIds.length,
             );
-            ticket.payoutMinor += topUpMinor;
-            ticket.walletCredits = [
-                ...(ticket.walletCredits ?? []),
-                topUpCredit,
-            ];
-            await manager.save(ticket);
+            const progressiveShares = this.bingoRulesService.splitPrizeMinor(
+                progressivePrize,
+                winnerIds.length,
+            );
+
+            // Reflect the FINAL amount (and each winner's final share) in the
+            // summary the clients read at completion.
+            this.setDerashSummaryPrize(room, place, finalPrize, finalShares);
+
+            for (const [index, winnerId] of winnerIds.entries()) {
+                const topUpShareMinor = finalShares[index] - progressiveShares[index];
+                if (topUpShareMinor <= 0) continue;
+
+                const ticket = await manager.findOne(BingoTicket, {
+                    where: { id: winnerId },
+                });
+                if (!ticket) continue;
+
+                const topUpCredit = await this.walletService.creditInSession(
+                    {
+                        userId: ticket.userId,
+                        amountMinor: topUpShareMinor,
+                        entryType: 'win',
+                        sourceType: 'bingo_ticket',
+                        sourceId: ticket.id,
+                        idempotencyKey: `bingo-reconcile:${place}:${ticket.id}`,
+                        metadata: {
+                            roomId: room.id,
+                            place,
+                            kind: 'pool_redistribution',
+                            progressivePrizeMinor: progressiveShares[index],
+                            finalPrizeMinor: finalShares[index],
+                        },
+                    },
+                    manager,
+                );
+                ticket.payoutMinor += topUpShareMinor;
+                ticket.walletCredits = [
+                    ...(ticket.walletCredits ?? []),
+                    topUpCredit,
+                ];
+                await manager.save(ticket);
+            }
         }
 
         // Cards that never won any place → lost (won cards keep their 'won' status).
         await this.markRemainingTicketsLost(room, manager);
     }
 
-    /** Overwrite a place's prizeMinor in the settlement summary (final reconciled value). */
+    /**
+     * Overwrite a place's prizeMinor in the settlement summary (final reconciled
+     * value), and each winner's shareMinor to match (`shares[i]` in winner order,
+     * same order as `room.winnersByTier[place]`).
+     */
     private setDerashSummaryPrize(
         room: BingoRoom,
         place: PrefilledPlace,
         prizeMinor: number,
+        shares?: number[],
     ): void {
         const entry = (room.settlementSummary ?? {})[place] as
             | Record<string, unknown>
             | undefined;
         if (!entry) return;
+        const winners = entry.winners;
+        const nextWinners =
+            Array.isArray(winners) && shares
+                ? (winners as Record<string, unknown>[]).map((w, index) => ({
+                      ...w,
+                      shareMinor: shares[index] ?? w.shareMinor,
+                  }))
+                : winners;
         room.settlementSummary = {
             ...room.settlementSummary,
-            [place]: { ...entry, prizeMinor },
+            [place]: {
+                ...entry,
+                prizeMinor,
+                ...(nextWinners ? { winners: nextWinners } : {}),
+            },
         };
     }
 
@@ -5002,7 +5145,7 @@ export class BingoService implements OnModuleInit {
                 const houseEdgePct = room.houseEdgePct ?? 20;
                 const awarded = await this.awardDerashPlace({
                     room,
-                    winner: awardee,
+                    winners: [awardee],
                     place,
                     pattern: pattern as BingoPattern,
                     totalPotMinor,
@@ -5010,13 +5153,14 @@ export class BingoService implements OnModuleInit {
                     cfg,
                     manager,
                 });
-                awardedAny = awardedAny || awarded;
+                const wasAwarded = awarded.length > 0;
+                awardedAny = awardedAny || wasAwarded;
                 callerWonAny =
-                    callerWonAny || (awarded && awardee.id === ticket.id);
-                if (awarded && cartelContext?.botIds.has(awardee.userId)) {
+                    callerWonAny || (wasAwarded && awardee.id === ticket.id);
+                if (wasAwarded && cartelContext?.botIds.has(awardee.userId)) {
                     cartelContext.awardedBotUserIds.add(awardee.userId);
                 }
-                if (awarded && rankedContext?.botIds.has(awardee.userId)) {
+                if (wasAwarded && rankedContext?.botIds.has(awardee.userId)) {
                     rankedContext.awardedBotUserIds.add(awardee.userId);
                 }
             }

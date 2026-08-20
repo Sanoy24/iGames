@@ -9337,25 +9337,40 @@ function BingoRoundDetailsModal({
     onClose: () => void;
 }) {
     const room = details?.room;
+    type BingoSummaryWinner = {
+        winnerDisplayName?: string;
+        winnerPhoneLast4?: string;
+        winnerCartelaNumber?: number;
+        prizeMinor?: number;
+        shareMinor?: number;
+        winnerGrid?: Array<Array<number | null>>;
+        winnerMarkedNumbers?: number[];
+        winnerIsBot?: boolean;
+        winnerUserId?: string;
+        winnerBotAccountId?: string;
+        winnerIdentitySource?: string;
+        winnerMaskedPhone?: string;
+        botWinnerCooldownRooms?: number;
+    };
     const summary = (room?.settlementSummary ?? {}) as Record<
         string,
-        {
-            winnerDisplayName?: string;
-            winnerPhoneLast4?: string;
-            winnerCartelaNumber?: number;
+        BingoSummaryWinner & {
             patternName?: string;
-            prizeMinor?: number;
-            winnerGrid?: Array<Array<number | null>>;
-            winnerMarkedNumbers?: number[];
-            winnerIsBot?: boolean;
-            winnerUserId?: string;
-            winnerBotAccountId?: string;
-            winnerIdentitySource?: string;
-            winnerMaskedPhone?: string;
-            botWinnerCooldownRooms?: number;
+            winnerCount?: number;
+            // Present on places settled after several cards could jointly complete
+            // one place in the same draw; absent on older, already-completed rooms
+            // (or a place with exactly one winner recorded pre-migration), where
+            // the winner fields above sit directly on the entry itself instead.
+            winners?: BingoSummaryWinner[];
         }
     >;
     const winnerPlaces = room ? Object.keys(summary) : [];
+    const placeWinners = (place: string): BingoSummaryWinner[] => {
+        const entry = summary[place];
+        if (!entry) return [];
+        if (Array.isArray(entry.winners)) return entry.winners;
+        return entry.winnerDisplayName || entry.winnerGrid ? [entry] : [];
+    };
     const roomBotIdentities = Object.entries(room?.botIdentityMap ?? {})
         .map(([botId, identity]) => ({ botId, ...identity }))
         .sort(
@@ -9566,12 +9581,15 @@ function BingoRoundDetailsModal({
                                                 placeMeta(a).order -
                                                 placeMeta(b).order,
                                         )
-                                        .map((place) => {
-                                            const w = summary[place];
+                                        .flatMap((place) => {
+                                            const entry = summary[place];
+                                            const entryWinners =
+                                                placeWinners(place);
                                             const meta = placeMeta(place);
-                                            return (
+                                            return entryWinners.map(
+                                                (w, i) => (
                                                 <div
-                                                    key={place}
+                                                    key={`${place}-${i}`}
                                                     style={{
                                                         border: '1px solid rgba(16,185,129,0.3)',
                                                         borderRadius: 10,
@@ -9607,9 +9625,13 @@ function BingoRoundDetailsModal({
                                                                     fontSize: 16,
                                                                 }}
                                                             >
-                                                                {meta.medal}
+                                                                {i === 0
+                                                                    ? meta.medal
+                                                                    : ''}
                                                             </span>
-                                                            {meta.label}
+                                                            {i === 0
+                                                                ? meta.label
+                                                                : 'split'}
                                                         </span>
                                                         <strong
                                                             style={{
@@ -9617,7 +9639,8 @@ function BingoRoundDetailsModal({
                                                             }}
                                                         >
                                                             {formatCreditsFull(
-                                                                w.prizeMinor ??
+                                                                w.shareMinor ??
+                                                                    w.prizeMinor ??
                                                                     0,
                                                             )}{' '}
                                                             ETB
@@ -9679,7 +9702,7 @@ function BingoRoundDetailsModal({
                                                         <span>
                                                             Pattern:{' '}
                                                             <strong>
-                                                                {w.patternName ??
+                                                                {entry?.patternName ??
                                                                     'Any Line'}
                                                             </strong>
                                                         </span>
@@ -9770,6 +9793,7 @@ function BingoRoundDetailsModal({
                                                         </span>
                                                     )}
                                                 </div>
+                                                ),
                                             );
                                         })}
                                 </div>

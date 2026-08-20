@@ -1161,6 +1161,37 @@ export type LivePlaceWin = {
     entry: Record<string, unknown>;
 };
 
+type WinnerRecord = {
+    winnerGrid?: Array<Array<number | null>>;
+    winnerMarkedNumbers?: number[];
+    winPatternCells?: Array<{ row: number; col: number }>;
+    winnerDisplayName?: string;
+    winnerPhoneLast4?: string;
+    winnerCartelaNumber?: number;
+    shareMinor?: number;
+};
+
+/**
+ * Normalizes a settlement entry into its individual winners, whether it uses
+ * the current `winners: [...]` array (several cards can jointly complete a
+ * place in the same draw and split its prize) or the older shape from before
+ * that existed, where the winner fields sat directly on the entry itself.
+ */
+function getEntryWinners(entry: Record<string, unknown>): WinnerRecord[] {
+    if (Array.isArray(entry.winners)) {
+        return entry.winners as WinnerRecord[];
+    }
+    if (entry.winnerDisplayName || entry.winnerGrid) {
+        return [
+            {
+                ...entry,
+                shareMinor: entry.prizeMinor as number | undefined,
+            } as WinnerRecord,
+        ];
+    }
+    return [];
+}
+
 function BingoLiveWinCard({
     place,
     entry,
@@ -1171,21 +1202,11 @@ function BingoLiveWinCard({
     drawnNumbers: number[];
 }) {
     const { t } = useTranslation();
-    const grid = entry.winnerGrid as Array<Array<number | null>>;
-    const marked =
-        (entry.winnerMarkedNumbers as number[] | undefined) ?? undefined;
-    const winCells =
-        (entry.winPatternCells as
-            | Array<{ row: number; col: number }>
-            | undefined) ?? undefined;
-    const name =
-        (entry.winnerDisplayName as string | undefined) ?? t('bingo.player');
-    const last4 = (entry.winnerPhoneLast4 as string | undefined) ?? '';
-    const prize = (entry.prizeMinor as number | undefined) ?? 0;
-    const cartela = entry.winnerCartelaNumber as number | undefined;
+    const winners = getEntryWinners(entry);
     const disqualified = !!entry.disqualified;
     const lastCalled =
         drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
+    const splitWays = winners.length > 1;
 
     return (
         <motion.div
@@ -1193,7 +1214,7 @@ function BingoLiveWinCard({
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 21 }}
-            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5'
+            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5 max-h-[85vh] overflow-y-auto'
             style={{
                 background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
                 border: '2px solid rgba(167,139,250,0.7)',
@@ -1216,17 +1237,27 @@ function BingoLiveWinCard({
                 <div className='text-[11px] font-black uppercase tracking-widest text-amber-300 mb-1'>
                     {PLACE_MEDAL[place]}{' '}
                     {t('bingo.placeOrdinal', { place: PLACE_LABEL[place] })}
+                    {splitWays
+                        ? ` · ${t('bingo.splitWays', { count: winners.length })}`
+                        : ''}
                 </div>
                 <p className='text-slate-100 text-sm font-bold flex items-center justify-center gap-2 flex-wrap'>
-                    <span
-                        className='rounded-lg px-3 py-1 font-black text-white'
-                        style={{
-                            background: disqualified ? '#b91c1c' : '#2f8f4f',
-                        }}
-                    >
-                        {name}
-                        {last4 ? ` ( *${last4} )` : ''}
-                    </span>
+                    {winners.map((w, i) => (
+                        <span
+                            key={i}
+                            className='rounded-lg px-3 py-1 font-black text-white'
+                            style={{
+                                background: disqualified
+                                    ? '#b91c1c'
+                                    : '#2f8f4f',
+                            }}
+                        >
+                            {w.winnerDisplayName ?? t('bingo.player')}
+                            {w.winnerPhoneLast4
+                                ? ` ( *${w.winnerPhoneLast4} )`
+                                : ''}
+                        </span>
+                    ))}
                     <span>
                         {disqualified
                             ? t('bingo.disqualifiedHouseWins')
@@ -1240,56 +1271,64 @@ function BingoLiveWinCard({
                 )}
             </div>
 
-            {grid ? (
-                <div
-                    className='rounded-xl p-1.5'
-                    style={{
-                        background: 'rgba(20,60,60,0.4)',
-                        border: '2px solid rgba(167,139,250,0.6)',
-                    }}
-                >
+            {winners.map((w, i) => {
+                const grid = w.winnerGrid;
+                if (!grid) return null;
+                const prize = w.shareMinor ?? 0;
+                return (
                     <div
-                        className='rounded-lg p-1.5'
+                        key={i}
+                        className='rounded-xl p-1.5'
                         style={{
-                            border: '2px solid rgba(245,158,11,0.85)',
+                            background: 'rgba(20,60,60,0.4)',
+                            border: '2px solid rgba(167,139,250,0.6)',
                         }}
                     >
-                        <WinnerBingoCard
-                            grid={grid}
-                            drawnNumbers={drawnNumbers}
-                            markedNumbers={marked}
-                            winCells={winCells}
-                            lastCalled={lastCalled}
-                        />
-                        <div className='flex items-center justify-between px-1 pt-1.5'>
-                            {disqualified ? (
-                                <span className='text-[13px] font-black flex items-center gap-1'>
-                                    <span className='line-through text-slate-400'>
-                                        {formatCreditsFull(prize)}
+                        <div
+                            className='rounded-lg p-1.5'
+                            style={{
+                                border: '2px solid rgba(245,158,11,0.85)',
+                            }}
+                        >
+                            <WinnerBingoCard
+                                grid={grid}
+                                drawnNumbers={drawnNumbers}
+                                markedNumbers={w.winnerMarkedNumbers}
+                                winCells={w.winPatternCells}
+                                lastCalled={lastCalled}
+                            />
+                            <div className='flex items-center justify-between px-1 pt-1.5'>
+                                {disqualified ? (
+                                    <span className='text-[13px] font-black flex items-center gap-1'>
+                                        <span className='line-through text-slate-400'>
+                                            {formatCreditsFull(prize)}
+                                        </span>
+                                        <span className='text-red-300 text-[10px] uppercase tracking-wide'>
+                                            {t('bingo.toHouse')}
+                                        </span>
                                     </span>
-                                    <span className='text-red-300 text-[10px] uppercase tracking-wide'>
-                                        {t('bingo.toHouse')}
+                                ) : (
+                                    <span
+                                        className='text-[13px] font-black'
+                                        style={{ color: '#34d399' }}
+                                    >
+                                        {t('bingo.prizeEtb', {
+                                            amount: formatCreditsFull(prize),
+                                        })}
                                     </span>
-                                </span>
-                            ) : (
-                                <span
-                                    className='text-[13px] font-black'
-                                    style={{ color: '#34d399' }}
-                                >
-                                    {t('bingo.prizeEtb', {
-                                        amount: formatCreditsFull(prize),
-                                    })}
-                                </span>
-                            )}
-                            {cartela != null && (
-                                <span className='text-[13px] font-black text-slate-100'>
-                                    {t('bingo.cardHash', { n: cartela })}
-                                </span>
-                            )}
+                                )}
+                                {w.winnerCartelaNumber != null && (
+                                    <span className='text-[13px] font-black text-slate-100'>
+                                        {t('bingo.cardHash', {
+                                            n: w.winnerCartelaNumber,
+                                        })}
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
-            ) : null}
+                );
+            })}
         </motion.div>
     );
 }
@@ -1498,13 +1537,13 @@ function RoomResultOverlay({
         (
             x,
         ): x is { place: PrefilledPlaceKey; entry: Record<string, unknown> } =>
-            !!x.entry && (!!x.entry.winnerDisplayName || !!x.entry.winnerGrid),
+            !!x.entry && getEntryWinners(x.entry).length > 0,
     );
 
     const primaryKey = isPrefilledMode ? '1st' : 'full_house';
     const winEntry =
         (summary[primaryKey] as Record<string, unknown> | undefined) ??
-        summaryEntries.find((e) => e.winnerGrid || e.winnerDisplayName);
+        summaryEntries.find((e) => getEntryWinners(e).length > 0);
     const winnerDisplayName =
         (winEntry?.winnerDisplayName as string | undefined) ??
         tr('bingo.luckyPlayer');
@@ -1538,9 +1577,12 @@ function RoomResultOverlay({
     // the standings: who placed 1st/2nd/3rd… with name + last-4 phone + card# +
     // amount won (matches the requested summary card).
     if (isPrefilledMode) {
+        const topWinners = winEntry ? getEntryWinners(winEntry) : [];
         const topName =
-            (winEntry?.winnerDisplayName as string | undefined) ??
-            tr('bingo.luckyPlayer');
+            topWinners
+                .map((w) => w.winnerDisplayName)
+                .filter((n): n is string => !!n)
+                .join(', ') || tr('bingo.luckyPlayer');
         return (
             <motion.div
                 initial={{ opacity: 0 }}
@@ -1640,29 +1682,27 @@ function RoomResultOverlay({
                                 {tr('bingo.finalStandings')}
                             </div>
                             <div className='space-y-1'>
-                                {placeEntries.map(({ place, entry }) => {
+                                {placeEntries.flatMap(({ place, entry }) => {
                                     const dq = !!entry.disqualified;
-                                    return (
+                                    const winners = getEntryWinners(entry);
+                                    return winners.map((w, i) => (
                                         <div
-                                            key={place}
+                                            key={`${place}-${i}`}
                                             className='flex items-center justify-between rounded-lg px-2 py-1 bg-black/20'
                                         >
                                             <span className='flex items-center gap-1.5 min-w-0'>
-                                                <span className='text-sm leading-none'>
-                                                    {PLACE_MEDAL[place]}
+                                                <span className='text-sm leading-none w-4 text-center'>
+                                                    {i === 0
+                                                        ? PLACE_MEDAL[place]
+                                                        : ''}
                                                 </span>
                                                 <span className='text-[11px] font-black truncate text-white'>
-                                                    {(entry.winnerDisplayName as
-                                                        | string
-                                                        | undefined) ??
+                                                    {w.winnerDisplayName ??
                                                         tr('bingo.player')}
-                                                    {entry.winnerPhoneLast4 ? (
+                                                    {w.winnerPhoneLast4 ? (
                                                         <span className='text-slate-400'>
                                                             {' '}
-                                                            *
-                                                            {
-                                                                entry.winnerPhoneLast4 as string
-                                                            }
+                                                            *{w.winnerPhoneLast4}
                                                         </span>
                                                     ) : null}
                                                     {dq && (
@@ -1675,22 +1715,17 @@ function RoomResultOverlay({
                                                 </span>
                                             </span>
                                             <span className='flex items-center gap-2 flex-shrink-0'>
-                                                {entry.winnerCartelaNumber !=
+                                                {w.winnerCartelaNumber !=
                                                     null && (
                                                     <span className='text-[10px] font-black text-slate-400'>
-                                                        #
-                                                        {
-                                                            entry.winnerCartelaNumber as number
-                                                        }
+                                                        #{w.winnerCartelaNumber}
                                                     </span>
                                                 )}
                                                 {dq ? (
                                                     <span className='text-[11px] font-black flex items-center gap-1'>
                                                         <span className='line-through text-slate-500'>
                                                             {formatCreditsFull(
-                                                                (entry.prizeMinor as
-                                                                    | number
-                                                                    | undefined) ??
+                                                                w.shareMinor ??
                                                                     0,
                                                             )}
                                                         </span>
@@ -1708,16 +1743,13 @@ function RoomResultOverlay({
                                                         }}
                                                     >
                                                         {formatCreditsFull(
-                                                            (entry.prizeMinor as
-                                                                | number
-                                                                | undefined) ??
-                                                                0,
+                                                            w.shareMinor ?? 0,
                                                         )}
                                                     </span>
                                                 )}
                                             </span>
                                         </div>
-                                    );
+                                    ));
                                 })}
                             </div>
                         </div>
@@ -2182,7 +2214,7 @@ export function Bingo({ onBack }: BingoProps) {
             const entry = summary[place] as Record<string, unknown> | undefined;
             if (
                 entry &&
-                (entry.winnerDisplayName || entry.winnerGrid) &&
+                getEntryWinners(entry).length > 0 &&
                 !ref.shown.has(place)
             ) {
                 ref.shown.add(place);

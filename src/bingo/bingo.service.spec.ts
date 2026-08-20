@@ -1655,7 +1655,7 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(details.room.botIdentityMap).toEqual(room.botIdentityMap);
     });
 
-    it('retries the same Derash place with another bot when a duplicate bot award is refused', async () => {
+    it('awards every simultaneously-completing candidate for a place in one joint call', async () => {
         const { service } = makeService({ rooms: [] });
         const room = makeRoom({
             winMode: 'prefilled',
@@ -1726,10 +1726,13 @@ describe('BingoService cartela lifecycle guards', () => {
             service as any,
             'pickDerashAutoWinnerCandidates',
         ).mockReturnValue([duplicateBotTicket, freshBotTicket]);
+        // Simulates awardDerashPlace's own per-winner filtering silently dropping
+        // the duplicate (bot-1) and awarding only the fresh candidate (bot-2)  the
+        // outer loop no longer retries candidate-by-candidate itself, it just hands
+        // the whole tied set to awardDerashPlace in a single call.
         const awardSpy = jest
             .spyOn(service as any, 'awardDerashPlace')
-            .mockResolvedValueOnce(false)
-            .mockResolvedValueOnce(true);
+            .mockResolvedValue([freshBotTicket]);
 
         await (service as any).evaluateAndSettleDerash(
             room,
@@ -1737,18 +1740,16 @@ describe('BingoService cartela lifecycle guards', () => {
             manager,
         );
 
-        expect(awardSpy).toHaveBeenCalledTimes(2);
-        const firstAwardInput = awardSpy.mock.calls[0][0] as {
-            winner: { userId: string };
+        expect(awardSpy).toHaveBeenCalledTimes(1);
+        const awardInput = awardSpy.mock.calls[0][0] as {
+            winners: { userId: string }[];
             place: string;
         };
-        const secondAwardInput = awardSpy.mock.calls[1][0] as {
-            winner: { userId: string };
-            place: string;
-        };
-        expect(firstAwardInput.winner.userId).toBe('bot-1');
-        expect(secondAwardInput.winner.userId).toBe('bot-2');
-        expect(secondAwardInput.place).toBe('1st');
+        expect(awardInput.winners.map((w) => w.userId)).toEqual([
+            'bot-1',
+            'bot-2',
+        ]);
+        expect(awardInput.place).toBe('1st');
     });
 
     it('does not award a real player while below-threshold cartel-dual is waiting for an eligible bot', async () => {
@@ -1943,7 +1944,7 @@ describe('BingoService cartela lifecycle guards', () => {
         jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
         const awardSpy = jest
             .spyOn(service as any, 'awardDerashPlace')
-            .mockResolvedValue(true);
+            .mockResolvedValue([botTicket]);
 
         const outcome = await service.claimBingo({
             userId,
@@ -1954,7 +1955,7 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(outcome.result).toBe('ignored');
         expect(awardSpy).toHaveBeenCalledWith(
             expect.objectContaining({
-                winner: botTicket,
+                winners: [botTicket],
                 place: '1st',
             }),
         );
@@ -2167,7 +2168,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
         await (service as any).awardDerashPlace({
             room,
-            winner,
+            winners: [winner],
             place: '1st',
             pattern: { id: 'pattern-1', name: 'Any Line' },
             totalPotMinor: 100,
@@ -2188,8 +2189,198 @@ describe('BingoService cartela lifecycle guards', () => {
             }),
         );
         const summary = room.settlementSummary ?? {};
-        expect((summary['1st'] as any).winnerDisplayName).toBe('Hana');
-        expect((summary['1st'] as any).winnerPhoneLast4).toBe('0851');
+        const summaryWinners = (summary['1st'] as any).winners;
+        expect(summaryWinners[0].winnerDisplayName).toBe('Hana');
+        expect(summaryWinners[0].winnerPhoneLast4).toBe('0851');
+    });
+
+    it('splits a derash place evenly between two cards that complete it in the same draw', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            settlementSummary: {},
+            settledTiers: [],
+            winnersByTier: {},
+        });
+        const winnerA = {
+            id: 'ticket-a',
+            userId: 'player-a',
+            cartelaNumber: 5,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const winnerB = {
+            id: 'ticket-b',
+            userId: 'player-b',
+            cartelaNumber: 9,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        };
+        const usersById: Record<string, unknown> = {
+            'player-a': {
+                id: 'player-a',
+                displayName: 'Amanuel',
+                phoneNumber: '0911111111',
+                productMetadata: {},
+            },
+            'player-b': {
+                id: 'player-b',
+                displayName: 'Betelhem',
+                phoneNumber: '0922222222',
+                productMetadata: {},
+            },
+        };
+        const manager = {
+            findOne: jest
+                .fn()
+                .mockImplementation((_entity: unknown, options: any) =>
+                    Promise.resolve(usersById[options?.where?.id] ?? null),
+                ),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        // prizePoolMinor = floor(127 * 0.8) = 101 (odd, so the 2-way split has a
+        // remainder cent  the first winner gets it, matching splitPrizeMinor).
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winners: [winnerA, winnerB],
+            place: '1st',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 127,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 100 },
+            manager,
+        });
+
+        expect(awarded).toHaveLength(2);
+        expect(room.winnersByTier['1st']).toEqual(['ticket-a', 'ticket-b']);
+        expect(winnerA.payoutMinor).toBe(51);
+        expect(winnerB.payoutMinor).toBe(50);
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
+        expect(walletService.creditInSession).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ userId: 'player-a', amountMinor: 51 }),
+            manager,
+        );
+        expect(walletService.creditInSession).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ userId: 'player-b', amountMinor: 50 }),
+            manager,
+        );
+
+        const summary = (room.settlementSummary ?? {})['1st'] as any;
+        expect(summary.winnerCount).toBe(2);
+        expect(summary.prizeMinor).toBe(101);
+        expect(summary.winners.map((w: any) => w.shareMinor)).toEqual([
+            51, 50,
+        ]);
+        expect(summary.winners.map((w: any) => w.winnerDisplayName)).toEqual([
+            'Amanuel',
+            'Betelhem',
+        ]);
+    });
+
+    it('splits the final pool top-up between joint place winners at reconcile', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            ticketPriceMinor: 1,
+            houseEdgePct: 20,
+            settledTiers: ['1st'],
+            winnersByTier: { '1st': ['ticket-a', 'ticket-b'] },
+            settlementSummary: {
+                '1st': {
+                    winnerCount: 2,
+                    prizeMinor: 123,
+                    winners: [
+                        {
+                            winnerId: 'ticket-a',
+                            winnerUserId: 'player-a',
+                            shareMinor: 62,
+                        },
+                        {
+                            winnerId: 'ticket-b',
+                            winnerUserId: 'player-b',
+                            shareMinor: 61,
+                        },
+                    ],
+                },
+            },
+        });
+        const ticketsById: Record<string, any> = {
+            'ticket-a': {
+                id: 'ticket-a',
+                userId: 'player-a',
+                payoutMinor: 62,
+                walletCredits: [],
+            },
+            'ticket-b': {
+                id: 'ticket-b',
+                userId: 'player-b',
+                payoutMinor: 61,
+                walletCredits: [],
+            },
+        };
+        const manager = {
+            update: jest.fn().mockResolvedValue({ affected: 0 }),
+            findOne: jest
+                .fn()
+                .mockImplementation((_entity: unknown, options: any) =>
+                    Promise.resolve(ticketsById[options?.where?.id] ?? null),
+                ),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(257);
+        jest.spyOn(
+            service as any,
+            'markRemainingTicketsLost',
+        ).mockResolvedValue(undefined);
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-2' });
+
+        // prizePoolMinor = floor(257 * 0.8) = 205. Only '1st' filled, but 2nd is
+        // also enabled (60/40 weights)  so progressive (enabled-weight-normalised,
+        // already paid = 123) is less than final (filled-weight-normalised = the
+        // whole pool = 205), leaving an 82-cent top-up split across both winners.
+        await (service as any).reconcileDerashPool(
+            room,
+            {
+                prefilledFirstPlacePct: 60,
+                prefilledSecondPlaceEnabled: true,
+                prefilledSecondPlacePct: 40,
+            },
+            manager,
+        );
+
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
+        expect(walletService.creditInSession).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ userId: 'player-a', amountMinor: 41 }),
+            manager,
+        );
+        expect(walletService.creditInSession).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ userId: 'player-b', amountMinor: 41 }),
+            manager,
+        );
+        expect(ticketsById['ticket-a'].payoutMinor).toBe(103);
+        expect(ticketsById['ticket-b'].payoutMinor).toBe(102);
+
+        const summary = (room.settlementSummary ?? {})['1st'] as any;
+        expect(summary.prizeMinor).toBe(205);
+        expect(summary.winners.map((w: any) => w.shareMinor)).toEqual([
+            103, 102,
+        ]);
     });
 
     it('refuses to award the same bot two visible Derash places in one room', async () => {
@@ -2291,7 +2482,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
         const awarded = await (service as any).awardDerashPlace({
             room,
-            winner,
+            winners: [winner],
             place: '2nd',
             pattern: { id: 'pattern-1', name: 'Any Line' },
             totalPotMinor: 100,
@@ -2300,7 +2491,7 @@ describe('BingoService cartela lifecycle guards', () => {
             manager,
         });
 
-        expect(awarded).toBe(false);
+        expect(awarded).toHaveLength(0);
         expect(room.winnersByTier['2nd']).toBeUndefined();
         expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
         expect(walletService.creditInSession).not.toHaveBeenCalled();
@@ -2397,7 +2588,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
         const awarded = await (service as any).awardDerashPlace({
             room,
-            winner,
+            winners: [winner],
             place: '2nd',
             pattern: { id: 'pattern-1', name: 'Any Line' },
             totalPotMinor: 100,
@@ -2406,14 +2597,13 @@ describe('BingoService cartela lifecycle guards', () => {
             manager,
         });
 
-        expect(awarded).toBe(true);
+        expect(awarded).toHaveLength(1);
         expect(room.winnersByTier['2nd']).toEqual(['ticket-2']);
-        expect(
-            ((room.settlementSummary ?? {})['2nd'] as any).winnerDisplayName,
-        ).toBe('Samuel');
-        expect(
-            ((room.settlementSummary ?? {})['2nd'] as any).winnerPhoneLast4,
-        ).toBe('6023');
+        const secondPlaceWinners = (
+            (room.settlementSummary ?? {})['2nd'] as any
+        ).winners;
+        expect(secondPlaceWinners[0].winnerDisplayName).toBe('Samuel');
+        expect(secondPlaceWinners[0].winnerPhoneLast4).toBe('6023');
         expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
     });
 
@@ -2453,7 +2643,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
         const awarded = await (service as any).awardDerashPlace({
             room,
-            winner,
+            winners: [winner],
             place: '2nd',
             pattern: { id: 'pattern-1', name: 'Any Line' },
             totalPotMinor: 120,
@@ -2462,7 +2652,7 @@ describe('BingoService cartela lifecycle guards', () => {
             manager,
         });
 
-        expect(awarded).toBe(false);
+        expect(awarded).toHaveLength(0);
         expect(manager.findOne).not.toHaveBeenCalled();
         expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
         expect(walletService.creditInSession).not.toHaveBeenCalled();
@@ -2505,7 +2695,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
         const awarded = await (service as any).awardDerashPlace({
             room,
-            winner: duplicateCartelaWinner,
+            winners: [duplicateCartelaWinner],
             place: '2nd',
             pattern: { id: 'pattern-1', name: 'Any Line' },
             totalPotMinor: 120,
@@ -2514,7 +2704,7 @@ describe('BingoService cartela lifecycle guards', () => {
             manager,
         });
 
-        expect(awarded).toBe(false);
+        expect(awarded).toHaveLength(0);
         expect(manager.findOne).not.toHaveBeenCalled();
         expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
         expect(walletService.creditInSession).not.toHaveBeenCalled();
@@ -2621,7 +2811,7 @@ describe('BingoService cartela lifecycle guards', () => {
 
         const awarded = await (service as any).awardDerashPlace({
             room,
-            winner,
+            winners: [winner],
             place: '2nd',
             pattern: { id: 'pattern-1', name: 'Any Line' },
             totalPotMinor: 100,
@@ -2630,7 +2820,7 @@ describe('BingoService cartela lifecycle guards', () => {
             manager,
         });
 
-        expect(awarded).toBe(false);
+        expect(awarded).toHaveLength(0);
         expect((room.settlementSummary ?? {})['2nd']).toBeUndefined();
         expect(walletService.creditInSession).not.toHaveBeenCalled();
     });

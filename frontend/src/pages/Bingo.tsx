@@ -2433,18 +2433,29 @@ export function Bingo({ onBack }: BingoProps) {
             ref.seeded = false;
             setLivePlaceQueue([]);
         }
+        if (!roomId) return;
+        // `summary` is null/undefined for the room's entire lifetime until the
+        // FIRST place is actually won  so gating the `return` above on it being
+        // truthy meant `ref.seeded` never got armed before that first win, and
+        // the first genuine win (the only one, for a single-place room) was
+        // always swallowed as if it had been decided before we joined. Seed on
+        // ANY render of this room, summary present or not; the loop below still
+        // only fires for entries a truly-first pass hadn't seen yet.
         const summary = room?.settlementSummary;
-        if (!roomId || !summary) return;
         const newly: LivePlaceWin[] = [];
-        for (const place of PREFILLED_PLACE_ORDER) {
-            const entry = summary[place] as Record<string, unknown> | undefined;
-            if (
-                entry &&
-                getEntryWinners(entry).length > 0 &&
-                !ref.shown.has(place)
-            ) {
-                ref.shown.add(place);
-                if (ref.seeded) newly.push({ place, entry });
+        if (summary) {
+            for (const place of PREFILLED_PLACE_ORDER) {
+                const entry = summary[place] as
+                    | Record<string, unknown>
+                    | undefined;
+                if (
+                    entry &&
+                    getEntryWinners(entry).length > 0 &&
+                    !ref.shown.has(place)
+                ) {
+                    ref.shown.add(place);
+                    if (ref.seeded) newly.push({ place, entry });
+                }
             }
         }
         ref.seeded = true;
@@ -2469,9 +2480,13 @@ export function Bingo({ onBack }: BingoProps) {
             ref.shown = false;
             ref.seeded = false;
         }
+        if (!roomId) return;
+        // Same fix as the per-place watcher above: `bonusSettlement` is
+        // null/undefined for the whole room lifetime until the bonus is
+        // actually won, so seeding only on a truthy pass meant the one real
+        // bonus win a room ever has was always swallowed. Seed on any render.
         const bonus = room?.bonusSettlement;
-        if (!roomId || !bonus) return;
-        if (!ref.shown) {
+        if (bonus && !ref.shown) {
             ref.shown = true;
             if (ref.seeded) setLiveBonusWin(bonus);
         }

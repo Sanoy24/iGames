@@ -298,6 +298,7 @@ export type BingoRoom = {
     takenSpots?: number[];
     cartelaChangeLockSeconds?: number;
     resultDisplaySeconds?: number;
+    bonusWinDisplaySeconds?: number;
     isAdminCreated?: boolean;
     ownerAgentId?: string | null;
     cardPaletteId?: string | null;
@@ -379,6 +380,7 @@ export type BingoConfig = {
     salesWindowSeconds?: number;
     cartelaChangeLockSeconds?: number;
     resultDisplaySeconds?: number;
+    bonusWinDisplaySeconds?: number;
     defaultWinMode?: string;
     defaultNumberRange?: number;
     defaultGridSize?: number;

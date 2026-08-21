@@ -55,6 +55,10 @@ export class BingoConfig {
     @Column({ type: 'int', default: 10 })
     resultDisplaySeconds: number;
 
+    /** Seconds the live Bonus Win popup is shown before it auto-dismisses. */
+    @Column({ type: 'int', default: 5 })
+    bonusWinDisplaySeconds: number;
+
     @Column({ type: 'varchar', length: 10, default: 'prefilled' })
     defaultWinMode: string;
 

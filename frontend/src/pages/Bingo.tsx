@@ -1576,9 +1576,13 @@ function BingoBonusBanner({
 function BingoBonusWinCard({
     entry,
     drawnNumbers,
+    secondsLeft,
+    totalSeconds,
 }: {
     entry: Record<string, unknown>;
     drawnNumbers: number[];
+    secondsLeft: number;
+    totalSeconds: number;
 }) {
     const { t } = useTranslation();
     const winners = getEntryWinners(entry);
@@ -1586,6 +1590,10 @@ function BingoBonusWinCard({
     const lastCalled =
         drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
     const splitWays = winners.length > 1;
+    const progressPct = Math.max(
+        0,
+        Math.min(100, (secondsLeft / totalSeconds) * 100),
+    );
 
     return (
         <motion.div
@@ -1683,6 +1691,32 @@ function BingoBonusWinCard({
                     </div>
                 );
             })}
+
+            {/* Countdown bar  same style as RoomResultOverlay's, so the bonus
+          popup gives the same "closing soon" feedback the result window does. */}
+            <div
+                className='rounded-xl py-2 px-4'
+                style={{ background: 'rgba(60,30,10,0.55)' }}
+            >
+                <div className='flex justify-center items-center mb-1'>
+                    <span className='font-mono font-black text-xl text-amber-400'>
+                        {secondsLeft}s
+                    </span>
+                </div>
+                <div
+                    className='h-1.5 rounded-full overflow-hidden'
+                    style={{ background: 'rgba(255,255,255,0.12)' }}
+                >
+                    <motion.div
+                        className='h-full rounded-full'
+                        style={{
+                            background: 'linear-gradient(90deg,#fbbf24,#f59e0b)',
+                        }}
+                        animate={{ width: `${progressPct}%` }}
+                        transition={{ duration: 0.9, ease: 'linear' }}
+                    />
+                </div>
+            </div>
         </motion.div>
     );
 }
@@ -1690,16 +1724,26 @@ function BingoBonusWinCard({
 function BingoBonusWinPopup({
     entry,
     drawnNumbers,
+    totalSeconds,
     onDone,
 }: {
     entry: Record<string, unknown>;
     drawnNumbers: number[];
+    totalSeconds: number;
     onDone: () => void;
 }) {
+    const [secondsLeft, setSecondsLeft] = useState(totalSeconds);
     useEffect(() => {
-        const id = setTimeout(onDone, LIVE_PLACE_WIN_MS);
-        return () => clearTimeout(id);
-    }, [entry, onDone]);
+        setSecondsLeft(totalSeconds);
+        const timeoutId = setTimeout(onDone, totalSeconds * 1000);
+        const intervalId = setInterval(() => {
+            setSecondsLeft((s) => Math.max(0, s - 1));
+        }, 1000);
+        return () => {
+            clearTimeout(timeoutId);
+            clearInterval(intervalId);
+        };
+    }, [entry, totalSeconds, onDone]);
 
     return (
         <motion.div
@@ -1708,7 +1752,12 @@ function BingoBonusWinPopup({
             exit={{ opacity: 0 }}
             className='fixed inset-0 z-[61] flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-none'
         >
-            <BingoBonusWinCard entry={entry} drawnNumbers={drawnNumbers} />
+            <BingoBonusWinCard
+                entry={entry}
+                drawnNumbers={drawnNumbers}
+                secondsLeft={secondsLeft}
+                totalSeconds={totalSeconds}
+            />
         </motion.div>
     );
 }
@@ -3621,6 +3670,7 @@ export function Bingo({ onBack }: BingoProps) {
                         key='bonus'
                         entry={liveBonusWin}
                         drawnNumbers={room.drawnNumbers}
+                        totalSeconds={room.bonusWinDisplaySeconds ?? 5}
                         onDone={() => setLiveBonusWin(null)}
                     />
                 )}

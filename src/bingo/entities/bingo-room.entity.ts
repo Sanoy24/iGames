@@ -77,6 +77,10 @@ export class BingoRoom {
     @Column({ type: 'int', default: 3 })
     cartelaChangeLockSeconds: number;
 
+    /** Seconds the live Bonus Win popup shows for this room, snapshotted from admin config at creation. */
+    @Column({ type: 'int', default: 5 })
+    bonusWinDisplaySeconds: number;
+
     @Column({ type: 'json' })
     drawnNumbers: number[];
 

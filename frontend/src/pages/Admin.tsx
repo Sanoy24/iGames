@@ -6078,6 +6078,7 @@ function BingoAdmin() {
         salesWindowSeconds: 40,
         cartelaChangeLockSeconds: 3,
         resultDisplaySeconds: 10,
+        bonusWinDisplaySeconds: 5,
         defaultWinMode: 'prefilled',
         defaultNumberRange: 75,
         defaultGridSize: 75,
@@ -6153,6 +6154,7 @@ function BingoAdmin() {
                 salesWindowSeconds: c.salesWindowSeconds ?? 40,
                 cartelaChangeLockSeconds: c.cartelaChangeLockSeconds ?? 3,
                 resultDisplaySeconds: c.resultDisplaySeconds ?? 10,
+                bonusWinDisplaySeconds: c.bonusWinDisplaySeconds ?? 5,
                 defaultWinMode: c.defaultWinMode ?? 'prefilled',
                 defaultNumberRange: c.defaultNumberRange ?? 75,
                 defaultGridSize: c.defaultGridSize ?? 75,
@@ -8696,6 +8698,28 @@ function BingoAdmin() {
                                     }))
                                 }
                             />
+                        </label>
+                        <label className='adm-field'>
+                            <span>Bonus Win Popup Display (seconds)</span>
+                            <input
+                                className='input'
+                                type='number'
+                                min={1}
+                                max={60}
+                                value={cfgForm.bonusWinDisplaySeconds ?? 5}
+                                onChange={(e) =>
+                                    setCfgForm((f) => ({
+                                        ...f,
+                                        bonusWinDisplaySeconds: Number(
+                                            e.target.value,
+                                        ),
+                                    }))
+                                }
+                            />
+                            <span className='adm-field-hint'>
+                                How long the live Bonus Win popup stays on
+                                screen before it auto-dismisses.
+                            </span>
                         </label>
                         <label className='adm-field'>
                             <span>Default Ticket Price (ETB)</span>

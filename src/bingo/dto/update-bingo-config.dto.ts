@@ -38,6 +38,9 @@ export class UpdateBingoConfigDto {
   @IsOptional() @IsInt() @Min(0)
   resultDisplaySeconds?: number;
 
+  @IsOptional() @IsInt() @Min(1) @Max(60)
+  bonusWinDisplaySeconds?: number;
+
   @IsOptional() @IsIn(['line', 'pattern', 'prefilled'])
   defaultWinMode?: string;
 

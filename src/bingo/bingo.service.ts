@@ -216,6 +216,7 @@ export type BingoRoomResponse = {
     takenSpots?: number[];
     cartelaChangeLockSeconds?: number;
     resultDisplaySeconds?: number;
+    bonusWinDisplaySeconds?: number;
     isAdminCreated?: boolean;
     ownerAgentId?: string | null;
     cardPaletteId?: string | null;
@@ -1274,6 +1275,7 @@ export class BingoService implements OnModuleInit {
                 salesWindowSeconds: 40,
                 cartelaChangeLockSeconds: 3,
                 resultDisplaySeconds: 10,
+                bonusWinDisplaySeconds: 5,
                 defaultWinMode: 'prefilled',
                 defaultNumberRange: 75,
                 defaultGridSize: 75,
@@ -2385,6 +2387,7 @@ export class BingoService implements OnModuleInit {
             rankingMode: cfg.prefilledRankingMode ?? 'race',
             winSequenceTarget,
             cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
+            bonusWinDisplaySeconds: cfg.bonusWinDisplaySeconds ?? 5,
             scheduledStartAt: null,
             drawnNumbers: [],
             rngAuditLogIds: [],
@@ -3003,6 +3006,7 @@ export class BingoService implements OnModuleInit {
             rankingMode: cfg.prefilledRankingMode ?? 'race',
             winSequenceTarget,
             cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
+            bonusWinDisplaySeconds: cfg.bonusWinDisplaySeconds ?? 5,
             scheduledStartAt: dto.scheduledStartAt
                 ? new Date(dto.scheduledStartAt)
                 : new Date(),
@@ -3549,6 +3553,7 @@ export class BingoService implements OnModuleInit {
             rankingMode: cfg.prefilledRankingMode ?? 'race',
             winSequenceTarget,
             cartelaChangeLockSeconds: cfg.cartelaChangeLockSeconds ?? 3,
+            bonusWinDisplaySeconds: cfg.bonusWinDisplaySeconds ?? 5,
             scheduledStartAt: null,
             drawnNumbers: [],
             rngAuditLogIds: [],
@@ -7266,6 +7271,7 @@ export class BingoService implements OnModuleInit {
             takenSpots:
                 room.winMode === 'prefilled' ? (takenSpots ?? []) : undefined,
             cartelaChangeLockSeconds: room.cartelaChangeLockSeconds ?? 3,
+            bonusWinDisplaySeconds: room.bonusWinDisplaySeconds ?? 5,
             isAdminCreated: room.isAdminCreated,
             ownerAgentId: room.ownerAgentId ?? null,
             cardPaletteId: room.cardPaletteId,

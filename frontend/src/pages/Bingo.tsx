@@ -2859,12 +2859,14 @@ export function Bingo({ onBack }: BingoProps) {
         holdingResultRef.current = true;
         setHoldingResult(true);
 
-        // Hold the room open (no room switch) while the live per-place 5×5 windows are
-        // still playing  the summary "win window" only shows once the queue drains, so
-        // don't start its display countdown until then. Otherwise a multi-place
-        // leaderboard round could burn the whole result window on the live popups and
-        // never show the summary. The effect re-runs when the queue length changes.
-        if (livePlaceQueue.length > 0) return;
+        // Hold the room open (no room switch) while the live per-place 5×5 windows  or
+        // the Bonus Win window, which always plays LAST, after every place  are still
+        // playing; the summary "win window" only shows once both drain, so don't start
+        // its display countdown until then. Otherwise a multi-place leaderboard round
+        // (or a bonus that resolves on the same draw the room completes) could burn the
+        // whole result window on the live popups and never show the summary, or race the
+        // summary in front of the bonus popup. The effect re-runs as either drains.
+        if (livePlaceQueue.length > 0 || liveBonusWin) return;
 
         // Use resultDisplaySeconds from the room config if available, else fall back to constant.
         const displayMs =
@@ -2894,6 +2896,7 @@ export function Bingo({ onBack }: BingoProps) {
         room?.status,
         room?.soldTickets,
         livePlaceQueue.length,
+        liveBonusWin,
         loadCurrent,
     ]);
 
@@ -3198,7 +3201,8 @@ export function Bingo({ onBack }: BingoProps) {
     // of a gap  so the player never sees a fully-marked card with nothing
     // acknowledging the round is being resolved.
     const resultsRevealing =
-        room?.status === 'completed' && livePlaceQueue.length > 0;
+        room?.status === 'completed' &&
+        (livePlaceQueue.length > 0 || !!liveBonusWin);
 
     // When a place is won, the server already knows the winner.
     // We intentionally do NOT snap the paced reveal here to keep the drawing uniform.
@@ -3548,12 +3552,15 @@ export function Bingo({ onBack }: BingoProps) {
             {/* Room result overlay  gated on the timed `holdingResult` flag, not the
           derived phase. A completed room's phase stays 'result' until the next
           room loads, so gating on phase left the dialog stuck open after the
-          countdown hit 0. holdingResult flips false exactly when the timer ends. */}
+          countdown hit 0. holdingResult flips false exactly when the timer ends.
+          Also waits for the Bonus Win window (liveBonusWin) to drain, same as the
+          per-place queue, so the summary never races in front of it. */}
             <AnimatePresence>
                 {holdingResult &&
                     room &&
                     room.status === 'completed' &&
-                    livePlaceQueue.length === 0 && (
+                    livePlaceQueue.length === 0 &&
+                    !liveBonusWin && (
                         <RoomResultOverlay
                             room={room}
                             myTickets={myTickets}
@@ -3589,11 +3596,12 @@ export function Bingo({ onBack }: BingoProps) {
                 )}
             </AnimatePresence>
 
-            {/* Live Bonus Win window  independent of the per-place queue above,
-          since a Bonus campaign pays out on its own pattern, separate from any
-          Derash placement. */}
+            {/* Live Bonus Win window  pays out on its own (deliberately harder)
+          pattern, separate from any Derash placement, but always shown LAST:
+          it waits for the per-place queue above to fully drain first, so the
+          reveal order is always easiest place -> ... -> 1st -> bonus. */}
             <AnimatePresence>
-                {liveBonusWin && room && (
+                {liveBonusWin && room && livePlaceQueue.length === 0 && (
                     <BingoBonusWinPopup
                         key='bonus'
                         entry={liveBonusWin}

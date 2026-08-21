@@ -4251,7 +4251,14 @@ export class BingoService implements OnModuleInit {
                 room.id,
                 manager,
             );
-            if (realPlayersRemaining === 0) {
+            const activeBotPlaySchedule =
+                await this.getActiveScheduledBotPlay(new Date());
+            const winSequenceForcesBot = room.winSequenceTarget === 'bot';
+            if (
+                realPlayersRemaining === 0 &&
+                !activeBotPlaySchedule &&
+                !winSequenceForcesBot
+            ) {
                 await this.cancelRoomWithRefundsInSession(
                     room,
                     manager,
@@ -4288,6 +4295,13 @@ export class BingoService implements OnModuleInit {
         const cfg = await this.getBingoConfig();
         const minDrawsBeforeWin = cfg.minDrawsBeforeWin ?? 0;
         await this.refreshActiveBonusCampaignCache();
+        // Same override reconcileBotCartelasInRoom uses: a Scheduled Bot Play
+        // window, or a room pinned to a Win Sequence 'bot' slot, is meant to
+        // start and play out on bots alone. Without this, the "no real
+        // players" gates below would cancel+refund the room the instant it's
+        // due to start, undoing everything the bot top-up already bought in.
+        const activeBotPlaySchedule =
+            await this.getActiveScheduledBotPlay(new Date());
 
         return await this.dataSource.transaction(async (manager) => {
             const room = await manager.findOne(BingoRoom, {
@@ -4353,7 +4367,13 @@ export class BingoService implements OnModuleInit {
                     validRoomId,
                     manager,
                 );
-                if (realPlayers <= 0) {
+                const winSequenceForcesBot =
+                    room.winSequenceTarget === 'bot';
+                if (
+                    realPlayers <= 0 &&
+                    !activeBotPlaySchedule &&
+                    !winSequenceForcesBot
+                ) {
                     await this.cancelRoomWithRefundsInSession(
                         room,
                         manager,

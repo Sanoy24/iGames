@@ -566,6 +566,18 @@ export type PlatformStats = {
     totalLiabilitiesMinor: number;
     /** Slice of totalPayoutsMinor that went to bot-controlled accounts  real, spendable money. */
     totalBotWinningsMinor: number;
+    /** Slice of totalPayoutsMinor that went to real (non-bot) players. */
+    totalPlayerWinningsMinor: number;
+    /** Total ever credited to wallets as a deposit (telebirr/mpesa/agent-funded). */
+    totalDepositsMinor: number;
+    /** Total referral commission ever credited to agent wallets. */
+    totalAgentCommissionMinor: number;
+    /** Total balance an admin has manually credited onto player wallets (Adjust Wallet). */
+    totalAdminLoadMinor: number;
+    /** Current combined wallet balance held by real (non-bot) players. */
+    totalNormalPlayerWalletMinor: number;
+    /** Current combined wallet balance held by bot-controlled accounts. */
+    totalBotPlayerWalletMinor: number;
     breakdown: Record<string, number>;
 };
 

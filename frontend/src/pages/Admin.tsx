@@ -12,6 +12,7 @@ import {
     CircleDot,
     Coins,
     Dices,
+    Download,
     Gift,
     Image as ImageIcon,
     LifeBuoy,
@@ -321,6 +322,72 @@ function OverviewAdmin() {
                 />
             </div>
 
+            <div className='adm-panel'>
+                <div className='adm-panel-head'>
+                    Deposits, Wallets &amp; Payouts
+                </div>
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                            'repeat(auto-fit, minmax(190px, 1fr))',
+                        gap: 12,
+                        padding: 16,
+                    }}
+                >
+                    <Kpi
+                        label='Total Deposits'
+                        value={formatCreditsFull(stats.totalDepositsMinor)}
+                        color='#10b981'
+                        icon={<Banknote size={16} />}
+                    />
+                    <Kpi
+                        label='Total Game Transactions'
+                        value={formatCreditsFull(stats.totalVolumeMinor)}
+                        color='#6366f1'
+                        icon={<History size={16} />}
+                    />
+                    <Kpi
+                        label='Normal Player Wallet Total'
+                        value={formatCreditsFull(
+                            stats.totalNormalPlayerWalletMinor,
+                        )}
+                        color='#3b82f6'
+                        icon={<Users size={16} />}
+                    />
+                    <Kpi
+                        label='Bot Player Wallet Total'
+                        value={formatCreditsFull(
+                            stats.totalBotPlayerWalletMinor,
+                        )}
+                        color='#a855f7'
+                        icon={<Bot size={16} />}
+                    />
+                    <Kpi
+                        label='Player Winnings'
+                        value={formatCreditsFull(
+                            stats.totalPlayerWinningsMinor,
+                        )}
+                        color='#ec4899'
+                        icon={<Gift size={16} />}
+                    />
+                    <Kpi
+                        label='Agent Commission Paid'
+                        value={formatCreditsFull(
+                            stats.totalAgentCommissionMinor,
+                        )}
+                        color='#f59e0b'
+                        icon={<Coins size={16} />}
+                    />
+                    <Kpi
+                        label='Loaded From Admin'
+                        value={formatCreditsFull(stats.totalAdminLoadMinor)}
+                        color='#6b7280'
+                        icon={<Plus size={16} />}
+                    />
+                </div>
+            </div>
+
             <div className='adm-dash-grid'>
                 {/* Financial composition donut */}
                 <div className='adm-panel'>
@@ -467,6 +534,103 @@ function PlayersAdmin() {
     // Player detail drill-down
     const [detailUser, setDetailUser] = useState<User | null>(null);
 
+    // CSV export (Excel opens CSV natively)  exports every user matching the
+    // CURRENT filters, not just the visible page, so a fresh full-list request
+    // is made with the total count as the limit rather than reusing `users`.
+    const [exporting, setExporting] = useState(false);
+    const handleExportCsv = useCallback(async () => {
+        setExporting(true);
+        try {
+            const res = await adminUsersApi.listUsers(
+                1,
+                Math.max(totalUsers, 1),
+                role || undefined,
+                search || undefined,
+                {
+                    isBot:
+                        accountType === 'bot'
+                            ? true
+                            : accountType === 'real'
+                              ? false
+                              : undefined,
+                    status: status || undefined,
+                    online:
+                        onlineFilter === 'online'
+                            ? true
+                            : onlineFilter === 'offline'
+                              ? false
+                              : undefined,
+                    hasPhone:
+                        phoneFilter === 'has'
+                            ? true
+                            : phoneFilter === 'none'
+                              ? false
+                              : undefined,
+                    minBalanceMinor: minBalance
+                        ? Math.round(parseFloat(minBalance) * 100)
+                        : undefined,
+                    maxBalanceMinor: maxBalance
+                        ? Math.round(parseFloat(maxBalance) * 100)
+                        : undefined,
+                },
+            );
+            const escape = (value: string) =>
+                /[",\n]/.test(value)
+                    ? `"${value.replace(/"/g, '""')}"`
+                    : value;
+            const header = [
+                'Display Name',
+                'Type',
+                'Roles',
+                'Phone',
+                'Wallet Balance (ETB)',
+                'Status',
+                'Online',
+                'Registered',
+            ];
+            const rows = res.data.map((u) => [
+                u.displayName,
+                u.isBot ? 'Bot' : 'Real',
+                u.roles.join('; '),
+                u.phoneNumber ?? '',
+                formatCredits(u.wallets?.[0]?.availableMinor ?? 0),
+                u.status ?? 'active',
+                u.online ? 'Online' : 'Offline',
+                formatDateTime(u.createdAt),
+            ]);
+            const csv = [header, ...rows]
+                .map((row) => row.map((cell) => escape(String(cell))).join(','))
+                .join('\r\n');
+            const blob = new Blob(['﻿' + csv], {
+                type: 'text/csv;charset=utf-8;',
+            });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `players-${new Date().toISOString().slice(0, 10)}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            addToast('success', `Exported ${res.data.length} players to CSV.`);
+        } catch (e) {
+            addToast('error', 'Failed to export players: ' + getErrorMessage(e));
+        } finally {
+            setExporting(false);
+        }
+    }, [
+        totalUsers,
+        role,
+        search,
+        accountType,
+        status,
+        onlineFilter,
+        phoneFilter,
+        minBalance,
+        maxBalance,
+        addToast,
+    ]);
+
     const load = useCallback(async () => {
         setLoading(true);
         try {
@@ -591,6 +755,15 @@ function PlayersAdmin() {
                 title='Player Accounts'
                 sub='View and manage player details, balances, status, and manual wallet adjustments.'
             >
+                <button
+                    className='adm-btn adm-btn-secondary adm-btn-xs'
+                    onClick={handleExportCsv}
+                    disabled={exporting || totalUsers === 0}
+                    title='Export the currently filtered player list to CSV'
+                >
+                    <Download size={14} />
+                    {exporting ? 'Exporting...' : 'Export CSV'}
+                </button>
                 <button className='adm-icon-btn' onClick={load} title='Refresh'>
                     <RefreshCw size={14} />
                 </button>

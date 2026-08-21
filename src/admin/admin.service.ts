@@ -1027,16 +1027,50 @@ export class AdminService implements OnApplicationBootstrap {
         // Online users count from socket gateway
         const liveCounts = this.gameEventsGateway.getLiveCounts();
 
-        // Real money paid out to bot-controlled accounts (win-steering payouts,
-        // e.g. Bingo cartel-dual redirects)  a slice of totalPayoutsMinor above,
-        // broken out so it's visible that this liability is real, not cosmetic.
-        const [botWinRow] = await this.dataSource.query(
-            `SELECT COALESCE(SUM(le.amountMinor), 0) totalBotWin
+        // Every ledger-side money-flow total the dashboard needs, in one pass:
+        // real vs bot payouts (a slice of totalPayoutsMinor above, broken out so
+        // it's visible that this liability is real, not cosmetic), total deposits
+        // credited, total agent referral commission earned, and total balance an
+        // admin has manually loaded onto player wallets (adjustUserWallet credits).
+        const masterWalletUserId = await this.getOrCreateMasterWalletUserId();
+        const BOT_FILTER = "JSON_EXTRACT(u.productMetadata, '$.botPolicy')";
+        const [moneyFlowRow] = await this.dataSource.query(
+            `SELECT
+                COALESCE(SUM(CASE WHEN le.entryType = 'win' AND le.direction = 'credit' AND ${BOT_FILTER} IS NOT NULL THEN le.amountMinor ELSE 0 END), 0) totalBotWin,
+                COALESCE(SUM(CASE WHEN le.entryType = 'win' AND le.direction = 'credit' AND ${BOT_FILTER} IS NULL THEN le.amountMinor ELSE 0 END), 0) totalPlayerWin,
+                COALESCE(SUM(CASE WHEN le.entryType = 'deposit' AND le.direction = 'credit' THEN le.amountMinor ELSE 0 END), 0) totalDeposits,
+                COALESCE(SUM(CASE WHEN le.entryType = 'agent_receipt' AND le.direction = 'credit' THEN le.amountMinor ELSE 0 END), 0) totalAgentCommission,
+                COALESCE(SUM(CASE WHEN le.sourceType = 'admin_adjustment' AND le.direction = 'credit' THEN le.amountMinor ELSE 0 END), 0) totalAdminLoad
                FROM ledger_entries le
-               JOIN users u ON u.id = le.userId
-              WHERE le.entryType = 'win' AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NOT NULL`,
+               JOIN users u ON u.id = le.userId`,
         );
-        const totalBotWinningsMinor = Number(botWinRow?.totalBotWin ?? 0);
+        const totalBotWinningsMinor = Number(moneyFlowRow?.totalBotWin ?? 0);
+        const totalPlayerWinningsMinor = Number(
+            moneyFlowRow?.totalPlayerWin ?? 0,
+        );
+        const totalDepositsMinor = Number(moneyFlowRow?.totalDeposits ?? 0);
+        const totalAgentCommissionMinor = Number(
+            moneyFlowRow?.totalAgentCommission ?? 0,
+        );
+        const totalAdminLoadMinor = Number(moneyFlowRow?.totalAdminLoad ?? 0);
+
+        // Current wallet balances split real vs bot (the Master Wallet itself is
+        // neither  it's the platform's own float  so it's excluded from both).
+        const [walletSplitRow] = await this.dataSource.query(
+            `SELECT
+                COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NOT NULL THEN w.availableMinor ELSE 0 END), 0) botWallet,
+                COALESCE(SUM(CASE WHEN ${BOT_FILTER} IS NULL THEN w.availableMinor ELSE 0 END), 0) realWallet
+               FROM wallets w
+               JOIN users u ON u.id = w.userId
+              WHERE u.id != ?`,
+            [masterWalletUserId],
+        );
+        const totalBotPlayerWalletMinor = Number(
+            walletSplitRow?.botWallet ?? 0,
+        );
+        const totalNormalPlayerWalletMinor = Number(
+            walletSplitRow?.realWallet ?? 0,
+        );
 
         return {
             ggrMinor: ggr,
@@ -1045,6 +1079,12 @@ export class AdminService implements OnApplicationBootstrap {
             totalRefundsMinor: totals.refunds,
             totalLiabilitiesMinor: totalLiabilities,
             totalBotWinningsMinor,
+            totalPlayerWinningsMinor,
+            totalDepositsMinor,
+            totalAgentCommissionMinor,
+            totalAdminLoadMinor,
+            totalNormalPlayerWalletMinor,
+            totalBotPlayerWalletMinor,
             breakdown: {
                 ...totals,
                 totalUsers,

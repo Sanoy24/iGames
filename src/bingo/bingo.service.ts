@@ -5540,11 +5540,30 @@ export class BingoService implements OnModuleInit {
             status: 'disqualified',
             settlementStatus: 'pending',
         });
+        const noCardsLeft = inPlay === 0 && pendingDq === 0;
+        const ballsExhausted = room.drawnNumbers.length >= maxNumber;
+        // Every enabled derash place is filled. Normally that ends the room, but
+        // a Bonus Win campaign's pattern is deliberately the HARDEST one in the
+        // room (see BingoBonusCampaign), meant to complete after 1st place, not
+        // instead of it. If one is active and this room's bonus hasn't settled
+        // yet, keep calling numbers past the derash finish so the bonus pattern
+        // gets the extra draws it needs - only the ball pool running out (or
+        // every card leaving play) can still end the room early. Bot-forcing for
+        // the bonus itself is unchanged (see evaluateAndSettleBonus).
+        let allPlacesFilled = room.settledTiers.length >= totalPlaces;
         if (
-            room.settledTiers.length >= totalPlaces ||
-            (inPlay === 0 && pendingDq === 0) ||
-            room.drawnNumbers.length >= maxNumber
+            allPlacesFilled &&
+            !noCardsLeft &&
+            !ballsExhausted &&
+            !room.bonusSettlement
         ) {
+            const activeBonus = await this.getActiveBonusCampaignForSettlement(
+                manager,
+                new Date(),
+            );
+            if (activeBonus) allPlacesFilled = false;
+        }
+        if (allPlacesFilled || noCardsLeft || ballsExhausted) {
             room.status = 'completed';
             room.activeGuard = null;
             await this.reconcileDerashPool(room, cfg, manager);

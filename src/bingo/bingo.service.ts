@@ -4265,6 +4265,15 @@ export class BingoService implements OnModuleInit {
                     'bingo_room_no_real_players',
                 );
                 roomCancelledBecauseNoRealPlayers = true;
+            } else if (room.soldTickets === 0 && room.scheduledStartAt) {
+                // The releasing real player was the room's only sold ticket (no
+                // bots bought in yet) and cancellation was bypassed for the
+                // schedule/Win Sequence override above. Clear the stamped
+                // countdown so the room falls back to truly idle instead of a
+                // state findOpenRoomsWithCountdown (needs soldTickets > 0) and
+                // findIdleOpenRooms (needs scheduledStartAt IS NULL) both miss.
+                room.scheduledStartAt = null;
+                await manager.save(room);
             }
 
             return {

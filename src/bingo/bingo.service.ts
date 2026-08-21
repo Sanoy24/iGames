@@ -892,6 +892,7 @@ export class BingoService implements OnModuleInit {
      */
     private async evaluateAndSettleBonus(
         room: BingoRoom,
+        cfg: BingoConfig,
         manager: EntityManager,
     ): Promise<void> {
         if (room.bonusSettlement) return;
@@ -922,6 +923,22 @@ export class BingoService implements OnModuleInit {
             manager,
         );
         const finalDraw = room.drawnNumbers.length >= 75;
+        // Same exclusions the Derash bot-redirect uses: never hand the bonus to
+        // a bot that already won a place in THIS room (evaluateAndSettleDerash
+        // runs first each draw, so wonTiers is already up to date here), nor to
+        // one that won recently in another room  a single bot sweeping both the
+        // placement AND the bonus in one round is exactly what looks rigged.
+        const awardedBotUserIds = this.awardedBotUserIdsForTickets(
+            inPlayTickets,
+            botGroups.botIds,
+        );
+        const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
+        const recentBotWinnerUserIds =
+            await this.getPreviousBingoBotWinnerUserIds(
+                room,
+                manager,
+                cooldownRooms,
+            );
 
         let winners: BingoTicket[] = naturalWinners;
         if (campaign.botWinEnabled) {
@@ -937,6 +954,7 @@ export class BingoService implements OnModuleInit {
                     pattern,
                     room.drawnNumbers,
                     room.numberRange ?? 75,
+                    { awardedBotUserIds, recentBotWinnerUserIds },
                 );
                 winners = botAwardee ? [botAwardee] : naturalWinners;
             } else if (naturalWinners.length === 0 && finalDraw) {
@@ -948,6 +966,7 @@ export class BingoService implements OnModuleInit {
                     pattern,
                     room.drawnNumbers,
                     room.numberRange ?? 75,
+                    { awardedBotUserIds, recentBotWinnerUserIds },
                 );
                 winners = botAwardee ? [botAwardee] : [];
             }
@@ -4429,7 +4448,11 @@ export class BingoService implements OnModuleInit {
                                 manager,
                             );
                             await this.reconcileDerashPool(room, cfg, manager);
-                            await this.evaluateAndSettleBonus(room, manager);
+                            await this.evaluateAndSettleBonus(
+                                room,
+                                cfg,
+                                manager,
+                            );
                         }
                     } else if (room.winMode === 'pattern') {
                         const patternIds = (room.patternPrizes ?? []).map(
@@ -4506,7 +4529,7 @@ export class BingoService implements OnModuleInit {
                 } else {
                     if (room.drawnNumbers.length >= minDrawsBeforeWin) {
                         await this.evaluateAndSettleDerash(room, cfg, manager);
-                        await this.evaluateAndSettleBonus(room, manager);
+                        await this.evaluateAndSettleBonus(room, cfg, manager);
                     }
                     await this.finalizeDerashIfDone(
                         room,

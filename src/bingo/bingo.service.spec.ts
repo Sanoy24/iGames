@@ -3459,7 +3459,11 @@ describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
             'getActiveEnabledBonusCampaign',
         ).mockResolvedValue(null);
 
-        await (service as any).evaluateAndSettleBonus(room, manager);
+        await (service as any).evaluateAndSettleBonus(
+            room,
+            { botWinnerCooldownRooms: 0 } as any,
+            manager,
+        );
 
         expect(walletService.creditInSession).not.toHaveBeenCalled();
         expect(room.bonusSettlement).toBeFalsy();
@@ -3478,6 +3482,7 @@ describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
 
         await (service as any).evaluateAndSettleBonus(
             room,
+            { botWinnerCooldownRooms: 0 } as any,
             { find: jest.fn(), save: jest.fn() } as any,
         );
 
@@ -3538,7 +3543,11 @@ describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
         });
         walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
 
-        await (service as any).evaluateAndSettleBonus(room, manager);
+        await (service as any).evaluateAndSettleBonus(
+            room,
+            { botWinnerCooldownRooms: 0 } as any,
+            manager,
+        );
 
         expect(walletService.creditInSession).toHaveBeenCalledTimes(2);
         expect(walletService.creditInSession).toHaveBeenNthCalledWith(
@@ -3618,12 +3627,93 @@ describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
         });
         walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
 
-        await (service as any).evaluateAndSettleBonus(room, manager);
+        await (service as any).evaluateAndSettleBonus(
+            room,
+            { botWinnerCooldownRooms: 0 } as any,
+            manager,
+        );
 
         expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
         expect(walletService.creditInSession).toHaveBeenCalledWith(
             expect.objectContaining({ userId: 'bot-1', amountMinor: 5000 }),
             manager,
+        );
+    });
+
+    it('excludes a bot that already won a Derash place in this room from also taking the bonus', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            bonusSettlement: null,
+        });
+        const realWinner = ticket({ id: 'ticket-real', userId: 'player-real' });
+        // Already won 1st place this room (non-empty wonTiers) - must be excluded
+        // from also taking the bonus so one bot can't sweep both prizes.
+        const alreadyWonBotTicket = ticket({
+            id: 'ticket-bot-1',
+            userId: 'bot-1',
+            wonTiers: ['1st'],
+        });
+        const otherBotTicket = ticket({ id: 'ticket-bot-2', userId: 'bot-2' });
+        const pattern = { id: 'pattern-1', name: 'Any Line' };
+        const manager = {
+            find: jest
+                .fn()
+                .mockResolvedValue([
+                    realWinner,
+                    alreadyWonBotTicket,
+                    otherBotTicket,
+                ]),
+            findOne: jest.fn().mockImplementation((_entity: unknown, options: any) =>
+                Promise.resolve(
+                    options?.where?.id === 'pattern-1' ? pattern : null,
+                ),
+            ),
+            save: jest.fn().mockImplementation(async (v: unknown) => v),
+        };
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue({
+            id: 'campaign-1',
+            name: 'Evening Bonus',
+            patternId: 'pattern-1',
+            prizeMinor: 5000,
+            botWinEnabled: true,
+        });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(['bot-1', 'bot-2']),
+            bingoEnabledBotIds: new Set(['bot-1', 'bot-2']),
+            nonBingoBotIds: new Set(),
+        });
+        const pickSpy = jest
+            .spyOn(service as any, 'pickBotRedirectWinner')
+            .mockReturnValue(otherBotTicket);
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        await (service as any).evaluateAndSettleBonus(
+            room,
+            { botWinnerCooldownRooms: 0 } as any,
+            manager,
+        );
+
+        expect(pickSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            pattern,
+            expect.anything(),
+            expect.anything(),
+            expect.objectContaining({
+                awardedBotUserIds: new Set(['bot-1']),
+            }),
         );
     });
 });

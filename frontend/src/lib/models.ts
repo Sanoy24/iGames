@@ -171,7 +171,15 @@ export type PatternType =
     | 'any_col'
     | 'any_diagonal'
     | 'any_line'
-    | 'coverall';
+    | 'any_two_lines'
+    | 'any_three_lines'
+    | 'coverall'
+    | 'composite_or';
+
+export type PatternCompositeOption = {
+    minLines?: number;
+    mask?: boolean[][];
+};
 
 export type BingoPattern = {
     id: string;
@@ -179,6 +187,7 @@ export type BingoPattern = {
     description?: string;
     patternType: PatternType;
     mask?: boolean[][];
+    compositeOptions?: PatternCompositeOption[] | null;
     isBuiltIn: boolean;
     enabled: boolean;
     sortOrder: number;

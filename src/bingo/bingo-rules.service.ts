@@ -2,7 +2,11 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import { BingoGrid } from './entities/bingo-ticket.entity';
 import { BingoPrizeTier } from './entities/bingo-room.entity';
-import { BingoPattern, PatternType } from './entities/bingo-pattern.entity';
+import {
+    BingoPattern,
+    PatternType,
+    PatternCompositeOption,
+} from './entities/bingo-pattern.entity';
 
 export type BingoTicketState = {
     markedNumbers: number[];
@@ -17,11 +21,78 @@ export type PatternTicketState = {
 
 // ─── Built-in pattern seed data ────────────────────────────────────────────────
 
+// Shared masks, reused both by their own standalone 'fixed' pattern below AND
+// by the composite_or patterns further down ("1 line + this shape") so the two
+// never drift apart.
+const CORNERS_MASK: boolean[][] = [
+    [true, false, false, false, true],
+    [false, false, false, false, false],
+    [false, false, false, false, false],
+    [false, false, false, false, false],
+    [true, false, false, false, true],
+];
+const SMALL_CROSS_MASK: boolean[][] = [
+    [false, false, false, false, false],
+    [false, false, false, false, false],
+    [false, false, true, false, false],
+    [false, true, true, true, false],
+    [false, false, true, false, false],
+];
+const SMALL_X_MASK: boolean[][] = [
+    [false, false, false, false, false],
+    [false, true, false, true, false],
+    [false, false, true, false, false],
+    [false, true, false, true, false],
+    [false, false, false, false, false],
+];
+const CORNERS_CENTER_MASK: boolean[][] = [
+    [true, false, false, false, true],
+    [false, false, false, false, false],
+    [false, false, true, false, false],
+    [false, false, false, false, false],
+    [true, false, false, false, true],
+];
+// These 4 are each EXACTLY 2 full lines glued together (Cross(+) = center row
+// + center column, X = both diagonals, T = top row + center column, L = left
+// column + bottom row) - so they never need a composite with tier 1 or 2
+// (already redundant, since completing them already satisfies "1 line"/"2
+// lines" via plain line-counting). They only add value at tier 3, as an
+// easier-but-more-specific alternate to 3 generic lines.
+const CROSS_PLUS_MASK: boolean[][] = [
+    [false, false, true, false, false],
+    [false, false, true, false, false],
+    [true, true, true, true, true],
+    [false, false, true, false, false],
+    [false, false, true, false, false],
+];
+const X_PATTERN_MASK: boolean[][] = [
+    [true, false, false, false, true],
+    [false, true, false, true, false],
+    [false, false, true, false, false],
+    [false, true, false, true, false],
+    [true, false, false, false, true],
+];
+const T_SHAPE_MASK: boolean[][] = [
+    [true, true, true, true, true],
+    [false, false, true, false, false],
+    [false, false, true, false, false],
+    [false, false, true, false, false],
+    [false, false, true, false, false],
+];
+const L_SHAPE_MASK: boolean[][] = [
+    [true, false, false, false, false],
+    [true, false, false, false, false],
+    [true, false, false, false, false],
+    [true, false, false, false, false],
+    [true, true, true, true, true],
+];
+
 export const BUILT_IN_PATTERNS: Array<{
     name: string;
     description: string;
     patternType: PatternType;
     mask?: boolean[][];
+    compositeOptions?: PatternCompositeOption[];
     sortOrder: number;
 }> = [
     {
@@ -34,65 +105,35 @@ export const BUILT_IN_PATTERNS: Array<{
         name: 'Corners',
         description: 'Mark all 4 corner squares',
         patternType: 'fixed',
-        mask: [
-            [true, false, false, false, true],
-            [false, false, false, false, false],
-            [false, false, false, false, false],
-            [false, false, false, false, false],
-            [true, false, false, false, true],
-        ],
+        mask: CORNERS_MASK,
         sortOrder: 1,
     },
     {
         name: 'Cross (+)',
         description: 'Complete center row and center column',
         patternType: 'fixed',
-        mask: [
-            [false, false, true, false, false],
-            [false, false, true, false, false],
-            [true, true, true, true, true],
-            [false, false, true, false, false],
-            [false, false, true, false, false],
-        ],
+        mask: CROSS_PLUS_MASK,
         sortOrder: 2,
     },
     {
         name: 'X Pattern',
         description: 'Complete both diagonals',
         patternType: 'fixed',
-        mask: [
-            [true, false, false, false, true],
-            [false, true, false, true, false],
-            [false, false, true, false, false],
-            [false, true, false, true, false],
-            [true, false, false, false, true],
-        ],
+        mask: X_PATTERN_MASK,
         sortOrder: 3,
     },
     {
         name: 'T Shape',
         description: 'Top row and center column going down',
         patternType: 'fixed',
-        mask: [
-            [true, true, true, true, true],
-            [false, false, true, false, false],
-            [false, false, true, false, false],
-            [false, false, true, false, false],
-            [false, false, true, false, false],
-        ],
+        mask: T_SHAPE_MASK,
         sortOrder: 4,
     },
     {
         name: 'L Shape',
         description: 'Left column and bottom row',
         patternType: 'fixed',
-        mask: [
-            [true, false, false, false, false],
-            [true, false, false, false, false],
-            [true, false, false, false, false],
-            [true, false, false, false, false],
-            [true, true, true, true, true],
-        ],
+        mask: L_SHAPE_MASK,
         sortOrder: 5,
     },
     {
@@ -118,40 +159,188 @@ export const BUILT_IN_PATTERNS: Array<{
         description:
             'A smaller plus/cross shape in the lower half of the card',
         patternType: 'fixed',
-        mask: [
-            [false, false, false, false, false],
-            [false, false, false, false, false],
-            [false, false, true, false, false],
-            [false, true, true, true, false],
-            [false, false, true, false, false],
-        ],
+        mask: SMALL_CROSS_MASK,
         sortOrder: 9,
     },
     {
         name: 'Small X',
         description: 'An X shape using only the inner 3x3 block',
         patternType: 'fixed',
-        mask: [
-            [false, false, false, false, false],
-            [false, true, false, true, false],
-            [false, false, true, false, false],
-            [false, true, false, true, false],
-            [false, false, false, false, false],
-        ],
+        mask: SMALL_X_MASK,
         sortOrder: 10,
     },
     {
         name: 'Corners & Center',
         description: 'All 4 corner squares plus the center free space',
         patternType: 'fixed',
-        mask: [
-            [true, false, false, false, true],
-            [false, false, false, false, false],
-            [false, false, true, false, false],
-            [false, false, false, false, false],
-            [true, false, false, false, true],
-        ],
+        mask: CORNERS_CENTER_MASK,
         sortOrder: 11,
+    },
+    // ── Composite "OR" patterns ──────────────────────────────────────────────
+    // Matches standard bingo-hall pattern books (e.g. Arrow International's
+    // "Any 2 Lines or Line & 4 Corners"): a harder line-count tier can ALSO be
+    // reached via one fewer line plus a bonus shape. Each is its own distinct,
+    // separately-selectable pattern  "Any 2 Lines"/"Any 3 Lines" above are
+    // untouched and still mean exactly what they always have.
+    {
+        name: 'Any 2 Lines or Line & Corners',
+        description: '2 complete lines, OR 1 line plus all 4 corners',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 2 },
+            { minLines: 1, mask: CORNERS_MASK },
+        ],
+        sortOrder: 12,
+    },
+    {
+        name: 'Any 2 Lines or Line & Small Cross',
+        description: '2 complete lines, OR 1 line plus the Small Cross shape',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 2 },
+            { minLines: 1, mask: SMALL_CROSS_MASK },
+        ],
+        sortOrder: 13,
+    },
+    {
+        name: 'Any 2 Lines or Line & Small X',
+        description: '2 complete lines, OR 1 line plus the Small X shape',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 2 },
+            { minLines: 1, mask: SMALL_X_MASK },
+        ],
+        sortOrder: 14,
+    },
+    {
+        name: 'Any 2 Lines or Line & Corners and Center',
+        description:
+            '2 complete lines, OR 1 line plus all 4 corners and the center',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 2 },
+            { minLines: 1, mask: CORNERS_CENTER_MASK },
+        ],
+        sortOrder: 15,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & Corners',
+        description: '3 complete lines, OR 2 lines plus all 4 corners',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: CORNERS_MASK },
+        ],
+        sortOrder: 16,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & Small Cross',
+        description: '3 complete lines, OR 2 lines plus the Small Cross shape',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: SMALL_CROSS_MASK },
+        ],
+        sortOrder: 17,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & Small X',
+        description: '3 complete lines, OR 2 lines plus the Small X shape',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: SMALL_X_MASK },
+        ],
+        sortOrder: 18,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & Corners and Center',
+        description:
+            '3 complete lines, OR 2 lines plus all 4 corners and the center',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: CORNERS_CENTER_MASK },
+        ],
+        sortOrder: 19,
+    },
+    // The "any line" tier's composite has no line requirement on the shape
+    // side  the shape alone is the whole alternate (no "0 lines" case needed
+    // since omitting minLines means "just check the mask").
+    {
+        name: 'Any Line or Corners',
+        description: '1 complete line, OR all 4 corners alone',
+        patternType: 'composite_or',
+        compositeOptions: [{ minLines: 1 }, { mask: CORNERS_MASK }],
+        sortOrder: 20,
+    },
+    {
+        name: 'Any Line or Small Cross',
+        description: '1 complete line, OR the Small Cross shape alone',
+        patternType: 'composite_or',
+        compositeOptions: [{ minLines: 1 }, { mask: SMALL_CROSS_MASK }],
+        sortOrder: 21,
+    },
+    {
+        name: 'Any Line or Small X',
+        description: '1 complete line, OR the Small X shape alone',
+        patternType: 'composite_or',
+        compositeOptions: [{ minLines: 1 }, { mask: SMALL_X_MASK }],
+        sortOrder: 22,
+    },
+    {
+        name: 'Any Line or Corners and Center',
+        description:
+            '1 complete line, OR all 4 corners and the center alone',
+        patternType: 'composite_or',
+        compositeOptions: [{ minLines: 1 }, { mask: CORNERS_CENTER_MASK }],
+        sortOrder: 23,
+    },
+    // Cross(+)/X/T/L each ALREADY equal exactly 2 lines, so they're redundant
+    // at tier 1/2 (plain Any Line / Any Two Lines already wins on them) - but
+    // tier 3 needs 3, so pairing them here is a genuine (if narrower/more
+    // specific) easier alternate, not a no-op. The `minLines: 2` alongside the
+    // mask is technically implied by the mask itself, kept only so these read
+    // the same way as the other tier-3 composites above.
+    {
+        name: 'Any 3 Lines or 2 Lines & Cross (+)',
+        description: '3 complete lines, OR the Cross (+) shape alone',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: CROSS_PLUS_MASK },
+        ],
+        sortOrder: 24,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & X Pattern',
+        description: '3 complete lines, OR the X Pattern shape alone',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: X_PATTERN_MASK },
+        ],
+        sortOrder: 25,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & T Shape',
+        description: '3 complete lines, OR the T Shape alone',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: T_SHAPE_MASK },
+        ],
+        sortOrder: 26,
+    },
+    {
+        name: 'Any 3 Lines or 2 Lines & L Shape',
+        description: '3 complete lines, OR the L Shape alone',
+        patternType: 'composite_or',
+        compositeOptions: [
+            { minLines: 3 },
+            { minLines: 2, mask: L_SHAPE_MASK },
+        ],
+        sortOrder: 27,
     },
 ];
 
@@ -573,7 +762,10 @@ export class BingoRulesService {
     explainPatternCompletion(
         grid: (number | null)[][],
         drawnNumbers: number[],
-        pattern: Pick<BingoPattern, 'patternType' | 'mask'>,
+        pattern: Pick<
+            BingoPattern,
+            'patternType' | 'mask' | 'compositeOptions'
+        >,
     ): Array<{ row: number; col: number }> | null {
         const drawn = new Set(drawnNumbers);
         const marked: boolean[][] = grid.map((row) =>
@@ -653,6 +845,31 @@ export class BingoRulesService {
                         required.push({ row, col });
                 }
                 return isComplete(required) ? required : null;
+            }
+            case 'composite_or': {
+                if (!pattern.compositeOptions?.length) return null;
+                for (const opt of pattern.compositeOptions) {
+                    if (
+                        opt.minLines !== undefined &&
+                        completedLines.length < opt.minLines
+                    )
+                        continue;
+                    let maskCells: Array<{ row: number; col: number }> = [];
+                    if (opt.mask) {
+                        maskCells = [];
+                        opt.mask.forEach((maskRow, row) =>
+                            maskRow.forEach((need, col) => {
+                                if (need) maskCells.push({ row, col });
+                            }),
+                        );
+                        if (!isComplete(maskCells)) continue;
+                    }
+                    const lineGroups = opt.minLines
+                        ? completedLines.slice(0, opt.minLines)
+                        : [];
+                    return union([...lineGroups, maskCells]);
+                }
+                return null;
             }
             default:
                 return null;
@@ -764,6 +981,34 @@ export class BingoRulesService {
                     }
                 }
                 return [cells];
+            }
+            case 'composite_or': {
+                if (!pattern.compositeOptions?.length) return [];
+                const candidates: Array<
+                    Array<{ row: number; col: number }>
+                > = [];
+                for (const opt of pattern.compositeOptions) {
+                    const maskCells = opt.mask
+                        ? opt.mask.flatMap((maskRow, row) =>
+                              maskRow.flatMap((need, col) =>
+                                  need && !isFree(row, col)
+                                      ? [{ row, col }]
+                                      : [],
+                              ),
+                          )
+                        : [];
+                    if (opt.minLines) {
+                        for (const combo of this.combinations(
+                            allLines,
+                            opt.minLines,
+                        )) {
+                            candidates.push(unionOf([...combo, maskCells]));
+                        }
+                    } else if (maskCells.length > 0) {
+                        candidates.push(maskCells);
+                    }
+                }
+                return this.shuffleList(candidates);
             }
             default:
                 return [];
@@ -934,9 +1179,37 @@ export class BingoRulesService {
             case 'coverall':
                 return marked.every((row) => row.every((v) => v));
 
+            case 'composite_or': {
+                if (!pattern.compositeOptions?.length) return false;
+                const lineCount = this.countCompletedLines(marked);
+                return pattern.compositeOptions.some((opt) =>
+                    this.isCompositeOptionMet(opt, marked, lineCount),
+                );
+            }
+
             default:
                 return false;
         }
+    }
+
+    /** Whether one `composite_or` alternative (line-count + optional mask) is met. */
+    private isCompositeOptionMet(
+        opt: PatternCompositeOption,
+        marked: boolean[][],
+        lineCount: number,
+    ): boolean {
+        if (opt.minLines !== undefined && lineCount < opt.minLines)
+            return false;
+        if (
+            opt.mask &&
+            !opt.mask.every((maskRow, r) =>
+                maskRow.every(
+                    (required, c) => !required || (marked[r]?.[c] ?? false),
+                ),
+            )
+        )
+            return false;
+        return true;
     }
 
     private generateTicketMask(): boolean[][] {

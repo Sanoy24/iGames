@@ -568,8 +568,12 @@ export type PlatformStats = {
     totalBotWinningsMinor: number;
     /** Slice of totalPayoutsMinor that went to real (non-bot) players. */
     totalPlayerWinningsMinor: number;
-    /** Total ever credited to wallets as a deposit (telebirr/mpesa/agent-funded). */
+    /** Total ever credited to wallets as a player deposit (telebirr + mpesa only  excludes admin float movements). */
     totalDepositsMinor: number;
+    /** Slice of totalDepositsMinor deposited via Telebirr. */
+    totalTelebirrDepositsMinor: number;
+    /** Slice of totalDepositsMinor deposited via M-Pesa. */
+    totalMpesaDepositsMinor: number;
     /** Total referral commission ever credited to agent wallets. */
     totalAgentCommissionMinor: number;
     /** Total balance an admin has manually credited onto player wallets (Adjust Wallet). */
@@ -579,6 +583,22 @@ export type PlatformStats = {
     /** Current combined wallet balance held by bot-controlled accounts. */
     totalBotPlayerWalletMinor: number;
     breakdown: Record<string, number>;
+};
+
+export type LiquidityDashboard = {
+    masterWallet: { availableMinor: number; reservedMinor: number };
+    depositsByProvider: {
+        telebirrMinor: number;
+        mpesaMinor: number;
+        totalMinor: number;
+    };
+    pendingWithdrawals: { count: number; totalMinor: number };
+    dailyFlow: Array<{
+        day: string;
+        inflowMinor: number;
+        outflowMinor: number;
+        netMinor: number;
+    }>;
 };
 
 export type SystemConfig = {
@@ -734,6 +754,10 @@ export type AgentSettlement = {
 export const adminApi = {
     getOverview: () =>
         api.get<PlatformStats>('/admin/stats/overview').then((r) => r.data),
+    getLiquidityDashboard: () =>
+        api
+            .get<LiquidityDashboard>('/admin/stats/liquidity')
+            .then((r) => r.data),
     getConfig: () => api.get<SystemConfig>('/admin/config').then((r) => r.data),
     updateConfig: (dto: Partial<SystemConfig>) =>
         api.post<SystemConfig>('/admin/config', dto).then((r) => r.data),

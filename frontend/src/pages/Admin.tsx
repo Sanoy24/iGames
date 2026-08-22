@@ -26,6 +26,7 @@ import {
     Shield,
     Tag,
     Trash2,
+    TrendingUp,
     Users,
     Wallet,
     X,
@@ -56,6 +57,7 @@ import {
     type BroadcastMessage,
     type CreateBroadcastInput,
     type PlatformStats,
+    type LiquidityDashboard,
     type SystemConfig,
     type WithdrawalFeeRange,
     type CoverageGap,
@@ -99,10 +101,11 @@ import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
 import { DepositsAdmin } from '../components/DepositsAdmin';
 import { SettlementsAdmin } from '../components/SettlementsAdmin';
-import { Donut, Bar } from '../components/AdminCharts';
+import { Donut, Bar, MiniTrendChart } from '../components/AdminCharts';
 
 type AdminTab =
     | 'overview'
+    | 'liquidity'
     | 'players'
     | 'agents'
     | 'locations'
@@ -125,6 +128,11 @@ type AdminTab =
 
 const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
     { id: 'overview', label: 'Overview', icon: <Activity size={15} /> },
+    {
+        id: 'liquidity',
+        label: 'Liquidity',
+        icon: <TrendingUp size={15} />,
+    },
     { id: 'players', label: 'Players', icon: <Users size={15} /> },
     { id: 'agents', label: 'Agents', icon: <Users size={15} /> },
     { id: 'locations', label: 'Locations', icon: <MapPin size={15} /> },
@@ -490,6 +498,210 @@ function OverviewAdmin() {
                         color='#ec4899'
                         icon={<CircleDot size={16} />}
                     />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Liquidity  Master Wallet health: current float, 14-day inflow/outflow
+// trend (the wallet's own ledger, so it's the real money movement, not a
+// proxy), player deposits by provider, and the outstanding withdrawal
+// liability the float will need to cover.
+// ══════════════════════════════════════════════════════════════════
+function LiquidityAdmin() {
+    const addToast = useStore((s) => s.addToast);
+    const [data, setData] = useState<LiquidityDashboard | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            setData(await adminApi.getLiquidityDashboard());
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setLoading(false);
+        }
+    }, [addToast]);
+
+    useEffect(() => {
+        void load();
+    }, [load]);
+
+    if (loading && !data)
+        return <div className='adm-empty'>Loading liquidity data…</div>;
+    if (!data) return null;
+
+    const available = data.masterWallet.availableMinor;
+    const pendingWithdrawals = data.pendingWithdrawals.totalMinor;
+    const coveragePct =
+        pendingWithdrawals > 0
+            ? Math.round((available / pendingWithdrawals) * 100)
+            : null;
+    const atRisk = coveragePct !== null && coveragePct < 100;
+
+    const trendData = data.dailyFlow.map((d) => ({
+        label: d.day.slice(5).replace('-', '/'),
+        series: [
+            {
+                value: d.inflowMinor,
+                color: '#10b981',
+                title: `${d.day} inflow: ${formatCredits(d.inflowMinor)} ETB`,
+            },
+            {
+                value: d.outflowMinor,
+                color: '#ef4444',
+                title: `${d.day} outflow: ${formatCredits(d.outflowMinor)} ETB`,
+            },
+        ],
+    }));
+
+    return (
+        <div className='stack-lg'>
+            <SectionHead
+                title='Liquidity Health'
+                sub='Master Wallet float, its 14-day money movement, and the withdrawal liability it needs to cover.'
+            >
+                <button className='adm-icon-btn' onClick={load} title='Refresh'>
+                    <RefreshCw size={14} />
+                </button>
+            </SectionHead>
+
+            {atRisk && (
+                <div
+                    className='adm-panel'
+                    style={{
+                        borderColor: 'rgba(239,68,68,0.5)',
+                        background: 'rgba(239,68,68,0.08)',
+                        padding: 14,
+                    }}
+                >
+                    <strong style={{ color: 'var(--danger)' }}>
+                        ⚠ Master Wallet covers only {coveragePct}% of pending
+                        withdrawals
+                    </strong>{' '}
+                    <span className='adm-td-muted'>
+                        ({formatCreditsFull(available)} available vs{' '}
+                        {formatCreditsFull(pendingWithdrawals)} owed across{' '}
+                        {data.pendingWithdrawals.count} pending request
+                        {data.pendingWithdrawals.count === 1 ? '' : 's'})
+                        top up before withdrawals start stalling.
+                    </span>
+                </div>
+            )}
+
+            <div className='adm-kpi-grid'>
+                <Kpi
+                    label='Master Wallet Available'
+                    value={formatCreditsFull(available)}
+                    color='#10b981'
+                    icon={<Wallet size={16} />}
+                />
+                <Kpi
+                    label='Master Wallet Reserved'
+                    value={formatCreditsFull(data.masterWallet.reservedMinor)}
+                    color='#8b5cf6'
+                    icon={<Wallet size={16} />}
+                />
+                <Kpi
+                    label='Pending Withdrawals'
+                    value={`${formatCreditsFull(pendingWithdrawals)} (${data.pendingWithdrawals.count})`}
+                    color={atRisk ? '#ef4444' : '#f59e0b'}
+                    icon={<Banknote size={16} />}
+                />
+                <Kpi
+                    label='Total Player Deposits'
+                    value={formatCreditsFull(
+                        data.depositsByProvider.totalMinor,
+                    )}
+                    color='#3b82f6'
+                    icon={<Coins size={16} />}
+                />
+            </div>
+
+            <div className='adm-dash-grid'>
+                <div className='adm-panel'>
+                    <div className='adm-panel-head'>
+                        Deposits by Provider
+                    </div>
+                    <div className='adm-donut-wrap'>
+                        {data.depositsByProvider.totalMinor === 0 ? (
+                            <div
+                                className='adm-empty'
+                                style={{ width: '100%' }}
+                            >
+                                No deposits yet.
+                            </div>
+                        ) : (
+                            <>
+                                <Donut
+                                    segments={[
+                                        {
+                                            label: 'Telebirr',
+                                            value: data.depositsByProvider
+                                                .telebirrMinor,
+                                            color: '#6366f1',
+                                        },
+                                        {
+                                            label: 'M-Pesa',
+                                            value: data.depositsByProvider
+                                                .mpesaMinor,
+                                            color: '#10b981',
+                                        },
+                                    ]}
+                                />
+                                <div className='adm-legend'>
+                                    <div className='adm-legend-row'>
+                                        <span
+                                            className='adm-legend-dot'
+                                            style={{ background: '#6366f1' }}
+                                        />
+                                        <span className='adm-legend-label'>
+                                            Telebirr
+                                        </span>
+                                        <span className='adm-legend-val'>
+                                            {formatCredits(
+                                                data.depositsByProvider
+                                                    .telebirrMinor,
+                                            )}
+                                        </span>
+                                    </div>
+                                    <div className='adm-legend-row'>
+                                        <span
+                                            className='adm-legend-dot'
+                                            style={{ background: '#10b981' }}
+                                        />
+                                        <span className='adm-legend-label'>
+                                            M-Pesa
+                                        </span>
+                                        <span className='adm-legend-val'>
+                                            {formatCredits(
+                                                data.depositsByProvider
+                                                    .mpesaMinor,
+                                            )}
+                                        </span>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                <div className='adm-panel'>
+                    <div className='adm-panel-head'>
+                        Master Wallet  14-Day Flow (green in / red out)
+                    </div>
+                    <div style={{ padding: 12 }}>
+                        {trendData.length === 0 ? (
+                            <div className='adm-empty'>
+                                No wallet activity in the last 14 days.
+                            </div>
+                        ) : (
+                            <MiniTrendChart data={trendData} />
+                        )}
+                    </div>
                 </div>
             </div>
         </div>
@@ -3314,59 +3526,116 @@ function AgentsAdmin() {
             </div>
 
             <div className='adm-panel'>
-                <div className='adm-panel-head'>Referrals &amp; Earnings</div>
+                <div className='adm-panel-head'>Agent Performance</div>
                 {perfLoading && perf.length === 0 ? (
                     <div className='adm-empty'>Loading…</div>
                 ) : perf.length === 0 ? (
                     <div className='adm-empty'>No agent activity yet.</div>
                 ) : (
-                    <table className='adm-table'>
-                        <thead>
-                            <tr>
-                                <th>Agent</th>
-                                <th>Referred Players</th>
-                                <th>Link Clicks</th>
-                                <th>Total Earnings</th>
-                                <th>Settled</th>
-                                <th>Remaining</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {perf.map((p) => (
-                                <tr key={p.agentId} className='adm-tr'>
-                                    <td>
-                                        <strong>{p.displayName}</strong>
-                                    </td>
-                                    <td className='adm-td-muted'>
-                                        {p.customersBrought}
-                                    </td>
-                                    <td className='adm-td-muted'>
-                                        {p.referralClicks}
-                                    </td>
-                                    <td>
-                                        <strong>
-                                            {formatCreditsFull(
-                                                p.totalEarningsMinor,
-                                            )}
-                                        </strong>
-                                    </td>
-                                    <td style={{ color: 'var(--green)' }}>
-                                        {formatCreditsFull(p.totalSettledMinor)}
-                                    </td>
-                                    <td
-                                        style={{
-                                            color:
-                                                p.remainingMinor > 0
-                                                    ? 'var(--danger)'
-                                                    : 'var(--adm-muted, #888)',
-                                        }}
-                                    >
-                                        {formatCreditsFull(p.remainingMinor)}
-                                    </td>
+                    <div className='adm-table-wrap'>
+                        <table className='adm-table'>
+                            <thead>
+                                <tr className='adm-tr'>
+                                    <th>Agent</th>
+                                    <th>Referred Players</th>
+                                    <th>Link Clicks</th>
+                                    <th>Bingo Tickets</th>
+                                    <th>Bingo Players</th>
+                                    <th>Bingo Staked</th>
+                                    <th>Bingo Paid Out</th>
+                                    <th>Bingo GGR</th>
+                                    <th>Commission</th>
+                                    <th>Withdrawal Fees</th>
+                                    <th>Deposits</th>
+                                    <th>Deposit Volume</th>
+                                    <th>Deposit Commission</th>
+                                    <th>Total Earnings</th>
+                                    <th>Settled</th>
+                                    <th>Remaining</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {perf.map((p) => (
+                                    <tr key={p.agentId} className='adm-tr'>
+                                        <td>
+                                            <strong>{p.displayName}</strong>
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {p.customersBrought}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {p.referralClicks}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {p.tickets}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {p.players}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {formatCreditsFull(p.stakedMinor)}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {formatCreditsFull(p.payoutMinor)}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {formatCreditsFull(p.ggrMinor)}
+                                        </td>
+                                        <td>
+                                            {formatCreditsFull(
+                                                p.commissionEarnedMinor,
+                                            )}{' '}
+                                            <span className='adm-td-muted'>
+                                                ({p.commissionEarnedCount})
+                                            </span>
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {formatCreditsFull(
+                                                p.withdrawalFeesEarnedMinor,
+                                            )}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {p.depositCount}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {formatCreditsFull(
+                                                p.depositVolumeMinor,
+                                            )}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {formatCreditsFull(
+                                                p.depositCommissionEarnedMinor,
+                                            )}
+                                        </td>
+                                        <td>
+                                            <strong>
+                                                {formatCreditsFull(
+                                                    p.totalEarningsMinor,
+                                                )}
+                                            </strong>
+                                        </td>
+                                        <td style={{ color: 'var(--green)' }}>
+                                            {formatCreditsFull(
+                                                p.totalSettledMinor,
+                                            )}
+                                        </td>
+                                        <td
+                                            style={{
+                                                color:
+                                                    p.remainingMinor > 0
+                                                        ? 'var(--danger)'
+                                                        : 'var(--adm-muted, #888)',
+                                            }}
+                                        >
+                                            {formatCreditsFull(
+                                                p.remainingMinor,
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </div>
 
@@ -16883,6 +17152,7 @@ export function Admin() {
 
                 <div className='adm-content'>
                     {tab === 'overview' && <OverviewAdmin />}
+                    {tab === 'liquidity' && <LiquidityAdmin />}
                     {tab === 'players' && <PlayersAdmin />}
                     {tab === 'agents' && <AgentsAdmin />}
                     {tab === 'locations' && <LocationsAdmin />}

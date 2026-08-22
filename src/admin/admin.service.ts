@@ -1038,7 +1038,8 @@ export class AdminService implements OnApplicationBootstrap {
             `SELECT
                 COALESCE(SUM(CASE WHEN le.entryType = 'win' AND le.direction = 'credit' AND ${BOT_FILTER} IS NOT NULL THEN le.amountMinor ELSE 0 END), 0) totalBotWin,
                 COALESCE(SUM(CASE WHEN le.entryType = 'win' AND le.direction = 'credit' AND ${BOT_FILTER} IS NULL THEN le.amountMinor ELSE 0 END), 0) totalPlayerWin,
-                COALESCE(SUM(CASE WHEN le.entryType = 'deposit' AND le.direction = 'credit' THEN le.amountMinor ELSE 0 END), 0) totalDeposits,
+                COALESCE(SUM(CASE WHEN le.entryType = 'deposit' AND le.direction = 'credit' AND le.sourceType = 'telebirr_receipt' THEN le.amountMinor ELSE 0 END), 0) totalTelebirrDeposits,
+                COALESCE(SUM(CASE WHEN le.entryType = 'deposit' AND le.direction = 'credit' AND le.sourceType = 'mpesa_receipt' THEN le.amountMinor ELSE 0 END), 0) totalMpesaDeposits,
                 COALESCE(SUM(CASE WHEN le.entryType = 'agent_receipt' AND le.direction = 'credit' THEN le.amountMinor ELSE 0 END), 0) totalAgentCommission,
                 COALESCE(SUM(CASE WHEN le.sourceType = 'admin_adjustment' AND le.direction = 'credit' THEN le.amountMinor ELSE 0 END), 0) totalAdminLoad
                FROM ledger_entries le
@@ -1048,7 +1049,19 @@ export class AdminService implements OnApplicationBootstrap {
         const totalPlayerWinningsMinor = Number(
             moneyFlowRow?.totalPlayerWin ?? 0,
         );
-        const totalDepositsMinor = Number(moneyFlowRow?.totalDeposits ?? 0);
+        // Player deposits only  entryType='deposit' also covers admin_topup
+        // (admin funding the Master Wallet itself) and admin_to_agent_transfer
+        // (admin funding an agent's own working capital), neither of which is
+        // money a PLAYER deposited, so those are deliberately excluded by
+        // filtering on the two real payment-provider sourceTypes instead.
+        const totalTelebirrDepositsMinor = Number(
+            moneyFlowRow?.totalTelebirrDeposits ?? 0,
+        );
+        const totalMpesaDepositsMinor = Number(
+            moneyFlowRow?.totalMpesaDeposits ?? 0,
+        );
+        const totalDepositsMinor =
+            totalTelebirrDepositsMinor + totalMpesaDepositsMinor;
         const totalAgentCommissionMinor = Number(
             moneyFlowRow?.totalAgentCommission ?? 0,
         );
@@ -1081,6 +1094,8 @@ export class AdminService implements OnApplicationBootstrap {
             totalBotWinningsMinor,
             totalPlayerWinningsMinor,
             totalDepositsMinor,
+            totalTelebirrDepositsMinor,
+            totalMpesaDepositsMinor,
             totalAgentCommissionMinor,
             totalAdminLoadMinor,
             totalNormalPlayerWalletMinor,
@@ -1100,6 +1115,95 @@ export class AdminService implements OnApplicationBootstrap {
                 totalPlayingUsers: liveCounts.totalPlaying,
                 totalConnections: liveCounts.totalConnections,
             },
+        };
+    }
+
+    /**
+     * Master Wallet liquidity health: current float balance, how it's trended
+     * over the last 14 days (its OWN ledger entries  admin_topup/master_wallet_
+     * reclaim credit it, master_wallet_funding/admin_to_agent_transfer debit
+     * it  so this is the wallet's real inflow/outflow, not a proxy), player
+     * deposits split by payment provider, and the outstanding withdrawal
+     * liability it will need to cover.
+     */
+    async getLiquidityDashboard(): Promise<{
+        masterWallet: { availableMinor: number; reservedMinor: number };
+        depositsByProvider: {
+            telebirrMinor: number;
+            mpesaMinor: number;
+            totalMinor: number;
+        };
+        pendingWithdrawals: { count: number; totalMinor: number };
+        dailyFlow: Array<{
+            day: string;
+            inflowMinor: number;
+            outflowMinor: number;
+            netMinor: number;
+        }>;
+    }> {
+        const masterWalletUserId = await this.getOrCreateMasterWalletUserId();
+
+        const [masterWallet, depositRow, withdrawalRow, dailyFlowRows] =
+            await Promise.all([
+                this.walletService.getDefaultWalletSummary(masterWalletUserId),
+                this.dataSource.query(
+                    `SELECT
+                        COALESCE(SUM(CASE WHEN sourceType = 'telebirr_receipt' THEN amountMinor ELSE 0 END), 0) telebirrMinor,
+                        COALESCE(SUM(CASE WHEN sourceType = 'mpesa_receipt' THEN amountMinor ELSE 0 END), 0) mpesaMinor
+                       FROM ledger_entries
+                      WHERE entryType = 'deposit' AND direction = 'credit'
+                        AND sourceType IN ('telebirr_receipt', 'mpesa_receipt')`,
+                ),
+                this.dataSource.query(
+                    `SELECT COUNT(*) cnt, COALESCE(SUM(amountMinor), 0) totalMinor
+                       FROM withdrawals
+                      WHERE status IN ('pending', 'claimed', 'processing', 'awaiting_verification')`,
+                ),
+                this.dataSource.query(
+                    `SELECT DATE(createdAt) day,
+                        COALESCE(SUM(CASE WHEN direction = 'credit' THEN amountMinor ELSE 0 END), 0) inflowMinor,
+                        COALESCE(SUM(CASE WHEN direction = 'debit' THEN amountMinor ELSE 0 END), 0) outflowMinor
+                       FROM ledger_entries
+                      WHERE userId = ?
+                        AND createdAt >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
+                      GROUP BY DATE(createdAt)
+                      ORDER BY day ASC`,
+                    [masterWalletUserId],
+                ),
+            ]);
+
+        const [depositTotals] = depositRow;
+        const [withdrawalTotals] = withdrawalRow;
+
+        return {
+            masterWallet: {
+                availableMinor: masterWallet.availableMinor,
+                reservedMinor: masterWallet.reservedMinor,
+            },
+            depositsByProvider: {
+                telebirrMinor: Number(depositTotals?.telebirrMinor ?? 0),
+                mpesaMinor: Number(depositTotals?.mpesaMinor ?? 0),
+                totalMinor:
+                    Number(depositTotals?.telebirrMinor ?? 0) +
+                    Number(depositTotals?.mpesaMinor ?? 0),
+            },
+            pendingWithdrawals: {
+                count: Number(withdrawalTotals?.cnt ?? 0),
+                totalMinor: Number(withdrawalTotals?.totalMinor ?? 0),
+            },
+            dailyFlow: dailyFlowRows.map((row: Record<string, unknown>) => {
+                const inflowMinor = Number(row.inflowMinor ?? 0);
+                const outflowMinor = Number(row.outflowMinor ?? 0);
+                return {
+                    day:
+                        row.day instanceof Date
+                            ? row.day.toISOString().slice(0, 10)
+                            : String(row.day),
+                    inflowMinor,
+                    outflowMinor,
+                    netMinor: inflowMinor - outflowMinor,
+                };
+            }),
         };
     }
 

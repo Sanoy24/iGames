@@ -84,6 +84,11 @@ export class AdminController {
         return this.adminService.getPlatformStats();
     }
 
+    @Get('stats/liquidity')
+    getLiquidityDashboard() {
+        return this.adminService.getLiquidityDashboard();
+    }
+
     @Get('game-transactions')
     getGameTransactions(
         @Query('page') page: string = '1',

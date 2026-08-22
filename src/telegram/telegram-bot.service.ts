@@ -375,24 +375,33 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     /**
      * Apply (and clear) a referral code parked by `captureReferralFromStart`, now
      * that the player's account exists. Never throws  attribution is a bonus, not
-     * a precondition for finishing onboarding.
+     * a precondition for finishing onboarding. Returns the referring agent's
+     * display name on success (the caller uses this to skip the redundant
+     * share-location/choose-agent step  see attributeReferral, which already
+     * claims `assignedAgentId` for this same agent), or null if there was no
+     * pending code or attribution didn't succeed.
      */
     private async applyPendingReferral(
         telegramUserId: number,
         userId: string,
-    ): Promise<void> {
+    ): Promise<string | null> {
         try {
             const key = PENDING_REFERRAL_KEY(telegramUserId);
             const code = await this.redis.get(key);
-            if (!code) return;
+            if (!code) return null;
 
-            await this.usersService.attributeReferral(userId, code);
+            const agentName = await this.usersService.attributeReferral(
+                userId,
+                code,
+            );
             await this.redis.del(key);
+            return agentName;
         } catch (err) {
             this.logger.error(
                 `Failed to apply pending referral for Telegram user ${telegramUserId}`,
                 err as Error,
             );
+            return null;
         }
     }
 
@@ -635,11 +644,28 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                 async () => {
                     // The account now exists, so a referral code parked on /start can
                     // finally be attributed.
+                    let referredByAgentName: string | null = null;
                     if (userId) {
-                        await this.applyPendingReferral(
+                        referredByAgentName = await this.applyPendingReferral(
                             userId,
                             savedPhone.userId,
                         );
+                    }
+
+                    // A referral already identifies this player's agent (and claimed
+                    // assignedAgentId to match  see attributeReferral), so asking
+                    // them to share location or pick an agent from a list would be
+                    // redundant, and risks them landing on a DIFFERENT agent than the
+                    // one whose link they actually used. Skip straight to the Play
+                    // button instead.
+                    if (referredByAgentName) {
+                        await this.finishLocationStep(
+                            ctx,
+                            miniAppUrl,
+                            `እናመሰግናለን! ቁጥርዎ ለክፍያ ተቀምጧል።\n\n` +
+                                `በ${referredByAgentName} በኩል ተመዝግበዋል። ለመጫወት ከታች ያለውን ይንኩ፦`,
+                        );
+                        return;
                     }
 
                     // Phone is durably saved; now offer to connect them with an agent.

@@ -37,7 +37,7 @@ const AGENT_MATCH_RADIUS_METERS = 5000;
 export type AssignedAgentResult = {
     assignedAgentId: string | null;
     assignedAgentName: string | null;
-    assignedAgentSource: 'gps_match' | 'manual_pick' | 'other';
+    assignedAgentSource: 'gps_match' | 'manual_pick' | 'referral' | 'other';
 };
 
 export type TelegramIdentityInput = {
@@ -1087,10 +1087,22 @@ export class UsersService {
             return null;
         if (agent.id === userId) return null; // an agent can't refer themselves
 
+        // A referral code is a stronger, explicit signal than a GPS match, so
+        // successful attribution also claims `assignedAgentId` right here  the
+        // player counts as this agent's player immediately (visible in the
+        // agent's Area Players list), without needing the separate
+        // share-location/choose-agent step to independently arrive at the same
+        // agent. Both writes are guarded by the SAME `referredByAgentId IS NULL`
+        // condition, so this only ever fires on the player's first attribution.
         const result = await this.userRepository
             .createQueryBuilder()
             .update(User)
-            .set({ referredByAgentId: agent.id })
+            .set({
+                referredByAgentId: agent.id,
+                assignedAgentId: agent.id,
+                assignedAgentSource: 'referral',
+                assignedAgentAt: new Date(),
+            })
             .where('id = :userId AND referredByAgentId IS NULL', { userId })
             .execute();
 

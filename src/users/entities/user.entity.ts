@@ -209,9 +209,20 @@ export class User {
     @Index()
     assignedAgentId?: string | null;
 
-    /** How `assignedAgentId` was obtained. `other` records a deliberate skip. */
+    /**
+     * How `assignedAgentId` was obtained. `other` records a deliberate skip.
+     * `referral` means it was claimed automatically by `attributeReferral` when
+     * the player signed up via this SAME agent's referral link  a stronger
+     * signal than a GPS match, so the location/choose-agent step is skipped
+     * for these players (see UsersService.attributeReferral).
+     */
     @Column({ type: 'varchar', length: 20, nullable: true })
-    assignedAgentSource?: 'gps_match' | 'manual_pick' | 'other' | null;
+    assignedAgentSource?:
+        | 'gps_match'
+        | 'manual_pick'
+        | 'referral'
+        | 'other'
+        | null;
 
     @Column({ type: 'timestamp', nullable: true })
     assignedAgentAt?: Date | null;

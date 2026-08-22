@@ -534,7 +534,7 @@ export type OnDutyAgentOption = { id: string; name: string };
 export type AssignedAgentResult = {
     assignedAgentId: string | null;
     assignedAgentName: string | null;
-    assignedAgentSource: 'gps_match' | 'manual_pick' | 'other';
+    assignedAgentSource: 'gps_match' | 'manual_pick' | 'referral' | 'other';
 };
 
 export const agentMatchApi = {

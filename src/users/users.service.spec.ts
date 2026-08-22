@@ -626,7 +626,15 @@ describe('UsersService  agent referral codes', () => {
 
             expect(result).toBe('Agent One');
             expect(updates).toHaveLength(1);
-            expect(updates[0].set).toEqual({ referredByAgentId: 'agent-1' });
+            // Attribution also claims assignedAgentId for the SAME agent, so a
+            // referred player counts as this agent's player immediately (see
+            // the comment on attributeReferral).
+            expect(updates[0].set).toEqual({
+                referredByAgentId: 'agent-1',
+                assignedAgentId: 'agent-1',
+                assignedAgentSource: 'referral',
+                assignedAgentAt: expect.any(Date),
+            });
             // The IS NULL guard is what makes first-attribution-wins true.
             expect(updates[0].where).toContain('referredByAgentId IS NULL');
             expect(updates[0].params).toEqual({ userId: 'player-1' });

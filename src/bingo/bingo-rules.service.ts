@@ -113,6 +113,46 @@ export const BUILT_IN_PATTERNS: Array<{
         patternType: 'coverall',
         sortOrder: 8,
     },
+    {
+        name: 'Small Cross',
+        description:
+            'A smaller plus/cross shape in the lower half of the card',
+        patternType: 'fixed',
+        mask: [
+            [false, false, false, false, false],
+            [false, false, false, false, false],
+            [false, false, true, false, false],
+            [false, true, true, true, false],
+            [false, false, true, false, false],
+        ],
+        sortOrder: 9,
+    },
+    {
+        name: 'Small X',
+        description: 'An X shape using only the inner 3x3 block',
+        patternType: 'fixed',
+        mask: [
+            [false, false, false, false, false],
+            [false, true, false, true, false],
+            [false, false, true, false, false],
+            [false, true, false, true, false],
+            [false, false, false, false, false],
+        ],
+        sortOrder: 10,
+    },
+    {
+        name: 'Corners & Center',
+        description: 'All 4 corner squares plus the center free space',
+        patternType: 'fixed',
+        mask: [
+            [true, false, false, false, true],
+            [false, false, false, false, false],
+            [false, false, true, false, false],
+            [false, false, false, false, false],
+            [true, false, false, false, true],
+        ],
+        sortOrder: 11,
+    },
 ];
 
 // ─── Service ──────────────────────────────────────────────────────────────────

@@ -566,6 +566,8 @@ describe('UsersService  agent referral codes', () => {
                 ),
         };
 
+        const plainUpdates: Array<{ id: unknown; values: unknown }> = [];
+
         const userRepository = {
             findOneBy: jest
                 .fn()
@@ -594,6 +596,12 @@ describe('UsersService  agent referral codes', () => {
                                 .length,
                         ),
                 ),
+            update: jest
+                .fn()
+                .mockImplementation((id: unknown, values: unknown) => {
+                    plainUpdates.push({ id, values });
+                    return Promise.resolve({ affected: 1 });
+                }),
             createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
         };
 
@@ -604,7 +612,7 @@ describe('UsersService  agent referral codes', () => {
             {} as any, // refreshSessionRepository
         );
 
-        return { service, userRepository, updates };
+        return { service, userRepository, updates, plainUpdates };
     }
 
     const AGENT = {
@@ -751,6 +759,170 @@ describe('UsersService  agent referral codes', () => {
             });
 
             expect(await service.countReferredPlayers('agent-1')).toBe(2);
+        });
+    });
+
+    describe('getReferralStatus', () => {
+        it('returns nulls for an unattributed player', async () => {
+            const { service } = makeService({
+                users: [AGENT, { id: 'player-1', referredByAgentId: null }],
+            });
+
+            expect(await service.getReferralStatus('player-1')).toEqual({
+                agentId: null,
+                agentName: null,
+            });
+        });
+
+        it("returns the referring agent's id and name", async () => {
+            const { service } = makeService({
+                users: [
+                    AGENT,
+                    { id: 'player-1', referredByAgentId: 'agent-1' },
+                ],
+            });
+
+            expect(await service.getReferralStatus('player-1')).toEqual({
+                agentId: 'agent-1',
+                agentName: 'Agent One',
+            });
+        });
+    });
+
+    describe('joinReferralCode', () => {
+        it('attributes the player and returns success', async () => {
+            const { service, updates } = makeService({
+                users: [AGENT, { id: 'player-1', referredByAgentId: null }],
+            });
+
+            const result = await service.joinReferralCode(
+                'player-1',
+                'ABC234',
+            );
+
+            expect(result).toEqual({
+                status: 'success',
+                agentId: 'agent-1',
+                agentName: 'Agent One',
+            });
+            expect(updates).toHaveLength(1);
+            expect(updates[0].set).toEqual({
+                referredByAgentId: 'agent-1',
+                assignedAgentId: 'agent-1',
+                assignedAgentSource: 'referral',
+                assignedAgentAt: expect.any(Date),
+            });
+        });
+
+        it('accepts a full referral link, not just a bare code', async () => {
+            const { service } = makeService({
+                users: [AGENT, { id: 'player-1', referredByAgentId: null }],
+            });
+
+            const result = await service.joinReferralCode(
+                'player-1',
+                'https://t.me/SomeBot?start=ref_ABC234',
+            );
+
+            expect(result).toEqual({
+                status: 'success',
+                agentId: 'agent-1',
+                agentName: 'Agent One',
+            });
+        });
+
+        it('reports already_joined without writing, for an already-attributed player', async () => {
+            const { service, updates } = makeService({
+                users: [
+                    AGENT,
+                    { id: 'player-1', referredByAgentId: 'agent-1' },
+                ],
+            });
+
+            const result = await service.joinReferralCode(
+                'player-1',
+                'ZZZZZZ',
+            );
+
+            expect(result).toEqual({
+                status: 'already_joined',
+                agentId: 'agent-1',
+                agentName: 'Agent One',
+            });
+            expect(updates).toHaveLength(0);
+        });
+
+        it('reports invalid_code for a code matching no agent', async () => {
+            const { service, updates } = makeService({
+                users: [AGENT, { id: 'player-1', referredByAgentId: null }],
+            });
+
+            expect(
+                await service.joinReferralCode('player-1', 'ZZZZZZ'),
+            ).toEqual({ status: 'invalid_code' });
+            expect(updates).toHaveLength(0);
+        });
+
+        it('reports invalid_code for garbage input', async () => {
+            const { service } = makeService({
+                users: [AGENT, { id: 'player-1', referredByAgentId: null }],
+            });
+
+            expect(
+                await service.joinReferralCode('player-1', '   '),
+            ).toEqual({ status: 'invalid_code' });
+        });
+    });
+
+    describe('setUserAgentByAdmin', () => {
+        it('writes referredByAgentId and assignedAgentId, unconditionally', async () => {
+            const { service, plainUpdates } = makeService({
+                users: [
+                    AGENT,
+                    { id: 'player-1', referredByAgentId: 'some-other-agent' },
+                ],
+            });
+
+            const result = await service.setUserAgentByAdmin(
+                'player-1',
+                'agent-1',
+            );
+
+            expect(result).toEqual({
+                assignedAgentId: 'agent-1',
+                assignedAgentName: 'Agent One',
+                assignedAgentSource: 'admin_assigned',
+            });
+            expect(plainUpdates).toHaveLength(1);
+            expect(plainUpdates[0].id).toBe('player-1');
+            expect(plainUpdates[0].values).toEqual({
+                referredByAgentId: 'agent-1',
+                assignedAgentId: 'agent-1',
+                assignedAgentSource: 'admin_assigned',
+                assignedAgentAt: expect.any(Date),
+            });
+        });
+
+        it('rejects a non-agent target', async () => {
+            const { service, plainUpdates } = makeService({
+                users: [
+                    { id: 'player-1', referredByAgentId: null },
+                    { id: 'player-2', roles: ['player'] as any },
+                ],
+            });
+
+            await expect(
+                service.setUserAgentByAdmin('player-1', 'player-2'),
+            ).rejects.toBeInstanceOf(NotFoundException);
+            expect(plainUpdates).toHaveLength(0);
+        });
+
+        it('404s on an unknown user id', async () => {
+            const { service } = makeService({ users: [AGENT] });
+
+            await expect(
+                service.setUserAgentByAdmin('missing-user', 'agent-1'),
+            ).rejects.toBeInstanceOf(NotFoundException);
         });
     });
 });

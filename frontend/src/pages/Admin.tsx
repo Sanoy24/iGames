@@ -1519,6 +1519,108 @@ function PlayersAdmin() {
     );
 }
 
+/**
+ * Admin's agent-assignment dropdown for a single player  unlike the player's
+ * own referral-code entry (one-time, self-service), the admin can reassign
+ * this at will, any number of times, and picks from a dropdown of every
+ * agent rather than typing a code.
+ */
+function PlayerAgentAssignment({ user }: { user: User }) {
+    const addToast = useStore((s) => s.addToast);
+    const [agents, setAgents] = useState<User[]>([]);
+    const [loadingAgents, setLoadingAgents] = useState(true);
+    const [assignedAgentId, setAssignedAgentId] = useState(
+        user.assignedAgentId ?? null,
+    );
+    const [selected, setSelected] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        let alive = true;
+        adminAgentsApi
+            .listAgents(1, 200)
+            .then((list) => {
+                if (alive) setAgents(list);
+            })
+            .catch((e) => addToast('error', getErrorMessage(e)))
+            .finally(() => {
+                if (alive) setLoadingAgents(false);
+            });
+        return () => {
+            alive = false;
+        };
+    }, [addToast]);
+
+    const currentAgent = agents.find((a) => a.id === assignedAgentId);
+
+    const assign = async () => {
+        if (!selected) return;
+        setSaving(true);
+        try {
+            await adminUsersApi.setUserAgent(user.id, selected);
+            setAssignedAgentId(selected);
+            setSelected('');
+            addToast('success', 'Agent assigned.');
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div
+            style={{
+                padding: '12px 16px',
+                borderBottom: '1px solid var(--adm-border, #2a2a30)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+            }}
+        >
+            <span
+                style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--text-secondary)',
+                }}
+            >
+                Agent:
+            </span>
+            <span style={{ fontSize: 13 }}>
+                {currentAgent
+                    ? currentAgent.displayName
+                    : assignedAgentId
+                      ? 'Unknown agent'
+                      : 'Unassigned'}
+            </span>
+            <select
+                className='input'
+                style={{ width: 220 }}
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+                disabled={loadingAgents}
+            >
+                <option value=''>Select agent…</option>
+                {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                        {a.displayName}
+                        {a.referralCode ? ` (${a.referralCode})` : ''}
+                    </option>
+                ))}
+            </select>
+            <button
+                className='btn btn-secondary btn-sm'
+                disabled={!selected || selected === assignedAgentId || saving}
+                onClick={assign}
+            >
+                {saving ? 'Saving…' : 'Assign'}
+            </button>
+        </div>
+    );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // Player detail drill-down (games played, deposits, withdrawals, wins)
 // ══════════════════════════════════════════════════════════════════
@@ -1601,6 +1703,8 @@ function PlayerDetailModal({
                         <X size={15} />
                     </button>
                 </div>
+
+                <PlayerAgentAssignment user={user} />
 
                 {loading || !activity ? (
                     <div className='adm-empty'>Loading player activity…</div>
@@ -3652,6 +3756,7 @@ function AgentsAdmin() {
                             <tr>
                                 <th>Name</th>
                                 <th>Phone</th>
+                                <th>Referral Code</th>
                                 <th>Working Hours</th>
                                 <th>On Duty</th>
                                 <th>Permissions</th>
@@ -3706,6 +3811,9 @@ function AgentsAdmin() {
                                         </td>
                                         <td className='adm-td-muted'>
                                             {a.phoneNumber ?? ''}
+                                        </td>
+                                        <td className='adm-td-muted'>
+                                            {a.referralCode ?? '—'}
                                         </td>
                                         <td className='adm-td-muted'>
                                             <div style={{ fontSize: 12 }}>

@@ -211,16 +211,21 @@ export class User {
 
     /**
      * How `assignedAgentId` was obtained. `other` records a deliberate skip.
-     * `referral` means it was claimed automatically by `attributeReferral` when
-     * the player signed up via this SAME agent's referral link  a stronger
-     * signal than a GPS match, so the location/choose-agent step is skipped
-     * for these players (see UsersService.attributeReferral).
+     * `referral` means it was claimed automatically by `attributeReferral`/
+     * `joinReferralCode` when the player signed up or later entered a code via
+     * this SAME agent's referral link  a stronger signal than a GPS match, so
+     * the location/choose-agent step is skipped for these players (see
+     * UsersService.attributeReferral). `admin_assigned` means an admin picked
+     * the agent directly from the Players admin screen  unlike every other
+     * source, this ALSO overwrites `referredByAgentId` and is not guarded by
+     * the once-only `IS NULL` check (see UsersService.setUserAgentByAdmin).
      */
     @Column({ type: 'varchar', length: 20, nullable: true })
     assignedAgentSource?:
         | 'gps_match'
         | 'manual_pick'
         | 'referral'
+        | 'admin_assigned'
         | 'other'
         | null;
 

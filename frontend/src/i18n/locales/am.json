@@ -337,7 +337,19 @@
         "logoutBtn": "ውጣ",
         "profileUpdated": "መገለጫ ተዘምኗል።",
         "passwordMinLength": "አዲስ የይለፍ ቃል ቢያንስ 8 ቁምፊዎች መሆን አለበት።",
-        "passwordChanged": "የይለፍ ቃል ተቀይሯል። በአዲሱ የይለፍ ቃል እንደገና ይግቡ።"
+        "passwordChanged": "የይለፍ ቃል ተቀይሯል። በአዲሱ የይለፍ ቃል እንደገና ይግቡ።",
+        "referralTitle": "ማጣቀሻ",
+        "referralJoinDesc": "ከወኪል የማጣቀሻ ኮድ ወይም ሊንክ አለዎት? መለያዎን ለማገናኘት አንድ ጊዜ ያስገቡት  ከዚያ በኋላ ሊቀየር አይችልም።",
+        "referralJoinedDesc": "መለያዎ ከዚህ ወኪል ጋር ተገናኝቷል።",
+        "referredByLabel": "በ ተጠቆመ",
+        "referralUnknownAgent": "ወኪል",
+        "referralCodeLabel": "የማጣቀሻ ኮድ ወይም ሊንክ",
+        "referralCodePlaceholder": "ለምሳሌ ABC123 ወይም የማጣቀሻ ሊንክ",
+        "referralJoinBtn": "ተቀላቀል",
+        "referralJoining": "በመቀላቀል ላይ…",
+        "referralJoined": "አሁን ከ{{agent}} ጋር ተገናኝተዋል።",
+        "referralAlreadyJoined": "መለያዎ አስቀድሞ ከወኪል ጋር ተገናኝቷል።",
+        "referralInvalidCode": "ያ የማጣቀሻ ኮድ ትክክል አይደለም። ያረጋግጡ እና እንደገና ይሞክሩ።"
     },
     "login": {
         "welcome": "እንኳን ደህና መጡ",

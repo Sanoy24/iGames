@@ -14,8 +14,10 @@ import {
     Send,
     LifeBuoy,
     ChevronRight,
+    Gift,
 } from 'lucide-react';
 import { authApi, userApi } from '../lib/api';
+import type { ReferralStatus } from '../lib/api';
 import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import type { User } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
@@ -81,6 +83,13 @@ export function Profile({
     const [changingPassword, setChangingPassword] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
 
+    const [referralStatus, setReferralStatus] = useState<ReferralStatus | null>(
+        null,
+    );
+    const [referralLoading, setReferralLoading] = useState(true);
+    const [referralInput, setReferralInput] = useState('');
+    const [joiningReferral, setJoiningReferral] = useState(false);
+
     const telegramMode = isTelegramMode();
 
     const loadProfile = useCallback(async () => {
@@ -99,6 +108,56 @@ export function Profile({
     useEffect(() => {
         void loadProfile();
     }, [loadProfile]);
+
+    useEffect(() => {
+        let alive = true;
+        userApi
+            .getReferralStatus()
+            .then((status) => {
+                if (alive) setReferralStatus(status);
+            })
+            .catch(() => {
+                /* non-critical: form just falls back to the entry state */
+            })
+            .finally(() => {
+                if (alive) setReferralLoading(false);
+            });
+        return () => {
+            alive = false;
+        };
+    }, []);
+
+    const submitReferral = async () => {
+        const code = referralInput.trim();
+        if (!code) return;
+        setJoiningReferral(true);
+        try {
+            const result = await userApi.joinReferral(code);
+            if (result.status === 'success') {
+                setReferralStatus({
+                    agentId: result.agentId,
+                    agentName: result.agentName,
+                });
+                setReferralInput('');
+                addToast(
+                    'success',
+                    t('profile.referralJoined', { agent: result.agentName }),
+                );
+            } else if (result.status === 'already_joined') {
+                setReferralStatus({
+                    agentId: result.agentId,
+                    agentName: result.agentName,
+                });
+                addToast('info', t('profile.referralAlreadyJoined'));
+            } else {
+                addToast('error', t('profile.referralInvalidCode'));
+            }
+        } catch (err) {
+            addToast('error', getErrorMessage(err));
+        } finally {
+            setJoiningReferral(false);
+        }
+    };
 
     const startEdit = () => {
         setDisplayName(profile?.displayName ?? '');
@@ -393,6 +452,65 @@ export function Profile({
                     </div>
                 )}
             </section>
+
+            {/* ── Referral ── */}
+            {!referralLoading && (
+                <section className='card'>
+                    <div className='section-header'>
+                        <div>
+                            <div className='section-title'>
+                                {t('profile.referralTitle')}
+                            </div>
+                            <p className='section-copy'>
+                                {referralStatus?.agentId
+                                    ? t('profile.referralJoinedDesc')
+                                    : t('profile.referralJoinDesc')}
+                            </p>
+                        </div>
+                    </div>
+
+                    {referralStatus?.agentId ? (
+                        <div className='profile-info-list'>
+                            <InfoRow
+                                icon={<Gift size={16} />}
+                                label={t('profile.referredByLabel')}
+                                value={
+                                    referralStatus.agentName ??
+                                    t('profile.referralUnknownAgent')
+                                }
+                            />
+                        </div>
+                    ) : (
+                        <div className='stack-sm' style={{ marginTop: 8 }}>
+                            <label className='form-field'>
+                                <span>{t('profile.referralCodeLabel')}</span>
+                                <input
+                                    className='input'
+                                    value={referralInput}
+                                    onChange={(e) =>
+                                        setReferralInput(e.target.value)
+                                    }
+                                    placeholder={t(
+                                        'profile.referralCodePlaceholder',
+                                    )}
+                                    maxLength={128}
+                                />
+                            </label>
+                            <button
+                                className='btn btn-primary'
+                                disabled={
+                                    !referralInput.trim() || joiningReferral
+                                }
+                                onClick={submitReferral}
+                            >
+                                {joiningReferral
+                                    ? t('profile.referralJoining')
+                                    : t('profile.referralJoinBtn')}
+                            </button>
+                        </div>
+                    )}
+                </section>
+            )}
 
             {/* ── Language ── */}
             <section className='card'>

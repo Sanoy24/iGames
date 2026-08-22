@@ -305,10 +305,14 @@ describe('BingoRulesService', () => {
         });
     });
 
-    // ─── composite_or patterns ("Any 2 Lines or Line & Corners" style) ──────────
-    describe('evaluatePatternTicket  composite_or patterns', () => {
-        // Same 5×5 fixture as the multi-line block above: FREE centre, rows carry
-        // contiguous blocks. Corners here are 1 (0,0), 5 (0,4), 20 (4,0), 24 (4,4).
+    // ─── any_line/any_two_lines/any_three_lines counting bonus shapes as units ──
+    // Small Cross, Small X, and Corners each count as ONE unit, on equal
+    // footing with a real completed line, freely combinable: 2 real lines; OR
+    // 1 line + 1 shape; OR 2 shapes together with zero real lines; etc.
+    describe('evaluatePatternTicket  bonus shapes count as line-tier units', () => {
+        // Same 5×5 fixture as the multi-line block above. Corners: 1 (0,0),
+        // 5 (0,4), 20 (4,0), 24 (4,4). Small Cross: 16,17,18,22 (+ free centre).
+        // Small X: 7,9,16,18 (+ free centre).
         const grid: (number | null)[][] = [
             [1, 2, 3, 4, 5],
             [6, 7, 8, 9, 10],
@@ -316,146 +320,57 @@ describe('BingoRulesService', () => {
             [15, 16, 17, 18, 19],
             [20, 21, 22, 23, 24],
         ];
-        const CORNERS_MASK = [
-            [true, false, false, false, true],
-            [false, false, false, false, false],
-            [false, false, false, false, false],
-            [false, false, false, false, false],
-            [true, false, false, false, true],
-        ];
-        const twoLinesOrLineAndCorners = {
-            id: 'p-composite',
-            patternType: 'composite_or',
-            compositeOptions: [
-                { minLines: 2 },
-                { minLines: 1, mask: CORNERS_MASK },
-            ],
-        } as any;
+        const completes = (drawn: number[], patternType: string) =>
+            service
+                .evaluatePatternTicket(grid, drawn, [
+                    { id: patternType, patternType } as any,
+                ])
+                .completedPatternIds.includes(patternType);
 
-        it('is satisfied by 1 line + all 4 corners, even without a second full line', () => {
-            // Row0 (a full line) already covers 2 of the 4 corners (1, 5); adding
-            // the other two corners (20, 24) alone  NOT the rest of row4
-            // matches the screenshot: one diagonal/line plus the 4 corners.
-            const drawn = [1, 2, 3, 4, 5, 20, 24];
-            const { completedPatternIds } = service.evaluatePatternTicket(
-                grid,
-                drawn,
-                [twoLinesOrLineAndCorners],
-            );
-            expect(completedPatternIds).toContain('p-composite');
+        it('any_line is satisfied by a single bonus shape alone (Corners), zero real lines', () => {
+            const drawn = [1, 5, 20, 24];
+            expect(completes(drawn, 'any_line')).toBe(true);
+            expect(completes(drawn, 'any_two_lines')).toBe(false);
         });
 
-        it('is NOT satisfied by 1 line alone (no corners, no second line)', () => {
-            const drawn = [1, 2, 3, 4, 5];
-            const { completedPatternIds } = service.evaluatePatternTicket(
-                grid,
-                drawn,
-                [twoLinesOrLineAndCorners],
-            );
-            expect(completedPatternIds).not.toContain('p-composite');
+        it('any_two_lines is satisfied by 1 real line + 1 bonus shape (Small Cross)', () => {
+            // Row0 (a full line) + Small Cross's own cells  no other line
+            // accidentally completes from just these numbers.
+            const drawn = [1, 2, 3, 4, 5, 16, 17, 18, 22];
+            expect(completes(drawn, 'any_two_lines')).toBe(true);
         });
 
-        it('is still satisfied by the plain 2-lines option with no corners involved', () => {
-            const drawn = [
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, // row0 + row1
-            ];
-            const { completedPatternIds } = service.evaluatePatternTicket(
-                grid,
-                drawn,
-                [twoLinesOrLineAndCorners],
-            );
-            expect(completedPatternIds).toContain('p-composite');
+        it('any_two_lines is satisfied by 2 bonus shapes together, with ZERO real lines', () => {
+            // Small Cross (16,17,18,22) + Small X (7,9,16,18)  overlapping on
+            // 16/18 is fine, each shape is checked independently. No row, col,
+            // or diagonal is anywhere near complete from just these 6 numbers.
+            const drawn = [7, 9, 16, 17, 18, 22];
+            expect(completes(drawn, 'any_line')).toBe(true); // 2 shape units is still >= 1
+            expect(completes(drawn, 'any_two_lines')).toBe(true);
+            expect(completes(drawn, 'any_three_lines')).toBe(false);
         });
 
-        it('explainPatternCompletion reports just the line + corner cells, not the whole card', () => {
-            const drawn = [1, 2, 3, 4, 5, 20, 24];
-            const cells = service.explainPatternCompletion(
-                grid,
-                drawn,
-                twoLinesOrLineAndCorners,
-            );
+        it('any_three_lines is satisfied by 1 real line + 2 bonus shapes', () => {
+            const drawn = [1, 2, 3, 4, 5, 7, 9, 16, 17, 18, 22];
+            expect(completes(drawn, 'any_three_lines')).toBe(true);
+        });
+
+        it('any_three_lines is NOT satisfied by 2 real lines alone (still needs a 3rd unit)', () => {
+            const drawn = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // row0 + row1, no shapes
+            expect(completes(drawn, 'any_two_lines')).toBe(true);
+            expect(completes(drawn, 'any_three_lines')).toBe(false);
+        });
+
+        it('explainPatternCompletion highlights the shape\'s own cells, not the whole card, when a shape supplies the unit', () => {
+            const drawn = [1, 5, 20, 24]; // Corners alone
+            const cells = service.explainPatternCompletion(grid, drawn, {
+                patternType: 'any_line',
+            } as any);
             expect(cells).not.toBeNull();
             const keys = new Set(cells!.map((c) => `${c.row}:${c.col}`));
-            // Row0 (5 cells) ∪ corners (0,0)/(0,4)/(4,0)/(4,4)  row0 already
-            // covers two of those, so the union is 7 distinct cells.
-            expect(keys.size).toBe(7);
-            expect(keys.has('4:0')).toBe(true);
-            expect(keys.has('4:4')).toBe(true);
-        });
-
-        // "Any Line or Corners"-style: the shape-only option has no `minLines`
-        // at all, so it must be satisfied by the mask alone, independent of
-        // whether any line happens to be complete too.
-        const lineOrCornersAlone = {
-            id: 'p-line-or-corners',
-            patternType: 'composite_or',
-            compositeOptions: [{ minLines: 1 }, { mask: CORNERS_MASK }],
-        } as any;
-
-        it('the shape-alone option wins even with zero completed lines', () => {
-            // Only the 4 corners drawn  no row/col/diagonal is anywhere near
-            // complete, so this only passes if the mask-only option (no line
-            // requirement) is actually being checked independently.
-            const drawn = [1, 5, 20, 24];
-            const { completedPatternIds } = service.evaluatePatternTicket(
-                grid,
-                drawn,
-                [lineOrCornersAlone],
+            expect(keys).toEqual(
+                new Set(['0:0', '0:4', '4:0', '4:4']),
             );
-            expect(completedPatternIds).toContain('p-line-or-corners');
-        });
-
-        it('a mask-only option (no minLines) ignores an unrelated line entirely', () => {
-            const maskOnly = {
-                id: 'p-corners-only',
-                patternType: 'composite_or',
-                compositeOptions: [{ mask: CORNERS_MASK }],
-            } as any;
-            const drawn = [6, 7, 8, 9, 10]; // row1  a full line, but no corners
-            const { completedPatternIds } = service.evaluatePatternTicket(
-                grid,
-                drawn,
-                [maskOnly],
-            );
-            expect(completedPatternIds).not.toContain('p-corners-only');
-        });
-
-        // Cross(+)/X/T/L are each EXACTLY 2 full lines glued together, so they're
-        // redundant at tiers 1-2 (already covered by plain line-counting) but
-        // genuinely useful at tier 3, where 2 lines alone isn't normally enough.
-        it('"Any 3 Lines or 2 Lines & Cross(+)" is met by Cross(+) alone (only 2 real lines)', () => {
-            const CROSS_PLUS_MASK = [
-                [false, false, true, false, false],
-                [false, false, true, false, false],
-                [true, true, true, true, true],
-                [false, false, true, false, false],
-                [false, false, true, false, false],
-            ];
-            const threeLinesOrCross = {
-                id: 'p-3lines-or-cross',
-                patternType: 'composite_or',
-                compositeOptions: [
-                    { minLines: 3 },
-                    { minLines: 2, mask: CROSS_PLUS_MASK },
-                ],
-            } as any;
-            // Row2 (11,12,13,14 + free) ∪ Col2 (3,8,17,22 + free)  exactly the
-            // Cross(+) shape, exactly 2 lines, nothing else.
-            const drawn = [3, 8, 11, 12, 13, 14, 17, 22];
-
-            const plainThreeLines = service.evaluatePatternTicket(grid, drawn, [
-                { id: 'plain', patternType: 'any_three_lines' } as any,
-            ]);
-            expect(plainThreeLines.completedPatternIds).not.toContain(
-                'plain',
-            ); // only 2 real lines, so plain Any Three Lines correctly misses it
-
-            const composite = service.evaluatePatternTicket(grid, drawn, [
-                threeLinesOrCross,
-            ]);
-            expect(composite.completedPatternIds).toContain(
-                'p-3lines-or-cross',
-            ); // but the composite's Cross(+)-alone alternate catches it
         });
     });
 

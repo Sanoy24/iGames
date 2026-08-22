@@ -19,6 +19,7 @@ import { AuthIdentity } from './entities/auth-identity.entity';
 import { RefreshSession } from '../auth/entities/refresh-session.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
 import {
+    extractReferralCode,
     generateReferralCode,
     normalizeReferralCode,
 } from '../common/referral-code.util';
@@ -37,8 +38,23 @@ const AGENT_MATCH_RADIUS_METERS = 5000;
 export type AssignedAgentResult = {
     assignedAgentId: string | null;
     assignedAgentName: string | null;
-    assignedAgentSource: 'gps_match' | 'manual_pick' | 'referral' | 'other';
+    assignedAgentSource:
+        | 'gps_match'
+        | 'manual_pick'
+        | 'referral'
+        | 'admin_assigned'
+        | 'other';
 };
+
+export type ReferralStatus = {
+    agentId: string | null;
+    agentName: string | null;
+};
+
+export type ReferralJoinResult =
+    | { status: 'success'; agentId: string; agentName: string }
+    | { status: 'already_joined'; agentId: string; agentName: string | null }
+    | { status: 'invalid_code' };
 
 export type TelegramIdentityInput = {
     telegramUserId: string;
@@ -1107,6 +1123,122 @@ export class UsersService {
             .execute();
 
         return (result.affected ?? 0) > 0 ? agent.displayName : null;
+    }
+
+    /** The agent a player was referred by, for read-only display in the Mini App. */
+    async getReferralStatus(userId: string): Promise<ReferralStatus> {
+        const user = await this.findById(userId);
+        if (!user.referredByAgentId) return { agentId: null, agentName: null };
+
+        const agent = await this.userRepository.findOneBy({
+            id: user.referredByAgentId,
+        });
+        return {
+            agentId: user.referredByAgentId,
+            agentName: agent?.displayName ?? null,
+        };
+    }
+
+    /**
+     * Mini App counterpart to `attributeReferral` (which only the Telegram bot's
+     * `/start` deep link uses)  lets a player paste a bare code, a `ref_CODE`
+     * payload, or a full referral link directly into the app. Same once-only
+     * `referredByAgentId IS NULL` guard, but returns a status the UI can turn
+     * into a specific message instead of bot's plain success/null.
+     */
+    async joinReferralCode(
+        userId: string,
+        rawInput: string,
+    ): Promise<ReferralJoinResult> {
+        const user = await this.findById(userId);
+        if (user.referredByAgentId) {
+            const existing = await this.userRepository.findOneBy({
+                id: user.referredByAgentId,
+            });
+            return {
+                status: 'already_joined',
+                agentId: user.referredByAgentId,
+                agentName: existing?.displayName ?? null,
+            };
+        }
+
+        const code = extractReferralCode(rawInput);
+        if (!code) return { status: 'invalid_code' };
+
+        const agent = await this.userRepository.findOneBy({
+            referralCode: code,
+        });
+        if (
+            !agent ||
+            agent.status !== 'active' ||
+            !Array.isArray(agent.roles) ||
+            !agent.roles.includes('agent' as any) ||
+            agent.id === userId
+        ) {
+            return { status: 'invalid_code' };
+        }
+
+        const result = await this.userRepository
+            .createQueryBuilder()
+            .update(User)
+            .set({
+                referredByAgentId: agent.id,
+                assignedAgentId: agent.id,
+                assignedAgentSource: 'referral',
+                assignedAgentAt: new Date(),
+            })
+            .where('id = :userId AND referredByAgentId IS NULL', { userId })
+            .execute();
+
+        if ((result.affected ?? 0) === 0) {
+            // Lost a race with another writer (e.g. the bot) between the check above
+            // and this write  report whatever attribution won instead of erroring.
+            const raceStatus = await this.getReferralStatus(userId);
+            return {
+                status: 'already_joined',
+                agentId: raceStatus.agentId!,
+                agentName: raceStatus.agentName,
+            };
+        }
+
+        return { status: 'success', agentId: agent.id, agentName: agent.displayName };
+    }
+
+    /**
+     * Admin override of a player's agent assignment, from the Players admin
+     * screen's agent dropdown. Unlike `joinReferralCode` (player self-service,
+     * once only, guarded by `IS NULL`), an admin can reassign this at will  to
+     * fix a mis-attributed signup or move a player to a different agent  so
+     * this write is unconditional and also overwrites `referredByAgentId`
+     * (commission attribution), since the admin's pick is authoritative for both.
+     */
+    async setUserAgentByAdmin(
+        userId: string,
+        agentId: string,
+    ): Promise<AssignedAgentResult> {
+        await this.findById(userId); // 404s on a bad user id
+
+        const agent = await this.userRepository.findOneBy({ id: agentId });
+        if (
+            !agent ||
+            !Array.isArray(agent.roles) ||
+            !agent.roles.includes('agent' as any)
+        ) {
+            throw new NotFoundException('Agent not found');
+        }
+
+        await this.userRepository.update(userId, {
+            referredByAgentId: agent.id,
+            assignedAgentId: agent.id,
+            assignedAgentSource: 'admin_assigned',
+            assignedAgentAt: new Date(),
+        });
+
+        return {
+            assignedAgentId: agent.id,
+            assignedAgentName: agent.displayName,
+            assignedAgentSource: 'admin_assigned',
+        };
     }
 
     /**

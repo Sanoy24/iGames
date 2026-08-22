@@ -511,10 +511,26 @@ export const crashApi = {
 };
 
 // ── Users / Profile ───────────────────────────────────────────────
+export type ReferralStatus = {
+    agentId: string | null;
+    agentName: string | null;
+};
+
+export type ReferralJoinResult =
+    | { status: 'success'; agentId: string; agentName: string }
+    | { status: 'already_joined'; agentId: string; agentName: string | null }
+    | { status: 'invalid_code' };
+
 export const userApi = {
     getMe: () => api.get<User>('/users/me').then((r) => r.data),
     updateProfile: (dto: { displayName?: string; phoneNumber?: string }) =>
         api.patch<User>('/users/me', dto).then((r) => r.data),
+    getReferralStatus: () =>
+        api.get<ReferralStatus>('/users/me/referral').then((r) => r.data),
+    joinReferral: (code: string) =>
+        api
+            .post<ReferralJoinResult>('/users/me/referral', { code })
+            .then((r) => r.data),
 };
 
 // ── Locations (player-facing) ─────────────────────────────────────
@@ -534,7 +550,12 @@ export type OnDutyAgentOption = { id: string; name: string };
 export type AssignedAgentResult = {
     assignedAgentId: string | null;
     assignedAgentName: string | null;
-    assignedAgentSource: 'gps_match' | 'manual_pick' | 'referral' | 'other';
+    assignedAgentSource:
+        | 'gps_match'
+        | 'manual_pick'
+        | 'referral'
+        | 'admin_assigned'
+        | 'other';
 };
 
 export const agentMatchApi = {
@@ -2040,6 +2061,11 @@ export const adminUsersApi = {
     updateUserStatus: (id: string, status: 'active' | 'suspended' | 'closed') =>
         api
             .put<User>(`/admin/users/${id}/status`, { status })
+            .then((r) => r.data),
+    /** Flexible, reassignable-at-will  unlike the player's own one-time referral code. */
+    setUserAgent: (id: string, agentId: string) =>
+        api
+            .put<User>(`/admin/users/${id}/agent`, { agentId })
             .then((r) => r.data),
     adjustWallet: (
         userId: string,

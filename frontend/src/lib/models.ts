@@ -37,6 +37,18 @@ export type User = {
     sharedLocationAt?: string | null;
     /** An agent's shareable referral code (players never have one). */
     referralCode?: string | null;
+    /** PLAYER: the agent credited with bringing this player in  set once (referral code entry, or an admin pick) and never reassigned by the player. */
+    referredByAgentId?: string | null;
+    /** PLAYER: the agent currently routed to this player  reassignable, unlike referredByAgentId. */
+    assignedAgentId?: string | null;
+    assignedAgentSource?:
+        | 'gps_match'
+        | 'manual_pick'
+        | 'referral'
+        | 'admin_assigned'
+        | 'other'
+        | null;
+    assignedAgentAt?: string | null;
     /** This agent's referral-commission % override. Null = use the global default. */
     referralCommissionPct?: number | null;
     /** This agent's per-game referral-commission % overrides (keno/crash/pool/werk). Missing key = no override for that game. */
@@ -173,13 +185,7 @@ export type PatternType =
     | 'any_line'
     | 'any_two_lines'
     | 'any_three_lines'
-    | 'coverall'
-    | 'composite_or';
-
-export type PatternCompositeOption = {
-    minLines?: number;
-    mask?: boolean[][];
-};
+    | 'coverall';
 
 export type BingoPattern = {
     id: string;
@@ -187,7 +193,6 @@ export type BingoPattern = {
     description?: string;
     patternType: PatternType;
     mask?: boolean[][];
-    compositeOptions?: PatternCompositeOption[] | null;
     isBuiltIn: boolean;
     enabled: boolean;
     sortOrder: number;

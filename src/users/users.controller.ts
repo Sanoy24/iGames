@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Get, ParseIntPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, DefaultValuePipe, Get, HttpCode, HttpStatus, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -7,6 +7,7 @@ import { BingoService } from '../bingo/bingo.service';
 import { KenoService } from '../keno/keno.service';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { JoinReferralDto } from './dto/join-referral.dto';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -27,6 +28,19 @@ export class UsersController {
   @Patch('me')
   updateMe(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateProfileDto) {
     return this.usersService.updateProfile(user.id, dto);
+  }
+
+  /** Null agent when the player hasn't entered a referral code (or joined via one at signup). */
+  @Get('me/referral')
+  getMyReferralStatus(@CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.getReferralStatus(user.id);
+  }
+
+  /** One-time referral code/link entry from the Mini App  see UsersService.joinReferralCode. */
+  @Post('me/referral')
+  @HttpCode(HttpStatus.OK)
+  joinReferral(@CurrentUser() user: AuthenticatedUser, @Body() dto: JoinReferralDto) {
+    return this.usersService.joinReferralCode(user.id, dto.code);
   }
 
   @Get('me/history')

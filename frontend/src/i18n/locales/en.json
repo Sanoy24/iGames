@@ -364,7 +364,19 @@
         "logoutBtn": "Logout",
         "profileUpdated": "Profile updated.",
         "passwordMinLength": "New password must be at least 8 characters.",
-        "passwordChanged": "Password changed. Sign in again with the new password."
+        "passwordChanged": "Password changed. Sign in again with the new password.",
+        "referralTitle": "Referral",
+        "referralJoinDesc": "Have a referral code or link from an agent? Enter it once to link your account  it can't be changed afterwards.",
+        "referralJoinedDesc": "Your account is linked to this agent.",
+        "referredByLabel": "Referred By",
+        "referralUnknownAgent": "Agent",
+        "referralCodeLabel": "Referral Code or Link",
+        "referralCodePlaceholder": "e.g. ABC123 or a referral link",
+        "referralJoinBtn": "Join",
+        "referralJoining": "Joining…",
+        "referralJoined": "You're now linked with {{agent}}.",
+        "referralAlreadyJoined": "Your account is already linked to an agent.",
+        "referralInvalidCode": "That referral code isn't valid. Check it and try again."
     },
     "login": {
         "welcome": "Welcome",

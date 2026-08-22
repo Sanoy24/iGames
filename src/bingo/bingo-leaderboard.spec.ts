@@ -167,7 +167,7 @@ describe('rankDerashLeaderboard', () => {
      * (column G) finishes at ball 30 while #44's (its 2nd row) finishes at ball 32,
      * so #107 correctly outranks #44 for 3rd  even though #44 was bought earlier.
      */
-    it('REAL ROUND: #107 finishes its line at ball 30, #44 at ball 32 → #107 correctly wins 3rd', () => {
+    it('REAL ROUND: #44 reaches 1 line + Small X (2 units) at ball 38, outranking #107\'s single line at ball 30', () => {
         const realPlacePattern = new Map<PrefilledPlace, BingoPattern>([
             ['1st', pat('r1', 'any_three_lines')],
             ['2nd', pat('r2', 'any_two_lines')],
@@ -210,13 +210,19 @@ describe('rankDerashLeaderboard', () => {
             realPlacePattern,
         );
 
-        // Both reach only the one-line tier (index 2 of PLACES). #107 gets there on
-        // ball 30, #44 on ball 32 → #107 ranks ahead. #47 (three lines) and #67 (two
-        // lines) sit above both and take 1st/2nd, so this pair contests 3rd  which
-        // #107 rightly wins.
+        // Since bonus shapes (Corners/Small Cross/Small X) each count as one more
+        // unit toward any_line/any_two_lines/any_three_lines (freely combinable
+        // with real lines  see BONUS_SHAPE_MASKS/countLineTierUnits), replaying
+        // this SAME real 42-ball draw now gives #44 a different, correct result:
+        // its one real line PLUS the Small X shape (cells 48, 20, 26, 52  the
+        // last, 26, lands at ball 38) reaches the 2-unit tier at ball 38, so #44
+        // now ranks 2nd (bestRank 1), ahead of #107, which only ever reaches the
+        // 1-line tier (bestRank 2) at ball 30. This is the intended effect of that
+        // rule, not a regression  a card can legitimately outrank a single visible
+        // line by also completing a small shape nobody explicitly pointed at.
         expect(ranked).toEqual([
+            { key: 44, bestRank: 1, reachedAt: 38, order: 0 },
             { key: 107, bestRank: 2, reachedAt: 30, order: 1 },
-            { key: 44, bestRank: 2, reachedAt: 32, order: 0 },
         ]);
     });
 });

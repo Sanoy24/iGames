@@ -14,22 +14,7 @@ export type PatternType =
     | 'any_line'
     | 'any_two_lines'
     | 'any_three_lines'
-    | 'coverall'
-    | 'composite_or';
-
-/**
- * One alternate way to satisfy a `composite_or` pattern  e.g. "1 line + the
- * Corners mask" or "2 lines" alone. The pattern is completed if ANY option is
- * fully met: `minLines` (if set) requires at least that many completed
- * rows/cols/diagonals, and `mask` (if set) requires those exact cells marked
- * too  matching real bingo-hall pattern books (e.g. "Any 2 Lines or Line & 4
- * Corners"), where a harder line-count tier can also be reached via an easier
- * line-count plus a bonus shape.
- */
-export type PatternCompositeOption = {
-    minLines?: number;
-    mask?: boolean[][];
-};
+    | 'coverall';
 
 @Entity({ name: 'bingo_patterns', engine: 'InnoDB ROW_FORMAT=DYNAMIC' })
 export class BingoPattern {
@@ -52,10 +37,6 @@ export class BingoPattern {
      */
     @Column({ type: 'json', nullable: true })
     mask?: boolean[][];
-
-    /** Only used when patternType === 'composite_or'. See PatternCompositeOption. */
-    @Column({ type: 'json', nullable: true })
-    compositeOptions?: PatternCompositeOption[] | null;
 
     /** Built-in patterns cannot be deleted */
     @Column({ type: 'boolean', default: false })

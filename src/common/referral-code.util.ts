@@ -84,3 +84,18 @@ export function parseReferralPayload(
 
     return normalizeReferralCode(withoutPrefix);
 }
+
+/**
+ * Accepts whatever a player pastes into a "have a referral code?" field  a
+ * bare code, a `ref_CODE` deep-link payload, or a full `t.me/<bot>?start=ref_CODE`
+ * link  and extracts the normalized code. Returns null if nothing usable.
+ */
+export function extractReferralCode(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    const trimmed = raw.trim();
+
+    const startParam = trimmed.match(/[?&]start=([^&\s]+)/i);
+    if (startParam) return parseReferralPayload(decodeURIComponent(startParam[1]));
+
+    return parseReferralPayload(trimmed);
+}

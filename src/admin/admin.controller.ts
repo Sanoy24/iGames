@@ -31,6 +31,7 @@ import { AdminService } from './admin.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { SetAgentOnDutyDto } from './dto/set-agent-on-duty.dto';
+import { SetUserAgentDto } from './dto/set-user-agent.dto';
 import { UpdateSystemConfigDto } from './dto/update-system-config.dto';
 import { VerifyDepositDto } from './dto/verify-deposit.dto';
 import { VerifyWithdrawalDto } from './dto/verify-withdrawal.dto';
@@ -273,6 +274,12 @@ export class AdminController {
     @Put('users/:id/status')
     updateUserStatus(@Param('id') id: string, @Body('status') status: string) {
         return this.usersService.updateStatus(id, status as any);
+    }
+
+    /** Admin picks a user's agent from a dropdown  reassignable at will, unlike a player's own one-time referral code. */
+    @Put('users/:id/agent')
+    setUserAgent(@Param('id') id: string, @Body() dto: SetUserAgentDto) {
+        return this.usersService.setUserAgentByAdmin(id, dto.agentId);
     }
 
     @Post('users/:id/wallet/adjust')

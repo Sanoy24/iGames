@@ -1,5 +1,5 @@
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
-import type { PatternType, PatternCompositeOption } from '../entities/bingo-pattern.entity';
+import type { PatternType } from '../entities/bingo-pattern.entity';
 
 const PATTERN_TYPES: PatternType[] = [
   'fixed',
@@ -10,7 +10,6 @@ const PATTERN_TYPES: PatternType[] = [
   'any_two_lines',
   'any_three_lines',
   'coverall',
-  'composite_or',
 ];
 
 export class CreateBingoPatternDto {
@@ -27,10 +26,6 @@ export class CreateBingoPatternDto {
   @IsOptional()
   @IsArray()
   mask?: boolean[][];
-
-  @IsOptional()
-  @IsArray()
-  compositeOptions?: PatternCompositeOption[];
 
   @IsOptional()
   @IsBoolean()
@@ -58,10 +53,6 @@ export class UpdateBingoPatternDto {
   @IsOptional()
   @IsArray()
   mask?: boolean[][];
-
-  @IsOptional()
-  @IsArray()
-  compositeOptions?: PatternCompositeOption[];
 
   @IsOptional()
   @IsBoolean()

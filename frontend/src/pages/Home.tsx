@@ -28,7 +28,7 @@ import {
     type LucideIcon,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import { kenoApi, walletApi } from '../lib/api';
+import { bingoApi, kenoApi, walletApi } from '../lib/api';
 import type { KenoDraw, LedgerEntry, RecentWin } from '../lib/models';
 import type { AppTab } from '../lib/navigation';
 import { soundEngine } from '../lib/audio';
@@ -500,6 +500,33 @@ export function Home({ onNavigate }: Props) {
         };
     }, [loadRecentWins]);
 
+    // The "playing" pill shows cartelas actually bought in the live Bingo room,
+    // not a generic connection count  a real signal of how much action is
+    // happening right now, kept live via the same room-update/draw events the
+    // Bingo screen itself listens to.
+    const [bingoCartelas, setBingoCartelas] = useState(0);
+    const loadBingoCartelas = useCallback(() => {
+        bingoApi
+            .getCurrentRoom()
+            .then((room) => setBingoCartelas(room?.soldTickets ?? 0))
+            .catch(() => {});
+    }, []);
+    useEffect(() => {
+        loadBingoCartelas();
+    }, [loadBingoCartelas]);
+    useEffect(() => {
+        const socket = getSocket();
+        if (!socket) return;
+        socket.on('bingo.room.updated', loadBingoCartelas);
+        socket.on('bingo.number.drawn', loadBingoCartelas);
+        socket.on('bingo.room.completed', loadBingoCartelas);
+        return () => {
+            socket.off('bingo.room.updated', loadBingoCartelas);
+            socket.off('bingo.number.drawn', loadBingoCartelas);
+            socket.off('bingo.room.completed', loadBingoCartelas);
+        };
+    }, [loadBingoCartelas]);
+
     const countdown = useCountdownSecs(
         activeDraw?.status === 'open' ? activeDraw.scheduledAt : null,
     );
@@ -753,7 +780,7 @@ export function Home({ onNavigate }: Props) {
                             })}
                         </span>
                     )}
-                    {liveCounts && liveCounts.totalPlaying > 0 && (
+                    {bingoCartelas > 0 && (
                         <span
                             className='live-badge-pulse'
                             style={{
@@ -771,7 +798,7 @@ export function Home({ onNavigate }: Props) {
                                 }}
                             />
                             {t('home.playing', {
-                                count: liveCounts.totalPlaying,
+                                count: bingoCartelas,
                             })}
                         </span>
                     )}

@@ -3657,6 +3657,7 @@ function AgentsAdmin() {
                                     <th>Total Earnings</th>
                                     <th>Settled</th>
                                     <th>Remaining</th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -3678,18 +3679,21 @@ function AgentsAdmin() {
                                             {p.players}
                                         </td>
                                         <td className='adm-td-muted'>
-                                            {formatCreditsFull(p.stakedMinor)}
+                                            {formatCreditsFull(p.stakedMinor)}{' '}
+                                            ETB
                                         </td>
                                         <td className='adm-td-muted'>
-                                            {formatCreditsFull(p.payoutMinor)}
+                                            {formatCreditsFull(p.payoutMinor)}{' '}
+                                            ETB
                                         </td>
                                         <td className='adm-td-muted'>
-                                            {formatCreditsFull(p.ggrMinor)}
+                                            {formatCreditsFull(p.ggrMinor)} ETB
                                         </td>
                                         <td>
                                             {formatCreditsFull(
                                                 p.commissionEarnedMinor,
                                             )}{' '}
+                                            ETB{' '}
                                             <span className='adm-td-muted'>
                                                 ({p.commissionEarnedCount})
                                             </span>
@@ -3697,7 +3701,8 @@ function AgentsAdmin() {
                                         <td className='adm-td-muted'>
                                             {formatCreditsFull(
                                                 p.withdrawalFeesEarnedMinor,
-                                            )}
+                                            )}{' '}
+                                            ETB
                                         </td>
                                         <td className='adm-td-muted'>
                                             {p.depositCount}
@@ -3705,24 +3710,28 @@ function AgentsAdmin() {
                                         <td className='adm-td-muted'>
                                             {formatCreditsFull(
                                                 p.depositVolumeMinor,
-                                            )}
+                                            )}{' '}
+                                            ETB
                                         </td>
                                         <td className='adm-td-muted'>
                                             {formatCreditsFull(
                                                 p.depositCommissionEarnedMinor,
-                                            )}
+                                            )}{' '}
+                                            ETB
                                         </td>
                                         <td>
                                             <strong>
                                                 {formatCreditsFull(
                                                     p.totalEarningsMinor,
-                                                )}
+                                                )}{' '}
+                                                ETB
                                             </strong>
                                         </td>
                                         <td style={{ color: 'var(--green)' }}>
                                             {formatCreditsFull(
                                                 p.totalSettledMinor,
-                                            )}
+                                            )}{' '}
+                                            ETB
                                         </td>
                                         <td
                                             style={{
@@ -3734,7 +3743,25 @@ function AgentsAdmin() {
                                         >
                                             {formatCreditsFull(
                                                 p.remainingMinor,
-                                            )}
+                                            )}{' '}
+                                            ETB
+                                        </td>
+                                        <td>
+                                            <button
+                                                className='adm-btn adm-btn-secondary adm-btn-xs'
+                                                onClick={() => {
+                                                    const agent = agents.find(
+                                                        (a) =>
+                                                            a.id === p.agentId,
+                                                    );
+                                                    if (agent) {
+                                                        startEdit(agent);
+                                                        setShowForm(false);
+                                                    }
+                                                }}
+                                            >
+                                                Edit
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}

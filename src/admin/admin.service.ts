@@ -1514,14 +1514,16 @@ export class AdminService implements OnApplicationBootstrap {
         }>
     > {
         // Bots are excluded from tickets/players/GGR  bot stakes aren't real revenue.
-        // "Game commission" is referral commission across every game that pays it
-        // (see REFERRAL_COMMISSION_SOURCE_TYPES  Bingo, Keno, Crash, Pool, Werk).
-        // There is no room-owner commission (removed); any pre-existing
-        // bingo_room_commission rows are historical and still folded into the
-        // amount total below so past real earnings aren't dropped from the
-        // lifetime figure, but they don't grow going forward. Withdrawal fees are
-        // tracked separately  payout_custody is deliberately excluded everywhere
-        // below, it reimburses cash already paid out, not earnings.
+        // "Commission" is referral commission across every game that pays it (see
+        // REFERRAL_COMMISSION_SOURCE_TYPES  Bingo, Keno, Crash, Pool, Werk), and
+        // ONLY that  it deliberately excludes the removed `bingo_room_commission`
+        // source (paid whenever an agent owned the Bingo room, independent of
+        // referrals; nothing writes it anymore). Any pre-existing such rows are
+        // historical revenue the agent really earned, but folding them into this
+        // column made an agent with 0 referred players/GGR show a nonzero
+        // "Commission" here, which read as a bug. Withdrawal fees are tracked
+        // separately  payout_custody is deliberately excluded everywhere below,
+        // it reimburses cash already paid out, not earnings.
         const referralSourceTypesSql = REFERRAL_COMMISSION_SOURCE_TYPES.map(
             (t) => `'${t}'`,
         ).join(', ');
@@ -1540,7 +1542,6 @@ export class AdminService implements OnApplicationBootstrap {
             deposits: string | number;
             depositVolume: string | number;
             depositCommission: string | number;
-            referralCommission: string | number;
             settledMinor: string | number;
             claimedMinor: string | number;
         }> = await this.dataSource.query(
@@ -1556,7 +1557,6 @@ export class AdminService implements OnApplicationBootstrap {
               COALESCE(d.deposits, 0) deposits,
               COALESCE(d.depositVolume, 0) depositVolume,
               COALESCE(dcm.commission, 0) depositCommission,
-              COALESCE(rc.referralCommission, 0) referralCommission,
               COALESCE(st.settledMinor, 0) settledMinor,
               COALESCE(st.claimedMinor, 0) claimedMinor
          FROM users u
@@ -1578,7 +1578,7 @@ export class AdminService implements OnApplicationBootstrap {
          LEFT JOIN (
            SELECT userId, SUM(amountMinor) commission, COUNT(*) commissionCount
              FROM ledger_entries
-            WHERE entryType = 'agent_receipt' AND sourceType IN ('bingo_room_commission', ${referralSourceTypesSql})
+            WHERE entryType = 'agent_receipt' AND sourceType IN (${referralSourceTypesSql})
             GROUP BY userId
          ) cm ON cm.userId = u.id
          LEFT JOIN (
@@ -1601,12 +1601,6 @@ export class AdminService implements OnApplicationBootstrap {
             GROUP BY userId
          ) dcm ON dcm.userId = u.id
          LEFT JOIN (
-           SELECT userId, SUM(amountMinor) referralCommission
-             FROM ledger_entries
-            WHERE entryType = 'agent_receipt' AND sourceType IN (${referralSourceTypesSql})
-            GROUP BY userId
-         ) rc ON rc.userId = u.id
-         LEFT JOIN (
            SELECT agentId,
                   SUM(CASE WHEN status = 'paid' THEN amountPaidMinor ELSE 0 END) settledMinor,
                   SUM(CASE WHEN status IN ('paid', 'pending', 'approved') THEN amountPaidMinor ELSE 0 END) claimedMinor
@@ -1621,13 +1615,13 @@ export class AdminService implements OnApplicationBootstrap {
             const stakedMinor = Number(r.staked ?? 0);
             const payoutMinor = Number(r.payout ?? 0);
             // Total earnings here matches AgentsService.computeAgentEarnings exactly
-            // (referral commission + withdrawal fees)  NOT the legacy-inclusive
-            // `commission` field above  so it lines up with what settlements
-            // (agent_settlements, computed from that same source) actually claim
-            // against. Using the broader figure would make "remaining" look wrong.
+            // (referral commission + withdrawal fees)  `commission` is now
+            // referral-only too (see the comment above), so it lines up with what
+            // settlements (agent_settlements, computed from that same source)
+            // actually claim against.
             const withdrawalFeesEarnedMinor = Number(r.withdrawalFees ?? 0);
             const totalEarningsMinor =
-                Number(r.referralCommission ?? 0) + withdrawalFeesEarnedMinor;
+                Number(r.commission ?? 0) + withdrawalFeesEarnedMinor;
             const claimedMinor = Number(r.claimedMinor ?? 0);
             return {
                 agentId: r.id,

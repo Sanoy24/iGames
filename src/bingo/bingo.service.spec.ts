@@ -4008,7 +4008,14 @@ describe('BingoService.reconcileBotCartelasInRoom  bonus bot-win cartela overrid
 describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override', () => {
     it('does not cancel a zero-real-player room and forces botCount*maxCartelasPerBot while a window is active', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        // Old enough to clear the first-bot-buy-in gate (see the dedicated
+        // "first-bot-buy-in gate" tests below) so this test can focus on the
+        // cartela-count math instead.
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            createdAt: new Date(Date.now() - 60_000),
+        });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
 
         jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
@@ -4103,7 +4110,14 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
 
     it('randomizes each bot\'s cartela count within [minCartelasPerBot, maxCartelasPerBot] and keeps it stable across ticks', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        // Old enough to clear the first-bot-buy-in gate (see the dedicated
+        // "first-bot-buy-in gate" tests below) so this test can focus on the
+        // randomization behavior instead.
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            createdAt: new Date(Date.now() - 60_000),
+        });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
 
         jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
@@ -4157,6 +4171,11 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
 
         await service.reconcileBotCartelasInRoom(room.id);
 
+        // Guards against this test vacuously passing (e.g. if the buy-in gate
+        // silently blocked every purchase, the loop below would iterate zero
+        // times and every assertion in it would trivially "pass").
+        expect(purchaseSpy).toHaveBeenCalled();
+
         const perBotCounts = new Map<string, number>();
         (purchaseSpy.mock.calls as any[]).forEach((call) => {
             const userId = call[0].userId;
@@ -4198,6 +4217,214 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
         expect(purchaseSpy).not.toHaveBeenCalled();
         expect(releaseSpy).not.toHaveBeenCalled();
         expect(secondChanged).toBe(false);
+    });
+});
+
+describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () => {
+    // Regression coverage for the reported bug: a room is created (idle) the
+    // instant the previous one completes, but the client keeps showing the
+    // PREVIOUS room's result  a live per-place popup, then the Bonus Win
+    // popup, THEN the resultDisplaySeconds countdown  before switching over
+    // (see Bingo.tsx). This method is reached not just from the scheduler's
+    // periodic tick but also directly from a real player's purchase/refund
+    // elsewhere in the same room (purchaseTickets/releaseCartela), so the gate
+    // has to live HERE, not in the scheduler, to cover every caller uniformly.
+    function baseMocks(service: any, overrides: Record<string, unknown> = {}) {
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'off',
+            botCartelaPolicyEnabled: false,
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+            resultDisplaySeconds: 10,
+            bonusWinDisplaySeconds: 5,
+            ...overrides,
+        });
+        jest.spyOn(service, 'cancelRoom').mockResolvedValue({} as any);
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(0);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue([1, 2, 3, 4, 5, 6]);
+    }
+
+    it('does not buy any bot cartela into a room created just now, during an active Scheduled Bot Play window', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            createdAt: new Date(),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).not.toHaveBeenCalled();
+        expect(changed).toBe(false);
+    });
+
+    it('does not buy in for a room pinned to a Win Sequence "bot" slot either, while under the gate', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            createdAt: new Date(),
+            winSequenceTarget: 'bot',
+        } as any);
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue(null);
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).not.toHaveBeenCalled();
+        expect(changed).toBe(false);
+    });
+
+    it('buys in once the full gate (resultDisplaySeconds + live-place popup + Bonus Win popup + buffer) has elapsed', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            // 10s + 3.4s + 5s + 1.5s buffer = 19.9s  comfortably past it.
+            createdAt: new Date(Date.now() - 21_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).toHaveBeenCalled();
+        expect(changed).toBe(true);
+    });
+
+    it('does NOT gate a room older than resultDisplaySeconds alone  the live-place and Bonus Win popups add more time first', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            // Clears resultDisplaySeconds(10s) alone but must NOT clear the full gate.
+            createdAt: new Date(Date.now() - 11_000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).not.toHaveBeenCalled();
+        expect(changed).toBe(false);
+    });
+
+    it('does not apply the gate once bots already hold at least one cartela in the room', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            createdAt: new Date(), // brand new
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            1, // a bot already bought in on an earlier, ungated tick
+        );
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(1);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).toHaveBeenCalled();
+    });
+
+    it('does not gate ordinary human-driven mirror participation (no Scheduled Bot Play, no Win Sequence bot slot)', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            soldTickets: 2,
+            createdAt: new Date(), // brand new, but a real player already bought in
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service, {
+            botCartelaPolicyEnabled: true,
+        });
+        jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue(null);
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).toHaveBeenCalled();
     });
 });
 

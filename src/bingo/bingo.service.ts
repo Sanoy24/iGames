@@ -83,6 +83,16 @@ export const PREFILLED_PLACES: PrefilledPlace[] = [
 ];
 const DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS = 25;
 
+// Mirrors frontend/src/pages/Bingo.tsx's LIVE_PLACE_WIN_MS  how long the
+// client shows a live per-place win popup before draining it. Keep in sync
+// with that constant; used only to budget reconcileBotCartelasInRoom's
+// first-bot-buy-in gate below.
+const LIVE_PLACE_WIN_MS = 3_400;
+
+// Extra buffer on top of the computed buy-in gate for network/render latency
+// between the client finishing its hold and a reconcile call observing that.
+const BUY_IN_GATE_SAFETY_BUFFER_MS = 1_500;
+
 type RoomBotIdentity = BingoBotIdentity;
 
 // ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
@@ -7003,6 +7013,38 @@ export class BingoService implements OnModuleInit {
         const cartelaPolicy = this.resolveBingoBotCartelaPolicy(cfg);
         const currentBotCartelas =
             await this.countBotCartelasInRoom(validRoomId);
+        // A brand-new room's FIRST bot cartela must wait until the client has
+        // actually finished showing the previous room's result and returned to
+        // the buying screen  otherwise a fill triggered by ANYTHING that calls
+        // this method (the scheduler's periodic tick, or the inline reconcile
+        // fired from a real player's purchase/refund elsewhere in this same
+        // room; see purchaseTickets/releaseCartela) seeds bots into the room
+        // before anyone could have seen it, making cartelas look pre-sold and
+        // the countdown look already-elapsed the moment the screen appears
+        // (reported bug). The client's hold isn't just resultDisplaySeconds: it
+        // first drains a live per-place win popup and the Bonus Win popup, THEN
+        // starts the resultDisplaySeconds countdown  see Bingo.tsx's "don't
+        // start its display countdown until then" effect. This only gates the
+        // very FIRST bot cartela for a Scheduled Bot Play / Win Sequence 'bot'
+        // room (currentBotCartelas === 0); once any bot has bought in, or for
+        // ordinary human-driven mirror participation, nothing here changes.
+        if (
+            currentBotCartelas === 0 &&
+            (activeBotPlaySchedule || winSequenceForcesBot)
+        ) {
+            const resultDisplayMs =
+                Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000;
+            const bonusWinDisplayMs =
+                Math.max(0, cfg.bonusWinDisplaySeconds ?? 5) * 1000;
+            const buyInGateMs =
+                resultDisplayMs +
+                LIVE_PLACE_WIN_MS +
+                bonusWinDisplayMs +
+                BUY_IN_GATE_SAFETY_BUFFER_MS;
+            if (Date.now() - room.createdAt.getTime() < buyInGateMs) {
+                return false;
+            }
+        }
         const totalCartelas = await this.countSoldTickets(validRoomId);
         const realCartelas = Math.max(0, totalCartelas - currentBotCartelas);
         const activeBotIds = await this.getActiveBotUserIds(

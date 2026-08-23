@@ -1,32 +1,26 @@
 import { BingoScheduler } from './bingo.scheduler';
 
-// Covers only the "don't top up a brand-new idle room's bot cartelas until the
-// client would actually be showing it" gate. Everything else `drawNextNumbers`
-// touches is mocked to a no-op so these tests isolate that one behavior.
-//
-// Root cause this guards against: a room is created (status='open', idle) the
-// instant the previous one completes, but the client keeps showing the
-// PREVIOUS room's win popup for `resultDisplaySeconds` (see
-// BingoService.getCurrentRoom). Without this gate, a Scheduled Bot Play /
-// Win Sequence 'bot' window let bots buy into the brand-new room immediately,
-// so by the time the client switched over, cartelas already looked pre-sold
-// and the buy-window countdown already looked partially elapsed.
+// Covers only which rooms the scheduler's periodic tick decides to visit for
+// bot cartela top-up during a Scheduled Bot Play / Win Sequence 'bot' window.
+// Whether it's actually too early for a room's FIRST bot cartela is decided
+// centrally inside BingoService.reconcileBotCartelasInRoom (see
+// bingo.service.spec.ts's "first-bot-buy-in gate" tests) - reconcile is also
+// reached directly from a real player's purchase/refund, not just from here,
+// so gating only at this scheduler layer previously left a hole where an
+// unrelated purchase could still trigger an immediate bot pile-on.
 function makeScheduler(overrides: {
     idleRooms?: Array<{
         id: string;
-        createdAt: Date;
         winSequenceTarget?: string | null;
     }>;
     countdownRooms?: Array<{ id: string }>;
     activeBotPlaySchedule?: unknown;
     winSequenceEnabled?: boolean;
-    resultDisplaySeconds?: number;
-    bonusWinDisplaySeconds?: number;
 } = {}) {
     const cfg = {
         drawIntervalSeconds: 2,
-        resultDisplaySeconds: overrides.resultDisplaySeconds ?? 10,
-        bonusWinDisplaySeconds: overrides.bonusWinDisplaySeconds ?? 5,
+        resultDisplaySeconds: 10,
+        bonusWinDisplaySeconds: 5,
         winSequenceEnabled: overrides.winSequenceEnabled ?? false,
     };
     const bingoService = {
@@ -85,98 +79,37 @@ function makeScheduler(overrides: {
     };
 }
 
-describe('BingoScheduler.drawNextNumbers  bot buy-in gate for freshly-created idle rooms', () => {
-    it('does not top up an idle room created just now during an active Scheduled Bot Play window', async () => {
+describe('BingoScheduler.drawNextNumbers  idle-room bot top-up visiting', () => {
+    it('visits an idle room during an active Scheduled Bot Play window (age is not decided here)', async () => {
         const { scheduler, botsService } = makeScheduler({
-            idleRooms: [{ id: 'room-new', createdAt: new Date() }],
+            idleRooms: [{ id: 'room-new' }],
             activeBotPlaySchedule: { id: 'schedule-1' },
-            resultDisplaySeconds: 10,
-        });
-
-        await scheduler.drawNextNumbers();
-
-        expect(botsService.topUpBotsForOpenRoom).not.toHaveBeenCalledWith(
-            'room-new',
-        );
-    });
-
-    it('does NOT top up a room older than resultDisplaySeconds alone  the client also drains a live-place popup and the Bonus Win popup before switching over', async () => {
-        // Regression test for the reported bug: gating on resultDisplaySeconds
-        // alone left a ~3.4s (live-place popup) + up to bonusWinDisplaySeconds
-        // gap where bots could still buy in before the client actually showed
-        // the buying screen. 11s clears resultDisplaySeconds(10s) alone but
-        // must NOT clear the full gate.
-        const { scheduler, botsService } = makeScheduler({
-            idleRooms: [
-                {
-                    id: 'room-almost-old-enough',
-                    createdAt: new Date(Date.now() - 11_000),
-                },
-            ],
-            activeBotPlaySchedule: { id: 'schedule-1' },
-            resultDisplaySeconds: 10,
-            bonusWinDisplaySeconds: 5,
-        });
-
-        await scheduler.drawNextNumbers();
-
-        expect(botsService.topUpBotsForOpenRoom).not.toHaveBeenCalledWith(
-            'room-almost-old-enough',
-        );
-    });
-
-    it('tops up an idle room once the full gate (resultDisplaySeconds + live-place popup + Bonus Win popup + buffer) has elapsed', async () => {
-        const { scheduler, botsService } = makeScheduler({
-            idleRooms: [
-                {
-                    id: 'room-old',
-                    // 10s + 3.4s + 5s + 1.5s buffer = 19.9s  comfortably past it.
-                    createdAt: new Date(Date.now() - 21_000),
-                },
-            ],
-            activeBotPlaySchedule: { id: 'schedule-1' },
-            resultDisplaySeconds: 10,
-            bonusWinDisplaySeconds: 5,
         });
 
         await scheduler.drawNextNumbers();
 
         expect(botsService.topUpBotsForOpenRoom).toHaveBeenCalledWith(
-            'room-old',
+            'room-new',
         );
     });
 
-    it('applies the same gate to an idle room pinned to a Win Sequence bot slot', async () => {
+    it('visits an idle room pinned to a Win Sequence bot slot', async () => {
         const { scheduler, botsService } = makeScheduler({
-            idleRooms: [
-                {
-                    id: 'room-seq-new',
-                    createdAt: new Date(),
-                    winSequenceTarget: 'bot',
-                },
-            ],
+            idleRooms: [{ id: 'room-seq-bot', winSequenceTarget: 'bot' }],
             winSequenceEnabled: true,
-            resultDisplaySeconds: 10,
         });
 
         await scheduler.drawNextNumbers();
 
-        expect(botsService.topUpBotsForOpenRoom).not.toHaveBeenCalledWith(
-            'room-seq-new',
+        expect(botsService.topUpBotsForOpenRoom).toHaveBeenCalledWith(
+            'room-seq-bot',
         );
     });
 
-    it('never touches an idle room NOT pinned to a bot slot, regardless of age', async () => {
+    it('never visits an idle room pinned to a Win Sequence USER slot', async () => {
         const { scheduler, botsService } = makeScheduler({
-            idleRooms: [
-                {
-                    id: 'room-seq-user',
-                    createdAt: new Date(Date.now() - 60_000),
-                    winSequenceTarget: 'user',
-                },
-            ],
+            idleRooms: [{ id: 'room-seq-user', winSequenceTarget: 'user' }],
             winSequenceEnabled: true,
-            resultDisplaySeconds: 10,
         });
 
         await scheduler.drawNextNumbers();
@@ -186,7 +119,19 @@ describe('BingoScheduler.drawNextNumbers  bot buy-in gate for freshly-created id
         );
     });
 
-    it('still tops up rooms whose countdown already started, regardless of the gate', async () => {
+    it('never visits idle rooms when neither Scheduled Bot Play nor Win Sequence is active', async () => {
+        const { scheduler, botsService } = makeScheduler({
+            idleRooms: [{ id: 'room-idle' }],
+        });
+
+        await scheduler.drawNextNumbers();
+
+        expect(botsService.topUpBotsForOpenRoom).not.toHaveBeenCalledWith(
+            'room-idle',
+        );
+    });
+
+    it('always tops up rooms whose countdown already started', async () => {
         const { scheduler, botsService } = makeScheduler({
             countdownRooms: [{ id: 'room-in-progress' }],
         });

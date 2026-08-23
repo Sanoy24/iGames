@@ -224,9 +224,6 @@ export function Games({ onNavigate }: Props) {
               <div className="game-banner-content">
                 <span className="game-banner-tag">
                   {bingo.maint ? t('games.maintenance') : t('games.bingoTag')}
-                  {liveCounts && liveCounts.bingoOnline > 0 && (
-                    <span className="live-pill-inline" style={{ marginLeft: 6 }}>🟢 {t('home.playing', { count: liveCounts.bingoOnline })}</span>
-                  )}
                 </span>
                 <h2 className="game-banner-title">Bingo</h2>
                 <p className="game-banner-desc">

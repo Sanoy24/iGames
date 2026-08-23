@@ -22,6 +22,15 @@ const BINGO_DRAW_LOCK_TTL_MS = 120_000;
 // after each run finishes (not fixed-rate), so slow ticks can't pile up.
 const SCHEDULER_TICK_MS = 250;
 
+// Mirrors frontend/src/pages/Bingo.tsx's LIVE_PLACE_WIN_MS  how long the
+// client shows a live per-place win popup before draining it. Keep in sync
+// with that constant; used only to budget the idle-room bot buy-in gate below.
+const LIVE_PLACE_WIN_MS = 3_400;
+
+// Extra buffer on top of the computed buy-in gate for network/render latency
+// between the client finishing its hold and this tick observing that.
+const BUY_IN_GATE_SAFETY_BUFFER_MS = 1_500;
+
 @Injectable()
 export class BingoScheduler
     implements OnApplicationBootstrap, OnApplicationShutdown
@@ -189,29 +198,47 @@ export class BingoScheduler
                     // (see BingoRoom.winSequenceTarget)  it must be able to start
                     // and play out on bots alone to make good on that slot.
                     //
-                    // A freshly-created room must sit untouched for at least
-                    // resultDisplaySeconds: that's how long the client keeps
-                    // showing the PREVIOUS room's win popup (see
-                    // BingoService.getCurrentRoom) before switching over, so a
-                    // bot buying in immediately  before any player could see
-                    // the buying screen  made cartelas look pre-sold and the
-                    // countdown look already-elapsed the moment it appeared
-                    // (reported: bots visibly buy before the win window closes).
-                    // Gating only the FIRST buy is enough: nothing else starts
-                    // this room's countdown during a bot-play window, so it
-                    // can't reach findOpenRoomsWithCountdown early either.
+                    // A freshly-created room must sit untouched long enough for
+                    // the client to actually finish showing the PREVIOUS room's
+                    // result before a bot buys in  otherwise cartelas look
+                    // pre-sold and the countdown looks already-elapsed the
+                    // moment the buying screen appears (reported: bots visibly
+                    // buy before the win window closes). The client's hold is
+                    // NOT just resultDisplaySeconds: it first drains any live
+                    // per-place win popup(s) (Bingo.tsx LivePlaceWinPopup,
+                    // LIVE_PLACE_WIN_MS each) and the Bonus Win popup, THEN
+                    // starts the resultDisplaySeconds countdown (see
+                    // Bingo.tsx's "don't start its display countdown until
+                    // then" effect) - only after ALL of that does it switch to
+                    // the next room. The worst realistic case is one live-place
+                    // popup and the bonus popup landing on the very last draw
+                    // (which is common - the hardest/final place often
+                    // completes on the same ball the room itself completes),
+                    // so the gate below budgets for exactly that, plus a small
+                    // network/render buffer. Gating only the FIRST buy is
+                    // enough: nothing else starts this room's countdown during
+                    // a bot-play window, so it can't reach
+                    // findOpenRoomsWithCountdown early either.
                     const activeBotPlaySchedule =
                         await this.bingoService.getActiveScheduledBotPlay();
                     if (activeBotPlaySchedule || cfg.winSequenceEnabled) {
                         const resultDisplayMs =
                             Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000;
+                        const bonusWinDisplayMs =
+                            Math.max(0, cfg.bonusWinDisplaySeconds ?? 5) *
+                            1000;
+                        const buyInGateMs =
+                            resultDisplayMs +
+                            LIVE_PLACE_WIN_MS +
+                            bonusWinDisplayMs +
+                            BUY_IN_GATE_SAFETY_BUFFER_MS;
                         const now = Date.now();
                         const idleRooms =
                             await this.bingoService.findIdleOpenRooms();
                         for (const room of idleRooms) {
                             if (
                                 now - room.createdAt.getTime() <
-                                resultDisplayMs
+                                buyInGateMs
                             ) {
                                 continue;
                             }

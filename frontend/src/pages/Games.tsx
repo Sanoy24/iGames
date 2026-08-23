@@ -1,10 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Zap, Users, Clock, Trophy, Star, TrendingUp, Target } from 'lucide-react';
 import type { AppTab } from '../lib/navigation';
 import { useStore } from '../store/useStore';
+import { bingoApi } from '../lib/api';
 import { formatOnlineCount } from '../lib/utils';
+import { getSocket } from '../hooks/useSocketConnection';
 
 type Props = { onNavigate: (tab: AppTab) => void; };
 
@@ -41,6 +43,32 @@ export function Games({ onNavigate }: Props) {
   const gameCatalog = useStore((s) => s.gameCatalog);
   const addToast = useStore((s) => s.addToast);
   const [filter, setFilter] = useState<Filter>('all');
+
+  // Same signal as the Home tab's "playing" badge: cartelas actually bought in
+  // the live Bingo room, not a generic connection count, kept live via the
+  // same room-update/draw events the Bingo screen itself listens to.
+  const [bingoCartelas, setBingoCartelas] = useState(0);
+  const loadBingoCartelas = useCallback(() => {
+    bingoApi
+      .getCurrentRoom()
+      .then((room) => setBingoCartelas(room?.soldTickets ?? 0))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadBingoCartelas();
+  }, [loadBingoCartelas]);
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    socket.on('bingo.room.updated', loadBingoCartelas);
+    socket.on('bingo.number.drawn', loadBingoCartelas);
+    socket.on('bingo.room.completed', loadBingoCartelas);
+    return () => {
+      socket.off('bingo.room.updated', loadBingoCartelas);
+      socket.off('bingo.number.drawn', loadBingoCartelas);
+      socket.off('bingo.room.completed', loadBingoCartelas);
+    };
+  }, [loadBingoCartelas]);
 
   // Availability: while the catalog is loading (null) default to visible+playable.
   // Once loaded, a game missing from the catalog is hidden by the backend.
@@ -126,10 +154,10 @@ export function Games({ onNavigate }: Props) {
                 <span className="stat-pill-lbl"> {t('home.inKeno')}</span>
               </span>
             )}
-            {liveCounts.bingoOnline > 0 && (
+            {bingoCartelas > 0 && (
               <span className="stat-pill">
                 <Star size={11} style={{ display: 'inline', marginRight: 4, color: '#c084fc' }} />
-                <span className="stat-pill-val">{liveCounts.bingoOnline}</span>
+                <span className="stat-pill-val">{bingoCartelas}</span>
                 <span className="stat-pill-lbl"> {t('home.inBingo')}</span>
               </span>
             )}

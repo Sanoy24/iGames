@@ -4630,43 +4630,121 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         ).resolves.toEqual({ open: true, secondsRemaining: 0 });
     });
 
-    it('stampBotBuyOpensAt sets the hold with the DB clock, covering all three presentation stages', async () => {
-        const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockResolvedValue(undefined);
+    // THE bug this whole gate kept failing on. The client presents a finished
+    // round as a QUEUE of win popups - one per place won, each costing a
+    // now-calling beat (1.4s) plus the popup (3.4s) - and the summary countdown
+    // does not even start until that queue drains. A hold budgeting a single
+    // popup is ~9s too short on a 3-place round, so bots bought in while the
+    // player was still watching. Every case below is a real settlement shape.
+    const CFG = { resultDisplaySeconds: 10, bonusWinDisplaySeconds: 5 };
+    const winner = { winners: [{ userId: 'u1' }] };
 
-        await (service as any).stampBotBuyOpensAt('room-1', {
-            resultDisplaySeconds: 10,
-            bonusWinDisplaySeconds: 5,
-        });
+    function stampHarness(settlementSummary: unknown) {
+        const harness = makeService({ rooms: [] });
+        harness.mockRoomRepo.query.mockResolvedValue(undefined);
+        jest.spyOn(
+            harness.service as any,
+            'findJustCompletedRoom',
+        ).mockResolvedValue(
+            settlementSummary === undefined ? null : { settlementSummary },
+        );
+        return harness;
+    }
 
-        const [sql, params] = mockRoomRepo.query.mock.calls[0];
+    const heldSeconds = (mockRoomRepo: any) =>
+        mockRoomRepo.query.mock.calls[0][1][0];
+
+    it('holds for ONE place popup on a single-winner round', async () => {
+        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
+
+        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+
+        const [sql] = mockRoomRepo.query.mock.calls[0];
         expect(sql).toContain('DATE_ADD(NOW(), INTERVAL ? SECOND)');
-        // 10s resultDisplay + 3.4s livePlace + 5s bonusWin + 1.5s buffer = 19.9s -> 20s
-        expect(params).toEqual([20, 'room-1']);
+        // 1x4.8s + 5s bonus + 10s summary + 1.5s buffer = 21.3s -> 22s
+        expect(heldSeconds(mockRoomRepo)).toBe(22);
     });
 
-    it('stampBotBuyOpensAt scales the hold with the admin-configured display seconds', async () => {
-        const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockResolvedValue(undefined);
+    it('holds ~9s LONGER on a three-place round - the exact case the old fixed hold got wrong', async () => {
+        const { service, mockRoomRepo } = stampHarness({
+            '1st': winner,
+            '2nd': winner,
+            '3rd': winner,
+        });
+
+        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+
+        // 3x4.8s + 5s + 10s + 1.5s = 30.9s -> 31s. The old hold was a flat 20s,
+        // so bots bought in 11s before the player was returned to the screen.
+        expect(heldSeconds(mockRoomRepo)).toBe(31);
+        expect(heldSeconds(mockRoomRepo)).toBeGreaterThan(20);
+    });
+
+    it('scales all the way to a five-place round', async () => {
+        const { service, mockRoomRepo } = stampHarness({
+            '1st': winner,
+            '2nd': winner,
+            '3rd': winner,
+            '4th': winner,
+            '5th': winner,
+        });
+
+        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+
+        // 5x4.8s + 5s + 10s + 1.5s = 40.5s -> 41s
+        expect(heldSeconds(mockRoomRepo)).toBe(41);
+    });
+
+    it('counts only places that actually have a winner - an empty or unsettled place pops up nothing', async () => {
+        const { service, mockRoomRepo } = stampHarness({
+            '1st': winner,
+            '2nd': { winners: [] }, // settled but nobody won it
+            '3rd': { disqualified: true }, // no winner payload at all
+        });
+
+        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+
+        expect(heldSeconds(mockRoomRepo)).toBe(22); // one popup, not three
+    });
+
+    it('counts the legacy single-winner shape (winnerDisplayName, no winners[])', async () => {
+        const { service, mockRoomRepo } = stampHarness({
+            '1st': { winnerDisplayName: 'Abebe' },
+            '2nd': { winnerGrid: [[1]] },
+        });
+
+        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+
+        // 2x4.8s + 5s + 10s + 1.5s = 26.1s -> 27s
+        expect(heldSeconds(mockRoomRepo)).toBe(27);
+    });
+
+    it('falls back to the WORST case (5 places), never the shortest, when no settlement can be read', async () => {
+        const { service, mockRoomRepo } = stampHarness(undefined); // no finished room
+
+        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+
+        expect(heldSeconds(mockRoomRepo)).toBe(41);
+    });
+
+    it('still honours the admin-configured display seconds on top of the per-place time', async () => {
+        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
 
         await (service as any).stampBotBuyOpensAt('room-1', {
             resultDisplaySeconds: 20,
             bonusWinDisplaySeconds: 0,
         });
 
-        // 20s + 3.4s + 0s + 1.5s = 24.9s -> 25s
-        expect(mockRoomRepo.query.mock.calls[0][1]).toEqual([25, 'room-1']);
+        // 1x4.8s + 0s + 20s + 1.5s = 26.3s -> 27s
+        expect(heldSeconds(mockRoomRepo)).toBe(27);
     });
 
     it('leaves the room un-held (rather than frozen) if the stamp write fails', async () => {
-        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
         mockRoomRepo.query.mockRejectedValue(new Error('write failed'));
 
         await expect(
-            (service as any).stampBotBuyOpensAt('room-1', {
-                resultDisplaySeconds: 10,
-                bonusWinDisplaySeconds: 5,
-            }),
+            (service as any).stampBotBuyOpensAt('room-1', CFG),
         ).resolves.toBeUndefined();
     });
 });

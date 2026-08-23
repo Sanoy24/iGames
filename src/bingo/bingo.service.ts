@@ -83,11 +83,22 @@ export const PREFILLED_PLACES: PrefilledPlace[] = [
 ];
 const DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS = 25;
 
-// Mirrors frontend/src/pages/Bingo.tsx's LIVE_PLACE_WIN_MS  how long the
-// client shows a live per-place win popup before draining it. Keep in sync
-// with that constant; used only to budget reconcileBotCartelasInRoom's
-// first-bot-buy-in gate below.
+// Mirror frontend/src/pages/Bingo.tsx  keep both in sync with that file.
+// The client presents a finished round as a QUEUE of per-place win popups (one
+// for EVERY place that was won: 1st…5th), and each place costs the beat where
+// the winning ball sits in "now calling" PLUS the popup itself. Budgeting a
+// single popup here is what kept the bot buy-in hold far too short on a
+// multi-place round  a 3-place round presents for ~29s, not ~20s  so bots
+// bought in while the player was still watching the result. See
+// resolveBotBuyInGateSeconds.
 const LIVE_PLACE_WIN_MS = 3_400;
+const NOW_CALLING_HOLD_MS = 1_400;
+const PER_PLACE_PRESENTATION_MS = NOW_CALLING_HOLD_MS + LIVE_PLACE_WIN_MS;
+
+// Places a prefilled room can settle (1st…5th) - mirrors the client's
+// PREFILLED_PLACE_ORDER. Used as the worst case when the finished round's
+// settlement can't be read, so the hold errs long rather than short.
+const MAX_PREFILLED_PLACES = 5;
 
 // Extra buffer on top of the computed buy-in gate for network/render latency
 // between the client finishing its hold and a reconcile call observing that.
@@ -3676,7 +3687,7 @@ export class BingoService implements OnModuleInit {
         // round's result (see stampBotBuyOpensAt). Custom-slot rooms are
         // recreated the moment their predecessor finishes, exactly like the
         // house room, so they need the same hold.
-        await this.stampBotBuyOpensAt(room.id, cfg);
+        await this.stampBotBuyOpensAt(room.id, cfg, slot.id);
         return this.toRoomResponse(room, 0, []);
     }
 
@@ -7008,20 +7019,92 @@ export class BingoService implements OnModuleInit {
     /**
      * How long after a room is created its FIRST bot cartela may be bought:
      * exactly as long as the client spends presenting the PREVIOUS round's
-     * result before it lands on this room's buying screen. That presentation is
-     * three sequential stages (see Bingo.tsx): a live per-place win popup, then
-     * the Bonus Win popup, and only THEN the resultDisplaySeconds summary
-     * countdown  the summary timer deliberately does not start until the first
-     * two drain. Two of the three durations are server config; LIVE_PLACE_WIN_MS
-     * mirrors the client constant. Plus a small buffer for network/render lag.
+     * result before it lands on this room's buying screen.
+     *
+     * The presentation is NOT a fixed length. The client queues one win popup
+     * per place that was actually won and plays them back to back, and only
+     * once that queue (and the Bonus Win popup) drains does the
+     * resultDisplaySeconds summary countdown even START  see Bingo.tsx's
+     * `if (livePlaceQueue.length > 0 || liveBonusWin) return;`. So the total is:
+     *
+     *     placesWon x (now-calling beat + popup) + bonus popup + summary + buffer
+     *
+     * Budgeting ONE popup here (the original bug) left the hold ~20s while a
+     * 3-place round really presents for ~29s, so bots bought in a full 9s
+     * before the player was returned to the buying screen  which is what made
+     * cartelas look pre-sold and the countdown look already-running.
+     *
+     * `placesWon` comes from the finished round's own settlement, so the hold is
+     * derived from what actually happened rather than assumed. When it can't be
+     * read we fall back to the maximum (5 places), erring long: over-holding
+     * only means bots join a moment later, while under-holding is the bug.
      */
-    private resolveBotBuyInGateSeconds(cfg: BingoConfig): number {
+    private resolveBotBuyInGateSeconds(
+        cfg: BingoConfig,
+        placesWon?: number | null,
+    ): number {
+        const places =
+            placesWon == null
+                ? MAX_PREFILLED_PLACES
+                : Math.min(
+                      MAX_PREFILLED_PLACES,
+                      Math.max(0, Math.floor(placesWon)),
+                  );
         const totalMs =
-            Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000 +
-            LIVE_PLACE_WIN_MS +
+            places * PER_PLACE_PRESENTATION_MS +
             Math.max(0, cfg.bonusWinDisplaySeconds ?? 5) * 1000 +
+            Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000 +
             BUY_IN_GATE_SAFETY_BUFFER_MS;
         return Math.ceil(totalMs / 1000);
+    }
+
+    /**
+     * How many places the just-finished round will actually pop up for, counted
+     * exactly the way the client counts them (see Bingo.tsx's getEntryWinners /
+     * PREFILLED_PLACE_ORDER loop): a place is presented when its settlement
+     * entry carries at least one winner. Returns null when there is no
+     * settlement to read, so the caller falls back to the worst case.
+     */
+    private countPresentedPlaces(
+        settlementSummary?: Record<string, unknown> | null,
+    ): number | null {
+        if (!settlementSummary || typeof settlementSummary !== 'object') {
+            return null;
+        }
+        let places = 0;
+        for (const place of ['1st', '2nd', '3rd', '4th', '5th']) {
+            const entry = settlementSummary[place] as
+                | Record<string, unknown>
+                | undefined;
+            if (!entry || typeof entry !== 'object') continue;
+            const hasWinners = Array.isArray(entry.winners)
+                ? entry.winners.length > 0
+                : !!entry.winnerDisplayName || !!entry.winnerGrid;
+            if (hasWinners) places += 1;
+        }
+        return places;
+    }
+
+    /**
+     * The round whose result the client is presenting RIGHT NOW  i.e. the one
+     * that just finished and caused this new room to be opened. Scoped to the
+     * same custom slot when the new room belongs to one, since those rooms are
+     * recreated per slot. Returns null if nothing suitable is found, which makes
+     * the hold fall back to the worst-case length.
+     */
+    private async findJustCompletedRoom(
+        customSlotId?: string | null,
+    ): Promise<BingoRoom | null> {
+        try {
+            return await this.bingoRoomRepository.findOne({
+                where: customSlotId
+                    ? { customSlotId, status: 'completed' }
+                    : { status: 'completed', isAdminCreated: false },
+                order: { updatedAt: 'DESC' },
+            });
+        } catch {
+            return null;
+        }
     }
 
     /**
@@ -7038,8 +7121,13 @@ export class BingoService implements OnModuleInit {
     private async stampBotBuyOpensAt(
         roomId: string,
         cfg: BingoConfig,
+        customSlotId?: string | null,
     ): Promise<void> {
-        const holdSeconds = this.resolveBotBuyInGateSeconds(cfg);
+        // Length the hold by what the finished round will actually present:
+        // one win popup per place won, then the bonus popup, then the summary.
+        const finished = await this.findJustCompletedRoom(customSlotId);
+        const placesWon = this.countPresentedPlaces(finished?.settlementSummary);
+        const holdSeconds = this.resolveBotBuyInGateSeconds(cfg, placesWon);
         try {
             await this.bingoRoomRepository.query(
                 `UPDATE bingo_rooms SET botBuyOpensAt = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE id = ?`,
@@ -7047,8 +7135,10 @@ export class BingoService implements OnModuleInit {
             );
             this.logger.log(
                 `Bot buy-in hold: room ${roomId} closed to bots for ${holdSeconds}s ` +
-                    `(resultDisplay ${cfg.resultDisplaySeconds ?? 10}s + livePlace ${LIVE_PLACE_WIN_MS / 1000}s + ` +
-                    `bonusWin ${cfg.bonusWinDisplaySeconds ?? 5}s + buffer ${BUY_IN_GATE_SAFETY_BUFFER_MS / 1000}s)`,
+                    `(${placesWon ?? MAX_PREFILLED_PLACES} place popup(s) x ${PER_PLACE_PRESENTATION_MS / 1000}s` +
+                    `${placesWon == null ? ' [worst case - no settlement found]' : ''} + ` +
+                    `bonusWin ${cfg.bonusWinDisplaySeconds ?? 5}s + resultDisplay ${cfg.resultDisplaySeconds ?? 10}s + ` +
+                    `buffer ${BUY_IN_GATE_SAFETY_BUFFER_MS / 1000}s)`,
             );
         } catch (err) {
             this.logger.warn(

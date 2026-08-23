@@ -78,4 +78,9 @@ export class UpdateSystemConfigDto {
   @IsOptional()
   @IsBoolean()
   recentWinsEnabled?: boolean;
+
+  /** On: withdrawals route to the requesting player's own agent only. Off: every withdrawal goes to admin only, no agent sees any of them. */
+  @IsOptional()
+  @IsBoolean()
+  agentWithdrawalRoutingEnabled?: boolean;
 }

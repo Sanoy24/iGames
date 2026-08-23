@@ -141,8 +141,8 @@ export class AgentsService {
 
     // ── Withdrawals ────────────────────────────────────────────────────
 
-    getAvailableWithdrawals() {
-        return this.walletService.getAvailableWithdrawals();
+    getAvailableWithdrawals(agentId: string) {
+        return this.walletService.getAvailableWithdrawals(agentId);
     }
 
     getMyWithdrawals(agentId: string) {

@@ -647,6 +647,8 @@ export type SystemConfig = {
     leaderboardEnabled?: boolean;
     /** Home page Live Wins Ticker. Off shows rotating trust messages instead of win data. */
     recentWinsEnabled?: boolean;
+    /** On: a pending withdrawal is only visible/claimable by the requesting player's own agent. Off: no agent sees or can claim any withdrawal, every request goes to admin only. */
+    agentWithdrawalRoutingEnabled?: boolean;
 };
 
 export type WithdrawalFeeRange = {
@@ -700,6 +702,9 @@ export type AgentPerformance = {
     totalSettledMinor: number;
     /** totalEarningsMinor minus everything already claimed (paid, pending, or approved). */
     remainingMinor: number;
+    /** Pending withdrawal requests from this agent's users, regardless of whether
+     * agentWithdrawalRoutingEnabled currently routes them to the agent or to admin. */
+    pendingWithdrawalRequests: number;
 };
 
 export type AgentSelfPerformance = {
@@ -1792,6 +1797,12 @@ export const adminLocationsApi = {
 export const adminWithdrawalsApi = {
     listWithdrawals: () =>
         api.get<Withdrawal[]>('/admin/withdrawals').then((r) => r.data),
+    /** ALL withdrawals (any status) from this agent's users  the drill-down
+     * behind the Agent Performance table's "Withdrawal Requests" count. */
+    listByAgent: (agentId: string) =>
+        api
+            .get<Withdrawal[]>(`/admin/agents/${agentId}/withdrawals`)
+            .then((r) => r.data),
     processWithdrawal: (
         id: string,
         action: 'approve' | 'reject',

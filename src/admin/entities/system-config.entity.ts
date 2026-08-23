@@ -111,6 +111,20 @@ export class SystemConfig {
     @Column({ type: 'boolean', default: false })
     recentWinsEnabled: boolean;
 
+    /**
+     * When true, a pending withdrawal is only visible/claimable by the requesting
+     * player's OWN agent (COALESCE(referredByAgentId, assignedAgentId)); a player
+     * with no agent attributed falls straight to the admin-only queue. Replaces
+     * the previous shared-pool model (any agent could claim any pending row) with
+     * per-agent routing. When false, NO agent sees or can claim any withdrawal
+     * every request goes to admin only (WalletService.getAvailableWithdrawals /
+     * .claimWithdrawal enforce this server-side, not just in the UI). Admin's own
+     * withdrawal view/actions (WalletService.getAllWithdrawals and friends) are
+     * unaffected either way  admin always sees and can act on everything.
+     */
+    @Column({ type: 'boolean', default: true })
+    agentWithdrawalRoutingEnabled: boolean;
+
     @CreateDateColumn({ type: 'timestamp' })
     createdAt: Date;
 

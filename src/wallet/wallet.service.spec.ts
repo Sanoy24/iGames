@@ -989,3 +989,229 @@ describe('WalletService.getAgentFloatRemaining', () => {
         expect(result.get('agent-1')).toBe(0);
     });
 });
+
+// ─── Agent withdrawal routing (agentWithdrawalRoutingEnabled) ────────────────
+// getAvailableWithdrawals/claimWithdrawal/getWithdrawalsByUsersAgent only ever
+// touch systemConfigRepository + a withdrawalRepository query builder.
+
+function makeWithdrawalQueryBuilder(overrides: {
+    getMany?: unknown[];
+    getOne?: unknown | null;
+} = {}) {
+    const qb: Record<string, jest.Mock> = {};
+    for (const method of ['leftJoinAndSelect', 'where', 'andWhere', 'orderBy']) {
+        qb[method] = jest.fn().mockReturnValue(qb);
+    }
+    qb.getMany = jest.fn().mockResolvedValue(overrides.getMany ?? []);
+    qb.getOne = jest.fn().mockResolvedValue(overrides.getOne ?? null);
+    return qb;
+}
+
+function makeRoutingService(input: {
+    config?: { agentWithdrawalRoutingEnabled?: boolean } | null;
+    qb?: ReturnType<typeof makeWithdrawalQueryBuilder>;
+}) {
+    const qb = input.qb ?? makeWithdrawalQueryBuilder();
+    const withdrawalRepository = {
+        createQueryBuilder: jest.fn().mockReturnValue(qb),
+        save: jest.fn().mockImplementation(async (v: unknown) => v),
+    };
+    const systemConfigRepository = {
+        findOneBy: jest.fn().mockResolvedValue(input.config ?? null),
+    };
+    const agentActionLogRepo = {
+        create: jest.fn().mockImplementation((v: unknown) => v),
+        save: jest.fn().mockResolvedValue(undefined),
+    };
+    const mockDataSource = {
+        getRepository: jest.fn().mockReturnValue(agentActionLogRepo),
+    } as unknown as DataSource;
+
+    const service = new WalletService(
+        mockDataSource,
+        {} as any, // walletRepository
+        {} as any, // wagerLimitRepository
+        withdrawalRepository as any,
+        systemConfigRepository as any,
+        {} as any, // withdrawalFeeRangeRepository
+        {} as any, // ledgerService
+        {} as any, // gameEventsGateway
+        {} as any, // notificationsService
+    );
+
+    return { service, qb, withdrawalRepository, systemConfigRepository };
+}
+
+describe('WalletService.getAvailableWithdrawals', () => {
+    it('returns nothing and never queries when routing is off', async () => {
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: false },
+        });
+
+        expect(await service.getAvailableWithdrawals('agent-1')).toEqual([]);
+        expect(withdrawalRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('returns nothing and never queries when no config row exists', async () => {
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: null,
+        });
+
+        expect(await service.getAvailableWithdrawals('agent-1')).toEqual([]);
+        expect(withdrawalRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('filters pending withdrawals by the REQUESTING player\'s attributed agent when routing is on', async () => {
+        const rows = [{ id: 'w-1' }];
+        const qb = makeWithdrawalQueryBuilder({ getMany: rows });
+        const { service } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: true },
+            qb,
+        });
+
+        const result = await service.getAvailableWithdrawals('agent-1');
+
+        expect(result).toBe(rows);
+        expect(qb.andWhere).toHaveBeenCalledWith(
+            'COALESCE(user.referredByAgentId, user.assignedAgentId) = :agentId',
+            { agentId: 'agent-1' },
+        );
+    });
+});
+
+describe('WalletService.claimWithdrawal  server-side routing enforcement', () => {
+    function makeWithdrawal(overrides: Record<string, unknown> = {}) {
+        return {
+            id: 'w-1',
+            status: 'pending',
+            userId: 'player-1',
+            amountMinor: 500,
+            destinationAccount: '0912345678',
+            user: { id: 'player-1', referredByAgentId: null, assignedAgentId: null },
+            ...overrides,
+        };
+    }
+
+    it('throws and never queries the withdrawal when routing is off', async () => {
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: false },
+        });
+
+        await expect(
+            service.claimWithdrawal('w-1', 'agent-1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(withdrawalRepository.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('throws when the withdrawal is not pending / not found', async () => {
+        const qb = makeWithdrawalQueryBuilder({ getOne: null });
+        const { service } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: true },
+            qb,
+        });
+
+        await expect(
+            service.claimWithdrawal('w-1', 'agent-1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it("rejects a claim when the withdrawal belongs to a DIFFERENT agent's user", async () => {
+        const qb = makeWithdrawalQueryBuilder({
+            getOne: makeWithdrawal({
+                user: {
+                    id: 'player-1',
+                    referredByAgentId: 'agent-2',
+                    assignedAgentId: null,
+                },
+            }),
+        });
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: true },
+            qb,
+        });
+
+        await expect(
+            service.claimWithdrawal('w-1', 'agent-1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(withdrawalRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a claim when the withdrawal belongs to a player with NO agent at all', async () => {
+        const qb = makeWithdrawalQueryBuilder({
+            getOne: makeWithdrawal({
+                user: { id: 'player-1', referredByAgentId: null, assignedAgentId: null },
+            }),
+        });
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: true },
+            qb,
+        });
+
+        await expect(
+            service.claimWithdrawal('w-1', 'agent-1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(withdrawalRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('allows the claim when referredByAgentId matches this agent', async () => {
+        const qb = makeWithdrawalQueryBuilder({
+            getOne: makeWithdrawal({
+                user: {
+                    id: 'player-1',
+                    referredByAgentId: 'agent-1',
+                    assignedAgentId: null,
+                },
+            }),
+        });
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: true },
+            qb,
+        });
+
+        const result = await service.claimWithdrawal('w-1', 'agent-1');
+
+        expect(result.status).toBe('claimed');
+        expect(result.agentId).toBe('agent-1');
+        expect(withdrawalRepository.save).toHaveBeenCalled();
+    });
+
+    it('falls back to assignedAgentId when referredByAgentId is null and it matches this agent', async () => {
+        const qb = makeWithdrawalQueryBuilder({
+            getOne: makeWithdrawal({
+                user: {
+                    id: 'player-1',
+                    referredByAgentId: null,
+                    assignedAgentId: 'agent-1',
+                },
+            }),
+        });
+        const { service, withdrawalRepository } = makeRoutingService({
+            config: { agentWithdrawalRoutingEnabled: true },
+            qb,
+        });
+
+        const result = await service.claimWithdrawal('w-1', 'agent-1');
+
+        expect(result.status).toBe('claimed');
+        expect(withdrawalRepository.save).toHaveBeenCalled();
+    });
+});
+
+describe('WalletService.getWithdrawalsByUsersAgent', () => {
+    it("queries ALL statuses filtered by the requesting player's attributed agent", async () => {
+        const rows = [{ id: 'w-1' }, { id: 'w-2' }];
+        const qb = makeWithdrawalQueryBuilder({ getMany: rows });
+        const { service } = makeRoutingService({ qb });
+
+        const result = await service.getWithdrawalsByUsersAgent('agent-1');
+
+        expect(result).toBe(rows);
+        expect(qb.where).toHaveBeenCalledWith(
+            'COALESCE(user.referredByAgentId, user.assignedAgentId) = :agentId',
+            { agentId: 'agent-1' },
+        );
+        // Unlike getAvailableWithdrawals, this must NOT restrict by status  it's
+        // meant to show admin every request from this agent's users, any state.
+        expect(qb.andWhere).not.toHaveBeenCalled();
+    });
+});

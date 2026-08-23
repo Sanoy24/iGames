@@ -368,6 +368,18 @@ export class AdminController {
         return this.adminService.getAgentPerformance();
     }
 
+    /**
+     * All withdrawal requests from THIS agent's users (any status)  the
+     * drill-down behind the "Withdrawal Requests" count on the Agent Performance
+     * table. Filtered by the REQUESTING player's attribution, not by who claimed
+     * it, so it still shows requests the agent never got to claim (routing off,
+     * or admin claimed it directly). See WalletService.getWithdrawalsByUsersAgent.
+     */
+    @Get('agents/:id/withdrawals')
+    getAgentWithdrawalRequests(@Param('id') id: string) {
+        return this.walletService.getWithdrawalsByUsersAgent(id);
+    }
+
     // ── Agent Settlements ────────────────────────────────────────────
     // Real-world payouts to an agent  separate from what they've earned.
 

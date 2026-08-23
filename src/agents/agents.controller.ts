@@ -145,8 +145,8 @@ export class AgentsController {
      * List pending withdrawals available to claim.
      */
     @Get('withdrawals')
-    getAvailableWithdrawals() {
-        return this.agentsService.getAvailableWithdrawals();
+    getAvailableWithdrawals(@CurrentUser() agent: AuthenticatedUser) {
+        return this.agentsService.getAvailableWithdrawals(agent.id);
     }
 
     /**

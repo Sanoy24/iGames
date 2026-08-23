@@ -1015,12 +1015,51 @@ export class WalletService {
         });
     }
 
-    async getAvailableWithdrawals(): Promise<Withdrawal[]> {
-        return this.withdrawalRepository.find({
-            where: { status: 'pending' },
-            relations: ['user'],
-            order: { createdAt: 'ASC' },
+    /**
+     * Pending withdrawals THIS agent may claim. When `agentWithdrawalRoutingEnabled`
+     * is on, that's only requests from players attributed to this agent
+     * (COALESCE(referredByAgentId, assignedAgentId))  a player with no agent at
+     * all never appears here, they fall straight to the admin-only queue. When
+     * off, no agent sees anything (empty list)  every request is admin-only. See
+     * SystemConfig.agentWithdrawalRoutingEnabled and claimWithdrawal's matching
+     * server-side guard below.
+     */
+    async getAvailableWithdrawals(agentId: string): Promise<Withdrawal[]> {
+        const config = await this.systemConfigRepository.findOneBy({
+            key: 'global',
         });
+        if (!config?.agentWithdrawalRoutingEnabled) return [];
+
+        return this.withdrawalRepository
+            .createQueryBuilder('w')
+            .leftJoinAndSelect('w.user', 'user')
+            .where('w.status = :status', { status: 'pending' })
+            .andWhere(
+                'COALESCE(user.referredByAgentId, user.assignedAgentId) = :agentId',
+                { agentId },
+            )
+            .orderBy('w.createdAt', 'ASC')
+            .getMany();
+    }
+
+    /**
+     * ALL withdrawals (any status) from players attributed to this agent, for the
+     * admin "per-agent withdrawal requests" drill-down  unlike getAgentWithdrawals
+     * (filtered by `withdrawal.agentId`, the CLAIMANT), this is filtered by the
+     * REQUESTING player's attribution, so it still shows requests the agent never
+     * got to claim (e.g. routing was off, or admin claimed it directly).
+     */
+    async getWithdrawalsByUsersAgent(agentId: string): Promise<Withdrawal[]> {
+        return this.withdrawalRepository
+            .createQueryBuilder('w')
+            .leftJoinAndSelect('w.user', 'user')
+            .leftJoinAndSelect('w.agent', 'claimedByAgent')
+            .where(
+                'COALESCE(user.referredByAgentId, user.assignedAgentId) = :agentId',
+                { agentId },
+            )
+            .orderBy('w.createdAt', 'DESC')
+            .getMany();
     }
 
     async getAgentWithdrawals(agentId: string): Promise<Withdrawal[]> {
@@ -1084,13 +1123,36 @@ export class WalletService {
         withdrawalId: string,
         agentId: string,
     ): Promise<Withdrawal> {
-        const withdrawal = await this.withdrawalRepository.findOneBy({
-            id: withdrawalId,
-            status: 'pending',
+        const config = await this.systemConfigRepository.findOneBy({
+            key: 'global',
         });
+        if (!config?.agentWithdrawalRoutingEnabled) {
+            throw new ConflictException(
+                'Agent withdrawal routing is currently off  withdrawals are handled by admin only.',
+            );
+        }
+
+        const withdrawal = await this.withdrawalRepository
+            .createQueryBuilder('w')
+            .leftJoinAndSelect('w.user', 'user')
+            .where('w.id = :id', { id: withdrawalId })
+            .andWhere('w.status = :status', { status: 'pending' })
+            .getOne();
         if (!withdrawal) {
             throw new ConflictException(
                 'Withdrawal is not available to claim (not pending or already claimed)',
+            );
+        }
+        // Server-side enforcement, not just a filtered list  an agent can never
+        // claim a request from a player attributed to a DIFFERENT agent (or to
+        // none), even by calling this endpoint directly with a known id.
+        const requesterAgentId =
+            withdrawal.user.referredByAgentId ??
+            withdrawal.user.assignedAgentId ??
+            null;
+        if (requesterAgentId !== agentId) {
+            throw new ConflictException(
+                'This withdrawal is not from one of your users',
             );
         }
 

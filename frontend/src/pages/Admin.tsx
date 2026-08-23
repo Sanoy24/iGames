@@ -2773,6 +2773,9 @@ function AgentsAdmin() {
         >,
     });
 
+    const [withdrawalsAgent, setWithdrawalsAgent] =
+        useState<AgentPerformance | null>(null);
+
     const [togglingId, setTogglingId] = useState<string | null>(null);
     const [statusChangingId, setStatusChangingId] = useState<string | null>(
         null,
@@ -3651,6 +3654,7 @@ function AgentsAdmin() {
                                     <th>Bingo GGR</th>
                                     <th>Commission</th>
                                     <th>Withdrawal Fees</th>
+                                    <th>Withdrawal Requests</th>
                                     <th>Deposits</th>
                                     <th>Deposit Volume</th>
                                     <th>Deposit Commission</th>
@@ -3703,6 +3707,17 @@ function AgentsAdmin() {
                                                 p.withdrawalFeesEarnedMinor,
                                             )}{' '}
                                             ETB
+                                        </td>
+                                        <td>
+                                            <button
+                                                className='adm-btn adm-btn-secondary adm-btn-xs'
+                                                onClick={() =>
+                                                    setWithdrawalsAgent(p)
+                                                }
+                                                title="Pending withdrawal requests from this agent's users  click to view all their requests"
+                                            >
+                                                {p.pendingWithdrawalRequests}
+                                            </button>
                                         </td>
                                         <td className='adm-td-muted'>
                                             {p.depositCount}
@@ -3980,6 +3995,14 @@ function AgentsAdmin() {
                     </table>
                 )}
             </div>
+
+            {withdrawalsAgent && (
+                <WithdrawalsAdmin
+                    agentId={withdrawalsAgent.agentId}
+                    agentName={withdrawalsAgent.displayName}
+                    onClose={() => setWithdrawalsAgent(null)}
+                />
+            )}
         </div>
     );
 }
@@ -4005,6 +4028,7 @@ function ConfigAdmin() {
         agentSettlementCooldownHours: 0,
         leaderboardEnabled: false,
         recentWinsEnabled: false,
+        agentWithdrawalRoutingEnabled: true,
     });
     const [perf, setPerf] = useState<AgentPerformance[]>([]);
     const [loading, setLoading] = useState(true);
@@ -4025,6 +4049,7 @@ function ConfigAdmin() {
         agentSettlementCooldownHours: c.agentSettlementCooldownHours ?? 0,
         leaderboardEnabled: c.leaderboardEnabled ?? false,
         recentWinsEnabled: c.recentWinsEnabled ?? false,
+        agentWithdrawalRoutingEnabled: c.agentWithdrawalRoutingEnabled ?? true,
     });
 
     useEffect(() => {
@@ -4220,6 +4245,13 @@ function ConfigAdmin() {
                     range the agent who completes the withdrawal keeps 100% of
                     it, there is no platform cut.
                 </p>
+                <div style={{ padding: '4px 16px 8px' }}>
+                    {toggleField(
+                        'agentWithdrawalRoutingEnabled',
+                        'Route Withdrawals to Agents',
+                        "ON = a withdrawal request is only visible/claimable by the requesting player's own agent (a player with no agent falls to admin). OFF = no agent sees any withdrawal request, everything goes to admin only  see each agent's \"Withdrawal Requests\" count on the Agent Performance table below.",
+                    )}
+                </div>
             </div>
 
             <WithdrawalFeeRangesAdmin />
@@ -4927,7 +4959,22 @@ type CompleteWithAgentForm = {
     receiptFile: File | null;
 };
 
-function WithdrawalsAdmin() {
+/**
+ * Also reused, scoped to one agent, as the "Withdrawal Requests" drill-down
+ * modal on the Agent Performance table (AgentsAdmin)  pass `agentId` (+
+ * `agentName` for the title, `onClose` to render as a modal instead of the
+ * standalone page) and every action here (approve/reject/verify/complete
+ * with agent) works identically, scoped to just that agent's users.
+ */
+function WithdrawalsAdmin({
+    agentId,
+    agentName,
+    onClose,
+}: {
+    agentId?: string;
+    agentName?: string;
+    onClose?: () => void;
+} = {}) {
     const addToast = useStore((s) => s.addToast);
     const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
     const [loading, setLoading] = useState(true);
@@ -4949,13 +4996,17 @@ function WithdrawalsAdmin() {
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            setWithdrawals(await adminWithdrawalsApi.listWithdrawals());
+            setWithdrawals(
+                agentId
+                    ? await adminWithdrawalsApi.listByAgent(agentId)
+                    : await adminWithdrawalsApi.listWithdrawals(),
+            );
         } catch (e) {
             addToast('error', getErrorMessage(e));
         } finally {
             setLoading(false);
         }
-    }, [addToast]);
+    }, [addToast, agentId]);
 
     useEffect(() => {
         void load();
@@ -4974,7 +5025,7 @@ function WithdrawalsAdmin() {
 
     const completeForm = (id: string): CompleteWithAgentForm =>
         completeForms[id] ?? {
-            agentId: '',
+            agentId: agentId ?? '',
             telebirrReference: '',
             receiptFile: null,
         };
@@ -5102,15 +5153,28 @@ function WithdrawalsAdmin() {
         rejected: 'badge-red',
     };
 
-    return (
+    const body = (
         <div className='stack-lg'>
             <SectionHead
-                title='Withdrawal Requests'
-                sub='Review and process player cashouts.'
+                title={
+                    agentName
+                        ? `Withdrawal Requests · ${agentName}`
+                        : 'Withdrawal Requests'
+                }
+                sub={
+                    agentName
+                        ? "This agent's player cashouts, any status."
+                        : 'Review and process player cashouts.'
+                }
             >
                 <button className='adm-icon-btn' onClick={load}>
                     <RefreshCw size={14} />
                 </button>
+                {onClose && (
+                    <button className='adm-icon-btn' onClick={onClose}>
+                        <X size={14} />
+                    </button>
+                )}
             </SectionHead>
 
             {loading && withdrawals.length === 0 ? (
@@ -5672,6 +5736,43 @@ function WithdrawalsAdmin() {
             )}
         </div>
     );
+
+    if (onClose) {
+        return (
+            <div
+                className='adm-modal-overlay'
+                onClick={onClose}
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.6)',
+                    zIndex: 1000,
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'center',
+                    overflowY: 'auto',
+                    padding: 20,
+                }}
+            >
+                <div
+                    className='adm-panel'
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                        maxWidth: 900,
+                        width: '100%',
+                        margin: 'auto',
+                        maxHeight: '90vh',
+                        overflowY: 'auto',
+                        padding: 16,
+                    }}
+                >
+                    {body}
+                </div>
+            </div>
+        );
+    }
+
+    return body;
 }
 
 // ══════════════════════════════════════════════════════════════════

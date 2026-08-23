@@ -1511,6 +1511,7 @@ export class AdminService implements OnApplicationBootstrap {
             totalEarningsMinor: number;
             totalSettledMinor: number;
             remainingMinor: number;
+            pendingWithdrawalRequests: number;
         }>
     > {
         // Bots are excluded from tickets/players/GGR  bot stakes aren't real revenue.
@@ -1532,6 +1533,14 @@ export class AdminService implements OnApplicationBootstrap {
         // manual pick (assignedAgentId set, no referral code) still generates
         // commission for that agent, so excluding them made "Commission" nonzero
         // while "Referred Players" showed 0, which read as a bug.
+        //
+        // "Withdrawal Requests" (pendingWithdrawalRequests) counts PENDING
+        // withdrawals from this SAME COALESCE(referredByAgentId, assignedAgentId)
+        // population, regardless of whether agentWithdrawalRoutingEnabled is on
+        // (routed to the agent) or off (admin-only)  it's "requests belonging to
+        // this agent's users that need handling," not "requests this agent can
+        // currently see." Click-through detail is GET /admin/agents/:id/withdrawals
+        // (WalletService.getWithdrawalsByUsersAgent).
         const referralSourceTypesSql = REFERRAL_COMMISSION_SOURCE_TYPES.map(
             (t) => `'${t}'`,
         ).join(', ');
@@ -1552,6 +1561,7 @@ export class AdminService implements OnApplicationBootstrap {
             depositCommission: string | number;
             settledMinor: string | number;
             claimedMinor: string | number;
+            pendingWithdrawals: string | number;
         }> = await this.dataSource.query(
             `SELECT u.id, u.displayName, u.referralClickCount referralClicks,
               COALESCE(c.customers, 0) customers,
@@ -1566,7 +1576,8 @@ export class AdminService implements OnApplicationBootstrap {
               COALESCE(d.depositVolume, 0) depositVolume,
               COALESCE(dcm.commission, 0) depositCommission,
               COALESCE(st.settledMinor, 0) settledMinor,
-              COALESCE(st.claimedMinor, 0) claimedMinor
+              COALESCE(st.claimedMinor, 0) claimedMinor,
+              COALESCE(pw.pendingWithdrawals, 0) pendingWithdrawals
          FROM users u
          LEFT JOIN (
            SELECT t.agentId, COUNT(*) tickets, COUNT(DISTINCT t.userId) players,
@@ -1615,6 +1626,14 @@ export class AdminService implements OnApplicationBootstrap {
              FROM agent_settlements
             GROUP BY agentId
          ) st ON st.agentId = u.id
+         LEFT JOIN (
+           SELECT COALESCE(pu.referredByAgentId, pu.assignedAgentId) AS agentId, COUNT(*) pendingWithdrawals
+             FROM withdrawals w
+             JOIN users pu ON pu.id = w.userId
+            WHERE w.status = 'pending'
+              AND COALESCE(pu.referredByAgentId, pu.assignedAgentId) IS NOT NULL
+            GROUP BY COALESCE(pu.referredByAgentId, pu.assignedAgentId)
+         ) pw ON pw.agentId = u.id
         WHERE JSON_CONTAINS(u.roles, '"agent"')
         ORDER BY staked DESC`,
         );
@@ -1650,6 +1669,7 @@ export class AdminService implements OnApplicationBootstrap {
                 totalEarningsMinor,
                 totalSettledMinor: Number(r.settledMinor ?? 0),
                 remainingMinor: Math.max(0, totalEarningsMinor - claimedMinor),
+                pendingWithdrawalRequests: Number(r.pendingWithdrawals ?? 0),
             };
         });
     }

@@ -2505,6 +2505,11 @@ export class BingoService implements OnModuleInit {
             }
             throw err;
         }
+        // Hold bots out until the client has finished showing the previous
+        // round's result (see stampBotBuyOpensAt). This room was almost
+        // certainly opened by autoCreateNextRoom the instant its predecessor
+        // completed  i.e. exactly when the win/summary screens began.
+        await this.stampBotBuyOpensAt(room.id, cfg);
         return this.toRoomResponse(room, 0, []);
     }
 
@@ -3667,6 +3672,11 @@ export class BingoService implements OnModuleInit {
             await manager.save(room);
             await this.generateCardPoolForRoom(room, manager);
         });
+        // Hold bots out until the client has finished showing the previous
+        // round's result (see stampBotBuyOpensAt). Custom-slot rooms are
+        // recreated the moment their predecessor finishes, exactly like the
+        // house room, so they need the same hold.
+        await this.stampBotBuyOpensAt(room.id, cfg);
         return this.toRoomResponse(room, 0, []);
     }
 
@@ -3991,6 +4001,30 @@ export class BingoService implements OnModuleInit {
                     throw new ConflictException(
                         'Cartela changes are locked near the draw start',
                     );
+                }
+
+                // ── Result-presentation hold (bots only) ─────────────────────────────────
+                // A real player CANNOT buy into a new room while their client is still
+                // showing the previous round's win + summary screens - they haven't been
+                // returned to the buying screen yet. Bots have no such screen, so without
+                // this they buy the instant the room row exists, and the player arrives to
+                // find the cartelas taken and the countdown already running (reported bug).
+                //
+                // Enforced HERE, at the single funnel every cartela purchase passes
+                // through, rather than only in reconcileBotCartelasInRoom: that method is
+                // also reached inline from a real player's purchase/refund and from the
+                // auto-start final top-off, so gating it alone still let bots slip in.
+                const purchasingUser = await manager.findOne(User, {
+                    where: { id: userId },
+                    select: { id: true, productMetadata: true },
+                });
+                if (this.isBotUser(purchasingUser)) {
+                    const gate = await this.isBotBuyWindowOpen(roomId);
+                    if (!gate.open) {
+                        throw new ConflictException(
+                            `Bots are held out of this room for another ${gate.secondsRemaining}s while the previous result is shown`,
+                        );
+                    }
                 }
 
                 // ── Per-user cartela cap (admin config; 0 = unlimited) ───────────────────
@@ -6991,39 +7025,82 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
-     * The room's age in seconds, computed ENTIRELY inside MySQL.
+     * Stamp `botBuyOpensAt` on a room that was just created, so bots are held
+     * out of it until the client has finished presenting the PREVIOUS round's
+     * result. Computed with the DATABASE's clock (`DATE_ADD(NOW(), ...)`) and
+     * later compared against the database's `NOW()`, so the value never passes
+     * through an app-side JS Date and any MySQL session-timezone offset cancels
+     * out on both the write and the read.
      *
-     * Deliberately not `Date.now() - room.createdAt.getTime()`: createdAt is
-     * written and deserialized by the driver, so mixing it with an app-side JS
-     * Date misfires under a non-UTC MySQL session timezone  the same hazard
-     * findRunningRoomIdsDue/getCurrentRoom already avoid by comparing
-     * column-to-NOW(). Skewed one way the row looks hours old (a gate built on
-     * it never blocks  which is exactly how the bot buy-in gate silently did
-     * nothing in production); skewed the other, it looks like the future and
-     * the gate would block forever. TIMESTAMPDIFF against NOW() keeps both
-     * sides in the same session timezone, so any offset cancels out.
-     *
-     * Returns null only if the row somehow can't be read; callers fall open
-     * (and log) rather than deadlocking the game on a missing measurement.
+     * Best-effort: a room that fails to get stamped keeps `botBuyOpensAt` NULL
+     * and behaves as before (bots may buy immediately) rather than being frozen.
      */
-    private async getRoomAgeSeconds(roomId: string): Promise<number | null> {
+    private async stampBotBuyOpensAt(
+        roomId: string,
+        cfg: BingoConfig,
+    ): Promise<void> {
+        const holdSeconds = this.resolveBotBuyInGateSeconds(cfg);
         try {
-            const rows: Array<{ ageSeconds: number | string | null }> =
-                await this.bingoRoomRepository.query(
-                    `SELECT TIMESTAMPDIFF(SECOND, createdAt, NOW()) AS ageSeconds FROM bingo_rooms WHERE id = ?`,
-                    [roomId],
-                );
-            const raw = rows?.[0]?.ageSeconds;
-            if (raw === undefined || raw === null) return null;
-            const age = Number(raw);
-            return Number.isFinite(age) ? age : null;
+            await this.bingoRoomRepository.query(
+                `UPDATE bingo_rooms SET botBuyOpensAt = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE id = ?`,
+                [holdSeconds, roomId],
+            );
+            this.logger.log(
+                `Bot buy-in hold: room ${roomId} closed to bots for ${holdSeconds}s ` +
+                    `(resultDisplay ${cfg.resultDisplaySeconds ?? 10}s + livePlace ${LIVE_PLACE_WIN_MS / 1000}s + ` +
+                    `bonusWin ${cfg.bonusWinDisplaySeconds ?? 5}s + buffer ${BUY_IN_GATE_SAFETY_BUFFER_MS / 1000}s)`,
+            );
         } catch (err) {
             this.logger.warn(
-                `Could not measure age of Bingo room ${roomId}; bot buy-in gate falls open: ${
+                `Could not stamp botBuyOpensAt on Bingo room ${roomId}; bots may buy immediately: ${
                     err instanceof Error ? err.message : String(err)
                 }`,
             );
-            return null;
+        }
+    }
+
+    /**
+     * Is this room open for BOT cartela purchases yet?
+     *
+     * Evaluated ENTIRELY inside MySQL (`botBuyOpensAt <= NOW()`), never as
+     * `Date.now() >= room.botBuyOpensAt.getTime()`: the column is written and
+     * deserialized by the driver, so mixing it with an app-side JS Date
+     * misfires under a non-UTC MySQL session timezone  the same hazard
+     * findRunningRoomIdsDue/getCurrentRoom already avoid by comparing
+     * column-to-NOW(). Skewed one way the hold looks long expired and never
+     * blocks (exactly how the previous createdAt-based gate silently did
+     * nothing in production); skewed the other it would block forever.
+     *
+     * A NULL stamp, a missing row, or a failed query all mean "open" so a room
+     * can never be frozen out of play by this check.
+     */
+    private async isBotBuyWindowOpen(
+        roomId: string,
+    ): Promise<{ open: boolean; secondsRemaining: number }> {
+        try {
+            const rows: Array<{ secondsRemaining: number | string | null }> =
+                await this.bingoRoomRepository.query(
+                    `SELECT TIMESTAMPDIFF(SECOND, NOW(), botBuyOpensAt) AS secondsRemaining
+                       FROM bingo_rooms
+                      WHERE id = ? AND botBuyOpensAt IS NOT NULL AND botBuyOpensAt > NOW()`,
+                    [roomId],
+                );
+            const raw = rows?.[0]?.secondsRemaining;
+            if (raw === undefined || raw === null) {
+                return { open: true, secondsRemaining: 0 };
+            }
+            const remaining = Number(raw);
+            if (!Number.isFinite(remaining) || remaining <= 0) {
+                return { open: true, secondsRemaining: 0 };
+            }
+            return { open: false, secondsRemaining: remaining };
+        } catch (err) {
+            this.logger.warn(
+                `Could not read botBuyOpensAt for Bingo room ${roomId}; allowing bot buy-in: ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            return { open: true, secondsRemaining: 0 };
         }
     }
 
@@ -7075,41 +7152,33 @@ export class BingoService implements OnModuleInit {
         const cartelaPolicy = this.resolveBingoBotCartelaPolicy(cfg);
         const currentBotCartelas =
             await this.countBotCartelasInRoom(validRoomId);
-        // A brand-new room's FIRST bot cartela must wait until the client has
-        // actually finished showing the previous room's result and returned to
-        // the buying screen  otherwise a fill triggered by ANYTHING that calls
-        // this method (the scheduler's periodic tick, or the inline reconcile
-        // fired from a real player's purchase/refund elsewhere in this same
-        // room; see purchaseTickets/releaseCartela) seeds bots into the room
-        // before anyone could have seen it, making cartelas look pre-sold and
-        // the countdown look already-elapsed the moment the screen appears
-        // (reported bug). The client's hold isn't just resultDisplaySeconds: it
-        // first drains a live per-place win popup and the Bonus Win popup, THEN
-        // starts the resultDisplaySeconds countdown  see Bingo.tsx's "don't
-        // start its display countdown until then" effect. This only gates the
-        // very FIRST bot cartela for a Scheduled Bot Play / Win Sequence 'bot'
-        // room (currentBotCartelas === 0); once any bot has bought in, or for
-        // ordinary human-driven mirror participation, nothing here changes.
-        if (
-            currentBotCartelas === 0 &&
-            (activeBotPlaySchedule || winSequenceForcesBot)
-        ) {
-            const gateSeconds = this.resolveBotBuyInGateSeconds(cfg);
-            const ageSeconds = await this.getRoomAgeSeconds(validRoomId);
-            if (ageSeconds !== null && ageSeconds < gateSeconds) {
+        // Bots must not buy into a brand-new room while the client is still
+        // presenting the PREVIOUS round's result  otherwise cartelas look
+        // pre-sold and the countdown looks already-elapsed the moment the
+        // player lands on the buying screen (reported bug). The hold is a
+        // timestamp stamped on the room at creation (see stampBotBuyOpensAt);
+        // it expires on its own, so this can only ever affect the opening
+        // seconds of a room's life, never a mid-countdown top-up.
+        //
+        // This is only a cheap early-out to avoid pointless work and log spam.
+        // The hold is ENFORCED in purchaseTickets, because reconcile is not the
+        // only way a bot buy can be triggered  a real player's purchase or
+        // refund reaches it inline, and the auto-start path does a final
+        // top-off. Gating here alone left exactly those holes open.
+        {
+            const gate = await this.isBotBuyWindowOpen(validRoomId);
+            if (!gate.open) {
                 if (!this.botBuyInGateLoggedRoomIds.has(validRoomId)) {
                     this.botBuyInGateLoggedRoomIds.add(validRoomId);
                     this.logger.log(
-                        `Bot buy-in gate HOLDING room ${validRoomId}: age ${ageSeconds}s < ${gateSeconds}s ` +
-                            `(resultDisplay ${cfg.resultDisplaySeconds ?? 10}s + livePlace ${LIVE_PLACE_WIN_MS / 1000}s + ` +
-                            `bonusWin ${cfg.bonusWinDisplaySeconds ?? 5}s + buffer ${BUY_IN_GATE_SAFETY_BUFFER_MS / 1000}s)`,
+                        `Bot buy-in gate HOLDING room ${validRoomId}: ${gate.secondsRemaining}s left on the result-presentation hold`,
                     );
                 }
                 return false;
             }
             if (this.botBuyInGateLoggedRoomIds.delete(validRoomId)) {
                 this.logger.log(
-                    `Bot buy-in gate RELEASED room ${validRoomId} at age ${ageSeconds}s  bots may now buy in`,
+                    `Bot buy-in gate RELEASED room ${validRoomId}  bots may now buy in`,
                 );
             }
         }

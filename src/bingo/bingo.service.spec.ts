@@ -1072,6 +1072,99 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(walletService.debitInSession).not.toHaveBeenCalled();
     });
 
+    // The hold is ENFORCED here, at the one funnel every cartela purchase passes
+    // through, because reconcileBotCartelasInRoom is not the only way a bot buy
+    // gets triggered - a real player's purchase/refund reaches it inline and the
+    // auto-start path does a final top-off. Gating reconcile alone left exactly
+    // those holes, which is why the bug survived several fixes.
+    function makePurchaseHarness(
+        opts: { botPolicy?: unknown; holdSecondsRemaining?: number } = {},
+    ) {
+        const harness = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        const user = {
+            id: '550e8400-e29b-41d4-a716-446655440000',
+            productMetadata: opts.botPolicy
+                ? { botPolicy: opts.botPolicy }
+                : {},
+        };
+        const manager = {
+            find: jest.fn().mockResolvedValue([]),
+            findOne: jest
+                .fn()
+                .mockResolvedValueOnce(room) // BingoRoom (locked)
+                .mockResolvedValueOnce(user), // purchasing User
+        };
+        (harness.dataSource.transaction as jest.Mock).mockImplementation(
+            (cb: (m: unknown) => Promise<unknown>) => cb(manager),
+        );
+        jest.spyOn(
+            harness.service as any,
+            'isCartelaChangeLocked',
+        ).mockReturnValue(false);
+        jest.spyOn(
+            harness.service as any,
+            'isBotBuyWindowOpen',
+        ).mockResolvedValue({
+            open: opts.holdSecondsRemaining == null,
+            secondsRemaining: opts.holdSecondsRemaining ?? 0,
+        });
+        return { ...harness, room, user };
+    }
+
+    it('refuses a BOT cartela purchase while the previous result is still being shown', async () => {
+        const { service, room, walletService } = makePurchaseHarness({
+            botPolicy: { active: true },
+            holdSecondsRemaining: 12,
+        });
+
+        await expect(
+            service.purchaseTickets({
+                userId: '550e8400-e29b-41d4-a716-446655440000',
+                roomId: room.id,
+                cartelaNumbers: [1],
+                idempotencyKey: 'bot-during-hold',
+            }),
+        ).rejects.toThrow(/Bots are held out of this room for another 12s/);
+
+        // Nothing was charged, so no cartela is taken and no countdown starts -
+        // the player returns to an untouched buying screen.
+        expect(walletService.debitInSession).not.toHaveBeenCalled();
+    });
+
+    it('does NOT hold a real player out during the same window - only bots', async () => {
+        const { service, room } = makePurchaseHarness({
+            holdSecondsRemaining: 12, // hold is active...
+            // ...but this user has no botPolicy
+        });
+
+        // Gets past the hold; whatever it fails on later, it is never the gate.
+        await expect(
+            service.purchaseTickets({
+                userId: '550e8400-e29b-41d4-a716-446655440000',
+                roomId: room.id,
+                cartelaNumbers: [1],
+                idempotencyKey: 'human-during-hold',
+            }),
+        ).rejects.not.toThrow(/Bots are held out/);
+    });
+
+    it('lets a bot buy once the hold has expired', async () => {
+        const { service, room } = makePurchaseHarness({
+            botPolicy: { active: true },
+            // no holdSecondsRemaining -> window open
+        });
+
+        await expect(
+            service.purchaseTickets({
+                userId: '550e8400-e29b-41d4-a716-446655440000',
+                roomId: room.id,
+                cartelaNumbers: [1],
+                idempotencyKey: 'bot-after-hold',
+            }),
+        ).rejects.not.toThrow(/Bots are held out/);
+    });
+
     it('skips bot reconcile when the room enters the freeze window', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({
@@ -4267,21 +4360,22 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         ).mockResolvedValue([1, 2, 3, 4, 5, 6]);
     }
 
-    /** Drive the DB-side age measurement the gate actually consults. */
-    const withRoomAge = (service: any, ageSeconds: number | null) =>
+    /** Drive the DB-side hold check the gate actually consults. */
+    const withBotBuyWindow = (
+        service: any,
+        open: boolean,
+        secondsRemaining = open ? 0 : 8,
+    ) =>
         jest
-            .spyOn(service as any, 'getRoomAgeSeconds')
-            .mockResolvedValue(ageSeconds);
-
-    // 10s resultDisplay + 3.4s livePlace + 5s bonusWin + 1.5s buffer = 19.9s -> 20s
-    const GATE_SECONDS = 20;
+            .spyOn(service as any, 'isBotBuyWindowOpen')
+            .mockResolvedValue({ open, secondsRemaining });
 
     it('does not buy any bot cartela into a room created just now, during an active Scheduled Bot Play window', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        withRoomAge(service, 0);
+        withBotBuyWindow(service, false);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4312,7 +4406,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         } as any);
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        withRoomAge(service, 0);
+        withBotBuyWindow(service, false);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4335,7 +4429,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        withRoomAge(service, GATE_SECONDS);
+        withBotBuyWindow(service, true);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4357,13 +4451,12 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(changed).toBe(true);
     });
 
-    it('does NOT release a room older than resultDisplaySeconds alone  the live-place and Bonus Win popups add more time first', async () => {
+    it('stays held while the stamp still has time left on it (the hold spans all three presentation stages, not just resultDisplaySeconds)', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        // Clears resultDisplaySeconds(10s) alone but not the full 20s gate.
-        withRoomAge(service, 11);
+        withBotBuyWindow(service, false, 9);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4385,12 +4478,12 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(changed).toBe(false);
     });
 
-    it('does not apply the gate once bots already hold at least one cartela in the room', async () => {
+    it('buys normally once the hold has expired, even for a room bots already hold a cartela in', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        const ageSpy = withRoomAge(service, 0); // brand new
+        withBotBuyWindow(service, true);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             1, // a bot already bought in on an earlier, released tick
         );
@@ -4410,10 +4503,9 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         await service.reconcileBotCartelasInRoom(room.id);
 
         expect(purchaseSpy).toHaveBeenCalled();
-        expect(ageSpy).not.toHaveBeenCalled(); // gate short-circuits before measuring
     });
 
-    it('does not gate ordinary human-driven mirror participation (no Scheduled Bot Play, no Win Sequence bot slot)', async () => {
+    it('does not hold up ordinary human-driven mirror participation once the hold has expired', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({
             winMode: 'prefilled',
@@ -4422,7 +4514,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service, { botCartelaPolicyEnabled: true });
-        const ageSpy = withRoomAge(service, 0); // brand new room
+        withBotBuyWindow(service, true);
         jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
@@ -4439,15 +4531,14 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         await service.reconcileBotCartelasInRoom(room.id);
 
         expect(purchaseSpy).toHaveBeenCalled();
-        expect(ageSpy).not.toHaveBeenCalled(); // gate does not apply to this path
     });
 
-    it('falls open (rather than deadlocking the game) when the room age cannot be measured', async () => {
+    it('falls open (rather than deadlocking the game) when the hold cannot be read', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        withRoomAge(service, null); // query failed / row unreadable
+        withBotBuyWindow(service, true); // unreadable stamp falls open
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4474,7 +4565,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
     // look OLD, that subtraction clears any gate instantly, which is why the
     // gate shipped three times and changed nothing in production. Age must come
     // from the DB (TIMESTAMPDIFF vs NOW()), where the offset cancels out.
-    it('ignores a timezone-skewed createdAt: a room the DB says is 2s old stays gated even if createdAt reads hours in the past', async () => {
+    it('ignores a timezone-skewed createdAt: the DB-side hold still blocks even though createdAt reads hours in the past', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({
             winMode: 'prefilled',
@@ -4484,7 +4575,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
-        withRoomAge(service, 2); // the DB's own, correct answer
+        withBotBuyWindow(service, false, 18); // the DB's own, correct answer
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4506,24 +4597,77 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(changed).toBe(false);
     });
 
-    it('getRoomAgeSeconds measures age in SQL against NOW(), not from a JS Date', async () => {
+    it('isBotBuyWindowOpen compares the stamp against the DB NOW(), not a JS Date', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockResolvedValue([{ ageSeconds: '7' }]);
+        mockRoomRepo.query.mockResolvedValue([{ secondsRemaining: '7' }]);
 
-        const age = await (service as any).getRoomAgeSeconds('room-1');
+        const gate = await (service as any).isBotBuyWindowOpen('room-1');
 
-        expect(age).toBe(7); // string from the driver is coerced
+        expect(gate).toEqual({ open: false, secondsRemaining: 7 }); // driver string coerced
         const sql = mockRoomRepo.query.mock.calls[0][0] as string;
-        expect(sql).toContain('TIMESTAMPDIFF(SECOND, createdAt, NOW())');
+        expect(sql).toContain('botBuyOpensAt > NOW()');
+        expect(sql).toContain('TIMESTAMPDIFF(SECOND, NOW(), botBuyOpensAt)');
+        // Only the roomId is bound - no timestamp is ever sent from the app side,
+        // which is what made the previous createdAt gate a no-op in production.
+        expect(mockRoomRepo.query.mock.calls[0][1]).toEqual(['room-1']);
     });
 
-    it('getRoomAgeSeconds returns null instead of throwing when the query fails', async () => {
+    it('isBotBuyWindowOpen treats an un-stamped (NULL) room as open, so legacy rooms are unaffected', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockResolvedValue([]); // WHERE botBuyOpensAt > NOW() matched nothing
+
+        await expect(
+            (service as any).isBotBuyWindowOpen('room-1'),
+        ).resolves.toEqual({ open: true, secondsRemaining: 0 });
+    });
+
+    it('isBotBuyWindowOpen falls open instead of throwing when the query fails', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         mockRoomRepo.query.mockRejectedValue(new Error('connection lost'));
 
         await expect(
-            (service as any).getRoomAgeSeconds('room-1'),
-        ).resolves.toBeNull();
+            (service as any).isBotBuyWindowOpen('room-1'),
+        ).resolves.toEqual({ open: true, secondsRemaining: 0 });
+    });
+
+    it('stampBotBuyOpensAt sets the hold with the DB clock, covering all three presentation stages', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockResolvedValue(undefined);
+
+        await (service as any).stampBotBuyOpensAt('room-1', {
+            resultDisplaySeconds: 10,
+            bonusWinDisplaySeconds: 5,
+        });
+
+        const [sql, params] = mockRoomRepo.query.mock.calls[0];
+        expect(sql).toContain('DATE_ADD(NOW(), INTERVAL ? SECOND)');
+        // 10s resultDisplay + 3.4s livePlace + 5s bonusWin + 1.5s buffer = 19.9s -> 20s
+        expect(params).toEqual([20, 'room-1']);
+    });
+
+    it('stampBotBuyOpensAt scales the hold with the admin-configured display seconds', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockResolvedValue(undefined);
+
+        await (service as any).stampBotBuyOpensAt('room-1', {
+            resultDisplaySeconds: 20,
+            bonusWinDisplaySeconds: 0,
+        });
+
+        // 20s + 3.4s + 0s + 1.5s = 24.9s -> 25s
+        expect(mockRoomRepo.query.mock.calls[0][1]).toEqual([25, 'room-1']);
+    });
+
+    it('leaves the room un-held (rather than frozen) if the stamp write fails', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockRejectedValue(new Error('write failed'));
+
+        await expect(
+            (service as any).stampBotBuyOpensAt('room-1', {
+                resultDisplaySeconds: 10,
+                bonusWinDisplaySeconds: 5,
+            }),
+        ).resolves.toBeUndefined();
     });
 });
 

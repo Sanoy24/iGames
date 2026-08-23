@@ -205,6 +205,26 @@ export class BingoRoom {
     @Index()
     customSlotId?: string | null;
 
+    /**
+     * The moment BOTS become allowed to buy their first cartela into this room.
+     * Stamped once at room creation to `NOW() + <result presentation length>`
+     * so a freshly-opened room cannot be filled by bots while the client is
+     * still showing the PREVIOUS round's result (live per-place win popup →
+     * Bonus Win popup → the resultDisplaySeconds summary). Without it, bots buy
+     * in during that presentation and the countdown they trigger is already
+     * half-elapsed by the time the player is returned to the buying screen.
+     *
+     * NULL means "no hold" (legacy rows, and rooms created before this column
+     * existed) — those behave exactly as before.
+     *
+     * ALWAYS compare this column against the database's own NOW() in SQL, never
+     * against an app-side `Date.now()`: it is written and read by the driver, so
+     * mixing it with a JS Date misfires under a non-UTC MySQL session timezone.
+     * See BingoService.isBotBuyWindowOpen.
+     */
+    @Column({ type: 'timestamp', nullable: true })
+    botBuyOpensAt?: Date | null;
+
     @CreateDateColumn({ type: 'timestamp' })
     createdAt: Date;
 

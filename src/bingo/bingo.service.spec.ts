@@ -4229,6 +4229,9 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
     // periodic tick but also directly from a real player's purchase/refund
     // elsewhere in the same room (purchaseTickets/releaseCartela), so the gate
     // has to live HERE, not in the scheduler, to cover every caller uniformly.
+    //
+    // Room age is measured DB-side (getRoomAgeSeconds), never from
+    // `room.createdAt` in JS  see the timezone-skew regression test at the end.
     function baseMocks(service: any, overrides: Record<string, unknown> = {}) {
         jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
             botWinMode: 'off',
@@ -4264,22 +4267,32 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         ).mockResolvedValue([1, 2, 3, 4, 5, 6]);
     }
 
+    /** Drive the DB-side age measurement the gate actually consults. */
+    const withRoomAge = (service: any, ageSeconds: number | null) =>
+        jest
+            .spyOn(service as any, 'getRoomAgeSeconds')
+            .mockResolvedValue(ageSeconds);
+
+    // 10s resultDisplay + 3.4s livePlace + 5s bonusWin + 1.5s buffer = 19.9s -> 20s
+    const GATE_SECONDS = 20;
+
     it('does not buy any bot cartela into a room created just now, during an active Scheduled Bot Play window', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        const room = makeRoom({
-            winMode: 'prefilled',
-            status: 'open',
-            createdAt: new Date(),
-        });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
+        withRoomAge(service, 0);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
         jest.spyOn(
             service as any,
             'getActiveScheduledBotPlay',
-        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 2,
+            maxCartelasPerBot: 2,
+        });
         const purchaseSpy = jest
             .spyOn(service, 'purchaseTickets')
             .mockResolvedValue([] as any);
@@ -4295,11 +4308,11 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         const room = makeRoom({
             winMode: 'prefilled',
             status: 'open',
-            createdAt: new Date(),
             winSequenceTarget: 'bot',
         } as any);
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
+        withRoomAge(service, 0);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
@@ -4319,21 +4332,21 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
 
     it('buys in once the full gate (resultDisplaySeconds + live-place popup + Bonus Win popup + buffer) has elapsed', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        const room = makeRoom({
-            winMode: 'prefilled',
-            status: 'open',
-            // 10s + 3.4s + 5s + 1.5s buffer = 19.9s  comfortably past it.
-            createdAt: new Date(Date.now() - 21_000),
-        });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
+        withRoomAge(service, GATE_SECONDS);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
         jest.spyOn(
             service as any,
             'getActiveScheduledBotPlay',
-        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 2,
+            maxCartelasPerBot: 2,
+        });
         const purchaseSpy = jest
             .spyOn(service, 'purchaseTickets')
             .mockResolvedValue([] as any);
@@ -4344,23 +4357,24 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(changed).toBe(true);
     });
 
-    it('does NOT gate a room older than resultDisplaySeconds alone  the live-place and Bonus Win popups add more time first', async () => {
+    it('does NOT release a room older than resultDisplaySeconds alone  the live-place and Bonus Win popups add more time first', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        const room = makeRoom({
-            winMode: 'prefilled',
-            status: 'open',
-            // Clears resultDisplaySeconds(10s) alone but must NOT clear the full gate.
-            createdAt: new Date(Date.now() - 11_000),
-        });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
+        // Clears resultDisplaySeconds(10s) alone but not the full 20s gate.
+        withRoomAge(service, 11);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
         );
         jest.spyOn(
             service as any,
             'getActiveScheduledBotPlay',
-        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 2,
+            maxCartelasPerBot: 2,
+        });
         const purchaseSpy = jest
             .spyOn(service, 'purchaseTickets')
             .mockResolvedValue([] as any);
@@ -4373,21 +4387,22 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
 
     it('does not apply the gate once bots already hold at least one cartela in the room', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        const room = makeRoom({
-            winMode: 'prefilled',
-            status: 'open',
-            createdAt: new Date(), // brand new
-        });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
         baseMocks(service);
+        const ageSpy = withRoomAge(service, 0); // brand new
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
-            1, // a bot already bought in on an earlier, ungated tick
+            1, // a bot already bought in on an earlier, released tick
         );
         jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(1);
         jest.spyOn(
             service as any,
             'getActiveScheduledBotPlay',
-        ).mockResolvedValue({ id: 'schedule-1', botCount: 2, maxCartelasPerBot: 2 });
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 2,
+            maxCartelasPerBot: 2,
+        });
         const purchaseSpy = jest
             .spyOn(service, 'purchaseTickets')
             .mockResolvedValue([] as any);
@@ -4395,6 +4410,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         await service.reconcileBotCartelasInRoom(room.id);
 
         expect(purchaseSpy).toHaveBeenCalled();
+        expect(ageSpy).not.toHaveBeenCalled(); // gate short-circuits before measuring
     });
 
     it('does not gate ordinary human-driven mirror participation (no Scheduled Bot Play, no Win Sequence bot slot)', async () => {
@@ -4403,12 +4419,10 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
             winMode: 'prefilled',
             status: 'open',
             soldTickets: 2,
-            createdAt: new Date(), // brand new, but a real player already bought in
         });
         mockRoomRepo.findOneBy.mockResolvedValue(room);
-        baseMocks(service, {
-            botCartelaPolicyEnabled: true,
-        });
+        baseMocks(service, { botCartelaPolicyEnabled: true });
+        const ageSpy = withRoomAge(service, 0); // brand new room
         jest.spyOn(service, 'countRealPlayersInRoom').mockResolvedValue(2);
         jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
             0,
@@ -4425,6 +4439,91 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         await service.reconcileBotCartelasInRoom(room.id);
 
         expect(purchaseSpy).toHaveBeenCalled();
+        expect(ageSpy).not.toHaveBeenCalled(); // gate does not apply to this path
+    });
+
+    it('falls open (rather than deadlocking the game) when the room age cannot be measured', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        withRoomAge(service, null); // query failed / row unreadable
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 2,
+            maxCartelasPerBot: 2,
+        });
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).toHaveBeenCalled();
+    });
+
+    // THE production bug. The gate previously did `Date.now() - room.createdAt
+    // .getTime()`. createdAt is written and deserialized by the driver, so under
+    // a non-UTC MySQL session timezone it comes back skewed by hours - skewed to
+    // look OLD, that subtraction clears any gate instantly, which is why the
+    // gate shipped three times and changed nothing in production. Age must come
+    // from the DB (TIMESTAMPDIFF vs NOW()), where the offset cancels out.
+    it('ignores a timezone-skewed createdAt: a room the DB says is 2s old stays gated even if createdAt reads hours in the past', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            // What a +03:00 session skew looks like to the app: "3 hours ago".
+            createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+        });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+        baseMocks(service);
+        withRoomAge(service, 2); // the DB's own, correct answer
+        jest.spyOn(service as any, 'countBotCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({
+            id: 'schedule-1',
+            botCount: 2,
+            maxCartelasPerBot: 2,
+        });
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        const changed = await service.reconcileBotCartelasInRoom(room.id);
+
+        expect(purchaseSpy).not.toHaveBeenCalled();
+        expect(changed).toBe(false);
+    });
+
+    it('getRoomAgeSeconds measures age in SQL against NOW(), not from a JS Date', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockResolvedValue([{ ageSeconds: '7' }]);
+
+        const age = await (service as any).getRoomAgeSeconds('room-1');
+
+        expect(age).toBe(7); // string from the driver is coerced
+        const sql = mockRoomRepo.query.mock.calls[0][0] as string;
+        expect(sql).toContain('TIMESTAMPDIFF(SECOND, createdAt, NOW())');
+    });
+
+    it('getRoomAgeSeconds returns null instead of throwing when the query fails', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockRejectedValue(new Error('connection lost'));
+
+        await expect(
+            (service as any).getRoomAgeSeconds('room-1'),
+        ).resolves.toBeNull();
     });
 });
 

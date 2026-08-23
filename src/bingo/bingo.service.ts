@@ -268,6 +268,12 @@ const MIN_BINGO_SALES_WINDOW_MS = 15_000;
 export class BingoService implements OnModuleInit {
     private readonly logger = new Logger(BingoService.name);
 
+    /** Rooms currently held by the bot buy-in gate, so the "HOLDING" line is
+     * logged once per room instead of on every 250ms scheduler tick. An entry is
+     * removed (and a "RELEASED" line logged) the moment that room clears the
+     * gate, so this never grows beyond the rooms being held right now. */
+    private readonly botBuyInGateLoggedRoomIds = new Set<string>();
+
     constructor(
         private readonly dataSource: DataSource,
         @InjectRepository(BingoRoom)
@@ -6966,6 +6972,62 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
+     * How long after a room is created its FIRST bot cartela may be bought:
+     * exactly as long as the client spends presenting the PREVIOUS round's
+     * result before it lands on this room's buying screen. That presentation is
+     * three sequential stages (see Bingo.tsx): a live per-place win popup, then
+     * the Bonus Win popup, and only THEN the resultDisplaySeconds summary
+     * countdown  the summary timer deliberately does not start until the first
+     * two drain. Two of the three durations are server config; LIVE_PLACE_WIN_MS
+     * mirrors the client constant. Plus a small buffer for network/render lag.
+     */
+    private resolveBotBuyInGateSeconds(cfg: BingoConfig): number {
+        const totalMs =
+            Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000 +
+            LIVE_PLACE_WIN_MS +
+            Math.max(0, cfg.bonusWinDisplaySeconds ?? 5) * 1000 +
+            BUY_IN_GATE_SAFETY_BUFFER_MS;
+        return Math.ceil(totalMs / 1000);
+    }
+
+    /**
+     * The room's age in seconds, computed ENTIRELY inside MySQL.
+     *
+     * Deliberately not `Date.now() - room.createdAt.getTime()`: createdAt is
+     * written and deserialized by the driver, so mixing it with an app-side JS
+     * Date misfires under a non-UTC MySQL session timezone  the same hazard
+     * findRunningRoomIdsDue/getCurrentRoom already avoid by comparing
+     * column-to-NOW(). Skewed one way the row looks hours old (a gate built on
+     * it never blocks  which is exactly how the bot buy-in gate silently did
+     * nothing in production); skewed the other, it looks like the future and
+     * the gate would block forever. TIMESTAMPDIFF against NOW() keeps both
+     * sides in the same session timezone, so any offset cancels out.
+     *
+     * Returns null only if the row somehow can't be read; callers fall open
+     * (and log) rather than deadlocking the game on a missing measurement.
+     */
+    private async getRoomAgeSeconds(roomId: string): Promise<number | null> {
+        try {
+            const rows: Array<{ ageSeconds: number | string | null }> =
+                await this.bingoRoomRepository.query(
+                    `SELECT TIMESTAMPDIFF(SECOND, createdAt, NOW()) AS ageSeconds FROM bingo_rooms WHERE id = ?`,
+                    [roomId],
+                );
+            const raw = rows?.[0]?.ageSeconds;
+            if (raw === undefined || raw === null) return null;
+            const age = Number(raw);
+            return Number.isFinite(age) ? age : null;
+        } catch (err) {
+            this.logger.warn(
+                `Could not measure age of Bingo room ${roomId}; bot buy-in gate falls open: ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+            return null;
+        }
+    }
+
+    /**
      * Reconcile the room's bot cartelas to the current human demand.
      * Prefilled Bingo bots mirror the live human cartela count while the room is
      * open, and stand down entirely once the room has enough real players or none
@@ -7032,17 +7094,23 @@ export class BingoService implements OnModuleInit {
             currentBotCartelas === 0 &&
             (activeBotPlaySchedule || winSequenceForcesBot)
         ) {
-            const resultDisplayMs =
-                Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000;
-            const bonusWinDisplayMs =
-                Math.max(0, cfg.bonusWinDisplaySeconds ?? 5) * 1000;
-            const buyInGateMs =
-                resultDisplayMs +
-                LIVE_PLACE_WIN_MS +
-                bonusWinDisplayMs +
-                BUY_IN_GATE_SAFETY_BUFFER_MS;
-            if (Date.now() - room.createdAt.getTime() < buyInGateMs) {
+            const gateSeconds = this.resolveBotBuyInGateSeconds(cfg);
+            const ageSeconds = await this.getRoomAgeSeconds(validRoomId);
+            if (ageSeconds !== null && ageSeconds < gateSeconds) {
+                if (!this.botBuyInGateLoggedRoomIds.has(validRoomId)) {
+                    this.botBuyInGateLoggedRoomIds.add(validRoomId);
+                    this.logger.log(
+                        `Bot buy-in gate HOLDING room ${validRoomId}: age ${ageSeconds}s < ${gateSeconds}s ` +
+                            `(resultDisplay ${cfg.resultDisplaySeconds ?? 10}s + livePlace ${LIVE_PLACE_WIN_MS / 1000}s + ` +
+                            `bonusWin ${cfg.bonusWinDisplaySeconds ?? 5}s + buffer ${BUY_IN_GATE_SAFETY_BUFFER_MS / 1000}s)`,
+                    );
+                }
                 return false;
+            }
+            if (this.botBuyInGateLoggedRoomIds.delete(validRoomId)) {
+                this.logger.log(
+                    `Bot buy-in gate RELEASED room ${validRoomId} at age ${ageSeconds}s  bots may now buy in`,
+                );
             }
         }
         const totalCartelas = await this.countSoldTickets(validRoomId);

@@ -1524,6 +1524,14 @@ export class AdminService implements OnApplicationBootstrap {
         // "Commission" here, which read as a bug. Withdrawal fees are tracked
         // separately  payout_custody is deliberately excluded everywhere below,
         // it reimburses cash already paid out, not earnings.
+        //
+        // "Referred Players" (customersBrought) counts COALESCE(referredByAgentId,
+        // assignedAgentId)  the SAME population every settleReferralCommission
+        // (Bingo/Keno/Crash/Pool/Werk) pays commission from. Counting only
+        // referredByAgentId undercounted it: a player connected via GPS match or
+        // manual pick (assignedAgentId set, no referral code) still generates
+        // commission for that agent, so excluding them made "Commission" nonzero
+        // while "Referred Players" showed 0, which read as a bug.
         const referralSourceTypesSql = REFERRAL_COMMISSION_SOURCE_TYPES.map(
             (t) => `'${t}'`,
         ).join(', ');
@@ -1570,11 +1578,11 @@ export class AdminService implements OnApplicationBootstrap {
             GROUP BY t.agentId
          ) t ON t.agentId = u.id
          LEFT JOIN (
-           SELECT referredByAgentId, COUNT(*) customers
+           SELECT COALESCE(referredByAgentId, assignedAgentId) AS agentId, COUNT(*) customers
              FROM users
-            WHERE referredByAgentId IS NOT NULL
-            GROUP BY referredByAgentId
-         ) c ON c.referredByAgentId = u.id
+            WHERE COALESCE(referredByAgentId, assignedAgentId) IS NOT NULL
+            GROUP BY COALESCE(referredByAgentId, assignedAgentId)
+         ) c ON c.agentId = u.id
          LEFT JOIN (
            SELECT userId, SUM(amountMinor) commission, COUNT(*) commissionCount
              FROM ledger_entries

@@ -188,12 +188,33 @@ export class BingoScheduler
                     // any idle room already pinned to a Win Sequence 'bot' slot
                     // (see BingoRoom.winSequenceTarget)  it must be able to start
                     // and play out on bots alone to make good on that slot.
+                    //
+                    // A freshly-created room must sit untouched for at least
+                    // resultDisplaySeconds: that's how long the client keeps
+                    // showing the PREVIOUS room's win popup (see
+                    // BingoService.getCurrentRoom) before switching over, so a
+                    // bot buying in immediately  before any player could see
+                    // the buying screen  made cartelas look pre-sold and the
+                    // countdown look already-elapsed the moment it appeared
+                    // (reported: bots visibly buy before the win window closes).
+                    // Gating only the FIRST buy is enough: nothing else starts
+                    // this room's countdown during a bot-play window, so it
+                    // can't reach findOpenRoomsWithCountdown early either.
                     const activeBotPlaySchedule =
                         await this.bingoService.getActiveScheduledBotPlay();
                     if (activeBotPlaySchedule || cfg.winSequenceEnabled) {
+                        const resultDisplayMs =
+                            Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000;
+                        const now = Date.now();
                         const idleRooms =
                             await this.bingoService.findIdleOpenRooms();
                         for (const room of idleRooms) {
+                            if (
+                                now - room.createdAt.getTime() <
+                                resultDisplayMs
+                            ) {
+                                continue;
+                            }
                             if (
                                 activeBotPlaySchedule ||
                                 room.winSequenceTarget === 'bot'

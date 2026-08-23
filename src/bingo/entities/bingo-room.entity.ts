@@ -206,24 +206,31 @@ export class BingoRoom {
     customSlotId?: string | null;
 
     /**
-     * The moment BOTS become allowed to buy their first cartela into this room.
-     * Stamped once at room creation to `NOW() + <result presentation length>`
-     * so a freshly-opened room cannot be filled by bots while the client is
-     * still showing the PREVIOUS round's result (live per-place win popup →
-     * Bonus Win popup → the resultDisplaySeconds summary). Without it, bots buy
-     * in during that presentation and the countdown they trigger is already
-     * half-elapsed by the time the player is returned to the buying screen.
+     * The moment a REAL player was first served this room while it was open for
+     * buying — i.e. when someone was actually put in front of its cartela grid.
+     * NULL until that happens.
      *
-     * NULL means "no hold" (legacy rows, and rooms created before this column
-     * existed) — those behave exactly as before.
+     * This is what the bot buy-in gate waits on: bots may open a room's
+     * countdown one second after a player has arrived, so cartelas are visibly
+     * bought rather than already gone when the player lands. Bingo.tsx suppresses
+     * its poll for the whole result presentation, so the first request that
+     * resolves to this room while it is open IS the player's arrival — an
+     * observed fact, not a guess at how long the win/summary screens ran.
      *
-     * ALWAYS compare this column against the database's own NOW() in SQL, never
-     * against an app-side `Date.now()`: it is written and read by the driver, so
-     * mixing it with a JS Date misfires under a non-UTC MySQL session timezone.
-     * See BingoService.isBotBuyWindowOpen.
+     * ALWAYS compare it against the database's own NOW() in SQL, never against an
+     * app-side `Date.now()`: it is written and read by the driver, so mixing it
+     * with a JS Date misfires under a non-UTC MySQL session timezone.
+     * See BingoService.isBotBuyAllowed.
+     *
+     * (A `botBuyOpensAt` column used to live here: a deadline stamped at room
+     * CREATION from an estimate of the presentation length. Both halves were
+     * wrong — a room can be created minutes before a player is returned to it,
+     * and the estimate mirrored client animation constants and admin display
+     * settings, so it went stale whenever either changed. The column is left in
+     * the database, unused; schema sync never drops.)
      */
     @Column({ type: 'timestamp', nullable: true })
-    botBuyOpensAt?: Date | null;
+    firstViewedAt?: Date | null;
 
     @CreateDateColumn({ type: 'timestamp' })
     createdAt: Date;

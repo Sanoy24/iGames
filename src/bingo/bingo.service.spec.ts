@@ -82,6 +82,13 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
             getOne: jest.fn().mockResolvedValue(null),
             getRawMany: jest.fn().mockResolvedValue([]),
         }),
+        // getRoomState reaches the users table through the room repo's manager
+        // (to tell a real viewer from a bot before stamping firstViewedAt).
+        manager: {
+            findOne: jest.fn().mockResolvedValue(null),
+            find: jest.fn().mockResolvedValue([]),
+            query: jest.fn().mockResolvedValue([]),
+        },
     };
 
     const mockBotNameRepo = {
@@ -119,6 +126,8 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     };
 
     const mockConfigRepo = {
+        // Raw query used by the bot buy-in gate's player-presence heartbeat.
+        query: jest.fn().mockResolvedValue([]),
         findOneBy: jest.fn().mockResolvedValue({
             key: 'default',
             enabled: true,
@@ -1104,15 +1113,19 @@ describe('BingoService cartela lifecycle guards', () => {
         ).mockReturnValue(false);
         jest.spyOn(
             harness.service as any,
-            'isBotBuyWindowOpen',
+            'isBotBuyAllowed',
         ).mockResolvedValue({
-            open: opts.holdSecondsRemaining == null,
+            allowed: opts.holdSecondsRemaining == null,
             secondsRemaining: opts.holdSecondsRemaining ?? 0,
+            reason:
+                opts.holdSecondsRemaining == null
+                    ? undefined
+                    : 'a round with real players is still being presented',
         });
         return { ...harness, room, user };
     }
 
-    it('refuses a BOT cartela purchase while the previous result is still being shown', async () => {
+    it('refuses a BOT cartela purchase while a player has not yet reached the buying screen', async () => {
         const { service, room, walletService } = makePurchaseHarness({
             botPolicy: { active: true },
             holdSecondsRemaining: 12,
@@ -1125,7 +1138,7 @@ describe('BingoService cartela lifecycle guards', () => {
                 cartelaNumbers: [1],
                 idempotencyKey: 'bot-during-hold',
             }),
-        ).rejects.toThrow(/Bots are held out of this room for another 12s/);
+        ).rejects.toThrow(/Bots are held out of this room .*up to 12s/);
 
         // Nothing was charged, so no cartela is taken and no countdown starts -
         // the player returns to an untouched buying screen.
@@ -4447,9 +4460,11 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         open: boolean,
         secondsRemaining = open ? 0 : 8,
     ) =>
-        jest
-            .spyOn(service as any, 'isBotBuyWindowOpen')
-            .mockResolvedValue({ open, secondsRemaining });
+        jest.spyOn(service as any, 'isBotBuyAllowed').mockResolvedValue({
+            allowed: open,
+            secondsRemaining,
+            reason: open ? undefined : 'a round is still being presented',
+        });
 
     it('does not buy any bot cartela into a room created just now, during an active Scheduled Bot Play window', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
@@ -4640,13 +4655,14 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(purchaseSpy).toHaveBeenCalled();
     });
 
-    // THE production bug. The gate previously did `Date.now() - room.createdAt
-    // .getTime()`. createdAt is written and deserialized by the driver, so under
-    // a non-UTC MySQL session timezone it comes back skewed by hours - skewed to
-    // look OLD, that subtraction clears any gate instantly, which is why the
-    // gate shipped three times and changed nothing in production. Age must come
-    // from the DB (TIMESTAMPDIFF vs NOW()), where the offset cancels out.
-    it('ignores a timezone-skewed createdAt: the DB-side hold still blocks even though createdAt reads hours in the past', async () => {
+    // The room's OWN age must never enter into it. An earlier gate did
+    // `Date.now() - room.createdAt.getTime()`, which failed twice over: createdAt
+    // is deserialized by the driver, so a non-UTC MySQL session timezone makes it
+    // read hours old and clears any gate instantly; and even read correctly, a
+    // room that has been sitting open for minutes (custom slots, agent rooms) is
+    // "old" while the round the player is actually watching only just ended. The
+    // hold comes from the completed round, measured DB-side.
+    it('holds an OLD room too: a room created hours ago is still gated while a round is presenting', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
         const room = makeRoom({
             winMode: 'prefilled',
@@ -4678,185 +4694,447 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(changed).toBe(false);
     });
 
-    it('isBotBuyWindowOpen compares the stamp against the DB NOW(), not a JS Date', async () => {
-        const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockResolvedValue([{ secondsRemaining: '7' }]);
+    // ── The gate's own unit tests ────────────────────────────────────────────
+    //
+    // THE production bug this rewrite fixes, and why the gate no longer computes
+    // anything. It used to stamp each room, at CREATION, with a deadline of
+    // "now + placesWon x popup + bonus popup + resultDisplaySeconds". Both halves
+    // were wrong:
+    //
+    //  * Wrong anchor. A room can be open for minutes before a player is returned
+    //    to it (custom slots and per-agent rooms each recreate on their own
+    //    cycle), so the stamp had usually expired by the time it mattered. Bots
+    //    were then held back only by being busy in the round still drawing, and
+    //    poured into the next room the instant that round completed - i.e.
+    //    exactly as the presentation STARTED. The recording shows the result: the
+    //    player landed on a buying screen with cartelas already gone and the 40s
+    //    countdown already down to 23s.
+    //  * Wrong length. It mirrored client animation constants and the admin's
+    //    display settings, so it went stale whenever either was changed.
+    //
+    // The gate now waits on an OBSERVED event - firstViewedAt, stamped when a
+    // real player is actually served the open room - so no admin setting or
+    // client animation timing can shrink it again.
 
-        const gate = await (service as any).isBotBuyWindowOpen('room-1');
-
-        expect(gate).toEqual({ open: false, secondsRemaining: 7 }); // driver string coerced
-        const sql = mockRoomRepo.query.mock.calls[0][0] as string;
-        expect(sql).toContain('botBuyOpensAt > NOW()');
-        expect(sql).toContain('TIMESTAMPDIFF(SECOND, NOW(), botBuyOpensAt)');
-        // Only the roomId is bound - no timestamp is ever sent from the app side,
-        // which is what made the previous createdAt gate a no-op in production.
-        expect(mockRoomRepo.query.mock.calls[0][1]).toEqual(['room-1']);
-    });
-
-    it('isBotBuyWindowOpen treats an un-stamped (NULL) room as open, so legacy rooms are unaffected', async () => {
-        const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockResolvedValue([]); // WHERE botBuyOpensAt > NOW() matched nothing
-
-        await expect(
-            (service as any).isBotBuyWindowOpen('room-1'),
-        ).resolves.toEqual({ open: true, secondsRemaining: 0 });
-    });
-
-    it('isBotBuyWindowOpen falls open instead of throwing when the query fails', async () => {
-        const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockRejectedValue(new Error('connection lost'));
-
-        await expect(
-            (service as any).isBotBuyWindowOpen('room-1'),
-        ).resolves.toEqual({ open: true, secondsRemaining: 0 });
-    });
-
-    // THE bug this whole gate kept failing on. The client presents a finished
-    // round as a QUEUE of win popups - one per place won, each costing a
-    // now-calling beat (1.4s) plus the popup (3.4s) - and the summary countdown
-    // does not even start until that queue drains. A hold budgeting a single
-    // popup is ~9s too short on a 3-place round, so bots bought in while the
-    // player was still watching. Every case below is a real settlement shape.
-    const CFG = { resultDisplaySeconds: 10, bonusWinDisplaySeconds: 5 };
-    const winner = { winners: [{ userId: 'u1' }] };
-
-    function stampHarness(settlementSummary: unknown) {
-        const harness = makeService({ rooms: [] });
-        harness.mockRoomRepo.query.mockResolvedValue(undefined);
-        jest.spyOn(
-            harness.service as any,
-            'findJustCompletedRoom',
-        ).mockResolvedValue(
-            settlementSummary === undefined ? null : { settlementSummary },
+    /**
+     * Drive the three observations the gate reads, as the DB reports them.
+     * `null` for any of them means "that query matched nothing".
+     */
+    const withObservations = (
+        harness: any,
+        obs: {
+            viewedSecondsAgo?: unknown;
+            playerSeenSecondsAgo?: unknown;
+            lineageRoundEndedSecondsAgo?: unknown;
+        },
+    ) => {
+        const {
+            viewedSecondsAgo = null,
+            playerSeenSecondsAgo = 2, // somebody is in the game, by default
+            lineageRoundEndedSecondsAgo = null,
+        } = obs;
+        harness.mockRoomRepo.query.mockImplementation((sql: string) =>
+            Promise.resolve(
+                sql.includes('firstViewedAt IS NOT NULL')
+                    ? viewedSecondsAgo === null
+                        ? []
+                        : [{ viewedSecondsAgo }]
+                    : [{ endedSecondsAgo: lineageRoundEndedSecondsAgo }],
+            ),
         );
-        return harness;
-    }
+        harness.mockConfigRepo.query.mockResolvedValue(
+            playerSeenSecondsAgo === null ? [] : [{ playerSeenSecondsAgo }],
+        );
+    };
 
-    const heldSeconds = (mockRoomRepo: any) =>
-        mockRoomRepo.query.mock.calls[0][1][0];
+    const HOUSE_ROOM = {
+        id: 'room-1',
+        soldTickets: 0,
+        customSlotId: null,
+        ownerAgentId: null,
+    };
 
-    it('holds for ONE place popup on a single-winner round', async () => {
-        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
+    it('measures every observation in SQL, never against a JS Date', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, { viewedSecondsAgo: 5 });
 
-        await (service as any).stampBotBuyOpensAt('room-1', CFG);
+        await (h.service as any).isBotBuyAllowed(HOUSE_ROOM);
 
-        const [sql] = mockRoomRepo.query.mock.calls[0];
-        expect(sql).toContain('DATE_ADD(NOW(), INTERVAL ? SECOND)');
-        // 1x4.8s + 5s bonus + 10s summary + 1.5s buffer = 21.3s -> 22s
-        expect(heldSeconds(mockRoomRepo)).toBe(22);
+        const sqls = [
+            ...h.mockRoomRepo.query.mock.calls,
+            ...h.mockConfigRepo.query.mock.calls,
+        ].map((c: unknown[]) => c[0] as string);
+        // The whole point: no timestamp ever crosses into JS, where a non-UTC
+        // MySQL session timezone would skew it by hours.
+        expect(
+            sqls.some((s: string) =>
+                s.includes('TIMESTAMPDIFF(SECOND, firstViewedAt, NOW())'),
+            ),
+        ).toBe(true);
+        expect(
+            sqls.some((s: string) =>
+                s.includes('TIMESTAMPDIFF(SECOND, lastPlayerSeenAt, NOW())'),
+            ),
+        ).toBe(true);
+        expect(
+            sqls.some((s: string) =>
+                s.includes('TIMESTAMPDIFF(SECOND, r.updatedAt, NOW())'),
+            ),
+        ).toBe(true);
+        // And nothing about display seconds, popup lengths or place counts is
+        // bound anywhere - the gate no longer computes a duration at all.
+        for (const call of h.mockRoomRepo.query.mock.calls) {
+            expect(call[1] ?? []).not.toContain(7);
+            expect(call[1] ?? []).not.toContain(10);
+        }
     });
 
-    it('holds ~9s LONGER on a three-place round - the exact case the old fixed hold got wrong', async () => {
-        const { service, mockRoomRepo } = stampHarness({
-            '1st': winner,
-            '2nd': winner,
-            '3rd': winner,
+    it('lets bots buy one second after the player actually landed on the buying screen', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: 12,
         });
 
-        await (service as any).stampBotBuyOpensAt('room-1', CFG);
-
-        // 3x4.8s + 5s + 10s + 1.5s = 30.9s -> 31s. The old hold was a flat 20s,
-        // so bots bought in 11s before the player was returned to the screen.
-        expect(heldSeconds(mockRoomRepo)).toBe(31);
-        expect(heldSeconds(mockRoomRepo)).toBeGreaterThan(20);
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
     });
 
-    it('scales all the way to a five-place round', async () => {
-        const { service, mockRoomRepo } = stampHarness({
-            '1st': winner,
-            '2nd': winner,
-            '3rd': winner,
-            '4th': winner,
-            '5th': winner,
+    it('holds for that one second - the player sees the grid before anything moves on it', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: 0,
+            lineageRoundEndedSecondsAgo: 12,
         });
 
-        await (service as any).stampBotBuyOpensAt('room-1', CFG);
-
-        // 5x4.8s + 5s + 10s + 1.5s = 40.5s -> 41s
-        expect(heldSeconds(mockRoomRepo)).toBe(41);
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({
+            allowed: false,
+            secondsRemaining: 1,
+            reason: 'a player just landed on the buying screen',
+        });
     });
 
-    it('counts only places that actually have a winner - an empty or unsettled place pops up nothing', async () => {
-        const { service, mockRoomRepo } = stampHarness({
-            '1st': winner,
-            '2nd': { winners: [] }, // settled but nobody won it
-            '3rd': { disqualified: true }, // no winner payload at all
+    // The recorded bug, as a test. A round in this room's lineage finished a
+    // second ago, a player is in the game watching its result, and nobody has
+    // been returned to this room yet. Under the old gate this room was minutes
+    // old, its creation-time deadline had expired, and bots bought here at once.
+    it('holds an OLD, long-open room while a player is still being shown the previous result', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: 1,
         });
 
-        await (service as any).stampBotBuyOpensAt('room-1', CFG);
-
-        expect(heldSeconds(mockRoomRepo)).toBe(22); // one popup, not three
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({
+            allowed: false,
+            secondsRemaining: 89,
+            reason: 'a player is still being shown the previous result',
+        });
     });
 
-    it('counts the legacy single-winner shape (winnerDisplayName, no winners[])', async () => {
-        const { service, mockRoomRepo } = stampHarness({
-            '1st': { winnerDisplayName: 'Abebe' },
-            '2nd': { winnerGrid: [[1]] },
+    // Independence from the admin's display settings is the point of the rewrite:
+    // the hold lasts until the player arrives, whether that takes 12s or 80s.
+    it('keeps holding however long the result screens run - it waits on the player, not a clock', async () => {
+        const h = makeService({ rooms: [] });
+        for (const endedSecondsAgo of [5, 30, 60, 89]) {
+            withObservations(h, {
+                playerSeenSecondsAgo: 1,
+                lineageRoundEndedSecondsAgo: endedSecondsAgo,
+            });
+            await expect(
+                (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+            ).resolves.toMatchObject({ allowed: false });
+        }
+    });
+
+    it('releases the moment the player arrives, however long that took', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: 2,
+            playerSeenSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: 80, // a long presentation
         });
 
-        await (service as any).stampBotBuyOpensAt('room-1', CFG);
-
-        // 2x4.8s + 5s + 10s + 1.5s = 26.1s -> 27s
-        expect(heldSeconds(mockRoomRepo)).toBe(27);
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
     });
 
-    it('falls back to the WORST case (5 places), never the shortest, when no settlement can be read', async () => {
-        const { service, mockRoomRepo } = stampHarness(undefined); // no finished room
-
-        await (service as any).stampBotBuyOpensAt('room-1', CFG);
-
-        expect(heldSeconds(mockRoomRepo)).toBe(41);
-    });
-
-    it('still honours the admin-configured display seconds on top of the per-place time', async () => {
-        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
-
-        await (service as any).stampBotBuyOpensAt('room-1', {
-            resultDisplaySeconds: 20,
-            bonusWinDisplaySeconds: 0,
+    it('does not wait when nobody is in the game at all - an all-bot house never stalls', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            playerSeenSecondsAgo: null, // no player has ever been seen
+            lineageRoundEndedSecondsAgo: 1,
         });
 
-        // 1x4.8s + 0s + 20s + 1.5s = 26.3s -> 27s
-        expect(heldSeconds(mockRoomRepo)).toBe(27);
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
     });
 
-    // Locked to the live admin config (Result Display 7s, Bonus Win Popup 5s) so
-    // a change to those defaults can't silently shorten the hold again.
-    it('matches the deployed config: a 3-place round holds 28s, not the 17s the old flat hold gave', async () => {
-        const LIVE_CFG = { resultDisplaySeconds: 7, bonusWinDisplaySeconds: 5 };
-        const { service, mockRoomRepo } = stampHarness({
-            '1st': winner,
-            '2nd': winner,
-            '3rd': winner,
+    it('does not wait once the last player has gone quiet', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            playerSeenSecondsAgo: 20, // stale heartbeat: nobody is looking
+            lineageRoundEndedSecondsAgo: 1,
         });
 
-        await (service as any).stampBotBuyOpensAt('room-1', LIVE_CFG);
-
-        // Client presents for 3x4.8s + 5s + 7s = 26.4s; hold = that + 1.5s buffer.
-        // The old single-popup hold was 3.4 + 5 + 7 + 1.5 = 17s, i.e. bots bought
-        // in ~9s before the player was returned to the buying screen.
-        expect(heldSeconds(mockRoomRepo)).toBe(28);
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
     });
 
-    it('matches the deployed config: a single-winner round holds 19s', async () => {
-        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
-
-        await (service as any).stampBotBuyOpensAt('room-1', {
-            resultDisplaySeconds: 7,
-            bonusWinDisplaySeconds: 5,
+    // A spectator holds no ticket, so no ticket-based check would see them - but
+    // Bingo.tsx keeps polling the lobby right through the result, so the presence
+    // heartbeat does. This is the exact case the recording was made in.
+    it('waits for a SPECTATOR who bought no cartela, because the lobby poll still shows them present', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: 3, // watching, holding nothing
+            lineageRoundEndedSecondsAgo: 4,
         });
 
-        // 4.8 + 5 + 7 + 1.5 = 18.3 -> 19s, and the 40s buy window starts after it.
-        expect(heldSeconds(mockRoomRepo)).toBe(19);
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toMatchObject({ allowed: false });
     });
 
-    it('leaves the room un-held (rather than frozen) if the stamp write fails', async () => {
-        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
+    it('does not wait when the player in the game is not coming out of THIS room lineage', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            playerSeenSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: null, // nothing finished in this lineage
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
+    });
+
+    it('scopes the lineage to the room custom slot, then its owner agent, then the house', async () => {
+        const h = makeService({ rooms: [] });
+        const predicate = (room: unknown) =>
+            (h.service as any).roomLineagePredicate(room);
+
+        expect(predicate({ customSlotId: 'slot-9', ownerAgentId: 'a-1' })).toEqual({
+            sql: 'r.customSlotId = ?',
+            params: ['slot-9'],
+        });
+        expect(predicate({ customSlotId: null, ownerAgentId: 'a-1' })).toEqual({
+            sql: 'r.ownerAgentId = ?',
+            params: ['a-1'],
+        });
+        expect(predicate({ customSlotId: null, ownerAgentId: null })).toEqual({
+            sql: 'r.customSlotId IS NULL AND r.ownerAgentId IS NULL',
+            params: [],
+        });
+    });
+
+    it('gives up on a player who never arrives, so a room can never stall for good', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            playerSeenSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: 90, // backstop reached
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
+    });
+
+    it('coerces the driver string form of the observations', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: '0',
+            lineageRoundEndedSecondsAgo: '4',
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toMatchObject({ allowed: false, secondsRemaining: 1 });
+    });
+
+    it('lets a MID-COUNTDOWN top-up through without even querying, whatever else is on screen', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            playerSeenSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: 1,
+        });
+
+        // The gate exists to stop bots STARTING a countdown early. Once one is
+        // running, freezing top-ups would stall the room's progressive fill every
+        // time an unrelated round happened to finish.
+        await expect(
+            (h.service as any).isBotBuyAllowed({
+                ...HOUSE_ROOM,
+                soldTickets: 3,
+            }),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
+        expect(h.mockRoomRepo.query).not.toHaveBeenCalled();
+    });
+
+    it('falls open instead of throwing when the observations cannot be read', async () => {
+        const h = makeService({ rooms: [] });
+        h.mockRoomRepo.query.mockRejectedValue(new Error('connection lost'));
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
+    });
+
+    // ── The observations themselves ──────────────────────────────────────────
+    it('markRoomViewedByPlayer stamps once, with the DB clock, and only while the room is open', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockResolvedValue(undefined);
+
+        await (service as any).markRoomViewedByPlayer('room-1');
+
+        const [sql, params] = mockRoomRepo.query.mock.calls[0];
+        expect(sql).toContain('SET firstViewedAt = NOW()');
+        // First writer wins: a later poll must not push the player's arrival
+        // forward and re-hold the bots.
+        expect(sql).toContain('firstViewedAt IS NULL');
+        expect(sql).toContain("status = 'open'");
+        expect(params).toEqual(['room-1']);
+    });
+
+    it('markRoomViewedByPlayer swallows a failed stamp rather than failing the room load', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
         mockRoomRepo.query.mockRejectedValue(new Error('write failed'));
 
         await expect(
-            (service as any).stampBotBuyOpensAt('room-1', CFG),
+            (service as any).markRoomViewedByPlayer('room-1'),
         ).resolves.toBeUndefined();
+    });
+
+    it('touchPlayerPresence throttles itself in SQL rather than writing on every poll', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        mockConfigRepo.query.mockResolvedValue(undefined);
+
+        await (service as any).touchPlayerPresence('user-1');
+
+        const [sql, params] = mockConfigRepo.query.mock.calls[0];
+        expect(sql).toContain('SET lastPlayerSeenAt = NOW()');
+        expect(sql).toContain('lastPlayerSeenAt < NOW() - INTERVAL ? SECOND');
+        expect(params).toEqual([5]);
+    });
+
+    it('touchPlayerPresence ignores an unauthenticated read, and never throws', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+
+        await expect(
+            (service as any).touchPlayerPresence(undefined),
+        ).resolves.toBeUndefined();
+        expect(mockConfigRepo.query).not.toHaveBeenCalled();
+
+        mockConfigRepo.query.mockRejectedValue(new Error('write failed'));
+        await expect(
+            (service as any).touchPlayerPresence('user-1'),
+        ).resolves.toBeUndefined();
+    });
+});
+
+describe('BingoService.getRoomState  recording the player arriving on the buying screen', () => {
+    // The observation the whole bot buy-in gate rests on. Bingo.tsx suppresses
+    // its poll for the ENTIRE result presentation (`if (!holdingResultRef.current)
+    // void loadCurrent();`), so the first time a real user's request resolves to
+    // an OPEN room is, by construction, the moment that player is put back in
+    // front of the cartela grid - whatever the admin set the display timings to.
+    const openRoom = () =>
+        makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            firstViewedAt: null,
+        } as any);
+
+    function harnessFor(room: BingoRoom, viewer: unknown) {
+        const h = makeService({ rooms: [room] });
+        h.mockRoomRepo.manager.findOne.mockResolvedValue(viewer);
+        jest.spyOn(h.service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(h.service as any, 'getTakenSpots').mockResolvedValue([]);
+        jest.spyOn(
+            h.service as any,
+            'refreshActiveBonusCampaignCache',
+        ).mockResolvedValue(undefined);
+        jest.spyOn(
+            h.service as any,
+            'refreshBotWinnerDisplayNames',
+        ).mockResolvedValue(undefined);
+        const stamp = jest
+            .spyOn(h.service as any, 'markRoomViewedByPlayer')
+            .mockResolvedValue(undefined);
+        return { ...h, stamp };
+    }
+
+    const REAL_USER = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        productMetadata: {},
+    };
+    const BOT_USER = {
+        id: '550e8400-e29b-41d4-a716-446655440111',
+        productMetadata: { botPolicy: { active: true } },
+    };
+
+    it('records the arrival when a real player is served an open room', async () => {
+        const room = openRoom();
+        const { service, stamp } = harnessFor(room, REAL_USER);
+
+        await service.getRoomState({ roomId: room.id, userId: REAL_USER.id });
+
+        expect(stamp).toHaveBeenCalledWith(room.id);
+    });
+
+    it('does not record an arrival for a BOT viewer - only a human landing counts', async () => {
+        const room = openRoom();
+        const { service, stamp } = harnessFor(room, BOT_USER);
+
+        await service.getRoomState({ roomId: room.id, userId: BOT_USER.id });
+
+        expect(stamp).not.toHaveBeenCalled();
+    });
+
+    it('does not record an arrival for an internal, unattributed read', async () => {
+        const room = openRoom();
+        const { service, stamp } = harnessFor(room, REAL_USER);
+
+        await service.getRoomState({ roomId: room.id }); // no userId
+
+        expect(stamp).not.toHaveBeenCalled();
+    });
+
+    it('does not record an arrival on a room that is not open for buying', async () => {
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'running',
+            firstViewedAt: null,
+        } as any);
+        const { service, stamp } = harnessFor(room, REAL_USER);
+
+        await service.getRoomState({ roomId: room.id, userId: REAL_USER.id });
+
+        expect(stamp).not.toHaveBeenCalled();
+    });
+
+    it('does not re-record on every poll once the first arrival is known', async () => {
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'open',
+            firstViewedAt: new Date(),
+        } as any);
+        const { service, stamp } = harnessFor(room, REAL_USER);
+
+        await service.getRoomState({ roomId: room.id, userId: REAL_USER.id });
+
+        // Re-stamping would push the arrival forward and re-hold the bots on
+        // every 5s poll, so the room would never open to them at all.
+        expect(stamp).not.toHaveBeenCalled();
     });
 });
 

@@ -69,8 +69,9 @@ export class BingoController {
         description:
             'Joinable rooms + whether per-agent room mode is enabled (Approach B)',
     })
-    getLobby() {
-        return this.bingoService.getLobby();
+    getLobby(@Req() request: Request) {
+        const maybeUser = (request as Partial<AuthenticatedRequest>).user;
+        return this.bingoService.getLobby(maybeUser?.id);
     }
 
     @Get('rooms/:id/state')

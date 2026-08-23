@@ -285,6 +285,21 @@ export class BingoConfig {
     @Column({ type: 'int', nullable: true })
     houseTicketPriceMinor?: number | null;
 
+    /**
+     * Heartbeat: the last time a REAL player was served any Bingo read endpoint.
+     * Not a setting — nothing in the admin UI touches it.
+     *
+     * It answers one question for the bot buy-in gate: is anybody actually in the
+     * game right now? Bingo.tsx keeps polling the lobby every 5s even while it is
+     * showing a finished round's result, so a player watching a result — INCLUDING
+     * one who bought no cartela and holds no ticket — keeps this fresh. When it
+     * has gone stale nobody is watching anything, so bots need not wait for a
+     * player to land on a buying screen and an all-bot house never stalls.
+     * See BingoService.isBotBuyAllowed.
+     */
+    @Column({ type: 'timestamp', nullable: true })
+    lastPlayerSeenAt?: Date | null;
+
     @CreateDateColumn({ type: 'timestamp' })
     createdAt: Date;
 

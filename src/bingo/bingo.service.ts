@@ -83,26 +83,38 @@ export const PREFILLED_PLACES: PrefilledPlace[] = [
 ];
 const DEFAULT_BINGO_BOT_WINNER_COOLDOWN_ROOMS = 25;
 
-// Mirror frontend/src/pages/Bingo.tsx  keep both in sync with that file.
-// The client presents a finished round as a QUEUE of per-place win popups (one
-// for EVERY place that was won: 1st…5th), and each place costs the beat where
-// the winning ball sits in "now calling" PLUS the popup itself. Budgeting a
-// single popup here is what kept the bot buy-in hold far too short on a
-// multi-place round  a 3-place round presents for ~29s, not ~20s  so bots
-// bought in while the player was still watching the result. See
-// resolveBotBuyInGateSeconds.
-const LIVE_PLACE_WIN_MS = 3_400;
-const NOW_CALLING_HOLD_MS = 1_400;
-const PER_PLACE_PRESENTATION_MS = NOW_CALLING_HOLD_MS + LIVE_PLACE_WIN_MS;
+// NOTE: this file used to mirror Bingo.tsx's presentation constants
+// (LIVE_PLACE_WIN_MS / NOW_CALLING_HOLD_MS / the 1st…5th place count) so the bot
+// buy-in hold could be computed as "however long we think the win + summary
+// screens run". That is deliberately gone: any such mirror goes stale the moment
+// either the client animations or the admin's display settings change, which is
+// exactly how the hold kept silently shrinking. The gate now waits on an
+// OBSERVED event instead - see isBotBuyAllowed.
 
-// Places a prefilled room can settle (1st…5th) - mirrors the client's
-// PREFILLED_PLACE_ORDER. Used as the worst case when the finished round's
-// settlement can't be read, so the hold errs long rather than short.
-const MAX_PREFILLED_PLACES = 5;
+// The deliberate beat the player gets ALONE on the freshly-loaded buying screen
+// before any bot is allowed to touch it, so cartelas are visibly bought rather
+// than already gone on arrival. Measured from the OBSERVED moment the player was
+// served the room (BingoRoom.firstViewedAt), not from any guess about how long
+// the result screens took - see isBotBuyAllowed.
+const BOT_BUY_PLAYER_GRACE_SECONDS = 1;
 
-// Extra buffer on top of the computed buy-in gate for network/render latency
-// between the client finishing its hold and a reconcile call observing that.
-const BUY_IN_GATE_SAFETY_BUFFER_MS = 1_500;
+// Liveness backstop ONLY: how long bots wait for a player who never arrives
+// because they closed the app part-way through a result. Deliberately far longer
+// than any presentation could run (even with the display timings turned right
+// up), so in normal play the player's arrival is always what releases the gate
+// and this value never is. Doubles as the lookback window for "did a round in
+// this room's lineage finish recently".
+const BOT_BUY_BACKSTOP_SECONDS = 90;
+
+// How recently a real player must have been seen anywhere in Bingo for the gate
+// to bother waiting for one to arrive. Bingo.tsx polls the lobby every 5s right
+// through a result presentation, so a watching player refreshes this several
+// times over; when it has gone stale, nobody is looking at anything.
+const PLAYER_PRESENCE_SECONDS = 20;
+
+// The heartbeat above is written at most this often, however many players are
+// polling - one small UPDATE every few seconds, not one per request.
+const PLAYER_PRESENCE_THROTTLE_SECONDS = 5;
 
 type RoomBotIdentity = BingoBotIdentity;
 
@@ -2546,11 +2558,10 @@ export class BingoService implements OnModuleInit {
             }
             throw err;
         }
-        // Hold bots out until the client has finished showing the previous
-        // round's result (see stampBotBuyOpensAt). This room was almost
-        // certainly opened by autoCreateNextRoom the instant its predecessor
-        // completed  i.e. exactly when the win/summary screens began.
-        await this.stampBotBuyOpensAt(room.id, cfg);
+        // No bot hold is stamped here on purpose: how long bots must stay out is
+        // NOT a property of this room's age (a room can sit idle for minutes
+        // before a player is returned to it) but of whichever round is still
+        // being presented when a bot tries to buy. See isBotBuyAllowed.
         return this.toRoomResponse(room, 0, []);
     }
 
@@ -2692,7 +2703,7 @@ export class BingoService implements OnModuleInit {
      * agent's room to play. `enabled` reflects the admin toggle so the client knows
      * whether to show the lobby at all.
      */
-    async getLobby(): Promise<{
+    async getLobby(viewerUserId?: string): Promise<{
         enabled: boolean;
         rooms: Array<{
             id: string;
@@ -2708,6 +2719,11 @@ export class BingoService implements OnModuleInit {
             cardBallNumber: number | null;
         }>;
     }> {
+        // The lobby is the one Bingo poll the client keeps running WHILE it is
+        // presenting a finished round, so it is what tells the bot buy-in gate a
+        // player is still out there watching - a spectator holding no cartela
+        // included. See touchPlayerPresence.
+        await this.touchPlayerPresence(viewerUserId);
         const enabled = await this.isAgentRoomsEnabled();
         const rows: Array<{
             id: string;
@@ -2953,6 +2969,8 @@ export class BingoService implements OnModuleInit {
         // scheduler (single instance, Redis-locked). Creating rooms from this
         // client-polled endpoint caused a race where many concurrent polls each
         // spawned a room, producing several games running at once.
+        // (The player-presence heartbeat is not needed here: every non-null
+        // return below goes out through getRoomState, which records it.)
         const cfg = await this.getBingoConfig();
         const resultWindowSec = Math.max(1, cfg.resultDisplaySeconds ?? 10);
 
@@ -3713,11 +3731,11 @@ export class BingoService implements OnModuleInit {
             await manager.save(room);
             await this.generateCardPoolForRoom(room, manager);
         });
-        // Hold bots out until the client has finished showing the previous
-        // round's result (see stampBotBuyOpensAt). Custom-slot rooms are
-        // recreated the moment their predecessor finishes, exactly like the
-        // house room, so they need the same hold.
-        await this.stampBotBuyOpensAt(room.id, cfg, slot.id);
+        // No bot hold is stamped here either, for the same reason as the house
+        // room above - and custom-slot rooms are exactly the case that broke the
+        // old creation-anchored hold, since each slot recreates on its own cycle
+        // and a player finishing one slot's round can land on another slot's room
+        // that has been open for a minute. See isBotBuyAllowed.
         return this.toRoomResponse(room, 0, []);
     }
 
@@ -3859,6 +3877,27 @@ export class BingoService implements OnModuleInit {
 
         if (input.userId) {
             this.validateUuid(input.userId, 'userId');
+            await this.touchPlayerPresence(input.userId);
+            // Serving an OPEN room to a real player IS that player arriving on
+            // the cartela-buying screen - Bingo.tsx does not poll again until its
+            // whole result presentation has drained. Record it once; that
+            // observation is the bot buy-in gate's only trigger (see
+            // isBotBuyAllowed). Internal callers pass no userId and so never
+            // stamp, and a bot never reaches this endpoint (bots buy through
+            // reconcileBotCartelasInRoom, not the room-state API) - but check
+            // anyway, since the whole point is that only a HUMAN arriving counts.
+            if (room.status === 'open' && room.firstViewedAt == null) {
+                const viewer = await this.bingoRoomRepository.manager.findOne(
+                    User,
+                    {
+                        where: { id: input.userId },
+                        select: { id: true, productMetadata: true },
+                    },
+                );
+                if (viewer && !this.isBotUser(viewer)) {
+                    await this.markRoomViewedByPlayer(room.id);
+                }
+            }
             // Exclude cancelled (refunded) tickets  a released cartela must stop
             // counting as owned so its grid cell reverts to the available style.
             const tickets = await this.bingoTicketRepository.find({
@@ -4045,25 +4084,29 @@ export class BingoService implements OnModuleInit {
                 }
 
                 // ── Result-presentation hold (bots only) ─────────────────────────────────
-                // A real player CANNOT buy into a new room while their client is still
-                // showing the previous round's win + summary screens - they haven't been
-                // returned to the buying screen yet. Bots have no such screen, so without
-                // this they buy the instant the room row exists, and the player arrives to
-                // find the cartelas taken and the countdown already running (reported bug).
+                // A real player CANNOT open a new room's countdown while their client is
+                // still showing a finished round's win + summary screens - they haven't
+                // been returned to the buying screen yet. Bots have no such screen, so
+                // without this they buy the instant they are free of the round that just
+                // ended, and the player arrives to find the cartelas taken and the
+                // countdown already running (reported bug).
                 //
                 // Enforced HERE, at the single funnel every cartela purchase passes
                 // through, rather than only in reconcileBotCartelasInRoom: that method is
                 // also reached inline from a real player's purchase/refund and from the
                 // auto-start final top-off, so gating it alone still let bots slip in.
+                // The room row is locked FOR UPDATE above, so this check and the countdown
+                // stamp it protects cannot straddle a concurrent first sale.
+                const cfg = await this.getBingoConfig();
                 const purchasingUser = await manager.findOne(User, {
                     where: { id: userId },
                     select: { id: true, productMetadata: true },
                 });
                 if (this.isBotUser(purchasingUser)) {
-                    const gate = await this.isBotBuyWindowOpen(roomId);
-                    if (!gate.open) {
+                    const gate = await this.isBotBuyAllowed(room);
+                    if (!gate.allowed) {
                         throw new ConflictException(
-                            `Bots are held out of this room for another ${gate.secondsRemaining}s while the previous result is shown`,
+                            `Bots are held out of this room (${gate.reason}); retry in up to ${gate.secondsRemaining}s`,
                         );
                     }
                 }
@@ -4072,7 +4115,6 @@ export class BingoService implements OnModuleInit {
                 // Counts how many cartelas this purchase adds and rejects if it would push
                 // the user past the configured limit for this room. Counted across all of
                 // the user's non-cancelled tickets in the room, not just this transaction.
-                const cfg = await this.getBingoConfig();
                 const maxPerUser = cfg.maxCartelasPerUser ?? 0;
                 const requestedCartelas =
                     room.winMode === 'prefilled'
@@ -7047,132 +7089,67 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
-     * How long after a room is created its FIRST bot cartela may be bought:
-     * exactly as long as the client spends presenting the PREVIOUS round's
-     * result before it lands on this room's buying screen.
+     * Heartbeat: note that a real player is in the Bingo game right now.
      *
-     * The presentation is NOT a fixed length. The client queues one win popup
-     * per place that was actually won and plays them back to back, and only
-     * once that queue (and the Bonus Win popup) drains does the
-     * resultDisplaySeconds summary countdown even START  see Bingo.tsx's
-     * `if (livePlaceQueue.length > 0 || liveBonusWin) return;`. So the total is:
+     * Called from every player-facing Bingo read. Bingo.tsx polls the lobby every
+     * 5s for the WHOLE time it is presenting a finished round (only the room poll
+     * is suppressed during the hold), so this stays fresh for anyone watching a
+     * result — including a spectator who bought no cartela and therefore appears
+     * in no round's ticket list. That is what isBotBuyAllowed needs: not "who
+     * played", but "is there anybody out there to wait for".
      *
-     *     placesWon x (now-calling beat + popup) + bonus popup + summary + buffer
+     * Self-throttling in SQL — the row is touched at most once every
+     * PLAYER_PRESENCE_THROTTLE_SECONDS no matter how many players are polling —
+     * and best-effort, since a missed heartbeat can only make bots buy sooner,
+     * never freeze a room.
      *
-     * Budgeting ONE popup here (the original bug) left the hold ~20s while a
-     * 3-place round really presents for ~29s, so bots bought in a full 9s
-     * before the player was returned to the buying screen  which is what made
-     * cartelas look pre-sold and the countdown look already-running.
-     *
-     * `placesWon` comes from the finished round's own settlement, so the hold is
-     * derived from what actually happened rather than assumed. When it can't be
-     * read we fall back to the maximum (5 places), erring long: over-holding
-     * only means bots join a moment later, while under-holding is the bug.
+     * Bots never reach these endpoints (they hold no session and buy through
+     * reconcileBotCartelasInRoom), so any authenticated caller here is a person.
      */
-    private resolveBotBuyInGateSeconds(
-        cfg: BingoConfig,
-        placesWon?: number | null,
-    ): number {
-        const places =
-            placesWon == null
-                ? MAX_PREFILLED_PLACES
-                : Math.min(
-                      MAX_PREFILLED_PLACES,
-                      Math.max(0, Math.floor(placesWon)),
-                  );
-        const totalMs =
-            places * PER_PLACE_PRESENTATION_MS +
-            Math.max(0, cfg.bonusWinDisplaySeconds ?? 5) * 1000 +
-            Math.max(1, cfg.resultDisplaySeconds ?? 10) * 1000 +
-            BUY_IN_GATE_SAFETY_BUFFER_MS;
-        return Math.ceil(totalMs / 1000);
-    }
-
-    /**
-     * How many places the just-finished round will actually pop up for, counted
-     * exactly the way the client counts them (see Bingo.tsx's getEntryWinners /
-     * PREFILLED_PLACE_ORDER loop): a place is presented when its settlement
-     * entry carries at least one winner. Returns null when there is no
-     * settlement to read, so the caller falls back to the worst case.
-     */
-    private countPresentedPlaces(
-        settlementSummary?: Record<string, unknown> | null,
-    ): number | null {
-        if (!settlementSummary || typeof settlementSummary !== 'object') {
-            return null;
-        }
-        let places = 0;
-        for (const place of ['1st', '2nd', '3rd', '4th', '5th']) {
-            const entry = settlementSummary[place] as
-                | Record<string, unknown>
-                | undefined;
-            if (!entry || typeof entry !== 'object') continue;
-            const hasWinners = Array.isArray(entry.winners)
-                ? entry.winners.length > 0
-                : !!entry.winnerDisplayName || !!entry.winnerGrid;
-            if (hasWinners) places += 1;
-        }
-        return places;
-    }
-
-    /**
-     * The round whose result the client is presenting RIGHT NOW  i.e. the one
-     * that just finished and caused this new room to be opened. Scoped to the
-     * same custom slot when the new room belongs to one, since those rooms are
-     * recreated per slot. Returns null if nothing suitable is found, which makes
-     * the hold fall back to the worst-case length.
-     */
-    private async findJustCompletedRoom(
-        customSlotId?: string | null,
-    ): Promise<BingoRoom | null> {
+    private async touchPlayerPresence(userId?: string): Promise<void> {
+        if (!userId) return;
         try {
-            return await this.bingoRoomRepository.findOne({
-                where: customSlotId
-                    ? { customSlotId, status: 'completed' }
-                    : { status: 'completed', isAdminCreated: false },
-                order: { updatedAt: 'DESC' },
-            });
+            await this.bingoConfigRepository.query(
+                `UPDATE bingo_configs
+                    SET lastPlayerSeenAt = NOW()
+                  WHERE \`key\` = 'global'
+                    AND (lastPlayerSeenAt IS NULL
+                         OR lastPlayerSeenAt < NOW() - INTERVAL ? SECOND)`,
+                [PLAYER_PRESENCE_THROTTLE_SECONDS],
+            );
         } catch {
-            return null;
+            // Best-effort heartbeat; never fail a room load over it.
         }
     }
 
     /**
-     * Stamp `botBuyOpensAt` on a room that was just created, so bots are held
-     * out of it until the client has finished presenting the PREVIOUS round's
-     * result. Computed with the DATABASE's clock (`DATE_ADD(NOW(), ...)`) and
-     * later compared against the database's `NOW()`, so the value never passes
-     * through an app-side JS Date and any MySQL session-timezone offset cancels
-     * out on both the write and the read.
+     * Stamp the moment a REAL player was first served this room while it was
+     * open for buying — i.e. the moment they are actually looking at its cartela
+     * grid. Idempotent (first writer wins) and written with the DATABASE's clock.
      *
-     * Best-effort: a room that fails to get stamped keeps `botBuyOpensAt` NULL
-     * and behaves as before (bots may buy immediately) rather than being frozen.
+     * This is the observation the whole bot buy-in gate is built on, and it is
+     * exact rather than estimated. Bingo.tsx suppresses its room poll for the
+     * ENTIRE result presentation (`if (!holdingResultRef.current) void
+     * loadCurrent();`) and only calls loadCurrent() again once the win popups,
+     * the Bonus Win popup and the summary countdown have all drained. So the
+     * first time a real user's request resolves to an OPEN room is, by
+     * construction, the first moment a player is back on the buying screen —
+     * whatever the admin has set the display timings to, however long the popup
+     * queue ran, and however late that client learned the round had ended.
+     *
+     * Best-effort: a failed stamp leaves the column NULL, which the gate treats
+     * as "no player here yet" and resolves through its backstop, never a freeze.
      */
-    private async stampBotBuyOpensAt(
-        roomId: string,
-        cfg: BingoConfig,
-        customSlotId?: string | null,
-    ): Promise<void> {
-        // Length the hold by what the finished round will actually present:
-        // one win popup per place won, then the bonus popup, then the summary.
-        const finished = await this.findJustCompletedRoom(customSlotId);
-        const placesWon = this.countPresentedPlaces(finished?.settlementSummary);
-        const holdSeconds = this.resolveBotBuyInGateSeconds(cfg, placesWon);
+    private async markRoomViewedByPlayer(roomId: string): Promise<void> {
         try {
             await this.bingoRoomRepository.query(
-                `UPDATE bingo_rooms SET botBuyOpensAt = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE id = ?`,
-                [holdSeconds, roomId],
-            );
-            this.logger.log(
-                `Bot buy-in hold: room ${roomId} closed to bots for ${holdSeconds}s ` +
-                    `(${placesWon ?? MAX_PREFILLED_PLACES} place popup(s) x ${PER_PLACE_PRESENTATION_MS / 1000}s` +
-                    `${placesWon == null ? ' [worst case - no settlement found]' : ''} + ` +
-                    `bonusWin ${cfg.bonusWinDisplaySeconds ?? 5}s + resultDisplay ${cfg.resultDisplaySeconds ?? 10}s + ` +
-                    `buffer ${BUY_IN_GATE_SAFETY_BUFFER_MS / 1000}s)`,
+                `UPDATE bingo_rooms SET firstViewedAt = NOW()
+                  WHERE id = ? AND firstViewedAt IS NULL AND status = 'open'`,
+                [roomId],
             );
         } catch (err) {
             this.logger.warn(
-                `Could not stamp botBuyOpensAt on Bingo room ${roomId}; bots may buy immediately: ${
+                `Could not stamp firstViewedAt on Bingo room ${roomId}: ${
                     err instanceof Error ? err.message : String(err)
                 }`,
             );
@@ -7180,47 +7157,183 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
-     * Is this room open for BOT cartela purchases yet?
+     * Which rooms a player can be handed BETWEEN by the client, as a SQL
+     * predicate. A custom-slot room is only ever replaced by the same slot's next
+     * room, and an agent room by the same agent's (Bingo.tsx's
+     * loadReplacementForSameSlot matches on ownerAgentId; a pinned room never
+     * leaves its slot at all). The shared house lineage is everything else.
      *
-     * Evaluated ENTIRELY inside MySQL (`botBuyOpensAt <= NOW()`), never as
-     * `Date.now() >= room.botBuyOpensAt.getTime()`: the column is written and
-     * deserialized by the driver, so mixing it with an app-side JS Date
-     * misfires under a non-UTC MySQL session timezone  the same hazard
-     * findRunningRoomIdsDue/getCurrentRoom already avoid by comparing
-     * column-to-NOW(). Skewed one way the hold looks long expired and never
-     * blocks (exactly how the previous createdAt-based gate silently did
-     * nothing in production); skewed the other it would block forever.
-     *
-     * A NULL stamp, a missing row, or a failed query all mean "open" so a room
-     * can never be frozen out of play by this check.
+     * Scoping the hold this way keeps one slot's finished round from stalling an
+     * unrelated slot's room, which a global hold would do every few minutes.
      */
-    private async isBotBuyWindowOpen(
-        roomId: string,
-    ): Promise<{ open: boolean; secondsRemaining: number }> {
+    private roomLineagePredicate(
+        room: Pick<BingoRoom, 'customSlotId' | 'ownerAgentId'>,
+    ): { sql: string; params: unknown[] } {
+        if (room.customSlotId) {
+            return { sql: 'r.customSlotId = ?', params: [room.customSlotId] };
+        }
+        if (room.ownerAgentId) {
+            return { sql: 'r.ownerAgentId = ?', params: [room.ownerAgentId] };
+        }
+        return {
+            sql: 'r.customSlotId IS NULL AND r.ownerAgentId IS NULL',
+            params: [],
+        };
+    }
+
+    /**
+     * Everything the bot buy-in gate needs, measured ENTIRELY inside MySQL so no
+     * timestamp ever crosses into JS — these columns are written and deserialized
+     * by the driver, so mixing them with an app-side `Date.now()` misfires under a
+     * non-UTC MySQL session timezone (the same hazard findRunningRoomIdsDue and
+     * getCurrentRoom already avoid by comparing column-to-NOW()).
+     *
+     *  - `viewedSecondsAgo` — how long ago a real player landed on THIS room's
+     *    buying screen; null if none has yet.
+     *  - `playerSeenSecondsAgo` — how long ago any real player was last seen in
+     *    the Bingo game at all; null if never.
+     *  - `lineageRoundEndedSecondsAgo` — how long ago a round finished in this
+     *    room's own lineage, i.e. one a player could be transitioning out of
+     *    right now; null if none did recently.
+     */
+    private async getBotBuyObservations(
+        room: Pick<BingoRoom, 'id' | 'customSlotId' | 'ownerAgentId'>,
+    ): Promise<{
+        viewedSecondsAgo: number | null;
+        playerSeenSecondsAgo: number | null;
+        lineageRoundEndedSecondsAgo: number | null;
+    }> {
+        const lineage = this.roomLineagePredicate(room);
+        const [viewRows, presenceRows, roundRows]: [
+            Array<{ viewedSecondsAgo: number | string | null }>,
+            Array<{ playerSeenSecondsAgo: number | string | null }>,
+            Array<{ endedSecondsAgo: number | string | null }>,
+        ] = await Promise.all([
+            this.bingoRoomRepository.query(
+                `SELECT TIMESTAMPDIFF(SECOND, firstViewedAt, NOW()) AS viewedSecondsAgo
+                   FROM bingo_rooms
+                  WHERE id = ? AND firstViewedAt IS NOT NULL`,
+                [room.id],
+            ),
+            this.bingoConfigRepository.query(
+                `SELECT TIMESTAMPDIFF(SECOND, lastPlayerSeenAt, NOW()) AS playerSeenSecondsAgo
+                   FROM bingo_configs
+                  WHERE \`key\` = 'global' AND lastPlayerSeenAt IS NOT NULL`,
+            ),
+            this.bingoRoomRepository.query(
+                `SELECT MIN(TIMESTAMPDIFF(SECOND, r.updatedAt, NOW())) AS endedSecondsAgo
+                   FROM bingo_rooms r
+                  WHERE r.status = 'completed'
+                    AND r.updatedAt >= (NOW() - INTERVAL ? SECOND)
+                    AND (${lineage.sql})`,
+                [BOT_BUY_BACKSTOP_SECONDS, ...lineage.params],
+            ),
+        ]);
+
+        const toSeconds = (raw: unknown): number | null => {
+            if (raw === undefined || raw === null) return null;
+            const n = Number(raw);
+            return Number.isFinite(n) ? n : null;
+        };
+        return {
+            viewedSecondsAgo: toSeconds(viewRows?.[0]?.viewedSecondsAgo),
+            playerSeenSecondsAgo: toSeconds(
+                presenceRows?.[0]?.playerSeenSecondsAgo,
+            ),
+            lineageRoundEndedSecondsAgo: toSeconds(
+                roundRows?.[0]?.endedSecondsAgo,
+            ),
+        };
+    }
+
+    /**
+     * May a BOT buy into this room right now?
+     *
+     * The rule enforced here is the one that was actually asked for: bots start
+     * buying once the player is back on the cartela-buying screen and one second
+     * has passed — not at some moment computed from how long we GUESS the win and
+     * summary screens take.
+     *
+     * An earlier version of this gate did guess. It stamped each room, at
+     * CREATION, with a deadline of "now + placesWon × popup + bonus popup +
+     * resultDisplaySeconds". Both halves were wrong. The anchor was wrong: a room
+     * can sit open for minutes before a player is returned to it (custom slots and
+     * per-agent rooms each recreate on their own cycle), so the deadline had
+     * usually expired by the time it mattered, and bots poured in the instant the
+     * previous round completed — exactly as the presentation STARTED. And the
+     * length was a mirror of client animation constants and admin display
+     * settings, so it went stale the moment anyone changed either.
+     *
+     * So the gate reads observations, never a computed duration:
+     *
+     *   1. Only a purchase that would OPEN the room's buy-window countdown is
+     *      gated (nothing sold yet). Once the countdown runs, a mid-countdown
+     *      top-up is exactly the progressive fill the room is meant to show, and
+     *      freezing those would stall rooms whenever an unrelated round finished.
+     *   2. Once a real player has been served this room's buying screen, bots may
+     *      buy BOT_BUY_PLAYER_GRACE_SECONDS later — the deliberate beat that lets
+     *      the player see the grid before anything moves on it.
+     *   3. Before that, bots wait only while there is genuinely someone to wait
+     *      for: a real player seen in the game within PLAYER_PRESENCE_SECONDS
+     *      (the lobby keeps polling right through a result, so a spectator counts
+     *      too) AND a round finished recently in THIS room's lineage, i.e. one a
+     *      player could be transitioning out of. An all-bot house satisfies
+     *      neither and never stalls.
+     *   4. BOT_BUY_BACKSTOP_SECONDS after that round ended, bots proceed anyway.
+     *      That is a liveness backstop for the player who closed the app
+     *      mid-presentation — deliberately far longer than any presentation could
+     *      run, so in normal play it is never what releases the gate.
+     *
+     * Nothing here reads resultDisplaySeconds, the Bonus Win popup length, or any
+     * client animation constant, so changing those cannot reintroduce the bug.
+     *
+     * Falls OPEN on any error, so a failed query can never freeze bots out.
+     */
+    private async isBotBuyAllowed(
+        room: Pick<BingoRoom, 'id' | 'soldTickets' | 'customSlotId' | 'ownerAgentId'>,
+    ): Promise<{ allowed: boolean; secondsRemaining: number; reason?: string }> {
+        const allow = { allowed: true, secondsRemaining: 0 };
+        if ((room.soldTickets ?? 0) > 0) return allow;
         try {
-            const rows: Array<{ secondsRemaining: number | string | null }> =
-                await this.bingoRoomRepository.query(
-                    `SELECT TIMESTAMPDIFF(SECOND, NOW(), botBuyOpensAt) AS secondsRemaining
-                       FROM bingo_rooms
-                      WHERE id = ? AND botBuyOpensAt IS NOT NULL AND botBuyOpensAt > NOW()`,
-                    [roomId],
-                );
-            const raw = rows?.[0]?.secondsRemaining;
-            if (raw === undefined || raw === null) {
-                return { open: true, secondsRemaining: 0 };
+            const seen = await this.getBotBuyObservations(room);
+
+            if (seen.viewedSecondsAgo !== null) {
+                const waited = seen.viewedSecondsAgo;
+                if (waited >= BOT_BUY_PLAYER_GRACE_SECONDS) return allow;
+                return {
+                    allowed: false,
+                    secondsRemaining: BOT_BUY_PLAYER_GRACE_SECONDS - waited,
+                    reason: 'a player just landed on the buying screen',
+                };
             }
-            const remaining = Number(raw);
-            if (!Number.isFinite(remaining) || remaining <= 0) {
-                return { open: true, secondsRemaining: 0 };
+
+            // Nobody in the game at all: no result is being watched anywhere, so
+            // there is no arrival to wait for.
+            if (
+                seen.playerSeenSecondsAgo === null ||
+                seen.playerSeenSecondsAgo >= PLAYER_PRESENCE_SECONDS
+            ) {
+                return allow;
             }
-            return { open: false, secondsRemaining: remaining };
+
+            // Somebody is here, but no round they could be coming out of has
+            // finished in this room's lineage - they are not mid-transition.
+            const sinceRound = seen.lineageRoundEndedSecondsAgo;
+            if (sinceRound === null) return allow;
+
+            if (sinceRound >= BOT_BUY_BACKSTOP_SECONDS) return allow;
+            return {
+                allowed: false,
+                secondsRemaining: BOT_BUY_BACKSTOP_SECONDS - sinceRound,
+                reason: 'a player is still being shown the previous result',
+            };
         } catch (err) {
             this.logger.warn(
-                `Could not read botBuyOpensAt for Bingo room ${roomId}; allowing bot buy-in: ${
+                `Could not evaluate the bot buy-in gate for room ${room.id}; allowing buy-in: ${
                     err instanceof Error ? err.message : String(err)
                 }`,
             );
-            return { open: true, secondsRemaining: 0 };
+            return allow;
         }
     }
 
@@ -7272,13 +7385,11 @@ export class BingoService implements OnModuleInit {
         const cartelaPolicy = this.resolveBingoBotCartelaPolicy(cfg);
         const currentBotCartelas =
             await this.countBotCartelasInRoom(validRoomId);
-        // Bots must not buy into a brand-new room while the client is still
-        // presenting the PREVIOUS round's result  otherwise cartelas look
-        // pre-sold and the countdown looks already-elapsed the moment the
-        // player lands on the buying screen (reported bug). The hold is a
-        // timestamp stamped on the room at creation (see stampBotBuyOpensAt);
-        // it expires on its own, so this can only ever affect the opening
-        // seconds of a room's life, never a mid-countdown top-up.
+        // Bots must not OPEN a room's countdown before a real player is actually
+        // back on its buying screen  otherwise cartelas look pre-sold and the
+        // countdown looks already-elapsed the moment the player lands (reported
+        // bug). See isBotBuyAllowed: the gate waits on the player's OBSERVED
+        // arrival, not on any estimate of how long the result screens run.
         //
         // This is only a cheap early-out to avoid pointless work and log spam.
         // The hold is ENFORCED in purchaseTickets, because reconcile is not the
@@ -7286,12 +7397,12 @@ export class BingoService implements OnModuleInit {
         // refund reaches it inline, and the auto-start path does a final
         // top-off. Gating here alone left exactly those holes open.
         {
-            const gate = await this.isBotBuyWindowOpen(validRoomId);
-            if (!gate.open) {
+            const gate = await this.isBotBuyAllowed(room);
+            if (!gate.allowed) {
                 if (!this.botBuyInGateLoggedRoomIds.has(validRoomId)) {
                     this.botBuyInGateLoggedRoomIds.add(validRoomId);
                     this.logger.log(
-                        `Bot buy-in gate HOLDING room ${validRoomId}: ${gate.secondsRemaining}s left on the result-presentation hold`,
+                        `Bot buy-in gate HOLDING room ${validRoomId}: ${gate.reason} (up to ${gate.secondsRemaining}s)`,
                     );
                 }
                 return false;

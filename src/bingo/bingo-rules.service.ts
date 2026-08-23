@@ -27,12 +27,18 @@ const CORNERS_MASK: boolean[][] = [
     [false, false, false, false, false],
     [true, false, false, false, true],
 ];
+// A plus centred on the FREE space (2,2), same centre as SMALL_X_MASK below.
+// This was previously written one row lower (centred on (3,2)), which both made
+// the standalone "Small Cross" pattern require the wrong five cells AND handed
+// the any_line/any_two_lines/any_three_lines tiers a phantom extra unit: a card
+// with only a Small X could also satisfy the shifted plus via (3,1)(3,2)(3,3)
+// (4,2), so "Any Two Lines" settled on what was really a single completed shape.
 const SMALL_CROSS_MASK: boolean[][] = [
-    [false, false, false, false, false],
     [false, false, false, false, false],
     [false, false, true, false, false],
     [false, true, true, true, false],
     [false, false, true, false, false],
+    [false, false, false, false, false],
 ];
 const SMALL_X_MASK: boolean[][] = [
     [false, false, false, false, false],
@@ -160,7 +166,7 @@ export const BUILT_IN_PATTERNS: Array<{
     {
         name: 'Small Cross',
         description:
-            'A smaller plus/cross shape in the lower half of the card',
+            'A small plus shape around the centre free space (inner 3x3)',
         patternType: 'fixed',
         mask: SMALL_CROSS_MASK,
         sortOrder: 9,

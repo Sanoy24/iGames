@@ -413,6 +413,36 @@ export class BingoService implements OnModuleInit {
         });
         const existingNames = new Set(existing.map((p) => p.name));
 
+        // A built-in pattern's GEOMETRY is defined by the code, not by the row.
+        // Seeding only ever inserted by name, so a mask corrected in code never
+        // reached a database that had already been seeded - which is how the
+        // mis-positioned Small Cross survived: the constant was fixed but every
+        // existing install kept evaluating the old, shifted cells. Re-sync the
+        // mask (and description) of any built-in whose row has drifted from its
+        // code definition. Only built-ins are touched; admin-authored patterns
+        // are never rewritten.
+        const drifted: BingoPattern[] = [];
+        for (const row of existing) {
+            const spec = BUILT_IN_PATTERNS.find((p) => p.name === row.name);
+            if (!spec) continue;
+            const specMask = JSON.stringify(spec.mask ?? null);
+            const rowMask = JSON.stringify(row.mask ?? null);
+            if (specMask === rowMask && spec.description === row.description) {
+                continue;
+            }
+            if (specMask !== rowMask) {
+                this.logger.warn(
+                    `Built-in Bingo pattern "${row.name}" had a stale mask; re-syncing it to the current code definition`,
+                );
+            }
+            row.mask = spec.mask;
+            row.description = spec.description;
+            drifted.push(row);
+        }
+        if (drifted.length > 0) {
+            await this.bingoPatternRepository.save(drifted);
+        }
+
         const toCreate = BUILT_IN_PATTERNS.filter(
             (p) => !existingNames.has(p.name),
         );

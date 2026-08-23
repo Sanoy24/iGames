@@ -4313,6 +4313,87 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
     });
 });
 
+describe('BingoService.seedBuiltInPatterns  built-in mask drift repair', () => {
+    // Seeding only ever inserted patterns by NAME, so a mask corrected in code
+    // never reached an install that had already been seeded. That is how the
+    // mis-positioned Small Cross kept evaluating its old, shifted cells in
+    // production long after the constant itself was right.
+    const STALE_SMALL_CROSS = [
+        [false, false, false, false, false],
+        [false, false, false, false, false],
+        [false, false, true, false, false],
+        [false, true, true, true, false],
+        [false, false, true, false, false],
+    ];
+
+    it('re-syncs an existing built-in whose stored mask has drifted from the code', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        const row: Record<string, unknown> = {
+            id: 'p-small-cross',
+            name: 'Small Cross',
+            description: 'A smaller plus/cross shape in the lower half of the card',
+            isBuiltIn: true,
+            mask: STALE_SMALL_CROSS,
+        };
+        mockPatternRepo.findBy.mockResolvedValue([row]);
+
+        await service.seedBuiltInPatterns();
+
+        expect(mockPatternRepo.save).toHaveBeenCalledWith([row]);
+        // Repaired in place to the plus centred on the free space (2,2).
+        expect(row.mask).toEqual([
+            [false, false, false, false, false],
+            [false, false, true, false, false],
+            [false, true, true, true, false],
+            [false, false, true, false, false],
+            [false, false, false, false, false],
+        ]);
+        expect(row.description).not.toContain('lower half');
+    });
+
+    it('leaves an already-correct built-in untouched', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        mockPatternRepo.findBy.mockResolvedValue([
+            {
+                id: 'p-any-line',
+                name: 'Any Line',
+                description: 'Complete any row, column, or diagonal',
+                isBuiltIn: true,
+                mask: null,
+            },
+        ]);
+
+        await service.seedBuiltInPatterns();
+
+        // Only the inserts for the not-yet-seeded built-ins, no drift rewrite.
+        for (const call of mockPatternRepo.save.mock.calls) {
+            expect(call[0]).not.toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ id: 'p-any-line' }),
+                ]),
+            );
+        }
+    });
+
+    it('never rewrites an admin-authored (non built-in) pattern', async () => {
+        const { service, mockPatternRepo } = makeService({ rooms: [] });
+        const custom = {
+            id: 'p-custom',
+            name: 'House Special',
+            description: 'admin made this',
+            isBuiltIn: false,
+            mask: STALE_SMALL_CROSS,
+        };
+        // findBy({ isBuiltIn: true }) is what the seeder reads; a custom pattern
+        // is not in that set, so it can never be picked up as "drifted".
+        mockPatternRepo.findBy.mockResolvedValue([]);
+
+        await service.seedBuiltInPatterns();
+
+        expect(custom.mask).toEqual(STALE_SMALL_CROSS);
+    });
+});
+
 describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () => {
     // Regression coverage for the reported bug: a room is created (idle) the
     // instant the previous one completes, but the client keeps showing the
@@ -4737,6 +4818,36 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
 
         // 1x4.8s + 0s + 20s + 1.5s = 26.3s -> 27s
         expect(heldSeconds(mockRoomRepo)).toBe(27);
+    });
+
+    // Locked to the live admin config (Result Display 7s, Bonus Win Popup 5s) so
+    // a change to those defaults can't silently shorten the hold again.
+    it('matches the deployed config: a 3-place round holds 28s, not the 17s the old flat hold gave', async () => {
+        const LIVE_CFG = { resultDisplaySeconds: 7, bonusWinDisplaySeconds: 5 };
+        const { service, mockRoomRepo } = stampHarness({
+            '1st': winner,
+            '2nd': winner,
+            '3rd': winner,
+        });
+
+        await (service as any).stampBotBuyOpensAt('room-1', LIVE_CFG);
+
+        // Client presents for 3x4.8s + 5s + 7s = 26.4s; hold = that + 1.5s buffer.
+        // The old single-popup hold was 3.4 + 5 + 7 + 1.5 = 17s, i.e. bots bought
+        // in ~9s before the player was returned to the buying screen.
+        expect(heldSeconds(mockRoomRepo)).toBe(28);
+    });
+
+    it('matches the deployed config: a single-winner round holds 19s', async () => {
+        const { service, mockRoomRepo } = stampHarness({ '1st': winner });
+
+        await (service as any).stampBotBuyOpensAt('room-1', {
+            resultDisplaySeconds: 7,
+            bonusWinDisplaySeconds: 5,
+        });
+
+        // 4.8 + 5 + 7 + 1.5 = 18.3 -> 19s, and the 40s buy window starts after it.
+        expect(heldSeconds(mockRoomRepo)).toBe(19);
     });
 
     it('leaves the room un-held (rather than frozen) if the stamp write fails', async () => {

@@ -311,8 +311,9 @@ describe('BingoRulesService', () => {
     // 1 line + 1 shape; OR 2 shapes together with zero real lines; etc.
     describe('evaluatePatternTicket  bonus shapes count as line-tier units', () => {
         // Same 5×5 fixture as the multi-line block above. Corners: 1 (0,0),
-        // 5 (0,4), 20 (4,0), 24 (4,4). Small Cross: 16,17,18,22 (+ free centre).
-        // Small X: 7,9,16,18 (+ free centre).
+        // 5 (0,4), 20 (4,0), 24 (4,4). Small Cross (a plus centred on the free
+        // space): 8 (1,2), 12 (2,1), 13 (2,3), 17 (3,2). Small X (centred on the
+        // same free space): 7 (1,1), 9 (1,3), 16 (3,1), 18 (3,3).
         const grid: (number | null)[][] = [
             [1, 2, 3, 4, 5],
             [6, 7, 8, 9, 10],
@@ -336,23 +337,43 @@ describe('BingoRulesService', () => {
         it('any_two_lines is satisfied by 1 real line + 1 bonus shape (Small Cross)', () => {
             // Row0 (a full line) + Small Cross's own cells  no other line
             // accidentally completes from just these numbers.
-            const drawn = [1, 2, 3, 4, 5, 16, 17, 18, 22];
+            const drawn = [1, 2, 3, 4, 5, 8, 12, 13, 17];
             expect(completes(drawn, 'any_two_lines')).toBe(true);
         });
 
         it('any_two_lines is satisfied by 2 bonus shapes together, with ZERO real lines', () => {
-            // Small Cross (16,17,18,22) + Small X (7,9,16,18)  overlapping on
-            // 16/18 is fine, each shape is checked independently. No row, col,
-            // or diagonal is anywhere near complete from just these 6 numbers.
-            const drawn = [7, 9, 16, 17, 18, 22];
+            // Small Cross (8,12,13,17) + Small X (7,9,16,18)  two distinct
+            // shapes sharing only the free centre. No row, col, or diagonal is
+            // anywhere near complete from just these 8 numbers.
+            const drawn = [7, 8, 9, 12, 13, 16, 17, 18];
             expect(completes(drawn, 'any_line')).toBe(true); // 2 shape units is still >= 1
             expect(completes(drawn, 'any_two_lines')).toBe(true);
             expect(completes(drawn, 'any_three_lines')).toBe(false);
         });
 
         it('any_three_lines is satisfied by 1 real line + 2 bonus shapes', () => {
-            const drawn = [1, 2, 3, 4, 5, 7, 9, 16, 17, 18, 22];
+            const drawn = [1, 2, 3, 4, 5, 7, 8, 9, 12, 13, 16, 17, 18];
             expect(completes(drawn, 'any_three_lines')).toBe(true);
+        });
+
+        // Shape geometry regression. SMALL_CROSS_MASK was written one row too
+        // low (a plus centred on (3,2) instead of the free centre (2,2)). That
+        // put four of its five cells - (3,1)(3,2)(3,3)(4,2) - within reach of a
+        // card that had only completed the Small X, so a SINGLE completed shape
+        // satisfied "Any Two Lines" and paid out a place it never won. It shipped
+        // because the tests above encoded the shifted cells as if they were
+        // correct. These pin the shape to its real position instead.
+        it('Small Cross is a plus centred on the FREE space, not one row lower', () => {
+            // The correct cells complete it...
+            expect(completes([8, 12, 13, 17], 'any_line')).toBe(true);
+            // ...and the old, shifted cells no longer do.
+            expect(completes([16, 17, 18, 22], 'any_line')).toBe(false);
+        });
+
+        it('a card completing ONLY the Small X does not also satisfy Any Two Lines', () => {
+            const smallXOnly = [7, 9, 16, 18];
+            expect(completes(smallXOnly, 'any_line')).toBe(true); // one unit
+            expect(completes(smallXOnly, 'any_two_lines')).toBe(false); // not two
         });
 
         it('any_three_lines is NOT satisfied by 2 real lines alone (still needs a 3rd unit)', () => {

@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { BotsService } from './bots.service';
 import { CreateBotDto } from './dto/create-bot.dto';
+import { BulkCreateBotDto, ImportBotsCsvDto } from './dto/bulk-create-bot.dto';
 import { CreateBotNameDto, ImportBotNamesDto } from './dto/create-bot-name.dto';
 import { TopupBotDto, UpdateBotPolicyDto } from './dto/update-bot-policy.dto';
 import { UpdateBotNameDto } from './dto/update-bot-name.dto';
@@ -21,6 +22,18 @@ export class BotsController {
   @ApiOkResponse({ description: 'Creates a virtual user with a bot participation policy' })
   createBot(@Body() dto: CreateBotDto) {
     return this.botsService.createBot(dto);
+  }
+
+  @Post('bulk')
+  @ApiCreatedResponse({ description: 'Creates many bots at once sharing one policy, auto-naming each from the bot name pool' })
+  bulkCreateBots(@Body() dto: BulkCreateBotDto) {
+    return this.botsService.bulkCreateBots(dto);
+  }
+
+  @Post('import-csv')
+  @ApiCreatedResponse({ description: 'Bulk-creates bots from CSV text (header row incl. "displayName"; other CreateBotDto fields are optional columns)' })
+  importBotsCsv(@Body() dto: ImportBotsCsvDto) {
+    return this.botsService.importBotsCsv(dto.csv);
   }
 
   @Get()

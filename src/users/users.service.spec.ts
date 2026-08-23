@@ -787,6 +787,25 @@ describe('UsersService  agent referral codes', () => {
                 agentName: 'Agent One',
             });
         });
+
+        it('falls back to assignedAgentId for a player connected via GPS/manual pick, not a referral code', async () => {
+            const { service } = makeService({
+                users: [
+                    AGENT,
+                    {
+                        id: 'player-1',
+                        referredByAgentId: null,
+                        assignedAgentId: 'agent-1',
+                        assignedAgentSource: 'gps_match',
+                    },
+                ],
+            });
+
+            expect(await service.getReferralStatus('player-1')).toEqual({
+                agentId: 'agent-1',
+                agentName: 'Agent One',
+            });
+        });
     });
 
     describe('joinReferralCode', () => {
@@ -842,6 +861,42 @@ describe('UsersService  agent referral codes', () => {
             const result = await service.joinReferralCode(
                 'player-1',
                 'ZZZZZZ',
+            );
+
+            expect(result).toEqual({
+                status: 'already_joined',
+                agentId: 'agent-1',
+                agentName: 'Agent One',
+            });
+            expect(updates).toHaveLength(0);
+        });
+
+        it('reports already_joined without writing, for a player already connected via GPS/manual pick (assignedAgentId set, no referral code used)', async () => {
+            const AGENT_TWO = {
+                id: 'agent-2',
+                roles: ['agent'] as any,
+                status: 'active' as any,
+                displayName: 'Agent Two',
+                referralCode: 'ZZZ999',
+            };
+            const { service, updates } = makeService({
+                users: [
+                    AGENT,
+                    AGENT_TWO,
+                    {
+                        id: 'player-1',
+                        referredByAgentId: null,
+                        assignedAgentId: 'agent-1',
+                        assignedAgentSource: 'gps_match',
+                    },
+                ],
+            });
+
+            // Player already GPS-matched to agent-1; typing agent-2's code must
+            // NOT silently switch them.
+            const result = await service.joinReferralCode(
+                'player-1',
+                'ZZZ999',
             );
 
             expect(result).toEqual({

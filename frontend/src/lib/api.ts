@@ -1240,6 +1240,7 @@ export const adminBingoApi = {
         recurrence?: BingoBonusRecurrence;
         botCount: number;
         maxCartelasPerBot: number;
+        minCartelasPerBot?: number;
     }) =>
         api
             .post<BingoScheduledBotPlay>(
@@ -1406,6 +1407,62 @@ export const adminBotsApi = {
         crashMinCashoutX100?: number;
         crashMaxCashoutX100?: number;
     }) => api.post<BotUser>('/admin/bots', dto).then((r) => r.data),
+    bulkCreateBots: (dto: {
+        count: number;
+        namePrefix?: string;
+        initialBalanceMinor?: number;
+        ticketsPerRound?: number;
+        spotCount?: number;
+        kenoActive?: boolean;
+        bingoActive?: boolean;
+        crashActive?: boolean;
+        kenoStrategy?:
+            | 'conservative'
+            | 'normal'
+            | 'aggressive'
+            | 'mirror-human';
+        bingoStrategy?:
+            | 'conservative'
+            | 'normal'
+            | 'aggressive'
+            | 'mirror-human';
+        crashStrategy?:
+            | 'conservative'
+            | 'normal'
+            | 'aggressive'
+            | 'mirror-human';
+        kenoParticipationRatePct?: number;
+        kenoActionDelayMinMs?: number;
+        kenoActionDelayMaxMs?: number;
+        kenoHesitationChancePct?: number;
+        kenoVariancePct?: number;
+        bingoParticipationRatePct?: number;
+        bingoActionDelayMinMs?: number;
+        bingoActionDelayMaxMs?: number;
+        bingoHesitationChancePct?: number;
+        bingoVariancePct?: number;
+        crashParticipationRatePct?: number;
+        crashActionDelayMinMs?: number;
+        crashActionDelayMaxMs?: number;
+        crashHesitationChancePct?: number;
+        crashVariancePct?: number;
+        kenoMinBalanceMinor?: number;
+        bingoMinBalanceMinor?: number;
+        crashMinBalanceMinor?: number;
+        kenoMaxStakeMinorPerDay?: number;
+        bingoMaxStakeMinorPerDay?: number;
+        crashMaxStakeMinorPerDay?: number;
+        bingoMaxCartelasPerRoom?: number;
+        crashMinCashoutX100?: number;
+        crashMaxCashoutX100?: number;
+    }) => api.post<BotUser[]>('/admin/bots/bulk', dto).then((r) => r.data),
+    importBotsCsv: (csv: string) =>
+        api
+            .post<{
+                created: BotUser[];
+                errors: Array<{ row: number; message: string }>;
+            }>('/admin/bots/import-csv', { csv })
+            .then((r) => r.data),
     updateBot: (
         id: string,
         dto: Partial<{

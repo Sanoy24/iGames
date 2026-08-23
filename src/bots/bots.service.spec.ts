@@ -78,10 +78,12 @@ function makeService(input: {
         ...input.existingBot,
     };
     const queryBuilder = {
+        select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         getOne: jest.fn().mockResolvedValue(bot),
         getMany: jest.fn().mockResolvedValue([bot]),
+        getRawMany: jest.fn().mockResolvedValue([]),
     };
     const userRepository = {
         createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
@@ -439,6 +441,105 @@ describe('BotsService  bot funding is Master-Wallet-backed', () => {
             expect(
                 botActionLogRepository.createQueryBuilder,
             ).toHaveBeenCalled();
+        });
+    });
+});
+
+describe('BotsService  bulk create and CSV import', () => {
+    describe('bulkCreateBots', () => {
+        it('creates `count` bots, preferring the active bot name pool before falling back to namePrefix', async () => {
+            const { service, botNameRepository, adminService } = makeService(
+                {},
+            );
+            botNameRepository.find.mockResolvedValue([
+                { displayName: 'Abebe', active: true },
+                { displayName: 'Hana', active: true },
+            ]);
+
+            const created = await service.bulkCreateBots({
+                count: 3,
+                namePrefix: 'X',
+                initialBalanceMinor: 100000,
+            } as any);
+
+            expect(created).toHaveLength(3);
+            const names = created.map((b) => b.displayName);
+            // Only 2 pool names exist, so the 3rd bot must fall back to the prefix.
+            expect(new Set(names).size).toBe(3);
+            expect(names.filter((n) => n === 'Abebe' || n === 'Hana')).toHaveLength(2);
+            expect(names).toContain('X 1');
+            expect(adminService.creditFromMasterWallet).toHaveBeenCalledTimes(3);
+        });
+
+        it('falls back to numbered names entirely when the pool is empty', async () => {
+            const { service } = makeService({});
+
+            const created = await service.bulkCreateBots({
+                count: 2,
+            } as any);
+
+            expect(created.map((b) => b.displayName)).toEqual([
+                'Bot 1',
+                'Bot 2',
+            ]);
+        });
+    });
+
+    describe('importBotsCsv', () => {
+        it('creates one bot per valid row and reports errors for invalid rows without aborting the import', async () => {
+            const { service } = makeService({});
+            const csv = [
+                'displayName,bingoActive,ticketsPerRound',
+                'Valid Bot,true,2',
+                'Broken Bot,true,999', // ticketsPerRound max is 12
+            ].join('\n');
+
+            const result = await service.importBotsCsv(csv);
+
+            expect(result.created).toHaveLength(1);
+            expect(result.created[0].displayName).toBe('Valid Bot');
+            expect(result.errors).toHaveLength(1);
+            expect(result.errors[0].row).toBe(3);
+        });
+
+        it('skips blank lines and ignores unknown columns', async () => {
+            const { service } = makeService({});
+            const csv = [
+                'displayName,notAField',
+                'Row One,whatever',
+                '',
+                'Row Two,whatever',
+            ].join('\n');
+
+            const result = await service.importBotsCsv(csv);
+
+            expect(result.created).toHaveLength(2);
+            expect(result.created.map((b) => b.displayName)).toEqual([
+                'Row One',
+                'Row Two',
+            ]);
+        });
+
+        it('throws when the header has no displayName column', async () => {
+            const { service } = makeService({});
+            const csv = ['ticketsPerRound', '2'].join('\n');
+
+            await expect(service.importBotsCsv(csv)).rejects.toThrow(
+                /displayName/i,
+            );
+        });
+
+        it('parses quoted fields containing commas', async () => {
+            const { service } = makeService({});
+            const csv = [
+                'displayName,kenoStrategy',
+                '"Bot, The Great",normal',
+            ].join('\n');
+
+            const result = await service.importBotsCsv(csv);
+
+            expect(result.errors).toHaveLength(0);
+            expect(result.created[0].displayName).toBe('Bot, The Great');
         });
     });
 });

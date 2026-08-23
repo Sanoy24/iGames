@@ -60,6 +60,16 @@ export class BingoScheduledBotPlay {
     @Column({ type: 'int', default: 1 })
     maxCartelasPerBot: number;
 
+    /** Minimum cartelas each participating bot may buy, for this schedule only.
+     * Null means "no range" — every bot buys exactly maxCartelasPerBot, which is
+     * also the behavior for schedules created before this field existed. When
+     * set (and lower than maxCartelasPerBot), each bot independently buys a
+     * random amount in [minCartelasPerBot, maxCartelasPerBot], chosen once per
+     * room so it stays stable across reconcile ticks (see BingoService.
+     * reconcileBotCartelasInRoom / deterministicRandomInRange). */
+    @Column({ type: 'int', nullable: true })
+    minCartelasPerBot: number | null;
+
     @Column({ type: 'varchar', length: 36, nullable: true })
     createdBy: string | null;
 

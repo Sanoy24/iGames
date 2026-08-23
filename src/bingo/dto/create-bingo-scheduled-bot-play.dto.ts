@@ -45,6 +45,14 @@ export class CreateBingoScheduledBotPlayDto {
     @IsInt()
     @Min(1)
     maxCartelasPerBot: number;
+
+    /** Optional lower bound; when set (and below maxCartelasPerBot) each bot buys
+     * a random amount in [minCartelasPerBot, maxCartelasPerBot] instead of a
+     * fixed amount. */
+    @IsOptional()
+    @IsInt()
+    @Min(1)
+    minCartelasPerBot?: number;
 }
 
 export class UpdateBingoScheduledBotPlayDto {
@@ -82,4 +90,9 @@ export class UpdateBingoScheduledBotPlayDto {
     @IsInt()
     @Min(1)
     maxCartelasPerBot?: number;
+
+    @IsOptional()
+    @IsInt()
+    @Min(1)
+    minCartelasPerBot?: number;
 }

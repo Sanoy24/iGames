@@ -218,8 +218,10 @@ export type BingoBonusRecurrence = {
 /**
  * An admin-scheduled window during which the platform proactively starts and
  * fills rooms using ONLY bots  no real player required. Up to `botCount`
- * distinct bots each buy up to `maxCartelasPerBot` cartelas while active.
- * Same once/recurring Addis Ababa (UTC+3) schedule shape as BingoBonusCampaign.
+ * distinct bots each buy cartelas while active: exactly `maxCartelasPerBot`
+ * when `minCartelasPerBot` is null, otherwise a random amount independently
+ * chosen per bot within [minCartelasPerBot, maxCartelasPerBot]. Same
+ * once/recurring Addis Ababa (UTC+3) schedule shape as BingoBonusCampaign.
  */
 export type BingoScheduledBotPlay = {
     id: string;
@@ -231,6 +233,7 @@ export type BingoScheduledBotPlay = {
     recurrence: BingoBonusRecurrence | null;
     botCount: number;
     maxCartelasPerBot: number;
+    minCartelasPerBot: number | null;
     createdAt?: string;
     updatedAt?: string;
 };

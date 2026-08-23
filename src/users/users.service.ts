@@ -1125,39 +1125,47 @@ export class UsersService {
         return (result.affected ?? 0) > 0 ? agent.displayName : null;
     }
 
-    /** The agent a player was referred by, for read-only display in the Mini App. */
+    /**
+     * The agent a player is already connected to, for read-only display in the
+     * Mini App  prefers `referredByAgentId` (commission attribution), but falls
+     * back to `assignedAgentId` so a player who already connected via GPS/manual
+     * pick (LocationPrompt, agent-match.controller) or an admin assignment also
+     * sees a read-only "already connected" card instead of an empty entry form
+     * that would let them silently switch to a different agent.
+     */
     async getReferralStatus(userId: string): Promise<ReferralStatus> {
         const user = await this.findById(userId);
-        if (!user.referredByAgentId) return { agentId: null, agentName: null };
+        const agentId = user.referredByAgentId ?? user.assignedAgentId ?? null;
+        if (!agentId) return { agentId: null, agentName: null };
 
-        const agent = await this.userRepository.findOneBy({
-            id: user.referredByAgentId,
-        });
-        return {
-            agentId: user.referredByAgentId,
-            agentName: agent?.displayName ?? null,
-        };
+        const agent = await this.userRepository.findOneBy({ id: agentId });
+        return { agentId, agentName: agent?.displayName ?? null };
     }
 
     /**
      * Mini App counterpart to `attributeReferral` (which only the Telegram bot's
      * `/start` deep link uses)  lets a player paste a bare code, a `ref_CODE`
-     * payload, or a full referral link directly into the app. Same once-only
-     * `referredByAgentId IS NULL` guard, but returns a status the UI can turn
-     * into a specific message instead of bot's plain success/null.
+     * payload, or a full referral link directly into the app. Guarded by BOTH
+     * `referredByAgentId IS NULL` and `assignedAgentId IS NULL`  unlike the bot's
+     * `attributeReferral` (which deliberately overrides an existing GPS match at
+     * signup, a stronger/more-controlled signal), this self-service entry must
+     * not let an already-connected player silently switch to a different agent.
+     * Returns a status the UI can turn into a specific message instead of the
+     * bot's plain success/null.
      */
     async joinReferralCode(
         userId: string,
         rawInput: string,
     ): Promise<ReferralJoinResult> {
         const user = await this.findById(userId);
-        if (user.referredByAgentId) {
+        const existingAgentId = user.referredByAgentId ?? user.assignedAgentId;
+        if (existingAgentId) {
             const existing = await this.userRepository.findOneBy({
-                id: user.referredByAgentId,
+                id: existingAgentId,
             });
             return {
                 status: 'already_joined',
-                agentId: user.referredByAgentId,
+                agentId: existingAgentId,
                 agentName: existing?.displayName ?? null,
             };
         }
@@ -1187,12 +1195,16 @@ export class UsersService {
                 assignedAgentSource: 'referral',
                 assignedAgentAt: new Date(),
             })
-            .where('id = :userId AND referredByAgentId IS NULL', { userId })
+            .where(
+                'id = :userId AND referredByAgentId IS NULL AND assignedAgentId IS NULL',
+                { userId },
+            )
             .execute();
 
         if ((result.affected ?? 0) === 0) {
-            // Lost a race with another writer (e.g. the bot) between the check above
-            // and this write  report whatever attribution won instead of erroring.
+            // Lost a race with another writer (e.g. the bot, or the location
+            // prompt) between the check above and this write  report whatever
+            // attribution won instead of erroring.
             const raceStatus = await this.getReferralStatus(userId);
             return {
                 status: 'already_joined',

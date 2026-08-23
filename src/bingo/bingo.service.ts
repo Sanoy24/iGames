@@ -758,9 +758,21 @@ export class BingoService implements OnModuleInit {
         if (!campaign)
             throw new NotFoundException('Bonus campaign not found');
 
+        // Only pass a scheduleType (which forces the once/recurring branch to
+        // demand its window fields) when the caller is actually touching the
+        // window. Otherwise a bare `{ enabled: false }` toggle would fail with
+        // "recurrence is required" purely because the existing campaign
+        // happens to be recurring  nothing about its window changed.
+        const windowTouched =
+            dto.scheduleType !== undefined ||
+            dto.startAt !== undefined ||
+            dto.endAt !== undefined ||
+            dto.recurrence !== undefined;
         const validated = await this.validateBonusCampaignPayload({
             patternId: dto.patternId,
-            scheduleType: dto.scheduleType ?? campaign.scheduleType,
+            scheduleType: windowTouched
+                ? (dto.scheduleType ?? campaign.scheduleType)
+                : undefined,
             startAt: dto.startAt,
             endAt: dto.endAt,
             recurrence: dto.recurrence,
@@ -785,12 +797,7 @@ export class BingoService implements OnModuleInit {
         // editing just the name/prize of an already-valid campaign shouldn't be
         // able to fail because some OTHER campaign now technically "overlaps" a
         // schedule that never changed.
-        if (
-            dto.scheduleType !== undefined ||
-            dto.startAt !== undefined ||
-            dto.endAt !== undefined ||
-            dto.recurrence !== undefined
-        ) {
+        if (windowTouched) {
             const others = (
                 await this.bingoBonusCampaignRepository.find()
             ).filter((c) => c.id !== id);
@@ -913,11 +920,23 @@ export class BingoService implements OnModuleInit {
         });
         if (inPlayTickets.length === 0) return;
 
-        const naturalWinners = inPlayTickets.filter((t) =>
+        const completedTickets = inPlayTickets.filter((t) =>
             this.bingoRulesService
                 .evaluatePatternTicket(t.grid, room.drawnNumbers, [pattern])
                 .completedPatternIds.includes(pattern.id),
         );
+        // A single bot can hold several cartelas in the same room (see
+        // botMaxCartelasPerBotPerRoom), so more than one of ITS cards can complete
+        // the bonus pattern on the same draw. Splitting the pot across two tickets
+        // owned by the same bot would show the identical bot identity twice in the
+        // winner list (same alias, same phone suffix)  keep only that user's first
+        // completing cartela so each distinct winner is counted, and shown, once.
+        const seenWinnerUserIds = new Set<string>();
+        const naturalWinners = completedTickets.filter((t) => {
+            if (seenWinnerUserIds.has(t.userId)) return false;
+            seenWinnerUserIds.add(t.userId);
+            return true;
+        });
 
         const botGroups = await this.getBotUserGroupsForTickets(
             inPlayTickets,
@@ -1101,6 +1120,7 @@ export class BingoService implements OnModuleInit {
         };
         const existing = await this.bingoScheduledBotPlayRepository.find();
         this.assertNoScheduledBotPlayOverlap(candidate, existing);
+        this.assertValidCartelaRange(dto.minCartelasPerBot, dto.maxCartelasPerBot);
 
         const schedule = this.bingoScheduledBotPlayRepository.create({
             name: dto.name,
@@ -1111,6 +1131,7 @@ export class BingoService implements OnModuleInit {
             recurrence: candidate.recurrence,
             botCount: dto.botCount,
             maxCartelasPerBot: dto.maxCartelasPerBot,
+            minCartelasPerBot: dto.minCartelasPerBot ?? null,
             createdBy: createdBy ?? null,
         });
         return this.bingoScheduledBotPlayRepository.save(schedule);
@@ -1126,8 +1147,19 @@ export class BingoService implements OnModuleInit {
         if (!schedule)
             throw new NotFoundException('Scheduled bot play not found');
 
+        // Same fix as updateBonusCampaign: only force the once/recurring
+        // window validation when the caller is actually touching the window,
+        // so e.g. toggling `enabled` alone on a recurring schedule doesn't
+        // fail demanding a recurrence that was never being changed.
+        const windowTouched =
+            dto.scheduleType !== undefined ||
+            dto.startAt !== undefined ||
+            dto.endAt !== undefined ||
+            dto.recurrence !== undefined;
         const validated = await this.validateScheduledBotPlayPayload({
-            scheduleType: dto.scheduleType ?? schedule.scheduleType,
+            scheduleType: windowTouched
+                ? (dto.scheduleType ?? schedule.scheduleType)
+                : undefined,
             startAt: dto.startAt,
             endAt: dto.endAt,
             recurrence: dto.recurrence,
@@ -1148,17 +1180,23 @@ export class BingoService implements OnModuleInit {
                     ? validated.recurrence
                     : schedule.recurrence,
         };
-        if (
-            dto.scheduleType !== undefined ||
-            dto.startAt !== undefined ||
-            dto.endAt !== undefined ||
-            dto.recurrence !== undefined
-        ) {
+        if (windowTouched) {
             const others = (
                 await this.bingoScheduledBotPlayRepository.find()
             ).filter((s) => s.id !== id);
             this.assertNoScheduledBotPlayOverlap(merged, others);
         }
+
+        const mergedMaxCartelasPerBot =
+            dto.maxCartelasPerBot ?? schedule.maxCartelasPerBot;
+        const mergedMinCartelasPerBot =
+            dto.minCartelasPerBot !== undefined
+                ? dto.minCartelasPerBot
+                : (schedule.minCartelasPerBot ?? undefined);
+        this.assertValidCartelaRange(
+            mergedMinCartelasPerBot,
+            mergedMaxCartelasPerBot,
+        );
 
         Object.assign(schedule, {
             name: dto.name ?? schedule.name,
@@ -1168,10 +1206,25 @@ export class BingoService implements OnModuleInit {
             endAt: merged.endAt,
             recurrence: merged.recurrence,
             botCount: dto.botCount ?? schedule.botCount,
-            maxCartelasPerBot:
-                dto.maxCartelasPerBot ?? schedule.maxCartelasPerBot,
+            maxCartelasPerBot: mergedMaxCartelasPerBot,
+            minCartelasPerBot: mergedMinCartelasPerBot ?? null,
         });
         return this.bingoScheduledBotPlayRepository.save(schedule);
+    }
+
+    /** Both fields are 1-indexed cartela counts; min (when set) must not exceed max. */
+    private assertValidCartelaRange(
+        minCartelasPerBot: number | undefined,
+        maxCartelasPerBot: number,
+    ): void {
+        if (
+            minCartelasPerBot !== undefined &&
+            minCartelasPerBot > maxCartelasPerBot
+        ) {
+            throw new BadRequestException(
+                'minCartelasPerBot cannot be greater than maxCartelasPerBot',
+            );
+        }
     }
 
     async deleteScheduledBotPlay(id: string): Promise<void> {
@@ -1408,6 +1461,27 @@ export class BingoService implements OnModuleInit {
             input.mode === 'fixed_cap' ? capTotal : input.realCartelas;
         const minimumTarget = Math.max(0, input.minTotalCartelas ?? 0);
         return Math.min(capTotal, Math.max(baseTarget, minimumTarget));
+    }
+
+    /** Deterministic pseudo-random integer in [min, max] derived from `seed`, so
+     * repeated calls with the same seed (e.g. the same room+bot pair across
+     * reconcile ticks) always return the same value. Used for Scheduled Bot
+     * Play's per-bot cartela cap so it stays stable for a room's whole
+     * lifetime instead of rerolling — and churning buys/releases — on every
+     * scheduler tick. Not cryptographic; this only shapes cosmetic bot
+     * behavior. */
+    private deterministicRandomInRange(
+        seed: string,
+        min: number,
+        max: number,
+    ): number {
+        if (max <= min) return Math.max(1, min);
+        let hash = 0;
+        for (let i = 0; i < seed.length; i++) {
+            hash = (Math.imul(31, hash) + seed.charCodeAt(i)) | 0;
+        }
+        const span = max - min + 1;
+        return min + ((hash >>> 0) % span);
     }
 
     private isBotUser(user?: Pick<User, 'productMetadata'> | null): boolean {
@@ -6975,17 +7049,46 @@ export class BingoService implements OnModuleInit {
             : bonusBotOverride
               ? Math.max(1, bonusBotOverride.botMaxCartelasPerRoom)
               : cartelaPolicy.maxCartelasPerBotPerRoom;
+        // Scheduled Bot Play only: each participating bot gets its own cartela
+        // cap, randomized within [minCartelasPerBot, maxCartelasPerBot] instead
+        // of every bot buying the same fixed amount. The seed is (roomId, botId)
+        // so the value is stable across reconcile ticks for this room's lifetime
+        // (see deterministicRandomInRange) rather than rerolling and churning
+        // buys/releases on every scheduler tick.
+        const scheduledBotCartelaCap = activeBotPlaySchedule
+            ? new Map(
+                  scheduledBotIds!.map((botId) => {
+                      const max = Math.max(
+                          1,
+                          activeBotPlaySchedule.maxCartelasPerBot,
+                      );
+                      const min = Math.max(
+                          1,
+                          Math.min(
+                              activeBotPlaySchedule.minCartelasPerBot ?? max,
+                              max,
+                          ),
+                      );
+                      return [
+                          botId,
+                          this.deterministicRandomInRange(
+                              `${validRoomId}:${botId}`,
+                              min,
+                              max,
+                          ),
+                      ];
+                  }),
+              )
+            : null;
         const desiredBotCartelas = winSequenceForcesUser
             ? // 'user' slot: bots stand down entirely, regardless of every other
               // setting, so the real player in the room gets an uncontested shot.
               0
             : activeBotPlaySchedule
-              ? this.resolveBingoBotCartelaTarget({
-                    mode: 'fixed_cap',
-                    maxCartelasPerBotPerRoom: effectiveMaxCartelasPerBotPerRoom,
-                    realCartelas,
-                    botCount: scheduledBotIds!.length,
-                })
+              ? [...scheduledBotCartelaCap!.values()].reduce(
+                    (sum, n) => sum + n,
+                    0,
+                )
               : (forceMinBotPresence || shouldParticipate) &&
                   (forceMinBotPresence || cartelaPolicy.enabled)
                 ? this.resolveBingoBotCartelaTarget({
@@ -7052,22 +7155,27 @@ export class BingoService implements OnModuleInit {
                 );
             }
 
+            // Scheduled Bot Play's per-bot randomized cap overrides the uniform
+            // cap for whichever bots it covers; every other path keeps the
+            // single scalar cap as before.
+            const capFor = (botId: string): number =>
+                scheduledBotCartelaCap?.get(botId) ??
+                effectiveMaxCartelasPerBotPerRoom;
+
             while (
                 remaining > 0 &&
                 freeCartelas.length > 0 &&
                 shuffledBotIds.length > 0
             ) {
                 const allAtCap = shuffledBotIds.every(
-                    (botId) =>
-                        (botHeldCounts.get(botId) ?? 0) >=
-                        effectiveMaxCartelasPerBotPerRoom,
+                    (botId) => (botHeldCounts.get(botId) ?? 0) >= capFor(botId),
                 );
                 if (allAtCap) break;
 
                 for (const botId of shuffledBotIds) {
                     if (remaining <= 0 || freeCartelas.length === 0) break;
                     const held = botHeldCounts.get(botId) ?? 0;
-                    if (held >= effectiveMaxCartelasPerBotPerRoom) {
+                    if (held >= capFor(botId)) {
                         continue;
                     }
 

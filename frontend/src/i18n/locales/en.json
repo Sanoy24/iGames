@@ -368,7 +368,7 @@
         "referralTitle": "Referral",
         "referralJoinDesc": "Have a referral code or link from an agent? Enter it once to link your account  it can't be changed afterwards.",
         "referralJoinedDesc": "Your account is linked to this agent.",
-        "referredByLabel": "Referred By",
+        "referredByLabel": "Your Agent",
         "referralUnknownAgent": "Agent",
         "referralCodeLabel": "Referral Code or Link",
         "referralCodePlaceholder": "e.g. ABC123 or a referral link",

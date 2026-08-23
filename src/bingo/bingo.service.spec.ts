@@ -3432,6 +3432,94 @@ describe('BingoService bonus campaigns  Addis-time window math', () => {
     });
 });
 
+describe('BingoService.updateBonusCampaign  partial updates', () => {
+    it('toggling enabled alone on a recurring campaign does not require re-supplying recurrence', async () => {
+        const { service, mockBonusCampaignRepo } = makeService({ rooms: [] });
+        const existing = {
+            id: 'campaign-1',
+            name: 'Existing',
+            patternId: 'pattern-1',
+            prizeMinor: 1000,
+            enabled: false,
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '02:00:00',
+                endTime: '06:00:00',
+            },
+            startAt: null,
+            endAt: null,
+            botWinEnabled: false,
+            botMaxCartelasPerRoom: 1,
+        };
+        mockBonusCampaignRepo.findOneBy.mockResolvedValue(existing);
+        mockBonusCampaignRepo.find.mockResolvedValue([existing]);
+
+        const updated = await service.updateBonusCampaign('campaign-1', {
+            enabled: true,
+        } as any);
+
+        expect(updated.enabled).toBe(true);
+        expect(updated.recurrence).toEqual(existing.recurrence);
+    });
+
+    it('toggling enabled alone on a one-time campaign does not require re-supplying startAt/endAt', async () => {
+        const { service, mockBonusCampaignRepo } = makeService({ rooms: [] });
+        const existing = {
+            id: 'campaign-2',
+            name: 'Existing Once',
+            patternId: 'pattern-1',
+            prizeMinor: 1000,
+            enabled: false,
+            scheduleType: 'once',
+            recurrence: null,
+            startAt: new Date('2026-01-01T10:00:00Z'),
+            endAt: new Date('2026-01-01T12:00:00Z'),
+            botWinEnabled: false,
+            botMaxCartelasPerRoom: 1,
+        };
+        mockBonusCampaignRepo.findOneBy.mockResolvedValue(existing);
+        mockBonusCampaignRepo.find.mockResolvedValue([existing]);
+
+        const updated = await service.updateBonusCampaign('campaign-2', {
+            enabled: true,
+        } as any);
+
+        expect(updated.enabled).toBe(true);
+        expect(updated.startAt).toEqual(existing.startAt);
+        expect(updated.endAt).toEqual(existing.endAt);
+    });
+
+    it('still validates the window when the caller actually changes it', async () => {
+        const { service, mockBonusCampaignRepo } = makeService({ rooms: [] });
+        const existing = {
+            id: 'campaign-3',
+            name: 'Existing',
+            patternId: 'pattern-1',
+            prizeMinor: 1000,
+            enabled: false,
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '02:00:00',
+                endTime: '06:00:00',
+            },
+            startAt: null,
+            endAt: null,
+            botWinEnabled: false,
+            botMaxCartelasPerRoom: 1,
+        };
+        mockBonusCampaignRepo.findOneBy.mockResolvedValue(existing);
+        mockBonusCampaignRepo.find.mockResolvedValue([existing]);
+
+        await expect(
+            service.updateBonusCampaign('campaign-3', {
+                scheduleType: 'once',
+            } as any),
+        ).rejects.toThrow(/startAt and endAt are required/i);
+    });
+});
+
 describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
     function ticket(overrides: Record<string, unknown> = {}) {
         return {
@@ -3566,6 +3654,99 @@ describe('BingoService.evaluateAndSettleBonus  Bonus Win settlement', () => {
             campaignId: 'campaign-1',
             winnerCount: 2,
         });
+    });
+
+    it("does not split the bonus across two cartelas owned by the SAME bot, as if they were different winners", async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            drawnNumbers: [1],
+            bonusSettlement: null,
+        });
+        // A single bot legitimately owns several cartelas in the room (see
+        // botMaxCartelasPerBotPerRoom), and BOTH complete the bonus pattern on
+        // the same draw. Splitting the pot across both would render the exact
+        // same bot identity twice in the winner list.
+        const winnerA = ticket({
+            id: 'ticket-a',
+            userId: 'bot-1',
+            cartelaNumber: 3,
+        });
+        const winnerB = ticket({
+            id: 'ticket-b',
+            userId: 'bot-1',
+            cartelaNumber: 9,
+        });
+        const pattern = { id: 'pattern-1', name: 'Any Line' };
+        const manager = {
+            find: jest.fn().mockResolvedValue([winnerA, winnerB]),
+            findOne: jest
+                .fn()
+                .mockImplementation((_entity: unknown, options: any) =>
+                    Promise.resolve(
+                        options?.where?.id === 'pattern-1'
+                            ? pattern
+                            : options?.where?.id === 'bot-1'
+                              ? {
+                                    id: 'bot-1',
+                                    productMetadata: {
+                                        botPolicy: { active: true },
+                                    },
+                                }
+                              : null,
+                    ),
+                ),
+            save: jest.fn().mockImplementation(async (v: unknown) => v),
+        };
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue({
+            id: 'campaign-1',
+            name: 'Evening Bonus',
+            patternId: 'pattern-1',
+            prizeMinor: 101,
+            botWinEnabled: false,
+        });
+        jest.spyOn(
+            (service as any).bingoRulesService,
+            'evaluatePatternTicket',
+        ).mockReturnValue({ completedPatternIds: ['pattern-1'] });
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(['bot-1']),
+            bingoEnabledBotIds: new Set(['bot-1']),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(
+            service as any,
+            'resolveDisplayedNameForUser',
+        ).mockResolvedValue({
+            displayName: 'Mesfin',
+            phoneLast4: '4014',
+            isBot: true,
+        });
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        await (service as any).evaluateAndSettleBonus(
+            room,
+            { botWinnerCooldownRooms: 0 } as any,
+            manager,
+        );
+
+        // Only the bot's FIRST completing cartela counts  the whole prize goes
+        // to it, not split in half across two entries with the identical
+        // displayed identity.
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+        expect(walletService.creditInSession).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: 'bot-1', amountMinor: 101 }),
+            manager,
+        );
+        expect(winnerA.payoutMinor).toBe(101);
+        expect(winnerB.payoutMinor).toBe(0);
+        expect(room.bonusSettlement).toMatchObject({ winnerCount: 1 });
     });
 
     it('redirects the bonus to a bot when botWinEnabled and a real ticket would otherwise win it', async () => {
@@ -3865,11 +4046,8 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
             id: 'schedule-1',
             botCount: 3,
             maxCartelasPerBot: 2,
+            minCartelasPerBot: null,
         });
-        const targetSpy = jest.spyOn(
-            service as any,
-            'resolveBingoBotCartelaTarget',
-        );
         jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
             {} as any,
         );
@@ -3887,14 +4065,10 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
         const changed = await service.reconcileBotCartelasInRoom(room.id);
 
         expect(cancelSpy).not.toHaveBeenCalled();
-        expect(targetSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                mode: 'fixed_cap',
-                maxCartelasPerBotPerRoom: 2,
-                botCount: 3, // pinned to the schedule's botCount, not all 4 active bots
-            }),
-        );
-        // desiredBotCartelas resolves to 3*2=6, vs currentBotCartelas 0.
+        // With minCartelasPerBot null (no range configured), every bot's
+        // randomized cap collapses to exactly maxCartelasPerBot (2), so the
+        // total is still botCount*maxCartelasPerBot = 3*2=6, vs currentBotCartelas 0
+        // — same outward result as the old fixed-cap behavior.
         expect(purchaseSpy).toHaveBeenCalledTimes(6);
         const purchasingUserIds = new Set(
             (purchaseSpy.mock.calls as any[]).map((call) => call[0].userId),
@@ -3925,6 +4099,105 @@ describe('BingoService.reconcileBotCartelasInRoom  Scheduled Bot Play override',
 
         expect(cancelSpy).toHaveBeenCalledWith(room.id);
         expect(changed).toBe(false);
+    });
+
+    it('randomizes each bot\'s cartela count within [minCartelasPerBot, maxCartelasPerBot] and keeps it stable across ticks', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = makeRoom({ winMode: 'prefilled', status: 'open' });
+        mockRoomRepo.findOneBy.mockResolvedValue(room);
+
+        jest.spyOn(service, 'getBingoConfig').mockResolvedValue({
+            botWinMode: 'off',
+            botCartelaPolicyEnabled: false,
+            botCartelaPolicyMode: 'mirror',
+            botMaxCartelasPerBotPerRoom: 5,
+        } as any);
+        jest.spyOn(service, 'cancelRoom').mockResolvedValue({} as any);
+        jest.spyOn(
+            service as any,
+            'countRealPlayersInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(service as any, 'isCartelaChangeLocked').mockReturnValue(
+            false,
+        );
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(0);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(0);
+        jest.spyOn(service as any, 'getActiveBotUserIds').mockResolvedValue(
+            new Set(['bot-1', 'bot-2', 'bot-3', 'bot-4']),
+        );
+        jest.spyOn(
+            service as any,
+            'getActiveEnabledBonusCampaign',
+        ).mockResolvedValue(null);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue({
+            id: 'schedule-range',
+            botCount: 4,
+            maxCartelasPerBot: 6,
+            minCartelasPerBot: 2,
+        });
+        jest.spyOn(service, 'ensureRoomBotIdentities').mockResolvedValue(
+            {} as any,
+        );
+        jest.spyOn(service as any, 'countUserCartelasInRoom').mockResolvedValue(
+            0,
+        );
+        jest.spyOn(
+            service as any,
+            'listAvailableCartelaNumbers',
+        ).mockResolvedValue(Array.from({ length: 24 }, (_, i) => i + 1));
+        const purchaseSpy = jest
+            .spyOn(service, 'purchaseTickets')
+            .mockResolvedValue([] as any);
+
+        await service.reconcileBotCartelasInRoom(room.id);
+
+        const perBotCounts = new Map<string, number>();
+        (purchaseSpy.mock.calls as any[]).forEach((call) => {
+            const userId = call[0].userId;
+            perBotCounts.set(userId, (perBotCounts.get(userId) ?? 0) + 1);
+        });
+        // Every participating bot's count must fall in [2, 6].
+        for (const count of perBotCounts.values()) {
+            expect(count).toBeGreaterThanOrEqual(2);
+            expect(count).toBeLessThanOrEqual(6);
+        }
+        const firstRunTotal = purchaseSpy.mock.calls.length;
+        const firstRunPerBot = new Map(perBotCounts);
+
+        // A second reconcile tick for the SAME room must derive the exact same
+        // per-bot cap (deterministic on roomId+botId), so once each bot already
+        // holds its target, nothing further is purchased or released.
+        purchaseSpy.mockClear();
+        jest.spyOn(
+            service as any,
+            'countBotCartelasInRoom',
+        ).mockResolvedValue(firstRunTotal);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(
+            firstRunTotal,
+        );
+        jest.spyOn(
+            service as any,
+            'countUserCartelasInRoom',
+        ).mockImplementation((...args: unknown[]) =>
+            Promise.resolve(firstRunPerBot.get(args[0] as string) ?? 0),
+        );
+        const releaseSpy = jest
+            .spyOn(service, 'releaseCartela')
+            .mockResolvedValue({} as any);
+
+        const secondChanged = await service.reconcileBotCartelasInRoom(
+            room.id,
+        );
+
+        expect(purchaseSpy).not.toHaveBeenCalled();
+        expect(releaseSpy).not.toHaveBeenCalled();
+        expect(secondChanged).toBe(false);
     });
 });
 
@@ -3990,6 +4263,116 @@ describe('BingoService Scheduled Bot Play CRUD', () => {
             new Date('2026-01-01T05:00:00Z'),
         );
         expect(inactive).toBeNull();
+    });
+
+    it('rejects minCartelasPerBot greater than maxCartelasPerBot on create', async () => {
+        const { service, mockScheduledBotPlayRepo } = makeService({
+            rooms: [],
+        });
+        mockScheduledBotPlayRepo.find.mockResolvedValue([]);
+
+        await expect(
+            service.createScheduledBotPlay({
+                name: 'Bad Range',
+                scheduleType: 'recurring',
+                recurrence: {
+                    frequency: 'daily',
+                    startTime: '02:00:00',
+                    endTime: '06:00:00',
+                },
+                botCount: 3,
+                maxCartelasPerBot: 2,
+                minCartelasPerBot: 5,
+            } as any),
+        ).rejects.toThrow(/minCartelasPerBot/i);
+    });
+
+    it('rejects minCartelasPerBot greater than maxCartelasPerBot on update', async () => {
+        const { service, mockScheduledBotPlayRepo } = makeService({
+            rooms: [],
+        });
+        const existing = {
+            id: 'schedule-1',
+            name: 'Existing',
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '02:00:00',
+                endTime: '06:00:00',
+            },
+            botCount: 3,
+            maxCartelasPerBot: 5,
+            minCartelasPerBot: null,
+        };
+        mockScheduledBotPlayRepo.findOneBy.mockResolvedValue(existing);
+        mockScheduledBotPlayRepo.find.mockResolvedValue([existing]);
+
+        await expect(
+            service.updateScheduledBotPlay('schedule-1', {
+                scheduleType: 'recurring',
+                recurrence: existing.recurrence,
+                minCartelasPerBot: 9,
+            } as any),
+        ).rejects.toThrow(/minCartelasPerBot/i);
+    });
+
+    it('toggling enabled alone on a recurring schedule does not require re-supplying recurrence', async () => {
+        const { service, mockScheduledBotPlayRepo } = makeService({
+            rooms: [],
+        });
+        const existing = {
+            id: 'schedule-1',
+            name: 'Existing',
+            enabled: false,
+            scheduleType: 'recurring',
+            recurrence: {
+                frequency: 'daily',
+                startTime: '02:00:00',
+                endTime: '06:00:00',
+            },
+            startAt: null,
+            endAt: null,
+            botCount: 3,
+            maxCartelasPerBot: 5,
+            minCartelasPerBot: null,
+        };
+        mockScheduledBotPlayRepo.findOneBy.mockResolvedValue(existing);
+        mockScheduledBotPlayRepo.find.mockResolvedValue([existing]);
+
+        const updated = await service.updateScheduledBotPlay('schedule-1', {
+            enabled: true,
+        } as any);
+
+        expect(updated.enabled).toBe(true);
+        expect(updated.recurrence).toEqual(existing.recurrence);
+    });
+
+    it('toggling enabled alone on a one-time schedule does not require re-supplying startAt/endAt', async () => {
+        const { service, mockScheduledBotPlayRepo } = makeService({
+            rooms: [],
+        });
+        const existing = {
+            id: 'schedule-2',
+            name: 'Existing Once',
+            enabled: false,
+            scheduleType: 'once',
+            recurrence: null,
+            startAt: new Date('2026-01-01T10:00:00Z'),
+            endAt: new Date('2026-01-01T12:00:00Z'),
+            botCount: 3,
+            maxCartelasPerBot: 5,
+            minCartelasPerBot: null,
+        };
+        mockScheduledBotPlayRepo.findOneBy.mockResolvedValue(existing);
+        mockScheduledBotPlayRepo.find.mockResolvedValue([existing]);
+
+        const updated = await service.updateScheduledBotPlay('schedule-2', {
+            enabled: true,
+        } as any);
+
+        expect(updated.enabled).toBe(true);
+        expect(updated.startAt).toEqual(existing.startAt);
+        expect(updated.endAt).toEqual(existing.endAt);
     });
 });
 

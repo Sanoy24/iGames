@@ -27,6 +27,7 @@ import {
     Tag,
     Trash2,
     TrendingUp,
+    Upload,
     Users,
     Wallet,
     X,
@@ -6291,6 +6292,7 @@ function BingoAdmin() {
         recurrenceEndTime: '06:00:00',
         botCount: 10,
         maxCartelasPerBot: 3,
+        minCartelasPerBot: 3,
     };
     const [botPlayForm, setBotPlayForm] = useState(emptyBotPlayForm);
 
@@ -7150,6 +7152,7 @@ function BingoAdmin() {
             recurrenceEndTime: s.recurrence?.endTime ?? '06:00:00',
             botCount: s.botCount,
             maxCartelasPerBot: s.maxCartelasPerBot,
+            minCartelasPerBot: s.minCartelasPerBot ?? s.maxCartelasPerBot,
         });
         setShowBotPlayForm(true);
     };
@@ -7157,6 +7160,13 @@ function BingoAdmin() {
     const saveBotPlaySchedule = async () => {
         if (!botPlayForm.name.trim()) {
             addToast('error', 'Name is required.');
+            return;
+        }
+        if (botPlayForm.minCartelasPerBot > botPlayForm.maxCartelasPerBot) {
+            addToast(
+                'error',
+                'Min Cartelas Per Bot cannot be greater than Max Cartelas Per Bot.',
+            );
             return;
         }
         setBusy('botplay-save');
@@ -7187,6 +7197,7 @@ function BingoAdmin() {
                         : undefined,
                 botCount: botPlayForm.botCount,
                 maxCartelasPerBot: botPlayForm.maxCartelasPerBot,
+                minCartelasPerBot: botPlayForm.minCartelasPerBot,
             };
             if (editingBotPlayId) {
                 const updated = await adminBingoApi.updateScheduledBotPlay(
@@ -8707,7 +8718,7 @@ function BingoAdmin() {
                                     <th>Name</th>
                                     <th>Schedule</th>
                                     <th>Bots</th>
-                                    <th>Max Cartelas/Bot</th>
+                                    <th>Cartelas/Bot</th>
                                     <th>Status</th>
                                     <th></th>
                                 </tr>
@@ -8725,7 +8736,13 @@ function BingoAdmin() {
                                             {describeBonusSchedule(s)}
                                         </td>
                                         <td>{s.botCount}</td>
-                                        <td>{s.maxCartelasPerBot}</td>
+                                        <td>
+                                            {s.minCartelasPerBot &&
+                                            s.minCartelasPerBot <
+                                                s.maxCartelasPerBot
+                                                ? `${s.minCartelasPerBot}-${s.maxCartelasPerBot}`
+                                                : s.maxCartelasPerBot}
+                                        </td>
                                         <td>
                                             <span
                                                 className={`badge ${s.enabled ? 'badge-green' : 'badge-red'}`}
@@ -8840,6 +8857,23 @@ function BingoAdmin() {
                                     />
                                 </label>
                                 <label className='adm-field'>
+                                    <span>Min Cartelas Per Bot</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={1}
+                                        value={botPlayForm.minCartelasPerBot}
+                                        onChange={(e) =>
+                                            setBotPlayForm((f) => ({
+                                                ...f,
+                                                minCartelasPerBot: Number(
+                                                    e.target.value,
+                                                ),
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field'>
                                     <span>Max Cartelas Per Bot</span>
                                     <input
                                         className='input'
@@ -8856,6 +8890,17 @@ function BingoAdmin() {
                                         }
                                     />
                                 </label>
+                                <div
+                                    className='adm-td-muted'
+                                    style={{
+                                        fontSize: 12,
+                                        gridColumn: '1 / -1',
+                                    }}
+                                >
+                                    Each bot independently buys a random
+                                    number of cartelas in this range. Set them
+                                    equal for a fixed amount per bot.
+                                </div>
                                 <label className='adm-field'>
                                     <span>Schedule Type</span>
                                     <select
@@ -12240,6 +12285,14 @@ function BotsAdmin() {
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
+    const [bulkMode, setBulkMode] = useState(false);
+    const [bulkForm, setBulkForm] = useState({ count: 5, namePrefix: 'Bot' });
+    const [showImportCsv, setShowImportCsv] = useState(false);
+    const [csvText, setCsvText] = useState('');
+    const [csvImportResult, setCsvImportResult] = useState<{
+        created: BotUser[];
+        errors: Array<{ row: number; message: string }>;
+    } | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [topupId, setTopupId] = useState<string | null>(null);
     const [topupAmount, setTopupAmount] = useState('');
@@ -12435,6 +12488,103 @@ function BotsAdmin() {
         }
     };
 
+    const bulkCreate = async () => {
+        if (bulkForm.count < 1) {
+            addToast('error', 'Count must be at least 1.');
+            return;
+        }
+        setBusy('create');
+        try {
+            const { displayName: _displayName, ...basePolicy } = form;
+            void _displayName;
+            if (
+                houseWallet &&
+                basePolicy.initialBalanceMinor * bulkForm.count >
+                    houseWallet.availableMinor
+            ) {
+                addToast(
+                    'error',
+                    `Total starting balance exceeds the Master Wallet balance. Available: ${formatCreditsFull(houseWallet.availableMinor)} ETB.`,
+                );
+                return;
+            }
+            const created = await adminBotsApi.bulkCreateBots({
+                ...basePolicy,
+                count: bulkForm.count,
+                namePrefix: bulkForm.namePrefix,
+            });
+            addToast('success', `Created ${created.length} bot(s).`);
+            setShowCreate(false);
+            setBulkMode(false);
+            await load();
+            await loadHouseWallet();
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const importCsv = async () => {
+        if (!csvText.trim()) {
+            addToast('error', 'Paste or choose a CSV file first.');
+            return;
+        }
+        setBusy('import-csv');
+        try {
+            const result = await adminBotsApi.importBotsCsv(csvText);
+            setCsvImportResult(result);
+            if (result.created.length > 0) {
+                addToast(
+                    'success',
+                    `Imported ${result.created.length} bot(s)${result.errors.length > 0 ? `, ${result.errors.length} row(s) failed` : ''}.`,
+                );
+                await load();
+                await loadHouseWallet();
+            } else {
+                addToast('error', 'No bots were created  see errors below.');
+            }
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const onCsvFileChosen = (file: File | null) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            setCsvText(String(reader.result ?? ''));
+        };
+        reader.readAsText(file);
+    };
+
+    const openSingleCreatePanel = () => {
+        setShowImportCsv(false);
+        setCsvImportResult(null);
+        if (showCreate && !bulkMode) {
+            setShowCreate(false);
+        } else {
+            setBulkMode(false);
+            setShowCreate(true);
+        }
+    };
+    const openBulkCreatePanel = () => {
+        setShowImportCsv(false);
+        setCsvImportResult(null);
+        if (showCreate && bulkMode) {
+            setShowCreate(false);
+        } else {
+            setBulkMode(true);
+            setShowCreate(true);
+        }
+    };
+    const toggleImportCsvPanel = () => {
+        setShowCreate(false);
+        setShowImportCsv((v) => !v);
+    };
+
     const toggleActive = async (bot: BotUser) => {
         setBusy(bot.id);
         try {
@@ -12618,10 +12768,32 @@ function BotsAdmin() {
                 </button>
                 <button
                     className='adm-btn adm-btn-primary'
-                    onClick={() => setShowCreate((v) => !v)}
+                    onClick={openSingleCreatePanel}
                 >
-                    {showCreate ? <X size={13} /> : <Plus size={13} />}
-                    {showCreate ? 'Cancel' : 'New Bot'}
+                    {showCreate && !bulkMode ? (
+                        <X size={13} />
+                    ) : (
+                        <Plus size={13} />
+                    )}
+                    {showCreate && !bulkMode ? 'Cancel' : 'New Bot'}
+                </button>
+                <button
+                    className='adm-btn adm-btn-secondary'
+                    onClick={openBulkCreatePanel}
+                >
+                    {showCreate && bulkMode ? (
+                        <X size={13} />
+                    ) : (
+                        <Users size={13} />
+                    )}
+                    {showCreate && bulkMode ? 'Cancel' : 'Bulk Create'}
+                </button>
+                <button
+                    className='adm-btn adm-btn-secondary'
+                    onClick={toggleImportCsvPanel}
+                >
+                    {showImportCsv ? <X size={13} /> : <Upload size={13} />}
+                    {showImportCsv ? 'Cancel' : 'Import CSV'}
                 </button>
             </SectionHead>
 
@@ -12977,15 +13149,67 @@ function BotsAdmin() {
                 </div>
             )}
 
-            {/* Create form */}
+            {/* Create form (shared by single-bot create and bulk create) */}
             {showCreate && (
                 <div className='adm-panel'>
-                    <div className='adm-panel-head'>Create New Bot</div>
+                    <div className='adm-panel-head'>
+                        {bulkMode ? 'Bulk Create Bots' : 'Create New Bot'}
+                    </div>
                     <div className='adm-field-grid'>
-                        <label className='adm-field'>
-                            <span>Display Name</span>
-                            <input className='input' {...f('displayName')} />
-                        </label>
+                        {bulkMode ? (
+                            <>
+                                <label className='adm-field'>
+                                    <span>How Many Bots</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={1}
+                                        max={50}
+                                        value={bulkForm.count}
+                                        onChange={(e) =>
+                                            setBulkForm((f) => ({
+                                                ...f,
+                                                count: Number(e.target.value),
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className='adm-field'>
+                                    <span>Fallback Name Prefix</span>
+                                    <input
+                                        className='input'
+                                        value={bulkForm.namePrefix}
+                                        onChange={(e) =>
+                                            setBulkForm((f) => ({
+                                                ...f,
+                                                namePrefix: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                    <small
+                                        style={{
+                                            color: 'var(--text-muted)',
+                                            display: 'block',
+                                            marginTop: 4,
+                                        }}
+                                    >
+                                        Names are drawn from the active Bingo
+                                        bot name pool first; once it runs out,
+                                        remaining bots are named "Prefix N".
+                                        The settings below apply to every bot
+                                        created.
+                                    </small>
+                                </label>
+                            </>
+                        ) : (
+                            <label className='adm-field'>
+                                <span>Display Name</span>
+                                <input
+                                    className='input'
+                                    {...f('displayName')}
+                                />
+                            </label>
+                        )}
                         <label className='adm-field'>
                             <span>Starting Balance (ETB)</span>
                             <input
@@ -13560,9 +13784,96 @@ function BotsAdmin() {
                         <button
                             className='adm-btn adm-btn-primary'
                             disabled={busy === 'create'}
-                            onClick={createBot}
+                            onClick={bulkMode ? bulkCreate : createBot}
                         >
-                            {busy === 'create' ? 'Creating…' : 'Create Bot'}
+                            {busy === 'create'
+                                ? 'Creating…'
+                                : bulkMode
+                                  ? `Create ${bulkForm.count} Bots`
+                                  : 'Create Bot'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Import CSV */}
+            {showImportCsv && (
+                <div className='adm-panel'>
+                    <div className='adm-panel-head'>Import Bots from CSV</div>
+                    <div style={{ padding: '0 12px 12px' }}>
+                        <div
+                            className='adm-td-muted'
+                            style={{ fontSize: 12, marginBottom: 10 }}
+                        >
+                            Header row required with a{' '}
+                            <code>displayName</code> column; every other
+                            column is optional and overrides that bot's
+                            policy (e.g. <code>bingoActive</code>,{' '}
+                            <code>kenoStrategy</code>,{' '}
+                            <code>initialBalanceMinor</code>). Unknown
+                            columns are ignored.
+                        </div>
+                        <input
+                            type='file'
+                            accept='.csv,text/csv'
+                            onChange={(e) =>
+                                onCsvFileChosen(e.target.files?.[0] ?? null)
+                            }
+                            style={{ marginBottom: 10 }}
+                        />
+                        <textarea
+                            className='input'
+                            rows={8}
+                            placeholder={
+                                'displayName,bingoActive,initialBalanceMinor\nAbebe,true,100000\nHana,true,100000'
+                            }
+                            value={csvText}
+                            onChange={(e) => setCsvText(e.target.value)}
+                            style={{
+                                width: '100%',
+                                fontFamily: 'monospace',
+                                fontSize: 12,
+                            }}
+                        />
+                        {csvImportResult && (
+                            <div style={{ marginTop: 10 }}>
+                                <div style={{ fontSize: 12 }}>
+                                    <strong>
+                                        {csvImportResult.created.length}
+                                    </strong>{' '}
+                                    bot(s) created
+                                    {csvImportResult.errors.length > 0
+                                        ? `, ${csvImportResult.errors.length} row(s) failed:`
+                                        : '.'}
+                                </div>
+                                {csvImportResult.errors.length > 0 && (
+                                    <ul
+                                        style={{
+                                            fontSize: 12,
+                                            color: 'var(--danger, #ef4444)',
+                                            marginTop: 6,
+                                        }}
+                                    >
+                                        {csvImportResult.errors.map(
+                                            (err, i) => (
+                                                <li key={i}>
+                                                    Row {err.row}:{' '}
+                                                    {err.message}
+                                                </li>
+                                            ),
+                                        )}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    <div className='adm-panel-footer'>
+                        <button
+                            className='adm-btn adm-btn-primary'
+                            disabled={busy === 'import-csv'}
+                            onClick={importCsv}
+                        >
+                            {busy === 'import-csv' ? 'Importing…' : 'Import'}
                         </button>
                     </div>
                 </div>

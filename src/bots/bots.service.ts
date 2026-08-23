@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomInt } from 'crypto';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 import { Repository, DataSource, EntityManager, In, MoreThan } from 'typeorm';
 import { KenoService } from '../keno/keno.service';
 import { BingoService } from '../bingo/bingo.service';
@@ -16,6 +18,7 @@ import { User } from '../users/entities/user.entity';
 import { WalletService } from '../wallet/wallet.service';
 import { AdminService } from '../admin/admin.service';
 import { CreateBotDto } from './dto/create-bot.dto';
+import { BulkCreateBotDto } from './dto/bulk-create-bot.dto';
 import { CreateBotNameDto, ImportBotNamesDto } from './dto/create-bot-name.dto';
 import { UpdateBotPolicyDto } from './dto/update-bot-policy.dto';
 import { UpdateBotNameDto } from './dto/update-bot-name.dto';
@@ -230,6 +233,237 @@ export class BotsService {
 
             return this.toBotResponse(user);
         });
+    }
+
+    /** Creates `dto.count` bots sharing the same policy, auto-naming each from
+     * the active Bingo bot name pool (falling back to `${namePrefix} N` once
+     * the pool is exhausted) so admins don't have to create bots one by one. */
+    async bulkCreateBots(dto: BulkCreateBotDto): Promise<BotResponse[]> {
+        const { count, namePrefix, ...basePolicy } = dto;
+        const displayNames = await this.reserveBotDisplayNames(
+            count,
+            namePrefix,
+        );
+        const created: BotResponse[] = [];
+        for (const displayName of displayNames) {
+            created.push(
+                await this.createBot({ ...basePolicy, displayName }),
+            );
+        }
+        return created;
+    }
+
+    /** Parses a CSV (header row + data rows) into one bot per row via
+     * `createBot`. The "displayName" column is mandatory; every other column
+     * matching a CreateBotDto field is optional and overrides that bot's
+     * policy. Unknown columns are ignored. Row failures don't abort the
+     * import  they're collected and returned alongside what succeeded. */
+    async importBotsCsv(csv: string): Promise<{
+        created: BotResponse[];
+        errors: Array<{ row: number; message: string }>;
+    }> {
+        const rows = this.parseCsv(csv);
+        if (rows.length === 0) return { created: [], errors: [] };
+
+        const [header, ...dataRows] = rows;
+        const displayNameCol = header.findIndex(
+            (h) => h.trim() === 'displayName',
+        );
+        if (displayNameCol === -1) {
+            throw new BadRequestException(
+                'CSV header must include a "displayName" column',
+            );
+        }
+
+        const created: BotResponse[] = [];
+        const errors: Array<{ row: number; message: string }> = [];
+        for (let i = 0; i < dataRows.length; i++) {
+            const rowNumber = i + 2; // header occupies row 1
+            const cells = dataRows[i];
+            if (cells.every((c) => c.trim() === '')) continue;
+
+            const record: Record<string, string> = {};
+            header.forEach((key, idx) => {
+                record[key.trim()] = (cells[idx] ?? '').trim();
+            });
+
+            try {
+                const candidate = this.coerceCsvRowToCreateBotDto(record);
+                const instance = plainToInstance(CreateBotDto, candidate);
+                const validationErrors = await validate(instance);
+                if (validationErrors.length > 0) {
+                    throw new BadRequestException(
+                        validationErrors
+                            .map((e) =>
+                                Object.values(e.constraints ?? {}).join('; '),
+                            )
+                            .join('; '),
+                    );
+                }
+                created.push(await this.createBot(instance));
+            } catch (err) {
+                errors.push({
+                    row: rowNumber,
+                    message:
+                        err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
+        return { created, errors };
+    }
+
+    private async reserveBotDisplayNames(
+        count: number,
+        namePrefix?: string,
+    ): Promise<string[]> {
+        const pool = await this.botNameRepository.find({
+            where: { active: true },
+            order: { displayName: 'ASC' },
+        });
+        const existingBotNames = new Set(
+            (
+                await this.userRepository
+                    .createQueryBuilder('user')
+                    .select('user.displayName', 'displayName')
+                    .where(
+                        "JSON_EXTRACT(user.productMetadata, '$.botPolicy') IS NOT NULL",
+                    )
+                    .getRawMany<{ displayName: string }>()
+            ).map((r) => r.displayName),
+        );
+        const available = this.shuffle(
+            pool.map((n) => n.displayName),
+        ).filter((name) => !existingBotNames.has(name));
+
+        const prefix = (namePrefix ?? 'Bot').trim() || 'Bot';
+        const names: string[] = [];
+        let fallbackIndex = 1;
+        for (let i = 0; i < count; i++) {
+            if (available[i]) {
+                names.push(available[i]);
+                continue;
+            }
+            let candidate: string;
+            do {
+                candidate = `${prefix} ${fallbackIndex++}`;
+            } while (existingBotNames.has(candidate) || names.includes(candidate));
+            names.push(candidate);
+        }
+        return names;
+    }
+
+    private static readonly CSV_BOOLEAN_FIELDS = new Set([
+        'kenoActive',
+        'bingoActive',
+        'crashActive',
+    ]);
+    private static readonly CSV_STRING_FIELDS = new Set([
+        'displayName',
+        'kenoStrategy',
+        'bingoStrategy',
+        'crashStrategy',
+    ]);
+    private static readonly CSV_INT_FIELDS = new Set([
+        'ticketsPerRound',
+        'spotCount',
+        'kenoParticipationRatePct',
+        'kenoActionDelayMinMs',
+        'kenoActionDelayMaxMs',
+        'kenoHesitationChancePct',
+        'kenoVariancePct',
+        'bingoParticipationRatePct',
+        'bingoActionDelayMinMs',
+        'bingoActionDelayMaxMs',
+        'bingoHesitationChancePct',
+        'bingoVariancePct',
+        'crashParticipationRatePct',
+        'crashActionDelayMinMs',
+        'crashActionDelayMaxMs',
+        'crashHesitationChancePct',
+        'crashVariancePct',
+        'kenoMinBalanceMinor',
+        'bingoMinBalanceMinor',
+        'crashMinBalanceMinor',
+        'kenoMaxStakeMinorPerDay',
+        'bingoMaxStakeMinorPerDay',
+        'crashMaxStakeMinorPerDay',
+        'bingoMaxCartelasPerRoom',
+        'crashMinCashoutX100',
+        'crashMaxCashoutX100',
+        'initialBalanceMinor',
+    ]);
+
+    private coerceCsvRowToCreateBotDto(
+        record: Record<string, string>,
+    ): CreateBotDto {
+        const dto: Record<string, unknown> = {};
+        for (const [key, raw] of Object.entries(record)) {
+            if (raw === '') continue;
+            if (BotsService.CSV_BOOLEAN_FIELDS.has(key)) {
+                dto[key] = ['true', '1', 'yes'].includes(raw.toLowerCase());
+            } else if (BotsService.CSV_INT_FIELDS.has(key)) {
+                const n = Number(raw);
+                if (!Number.isNaN(n)) dto[key] = Math.trunc(n);
+            } else if (BotsService.CSV_STRING_FIELDS.has(key)) {
+                dto[key] = raw;
+            }
+        }
+        return dto as unknown as CreateBotDto;
+    }
+
+    /** Minimal RFC4180-style CSV parser: handles quoted fields, escaped `""`
+     * quotes, commas inside quoted fields, and CRLF/LF line endings. */
+    private parseCsv(text: string): string[][] {
+        const rows: string[][] = [];
+        let row: string[] = [];
+        let field = '';
+        let inQuotes = false;
+        const pushField = () => {
+            row.push(field);
+            field = '';
+        };
+        const pushRow = () => {
+            pushField();
+            rows.push(row);
+            row = [];
+        };
+
+        const normalized = text.replace(/\r\n/g, '\n');
+        for (let i = 0; i < normalized.length; i++) {
+            const ch = normalized[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (normalized[i + 1] === '"') {
+                        field += '"';
+                        i++;
+                    } else {
+                        inQuotes = false;
+                    }
+                } else {
+                    field += ch;
+                }
+            } else if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === ',') {
+                pushField();
+            } else if (ch === '\n') {
+                pushRow();
+            } else {
+                field += ch;
+            }
+        }
+        if (field.length > 0 || row.length > 0) pushRow();
+
+        return rows.filter((r) => !(r.length === 1 && r[0].trim() === ''));
+    }
+
+    private shuffle<T>(items: T[]): T[] {
+        const copy = [...items];
+        for (let i = copy.length - 1; i > 0; i--) {
+            const j = randomInt(0, i + 1);
+            [copy[i], copy[j]] = [copy[j], copy[i]];
+        }
+        return copy;
     }
 
     async listBots(): Promise<BotResponse[]> {

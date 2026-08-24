@@ -297,6 +297,9 @@ export class BingoService implements OnModuleInit {
      * gate, so this never grows beyond the rooms being held right now. */
     private readonly botBuyInGateLoggedRoomIds = new Set<string>();
 
+    /** Log the player-presence heartbeat failing once, not on every poll. */
+    private playerPresenceWriteFailed = false;
+
     constructor(
         private readonly dataSource: DataSource,
         @InjectRepository(BingoRoom)
@@ -7117,8 +7120,19 @@ export class BingoService implements OnModuleInit {
                          OR lastPlayerSeenAt < NOW() - INTERVAL ? SECOND)`,
                 [PLAYER_PRESENCE_THROTTLE_SECONDS],
             );
-        } catch {
-            // Best-effort heartbeat; never fail a room load over it.
+        } catch (err) {
+            // Best-effort - never fail a room load over a heartbeat. But it MUST
+            // be visible: a silently failing heartbeat used to switch the whole
+            // bot buy-in gate off (see isBotBuyAllowed), which is exactly how the
+            // gate shipped and changed nothing in production.
+            if (!this.playerPresenceWriteFailed) {
+                this.playerPresenceWriteFailed = true;
+                this.logger.error(
+                    `Bingo player-presence heartbeat is failing; the bot buy-in gate is running without it: ${
+                        err instanceof Error ? err.message : String(err)
+                    }`,
+                );
+            }
         }
     }
 
@@ -7202,12 +7216,16 @@ export class BingoService implements OnModuleInit {
         viewedSecondsAgo: number | null;
         playerSeenSecondsAgo: number | null;
         lineageRoundEndedSecondsAgo: number | null;
+        lineageRoundHadRealPlayers: boolean;
     }> {
         const lineage = this.roomLineagePredicate(room);
         const [viewRows, presenceRows, roundRows]: [
             Array<{ viewedSecondsAgo: number | string | null }>,
             Array<{ playerSeenSecondsAgo: number | string | null }>,
-            Array<{ endedSecondsAgo: number | string | null }>,
+            Array<{
+                endedSecondsAgo: number | string | null;
+                hadRealPlayers: number | string | null;
+            }>,
         ] = await Promise.all([
             this.bingoRoomRepository.query(
                 `SELECT TIMESTAMPDIFF(SECOND, firstViewedAt, NOW()) AS viewedSecondsAgo
@@ -7221,11 +7239,20 @@ export class BingoService implements OnModuleInit {
                   WHERE \`key\` = 'global' AND lastPlayerSeenAt IS NOT NULL`,
             ),
             this.bingoRoomRepository.query(
-                `SELECT MIN(TIMESTAMPDIFF(SECOND, r.updatedAt, NOW())) AS endedSecondsAgo
+                `SELECT TIMESTAMPDIFF(SECOND, r.updatedAt, NOW()) AS endedSecondsAgo,
+                        EXISTS (
+                            SELECT 1 FROM bingo_tickets t
+                              JOIN users u ON u.id = t.userId
+                             WHERE t.roomId = r.id
+                               AND t.status <> 'cancelled'
+                               AND JSON_EXTRACT(u.productMetadata, '$.botPolicy') IS NULL
+                        ) AS hadRealPlayers
                    FROM bingo_rooms r
                   WHERE r.status = 'completed'
                     AND r.updatedAt >= (NOW() - INTERVAL ? SECOND)
-                    AND (${lineage.sql})`,
+                    AND (${lineage.sql})
+                  ORDER BY r.updatedAt DESC
+                  LIMIT 1`,
                 [BOT_BUY_BACKSTOP_SECONDS, ...lineage.params],
             ),
         ]);
@@ -7242,6 +7269,9 @@ export class BingoService implements OnModuleInit {
             ),
             lineageRoundEndedSecondsAgo: toSeconds(
                 roundRows?.[0]?.endedSecondsAgo,
+            ),
+            lineageRoundHadRealPlayers: !!Number(
+                roundRows?.[0]?.hadRealPlayers ?? 0,
             ),
         };
     }
@@ -7292,14 +7322,27 @@ export class BingoService implements OnModuleInit {
     private async isBotBuyAllowed(
         room: Pick<BingoRoom, 'id' | 'soldTickets' | 'customSlotId' | 'ownerAgentId'>,
     ): Promise<{ allowed: boolean; secondsRemaining: number; reason?: string }> {
-        const allow = { allowed: true, secondsRemaining: 0 };
-        if ((room.soldTickets ?? 0) > 0) return allow;
+        if ((room.soldTickets ?? 0) > 0) {
+            return { allowed: true, secondsRemaining: 0 };
+        }
+        const open = (why: string) => {
+            // Opening a countdown happens once per room, so this is a handful of
+            // lines per round - and it is the only way to tell, after the fact,
+            // WHICH condition let bots in. The gate silently answering "allowed"
+            // is precisely what made the last two attempts undiagnosable.
+            this.logger.log(
+                `Bot buy-in gate OPENING room ${room.id}: ${why}`,
+            );
+            return { allowed: true, secondsRemaining: 0 };
+        };
         try {
             const seen = await this.getBotBuyObservations(room);
 
             if (seen.viewedSecondsAgo !== null) {
                 const waited = seen.viewedSecondsAgo;
-                if (waited >= BOT_BUY_PLAYER_GRACE_SECONDS) return allow;
+                if (waited >= BOT_BUY_PLAYER_GRACE_SECONDS) {
+                    return open(`a player arrived ${waited}s ago`);
+                }
                 return {
                     allowed: false,
                     secondsRemaining: BOT_BUY_PLAYER_GRACE_SECONDS - waited,
@@ -7307,33 +7350,53 @@ export class BingoService implements OnModuleInit {
                 };
             }
 
-            // Nobody in the game at all: no result is being watched anywhere, so
-            // there is no arrival to wait for.
-            if (
-                seen.playerSeenSecondsAgo === null ||
-                seen.playerSeenSecondsAgo >= PLAYER_PRESENCE_SECONDS
-            ) {
-                return allow;
+            // No player has been served this room yet. The ONLY thing that makes
+            // that acceptable is that there is no transition in flight to spoil.
+            const sinceRound = seen.lineageRoundEndedSecondsAgo;
+            if (sinceRound === null) {
+                return open('no round finished recently in this room lineage');
+            }
+            if (sinceRound >= BOT_BUY_BACKSTOP_SECONDS) {
+                return open(
+                    `backstop: the last round in this lineage ended ${sinceRound}s ago and no player ever arrived`,
+                );
             }
 
-            // Somebody is here, but no round they could be coming out of has
-            // finished in this room's lineage - they are not mid-transition.
-            const sinceRound = seen.lineageRoundEndedSecondsAgo;
-            if (sinceRound === null) return allow;
+            // A round in this lineage just ended. Is anyone out there who could
+            // still be watching its result?
+            //
+            // TWO independent signals, and either one is enough to hold. That is
+            // deliberate: the previous version asked ONLY the presence heartbeat
+            // and treated "no heartbeat recorded" as "nobody is here", so a single
+            // unwritten column silently switched the whole gate off and bots
+            // bought the instant a room was created - the reported bug, again.
+            // The ticket-based signal needs no new column at all, so the gate now
+            // survives the heartbeat being broken, and vice versa.
+            const seenRecently =
+                seen.playerSeenSecondsAgo !== null &&
+                seen.playerSeenSecondsAgo < PLAYER_PRESENCE_SECONDS;
+            if (!seen.lineageRoundHadRealPlayers && !seenRecently) {
+                return open(
+                    `the round that just ended was bot-only and no player has been seen for ${
+                        seen.playerSeenSecondsAgo ?? 'ever'
+                    }s`,
+                );
+            }
 
-            if (sinceRound >= BOT_BUY_BACKSTOP_SECONDS) return allow;
             return {
                 allowed: false,
                 secondsRemaining: BOT_BUY_BACKSTOP_SECONDS - sinceRound,
                 reason: 'a player is still being shown the previous result',
             };
         } catch (err) {
-            this.logger.warn(
-                `Could not evaluate the bot buy-in gate for room ${room.id}; allowing buy-in: ${
+            // Falling open keeps a broken query from freezing the game, but it
+            // must never be quiet about it.
+            this.logger.error(
+                `Bot buy-in gate could not be evaluated for room ${room.id}; allowing buy-in: ${
                     err instanceof Error ? err.message : String(err)
                 }`,
             );
-            return allow;
+            return { allowed: true, secondsRemaining: 0 };
         }
     }
 

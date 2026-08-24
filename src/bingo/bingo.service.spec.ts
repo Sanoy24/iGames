@@ -4717,8 +4717,8 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
     // client animation timing can shrink it again.
 
     /**
-     * Drive the three observations the gate reads, as the DB reports them.
-     * `null` for any of them means "that query matched nothing".
+     * Drive the observations the gate reads, as the DB reports them.
+     * `null` means "that query matched nothing".
      */
     const withObservations = (
         harness: any,
@@ -4726,12 +4726,14 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
             viewedSecondsAgo?: unknown;
             playerSeenSecondsAgo?: unknown;
             lineageRoundEndedSecondsAgo?: unknown;
+            lineageRoundHadRealPlayers?: boolean;
         },
     ) => {
         const {
             viewedSecondsAgo = null,
             playerSeenSecondsAgo = 2, // somebody is in the game, by default
             lineageRoundEndedSecondsAgo = null,
+            lineageRoundHadRealPlayers = true,
         } = obs;
         harness.mockRoomRepo.query.mockImplementation((sql: string) =>
             Promise.resolve(
@@ -4739,7 +4741,16 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
                     ? viewedSecondsAgo === null
                         ? []
                         : [{ viewedSecondsAgo }]
-                    : [{ endedSecondsAgo: lineageRoundEndedSecondsAgo }],
+                    : lineageRoundEndedSecondsAgo === null
+                      ? [{ endedSecondsAgo: null, hadRealPlayers: 0 }]
+                      : [
+                            {
+                                endedSecondsAgo: lineageRoundEndedSecondsAgo,
+                                hadRealPlayers: lineageRoundHadRealPlayers
+                                    ? 1
+                                    : 0,
+                            },
+                        ],
             ),
         );
         harness.mockConfigRepo.query.mockResolvedValue(
@@ -4866,11 +4877,103 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
     });
 
+
+    // ── Regression: no single missing observation may switch the gate off ────
+    //
+    // This is the bug the SECOND recording caught. The gate asked only the
+    // player-presence heartbeat whether anyone was around, and read "no
+    // heartbeat recorded" as "nobody is here" - so one unwritten column turned
+    // the whole gate into a no-op and bots bought the instant a room was
+    // created. The recording shows the cost exactly: the player landed on a room
+    // whose 40s countdown already read 00:24 with all 23 cartelas sold, and not
+    // one further cartela was bought in the 24s they sat there.
+    it('still holds when the presence heartbeat is missing entirely, because the finished round had real players', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: null, // heartbeat never written
+            lineageRoundEndedSecondsAgo: 1,
+            lineageRoundHadRealPlayers: true,
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toMatchObject({ allowed: false });
+    });
+
+    it('still holds when the presence heartbeat is stale, because the finished round had real players', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: 3600, // an hour old
+            lineageRoundEndedSecondsAgo: 2,
+            lineageRoundHadRealPlayers: true,
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toMatchObject({ allowed: false });
+    });
+
+    // ...and the mirror image: the heartbeat alone is enough when the round that
+    // just ended was all bots, which is the spectator case.
+    it('still holds for a spectator when the finished round was bot-only, on the heartbeat alone', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: 3,
+            lineageRoundEndedSecondsAgo: 2,
+            lineageRoundHadRealPlayers: false,
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toMatchObject({ allowed: false });
+    });
+
+    it('releases only when BOTH signals agree nobody is watching', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: null,
+            lineageRoundEndedSecondsAgo: 2,
+            lineageRoundHadRealPlayers: false,
+        });
+
+        await expect(
+            (h.service as any).isBotBuyAllowed(HOUSE_ROOM),
+        ).resolves.toEqual({ allowed: true, secondsRemaining: 0 });
+    });
+
+    it('says in the log which condition let bots open a room, so a bad release is never silent', async () => {
+        const h = makeService({ rooms: [] });
+        const logged: string[] = [];
+        jest.spyOn((h.service as any).logger, 'log').mockImplementation(
+            (m: unknown) => void logged.push(String(m)),
+        );
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: null,
+            lineageRoundEndedSecondsAgo: null,
+        });
+
+        await (h.service as any).isBotBuyAllowed(HOUSE_ROOM);
+
+        expect(
+            logged.some(
+                (m) =>
+                    m.includes('Bot buy-in gate OPENING') &&
+                    m.includes('no round finished recently'),
+            ),
+        ).toBe(true);
+    });
+
     it('does not wait when nobody is in the game at all - an all-bot house never stalls', async () => {
         const h = makeService({ rooms: [] });
         withObservations(h, {
             playerSeenSecondsAgo: null, // no player has ever been seen
             lineageRoundEndedSecondsAgo: 1,
+            lineageRoundHadRealPlayers: false, // ...and the round was all bots
         });
 
         await expect(
@@ -4883,6 +4986,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         withObservations(h, {
             playerSeenSecondsAgo: 20, // stale heartbeat: nobody is looking
             lineageRoundEndedSecondsAgo: 1,
+            lineageRoundHadRealPlayers: false, // ...and the round was all bots
         });
 
         await expect(

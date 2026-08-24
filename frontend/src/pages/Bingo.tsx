@@ -703,14 +703,19 @@ function CurrentBallDisplay({
                     animate={{
                         y: 0,
                         opacity: 1,
-                        // Same pulsing glow as the just-called tile on the 75/90 board
-                        // (NumberCell's `isCurrent`)  a white ring plus the group's
-                        // color glow, breathing on the same 0.9s loop.
+                        // Same pulsing glow/scale as the just-called tile on the 75/90
+                        // board (NumberCell's `isCurrent`), breathing on the same 0.9s
+                        // loop. The white ring itself is a static `outline` below (see
+                        // style), NOT baked into this animated string  Framer Motion
+                        // interpolates boxShadow by parsing out its numeric tokens, and
+                        // varying a 3rd shadow layer's width alongside the rgba() glow's
+                        // own embedded commas made that parsing unreliable and blanked
+                        // the whole tile.
                         scale: [1, 1.22, 1],
                         boxShadow: [
-                            `0 0 0 2px #fff, 0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
-                            `0 0 0 3px #fff, 0 0 32px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
-                            `0 0 0 2px #fff, 0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+                            `0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+                            `0 0 32px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+                            `0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
                         ],
                     }}
                     // `exit` gets its OWN transition (finite, no `repeat`)  otherwise it
@@ -748,6 +753,11 @@ function CurrentBallDisplay({
                         height: 54,
                         background: `linear-gradient(145deg, ${s!.color}22, ${s!.color}08)`,
                         border: `2px solid ${s!.color}66`,
+                        // Static (not animated)  the white ring the board gives its
+                        // `isCurrent` cell. `outline` is its own CSS layer, so it can't
+                        // collide with the animated `boxShadow` glow above.
+                        outline: '2px solid #fff',
+                        outlineOffset: 2,
                     }}
                 >
                     {prefix && (

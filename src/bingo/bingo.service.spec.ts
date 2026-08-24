@@ -5161,17 +5161,27 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         }
     });
 
-    it('touchPlayerPresence ignores an unauthenticated read, and never throws', async () => {
+    // Presence is about a PERSON being there, not about holding a valid token.
+    // Keying it off `request.user` meant a viewer whose JWT had expired counted
+    // as absent - and the production logs showed exactly that (401s and
+    // "jwt expired" from the client that was sitting watching the result). With
+    // the previous round bot-only, the gate then concluded nobody was watching
+    // and let bots open the next room's countdown immediately.
+    it('touchPlayerPresence records a viewer with no usable session at all', async () => {
         const { service, mockConfigRepo } = makeService({ rooms: [] });
+        mockConfigRepo.query.mockResolvedValue(undefined);
 
-        await expect(
-            (service as any).touchPlayerPresence(undefined),
-        ).resolves.toBeUndefined();
-        expect(mockConfigRepo.query).not.toHaveBeenCalled();
+        await (service as any).touchPlayerPresence();
 
+        expect(mockConfigRepo.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('touchPlayerPresence never throws, so a failed heartbeat cannot fail a room load', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
         mockConfigRepo.query.mockRejectedValue(new Error('write failed'));
+
         await expect(
-            (service as any).touchPlayerPresence('user-1'),
+            (service as any).touchPlayerPresence(),
         ).resolves.toBeUndefined();
     });
 });
@@ -5221,7 +5231,11 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
         const room = openRoom();
         const { service, stamp } = harnessFor(room, REAL_USER);
 
-        await service.getRoomState({ roomId: room.id, userId: REAL_USER.id });
+        await service.getRoomState({
+            roomId: room.id,
+            userId: REAL_USER.id,
+            viewer: true,
+        });
 
         expect(stamp).toHaveBeenCalledWith(room.id);
     });
@@ -5230,7 +5244,11 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
         const room = openRoom();
         const { service, stamp } = harnessFor(room, BOT_USER);
 
-        await service.getRoomState({ roomId: room.id, userId: BOT_USER.id });
+        await service.getRoomState({
+            roomId: room.id,
+            userId: BOT_USER.id,
+            viewer: true,
+        });
 
         expect(stamp).not.toHaveBeenCalled();
     });
@@ -5239,9 +5257,32 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
         const room = openRoom();
         const { service, stamp } = harnessFor(room, REAL_USER);
 
-        await service.getRoomState({ roomId: room.id }); // no userId
+        await service.getRoomState({ roomId: room.id }); // no viewer flag
 
         expect(stamp).not.toHaveBeenCalled();
+    });
+
+    // The case the production logs caught: the client's token had expired, so
+    // `request.user` was undefined on every poll. They were still a person
+    // watching the result, and must still count as one.
+    it('records the arrival of a viewer whose token has expired', async () => {
+        const room = openRoom();
+        const { service, stamp } = harnessFor(room, null);
+
+        await service.getRoomState({ roomId: room.id, viewer: true });
+
+        expect(stamp).toHaveBeenCalledWith(room.id);
+    });
+
+    it('does not count the scheduler own room reads as anybody arriving', async () => {
+        const room = openRoom();
+        const { service, stamp, mockConfigRepo } = harnessFor(room, REAL_USER);
+
+        // How BingoScheduler and the post-purchase broadcast refresh call it.
+        await service.getRoomState({ roomId: room.id });
+
+        expect(stamp).not.toHaveBeenCalled();
+        expect(mockConfigRepo.query).not.toHaveBeenCalled();
     });
 
     it('does not record an arrival on a room that is not open for buying', async () => {
@@ -5252,7 +5293,11 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
         } as any);
         const { service, stamp } = harnessFor(room, REAL_USER);
 
-        await service.getRoomState({ roomId: room.id, userId: REAL_USER.id });
+        await service.getRoomState({
+            roomId: room.id,
+            userId: REAL_USER.id,
+            viewer: true,
+        });
 
         expect(stamp).not.toHaveBeenCalled();
     });
@@ -5265,7 +5310,11 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
         } as any);
         const { service, stamp } = harnessFor(room, REAL_USER);
 
-        await service.getRoomState({ roomId: room.id, userId: REAL_USER.id });
+        await service.getRoomState({
+            roomId: room.id,
+            userId: REAL_USER.id,
+            viewer: true,
+        });
 
         // Re-stamping would push the arrival forward and re-hold the bots on
         // every 5s poll, so the room would never open to them at all.

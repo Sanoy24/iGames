@@ -2736,7 +2736,7 @@ export class BingoService implements OnModuleInit {
      * agent's room to play. `enabled` reflects the admin toggle so the client knows
      * whether to show the lobby at all.
      */
-    async getLobby(viewerUserId?: string): Promise<{
+    async getLobby(): Promise<{
         enabled: boolean;
         rooms: Array<{
             id: string;
@@ -2756,7 +2756,7 @@ export class BingoService implements OnModuleInit {
         // presenting a finished round, so it is what tells the bot buy-in gate a
         // player is still out there watching - a spectator holding no cartela
         // included. See touchPlayerPresence.
-        await this.touchPlayerPresence(viewerUserId);
+        await this.touchPlayerPresence();
         const enabled = await this.isAgentRoomsEnabled();
         const rows: Array<{
             id: string;
@@ -3041,7 +3041,7 @@ export class BingoService implements OnModuleInit {
         }
 
         if (!room) return null;
-        return this.getRoomState({ roomId: room.id, userId });
+        return this.getRoomState({ roomId: room.id, userId, viewer: true });
     }
 
     async findRunningRoomIdsDue(intervalSeconds: number): Promise<string[]> {
@@ -3889,6 +3889,13 @@ export class BingoService implements OnModuleInit {
     async getRoomState(input: {
         roomId: string;
         userId?: string;
+        /**
+         * True only when this read is a PERSON looking at the room - the
+         * player-facing GET endpoints. The scheduler and the post-purchase
+         * broadcast refreshes call this method too, and they must never be
+         * mistaken for someone arriving on the buying screen.
+         */
+        viewer?: boolean;
     }): Promise<BingoRoomResponse & { tickets?: BingoTicketResponse[] }> {
         this.validateUuid(input.roomId, 'roomId');
         const room = await this.findRoom(input.roomId);
@@ -3908,29 +3915,33 @@ export class BingoService implements OnModuleInit {
             tickets?: BingoTicketResponse[];
         } = this.toRoomResponse(room, soldTickets, takenSpots);
 
-        if (input.userId) {
-            this.validateUuid(input.userId, 'userId');
-            await this.touchPlayerPresence(input.userId);
-            // Serving an OPEN room to a real player IS that player arriving on
-            // the cartela-buying screen - Bingo.tsx does not poll again until its
-            // whole result presentation has drained. Record it once; that
-            // observation is the bot buy-in gate's only trigger (see
-            // isBotBuyAllowed). Internal callers pass no userId and so never
-            // stamp, and a bot never reaches this endpoint (bots buy through
-            // reconcileBotCartelasInRoom, not the room-state API) - but check
-            // anyway, since the whole point is that only a HUMAN arriving counts.
+        // Serving an OPEN room to a person IS that person arriving on the cartela-
+        // buying screen - Bingo.tsx does not poll again until its whole result
+        // presentation has drained. Record it once; that observation is what the
+        // bot buy-in gate waits on (see isBotBuyAllowed).
+        //
+        // Keyed on `viewer`, NOT on there being a logged-in user: a spectator
+        // with an expired token is still a person watching, and treating them as
+        // absent is what let bots open a countdown while one sat through the win
+        // and summary screens. A bot never reaches these endpoints, but when we do
+        // have a user id we still check, since only a HUMAN arriving counts.
+        if (input.viewer) {
+            await this.touchPlayerPresence();
             if (room.status === 'open' && room.firstViewedAt == null) {
-                const viewer = await this.bingoRoomRepository.manager.findOne(
-                    User,
-                    {
-                        where: { id: input.userId },
-                        select: { id: true, productMetadata: true },
-                    },
-                );
-                if (viewer && !this.isBotUser(viewer)) {
+                const requester = input.userId
+                    ? await this.bingoRoomRepository.manager.findOne(User, {
+                          where: { id: input.userId },
+                          select: { id: true, productMetadata: true },
+                      })
+                    : null;
+                if (!this.isBotUser(requester)) {
                     await this.markRoomViewedByPlayer(room.id);
                 }
             }
+        }
+
+        if (input.userId) {
+            this.validateUuid(input.userId, 'userId');
             // Exclude cancelled (refunded) tickets  a released cartela must stop
             // counting as owned so its grid cell reverts to the available style.
             const tickets = await this.bingoTicketRepository.find({
@@ -7142,11 +7153,15 @@ export class BingoService implements OnModuleInit {
      * and best-effort, since a missed heartbeat can only make bots buy sooner,
      * never freeze a room.
      *
-     * Bots never reach these endpoints (they hold no session and buy through
-     * reconcileBotCartelasInRoom), so any authenticated caller here is a person.
+     * Deliberately does NOT require an authenticated user. A viewer whose JWT has
+     * expired is still a person staring at the screen, and this gate exists to
+     * protect exactly that person; keying presence off `request.user` meant a
+     * stale token made them invisible and the gate concluded nobody was watching.
+     * The callers decide what counts - only the player-facing READ endpoints pass
+     * `viewer: true`, so the scheduler's own getRoomState calls never register as
+     * a person being present. Bots reach none of them.
      */
-    private async touchPlayerPresence(userId?: string): Promise<void> {
-        if (!userId) return;
+    private async touchPlayerPresence(): Promise<void> {
         try {
             await this.bingoConfigRepository.query(
                 `UPDATE \`${this.bingoConfigTable}\`

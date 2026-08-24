@@ -1,12 +1,21 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
-import Redlock, { Lock } from 'redlock';
+import Redlock, { Lock, ResourceLockedError } from 'redlock';
 import { REDIS_CLIENT } from './redis.constants';
+
+// A genuine Redlock fault (not plain contention) is logged at most this often.
+// Every tick of every scheduler contends, so an unthrottled handler can emit
+// thousands of identical lines an hour and bury the one error that matters.
+const REDLOCK_ERROR_LOG_INTERVAL_MS = 30_000;
 
 @Injectable()
 export class RedisLockService implements OnModuleDestroy {
     private readonly logger = new Logger(RedisLockService.name);
     private readonly redlock: Redlock;
+
+    /** Throttle state for genuine (non-contention) Redlock faults. */
+    private lastRedlockErrorLoggedAt = 0;
+    private suppressedRedlockErrors = 0;
 
     constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {
         this.redlock = new Redlock([redis], {
@@ -18,10 +27,38 @@ export class RedisLockService implements OnModuleDestroy {
         });
 
         this.redlock.on('error', (err) => {
-            // Suppress "lock already held" errors  those are normal under contention
-            if (!err.message?.includes('was not granted')) {
-                this.logger.error(`Redlock error: ${err.message}`);
+            // Losing a race for a lock is the NORMAL outcome - every scheduler
+            // tick on every instance contends for the same few resources, and the
+            // loser simply skips that tick. Redlock reports it by emitting a
+            // ResourceLockedError here, so match on the TYPE.
+            //
+            // This used to test `err.message.includes('was not granted')`, which
+            // is redlock v4 wording; on the v5 in use the message reads "The
+            // operation was applied to: 0 of the 1 requested resources", so
+            // nothing was ever suppressed and routine contention filled the error
+            // log at ~10 lines a second. That is not just noise: it buried the
+            // one real error ("Table 'bingo_configs' doesn't exist") that
+            // explained why the Bingo bot buy-in gate was doing nothing.
+            if (err instanceof ResourceLockedError) return;
+
+            // Anything else is a real fault (quorum lost, Redis unreachable) and
+            // must stay visible - but throttled, since it will also fire on every
+            // tick for as long as it lasts.
+            const now = Date.now();
+            if (now - this.lastRedlockErrorLoggedAt < REDLOCK_ERROR_LOG_INTERVAL_MS) {
+                this.suppressedRedlockErrors += 1;
+                return;
             }
+            const alsoSuppressed = this.suppressedRedlockErrors;
+            this.suppressedRedlockErrors = 0;
+            this.lastRedlockErrorLoggedAt = now;
+            this.logger.error(
+                `Redlock error: ${err.message}${
+                    alsoSuppressed > 0
+                        ? ` (+${alsoSuppressed} more in the last ${REDLOCK_ERROR_LOG_INTERVAL_MS / 1000}s)`
+                        : ''
+                }`,
+            );
         });
     }
 

@@ -2234,7 +2234,19 @@ export class BingoService implements OnModuleInit {
                         message: `Buy-window countdown opened by ${detail}`,
                     }),
                 )
-                .catch(() => undefined);
+                // Never swallow this silently. A diagnostic that fails without
+                // saying so is worse than none at all: a quiet `.catch()` on the
+                // player-presence write is exactly what hid the `bingo_configs`
+                // typo for two days, and an unwritten row here would read as
+                // "the build is not deployed" and send the next hour chasing the
+                // wrong thing.
+                .catch((err: unknown) =>
+                    this.logger.error(
+                        `Could not record the countdown-started alert for room ${room.id}: ${
+                            err instanceof Error ? err.message : String(err)
+                        }`,
+                    ),
+                );
         }
     }
 

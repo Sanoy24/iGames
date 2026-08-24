@@ -1129,6 +1129,45 @@ describe('BingoService cartela lifecycle guards', () => {
         return { ...harness, room, user };
     }
 
+    // Unconditional, once per room. This is what makes an EMPTY alerts table
+    // mean "this build is not deployed" rather than "the gate never opened" -
+    // the distinction that cost several rounds of guessing.
+    it('records who opened the countdown, so the alerts table is never empty on a live build', async () => {
+        const { service, room, mockOperationalAlertRepo } =
+            makePurchaseHarness({ botPolicy: { active: true } });
+
+        (service as any).startCountdownOnFirstSale(
+            room,
+            { salesWindowSeconds: 40 } as any,
+            true,
+            { userId: 'bot-9', isBot: true },
+        );
+
+        expect(mockOperationalAlertRepo.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'bingo_countdown_started',
+                roomId: room.id,
+            }),
+        );
+        expect(
+            mockOperationalAlertRepo.create.mock.calls[0][0].message,
+        ).toContain('BOT bot-9');
+    });
+
+    it('does not record anything when the sale is not the first one', async () => {
+        const { service, room, mockOperationalAlertRepo } =
+            makePurchaseHarness({ botPolicy: { active: true } });
+
+        (service as any).startCountdownOnFirstSale(
+            room,
+            { salesWindowSeconds: 40 } as any,
+            false, // room already had tickets - no countdown to open
+            { userId: 'bot-9', isBot: true },
+        );
+
+        expect(mockOperationalAlertRepo.create).not.toHaveBeenCalled();
+    });
+
     it('refuses a BOT cartela purchase while a player has not yet reached the buying screen', async () => {
         const { service, room, walletService } = makePurchaseHarness({
             botPolicy: { active: true },

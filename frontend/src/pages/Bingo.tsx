@@ -703,11 +703,14 @@ function CurrentBallDisplay({
                     animate={{
                         y: 0,
                         opacity: 1,
-                        scale: 1,
+                        // Same pulsing glow as the just-called tile on the 75/90 board
+                        // (NumberCell's `isCurrent`)  a white ring plus the group's
+                        // color glow, breathing on the same 0.9s loop.
+                        scale: [1, 1.22, 1],
                         boxShadow: [
-                            `0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
-                            `0 0 30px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
-                            `0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+                            `0 0 0 2px #fff, 0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+                            `0 0 0 3px #fff, 0 0 32px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
+                            `0 0 0 2px #fff, 0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
                         ],
                     }}
                     exit={{ y: 12, opacity: 0, scale: 0.82 }}
@@ -718,8 +721,13 @@ function CurrentBallDisplay({
                             damping: 23,
                             mass: 0.9,
                         },
+                        scale: {
+                            duration: 0.9,
+                            repeat: Infinity,
+                            ease: 'easeInOut',
+                        },
                         boxShadow: {
-                            duration: 1.6,
+                            duration: 0.9,
                             repeat: Infinity,
                             ease: 'easeInOut',
                         },
@@ -734,7 +742,7 @@ function CurrentBallDisplay({
                 >
                     {prefix && (
                         <span
-                            className='text-[8px] font-black leading-none'
+                            className='text-[13px] font-black leading-none'
                             style={{ color: s!.color }}
                         >
                             {prefix}

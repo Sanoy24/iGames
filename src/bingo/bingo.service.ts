@@ -3911,14 +3911,16 @@ export class BingoService implements OnModuleInit {
             room,
             this.bingoRoomRepository.manager,
         );
-        const response: BingoRoomResponse & {
-            tickets?: BingoTicketResponse[];
-        } = this.toRoomResponse(room, soldTickets, takenSpots);
 
         // Serving an OPEN room to a person IS that person arriving on the cartela-
         // buying screen - Bingo.tsx does not poll again until its whole result
-        // presentation has drained. Record it once; that observation is what the
-        // bot buy-in gate waits on (see isBotBuyAllowed).
+        // presentation has drained. Recording it both releases the bot buy-in gate
+        // (see isBotBuyAllowed) and hands this player a full buy window (see
+        // markRoomViewedByPlayer).
+        //
+        // MUST run before toRoomResponse below: the arrival can move
+        // scheduledStartAt, and the whole point is that THIS response already
+        // carries the fresh countdown rather than the part-spent one.
         //
         // Keyed on `viewer`, NOT on there being a logged-in user: a spectator
         // with an expired token is still a person watching, and treating them as
@@ -3935,10 +3937,14 @@ export class BingoService implements OnModuleInit {
                       })
                     : null;
                 if (!this.isBotUser(requester)) {
-                    await this.markRoomViewedByPlayer(room.id);
+                    await this.markRoomViewedByPlayer(room);
                 }
             }
         }
+
+        const response: BingoRoomResponse & {
+            tickets?: BingoTicketResponse[];
+        } = this.toRoomResponse(room, soldTickets, takenSpots);
 
         if (input.userId) {
             this.validateUuid(input.userId, 'userId');
@@ -7202,19 +7208,83 @@ export class BingoService implements OnModuleInit {
      * whatever the admin has set the display timings to, however long the popup
      * queue ran, and however late that client learned the round had ended.
      *
+     * Arriving ALSO restarts the buy window, and this is the part that actually
+     * fixes the reported bug. Bots opening a room's countdown is not the problem
+     * - an empty house must keep playing at full speed, which is the entire point
+     * of Scheduled Bot Play - the problem is a player being handed a countdown
+     * that is already two thirds spent. So the countdown is not withheld from
+     * bots (that would stall a house with nobody in it); it is RESET the moment a
+     * real person is first put in front of the room.
+     *
+     * That makes the rule reactive rather than predictive, which is why it cannot
+     * fail the way every previous attempt did. Nothing has to work out in advance
+     * whether somebody is watching, whether their token is valid, or how long the
+     * win and summary screens ran. If nobody ever shows up, nothing happens and
+     * the bots play exactly as they do today. If somebody does show up, they get
+     * a full window - measured from the moment they actually arrived.
+     *
+     * Bounded by design: `firstViewedAt IS NULL` means one reset per room, ever,
+     * so this can neither be used to hold a round open indefinitely nor fire
+     * repeatedly as players poll.
+     *
      * Best-effort: a failed stamp leaves the column NULL, which the gate treats
      * as "no player here yet" and resolves through its backstop, never a freeze.
      */
-    private async markRoomViewedByPlayer(roomId: string): Promise<void> {
+    private async markRoomViewedByPlayer(room: BingoRoom): Promise<void> {
         try {
-            await this.bingoRoomRepository.query(
-                `UPDATE bingo_rooms SET firstViewedAt = NOW()
-                  WHERE id = ? AND firstViewedAt IS NULL AND status = 'open'`,
-                [roomId],
+            const cfg = await this.getBingoConfig();
+            const windowSeconds = Math.round(
+                this.startCountdownDelayMs(cfg) / 1000,
             );
+            // Stamp the arrival AND, in the same statement, give this player the
+            // full buy window - see the doc comment above for why extending on
+            // arrival is the only version of this that leaves an empty house
+            // running at full speed.
+            //
+            // `scheduledStartAt < NOW() + INTERVAL window` is what makes it an
+            // extension and never a cut: a countdown with more time left than a
+            // fresh window (impossible today, but true if the window is ever
+            // shortened by config) is left exactly as it is. Guarded by
+            // `firstViewedAt IS NULL`, so it happens at most ONCE per room no
+            // matter how many people arrive or how often they poll.
+            const result: { affectedRows?: number } =
+                await this.bingoRoomRepository.query(
+                    `UPDATE bingo_rooms
+                        SET firstViewedAt = NOW(),
+                            scheduledStartAt = CASE
+                                WHEN scheduledStartAt IS NOT NULL
+                                 AND scheduledStartAt < NOW() + INTERVAL ? SECOND
+                                THEN NOW() + INTERVAL ? SECOND
+                                ELSE scheduledStartAt
+                            END
+                      WHERE id = ? AND firstViewedAt IS NULL AND status = 'open'`,
+                    [windowSeconds, windowSeconds, room.id],
+                );
+            if (!result?.affectedRows) return;
+
+            // Re-read what the DATABASE actually stamped and put it on the room
+            // we are about to serialize, so this very response carries the fresh
+            // countdown. Without it the player would see the old, part-spent
+            // timer for one more poll (up to 5s) before it corrected itself -
+            // which is the whole symptom we are removing.
+            const rows: Array<{ scheduledStartAt: Date | null }> =
+                await this.bingoRoomRepository.query(
+                    `SELECT scheduledStartAt FROM bingo_rooms WHERE id = ?`,
+                    [room.id],
+                );
+            const stamped = rows?.[0]?.scheduledStartAt ?? null;
+            if (stamped && room.scheduledStartAt) {
+                const before = room.scheduledStartAt;
+                room.scheduledStartAt = stamped;
+                if (stamped.getTime() !== before.getTime()) {
+                    this.logger.log(
+                        `Bingo room ${room.id}: first player arrived mid-countdown; buy window reset to a full ${windowSeconds}s`,
+                    );
+                }
+            }
         } catch (err) {
             this.logger.warn(
-                `Could not stamp firstViewedAt on Bingo room ${roomId}: ${
+                `Could not stamp firstViewedAt on Bingo room ${room.id}: ${
                     err instanceof Error ? err.message : String(err)
                 }`,
             );

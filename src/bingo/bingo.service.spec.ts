@@ -5098,19 +5098,78 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
     });
 
     // ── The observations themselves ──────────────────────────────────────────
+    // A room mid-countdown, the way the player finds it: bots opened the window
+    // 16s ago and it is two thirds spent.
+    const midCountdownRoom = () =>
+        ({
+            id: 'room-1',
+            status: 'open',
+            firstViewedAt: null,
+            scheduledStartAt: new Date(Date.now() + 24_000),
+        }) as any;
+
     it('markRoomViewedByPlayer stamps once, with the DB clock, and only while the room is open', async () => {
         const { service, mockRoomRepo } = makeService({ rooms: [] });
-        mockRoomRepo.query.mockResolvedValue(undefined);
+        mockRoomRepo.query.mockResolvedValue({ affectedRows: 0 });
 
-        await (service as any).markRoomViewedByPlayer('room-1');
+        await (service as any).markRoomViewedByPlayer(midCountdownRoom());
 
         const [sql, params] = mockRoomRepo.query.mock.calls[0];
         expect(sql).toContain('SET firstViewedAt = NOW()');
-        // First writer wins: a later poll must not push the player's arrival
-        // forward and re-hold the bots.
+        // First writer wins: a later poll must not push the arrival forward,
+        // re-hold the bots, or reset the window a second time.
         expect(sql).toContain('firstViewedAt IS NULL');
         expect(sql).toContain("status = 'open'");
-        expect(params).toEqual(['room-1']);
+        expect(params[params.length - 1]).toBe('room-1');
+    });
+
+    // THE fix for the reported bug. Bots opening the countdown is fine - an empty
+    // house has to keep playing at full speed, which is the entire point of
+    // Scheduled Bot Play. What is not fine is handing a player a countdown that
+    // is already two thirds gone. So the window is RESET on arrival rather than
+    // withheld from bots.
+    it('gives the arriving player a full buy window, in the same statement as the stamp', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        mockRoomRepo.query.mockResolvedValue({ affectedRows: 0 });
+
+        await (service as any).markRoomViewedByPlayer(midCountdownRoom());
+
+        const [sql] = mockRoomRepo.query.mock.calls[0];
+        expect(sql).toContain('scheduledStartAt = CASE');
+        expect(sql).toContain('NOW() + INTERVAL ? SECOND');
+        // Only ever forward: a countdown with MORE time left than a fresh window
+        // is left alone, so this can never shorten anyone's window.
+        expect(sql).toContain('scheduledStartAt < NOW() + INTERVAL ? SECOND');
+        // An idle room with no countdown yet is untouched - the countdown still
+        // starts on the first sale, exactly as before.
+        expect(sql).toContain('scheduledStartAt IS NOT NULL');
+    });
+
+    it('puts the reset countdown on THIS response, not the next poll', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = midCountdownRoom();
+        const reset = new Date(Date.now() + 40_000);
+        mockRoomRepo.query
+            .mockResolvedValueOnce({ affectedRows: 1 })
+            .mockResolvedValueOnce([{ scheduledStartAt: reset }]);
+
+        await (service as any).markRoomViewedByPlayer(room);
+
+        // Serialized from this same object moments later - without the re-read the
+        // player would stare at the old, part-spent timer for another poll.
+        expect(room.scheduledStartAt).toEqual(reset);
+    });
+
+    it('leaves the countdown alone when the room was not actually stamped', async () => {
+        const { service, mockRoomRepo } = makeService({ rooms: [] });
+        const room = midCountdownRoom();
+        const before = room.scheduledStartAt;
+        mockRoomRepo.query.mockResolvedValue({ affectedRows: 0 }); // already viewed
+
+        await (service as any).markRoomViewedByPlayer(room);
+
+        expect(room.scheduledStartAt).toBe(before);
+        expect(mockRoomRepo.query).toHaveBeenCalledTimes(1); // no pointless re-read
     });
 
     it('markRoomViewedByPlayer swallows a failed stamp rather than failing the room load', async () => {
@@ -5118,7 +5177,7 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         mockRoomRepo.query.mockRejectedValue(new Error('write failed'));
 
         await expect(
-            (service as any).markRoomViewedByPlayer('room-1'),
+            (service as any).markRoomViewedByPlayer(midCountdownRoom()),
         ).resolves.toBeUndefined();
     });
 
@@ -5237,7 +5296,7 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
             viewer: true,
         });
 
-        expect(stamp).toHaveBeenCalledWith(room.id);
+        expect(stamp).toHaveBeenCalledWith(room);
     });
 
     it('does not record an arrival for a BOT viewer - only a human landing counts', async () => {
@@ -5271,7 +5330,7 @@ describe('BingoService.getRoomState  recording the player arriving on the buying
 
         await service.getRoomState({ roomId: room.id, viewer: true });
 
-        expect(stamp).toHaveBeenCalledWith(room.id);
+        expect(stamp).toHaveBeenCalledWith(room);
     });
 
     it('does not count the scheduler own room reads as anybody arriving', async () => {

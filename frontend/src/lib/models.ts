@@ -269,7 +269,12 @@ export type BingoStalledRoom = {
     stalledSeconds: number;
 };
 
-export type BingoOperationalAlertKind = 'pattern_resolution_failed';
+/** Mirrors BingoOperationalAlertKind in src/bingo/entities/bingo-operational-alert.entity.ts. */
+export type BingoOperationalAlertKind =
+    | 'pattern_resolution_failed'
+    | 'redis_lock_unavailable'
+    | 'bot_buy_gate_opened'
+    | 'bingo_countdown_started';
 
 export type BingoOperationalAlert = {
     id: string;

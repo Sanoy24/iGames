@@ -16,7 +16,15 @@ export type BingoOperationalAlertKind =
      * file whose first 40KB are boot noise - which is the precise situation this
      * table exists to avoid.
      */
-    | 'bot_buy_gate_opened';
+    | 'bot_buy_gate_opened'
+    /**
+     * A room's buy-window countdown was opened, and by whom. Exactly one row per
+     * room, unconditionally - which is what makes an EMPTY alerts table mean
+     * "this build is not deployed" rather than "the gate never opened". Without
+     * it the gate's one silent path (a purchase into a room that already has
+     * tickets) is indistinguishable from the code not running at all.
+     */
+    | 'bingo_countdown_started';
 
 /**
  * DB-visible trail of operational failures in the Bingo draw/settlement path

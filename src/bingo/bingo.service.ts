@@ -2214,13 +2214,27 @@ export class BingoService implements OnModuleInit {
             // countdown keeps starting too early, the first thing to establish is
             // whether a bot or an authenticated client actually opened it. Logged
             // once per room.
+            const by = buyer
+                ? `${buyer.isBot ? 'BOT' : 'real user'} ${buyer.userId}`
+                : 'unknown';
+            const detail = `${by} - ${
+                this.startCountdownDelayMs(cfg) / 1000
+            }s window`;
             this.logger.log(
-                `Bingo room ${room.id} countdown STARTED by ${
-                    buyer ? (buyer.isBot ? 'BOT' : 'real user') : 'unknown'
-                } ${buyer?.userId ?? ''} - ${
-                    this.startCountdownDelayMs(cfg) / 1000
-                }s window`,
+                `Bingo room ${room.id} countdown STARTED by ${detail}`,
             );
+            // Unconditional and once per room, so the alerts table always gets a
+            // row when this build is live. That is what lets an empty table be
+            // read as "not deployed" instead of "nothing happened".
+            void this.bingoOperationalAlertRepository
+                .save(
+                    this.bingoOperationalAlertRepository.create({
+                        kind: 'bingo_countdown_started',
+                        roomId: room.id,
+                        message: `Buy-window countdown opened by ${detail}`,
+                    }),
+                )
+                .catch(() => undefined);
         }
     }
 

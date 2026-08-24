@@ -468,6 +468,29 @@ button {
     }
 }
 
+/* Perpetual "now calling" glow  driven purely by the browser's own CSS
+   animation engine, not Framer Motion, so it can never collide with (or get
+   starved by) the AnimatePresence enter/exit lifecycle on the tile it lives
+   inside. Colors come in via custom properties set inline per-call. */
+.bingo-ball-pulse {
+    animation: bingo-ball-pulse 0.9s ease-in-out infinite;
+}
+@keyframes bingo-ball-pulse {
+    0%,
+    100% {
+        transform: scale(1);
+        box-shadow:
+            0 0 18px var(--ball-glow),
+            inset 0 1px 0 var(--ball-inset);
+    }
+    50% {
+        transform: scale(1.22);
+        box-shadow:
+            0 0 32px var(--ball-glow),
+            inset 0 1px 0 var(--ball-inset);
+    }
+}
+
 /* ── Toasts ───────────────────────────────────────────────── */
 .toast-container {
     position: fixed;

@@ -2194,10 +2194,25 @@ export class BingoService implements OnModuleInit {
         room: BingoRoom,
         cfg: BingoConfig,
         wasEmpty: boolean,
+        buyer?: { userId: string; isBot: boolean },
     ): void {
         if (wasEmpty) {
             room.scheduledStartAt = new Date(
                 Date.now() + this.startCountdownDelayMs(cfg),
+            );
+            // WHO opens the countdown decides what a returning player sees: it is
+            // stamped once, and everyone still watching the previous result loses
+            // that head start. The bot buy-in gate can only protect this moment on
+            // the path it guards (reconcileBotCartelasInRoom), so when a room's
+            // countdown keeps starting too early, the first thing to establish is
+            // whether a bot or an authenticated client actually opened it. Logged
+            // once per room.
+            this.logger.log(
+                `Bingo room ${room.id} countdown STARTED by ${
+                    buyer ? (buyer.isBot ? 'BOT' : 'real user') : 'unknown'
+                } ${buyer?.userId ?? ''} - ${
+                    this.startCountdownDelayMs(cfg) / 1000
+                }s window`,
             );
         }
     }
@@ -4278,7 +4293,10 @@ export class BingoService implements OnModuleInit {
 
                     const wasEmpty = room.soldTickets === 0;
                     room.soldTickets += cartelaNumbers.length;
-                    this.startCountdownOnFirstSale(room, cfg, wasEmpty);
+                    this.startCountdownOnFirstSale(room, cfg, wasEmpty, {
+                        userId,
+                        isBot: this.isBotUser(purchasingUser),
+                    });
                     await manager.save(room);
 
                     return createdTickets.map((ticket) =>
@@ -4301,7 +4319,10 @@ export class BingoService implements OnModuleInit {
 
                 const wasEmpty = room.soldTickets === 0;
                 room.soldTickets += count;
-                this.startCountdownOnFirstSale(room, cfg, wasEmpty);
+                this.startCountdownOnFirstSale(room, cfg, wasEmpty, {
+                    userId,
+                    isBot: this.isBotUser(purchasingUser),
+                });
                 await manager.save(room);
 
                 const createdTickets: BingoTicket[] = [];

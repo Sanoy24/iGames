@@ -713,7 +713,17 @@ function CurrentBallDisplay({
                             `0 0 0 2px #fff, 0 0 18px ${s!.glow}, inset 0 1px 0 ${s!.color}33`,
                         ],
                     }}
-                    exit={{ y: 12, opacity: 0, scale: 0.82 }}
+                    // `exit` gets its OWN transition (finite, no `repeat`)  otherwise it
+                    // inherits the infinite-repeat `scale`/`boxShadow` transitions below,
+                    // which never "complete", so `AnimatePresence mode="wait"` stalls
+                    // forever waiting for the outgoing tile to finish exiting and the
+                    // next number never appears.
+                    exit={{
+                        y: 12,
+                        opacity: 0,
+                        scale: 0.82,
+                        transition: { duration: 0.25, ease: 'easeIn' },
+                    }}
                     transition={{
                         default: {
                             type: 'spring',

@@ -300,6 +300,21 @@ export class BingoService implements OnModuleInit {
     /** Log the player-presence heartbeat failing once, not on every poll. */
     private playerPresenceWriteFailed = false;
 
+    /**
+     * The Bingo config table's REAL name, taken from the entity rather than
+     * written out by hand.
+     *
+     * Hand-writing it is what broke the bot buy-in gate in production: the raw
+     * SQL said `bingo_configs` while the entity maps to `bingo_config`, so every
+     * player-presence write threw "Table doesn't exist", the gate lost its
+     * "is anyone watching" signal, and bots bought the instant a room was
+     * created. TypeScript cannot check a table name inside a template string, so
+     * the only durable fix is to stop writing one.
+     */
+    private get bingoConfigTable(): string {
+        return this.bingoConfigRepository.metadata.tableName;
+    }
+
     constructor(
         private readonly dataSource: DataSource,
         @InjectRepository(BingoRoom)
@@ -7113,7 +7128,7 @@ export class BingoService implements OnModuleInit {
         if (!userId) return;
         try {
             await this.bingoConfigRepository.query(
-                `UPDATE bingo_configs
+                `UPDATE \`${this.bingoConfigTable}\`
                     SET lastPlayerSeenAt = NOW()
                   WHERE \`key\` = 'global'
                     AND (lastPlayerSeenAt IS NULL
@@ -7235,7 +7250,7 @@ export class BingoService implements OnModuleInit {
             ),
             this.bingoConfigRepository.query(
                 `SELECT TIMESTAMPDIFF(SECOND, lastPlayerSeenAt, NOW()) AS playerSeenSecondsAgo
-                   FROM bingo_configs
+                   FROM \`${this.bingoConfigTable}\`
                   WHERE \`key\` = 'global' AND lastPlayerSeenAt IS NOT NULL`,
             ),
             this.bingoRoomRepository.query(

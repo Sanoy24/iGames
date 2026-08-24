@@ -128,6 +128,10 @@ function makeService({ rooms }: { rooms: BingoRoom[] }) {
     const mockConfigRepo = {
         // Raw query used by the bot buy-in gate's player-presence heartbeat.
         query: jest.fn().mockResolvedValue([]),
+        // The real entity maps to `bingo_config` (SINGULAR). A deliberately
+        // distinctive value here proves the service reads the name from metadata
+        // instead of writing one out by hand - see the regression test below.
+        metadata: { tableName: 'bingo_config_from_metadata' },
         findOneBy: jest.fn().mockResolvedValue({
             key: 'default',
             enabled: true,
@@ -5128,6 +5132,33 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
         expect(sql).toContain('SET lastPlayerSeenAt = NOW()');
         expect(sql).toContain('lastPlayerSeenAt < NOW() - INTERVAL ? SECOND');
         expect(params).toEqual([5]);
+    });
+
+    // THE production failure. The raw SQL said `bingo_configs`; the entity maps
+    // to `bingo_config`. Every heartbeat write threw "Table 'prod-igames.
+    // bingo_configs' doesn't exist", the gate lost its "is anyone watching"
+    // signal, and bots bought the instant a room was created. TypeScript cannot
+    // check a table name inside a template string, so the name must come from
+    // the entity - which is what these assertions pin down.
+    it('takes the config table name from the entity metadata, never a hand-written literal', async () => {
+        const { service, mockConfigRepo } = makeService({ rooms: [] });
+        mockConfigRepo.query.mockResolvedValue([]);
+
+        await (service as any).touchPlayerPresence('user-1');
+        await (service as any).getBotBuyObservations({
+            id: 'r',
+            customSlotId: null,
+            ownerAgentId: null,
+        });
+
+        const sqls = mockConfigRepo.query.mock.calls.map(
+            (c: unknown[]) => c[0] as string,
+        );
+        expect(sqls.length).toBe(2); // the heartbeat write, then the read
+        for (const sql of sqls) {
+            expect(sql).toContain('bingo_config_from_metadata');
+            expect(sql).not.toContain('bingo_configs');
+        }
     });
 
     it('touchPlayerPresence ignores an unauthenticated read, and never throws', async () => {

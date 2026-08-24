@@ -8,7 +8,15 @@ import {
 
 export type BingoOperationalAlertKind =
     | 'pattern_resolution_failed'
-    | 'redis_lock_unavailable';
+    | 'redis_lock_unavailable'
+    /**
+     * Bots were allowed to open a room's buy-window countdown, with the exact
+     * condition that permitted it. Recorded because "why did bots buy before the
+     * player arrived?" was, for several rounds, answerable only by grepping a log
+     * file whose first 40KB are boot noise - which is the precise situation this
+     * table exists to avoid.
+     */
+    | 'bot_buy_gate_opened';
 
 /**
  * DB-visible trail of operational failures in the Bingo draw/settlement path

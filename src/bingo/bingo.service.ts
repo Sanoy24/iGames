@@ -116,6 +116,10 @@ const PLAYER_PRESENCE_SECONDS = 20;
 // polling - one small UPDATE every few seconds, not one per request.
 const PLAYER_PRESENCE_THROTTLE_SECONDS = 5;
 
+// A round lasts minutes and opens exactly one room, so this keeps the gate's
+// DB-visible decisions to roughly one row per round rather than one per tick.
+const BOT_BUY_GATE_ALERT_THROTTLE_MS = 30_000;
+
 type RoomBotIdentity = BingoBotIdentity;
 
 // ── Pure derash-leaderboard ranking (exported for deterministic tests) ──────────
@@ -299,6 +303,9 @@ export class BingoService implements OnModuleInit {
 
     /** Log the player-presence heartbeat failing once, not on every poll. */
     private playerPresenceWriteFailed = false;
+
+    /** Throttle for the bot buy-in gate's DB-visible OPEN decisions. */
+    private botBuyGateAlertLastLoggedAt = 0;
 
     /**
      * The Bingo config table's REAL name, taken from the entity rather than
@@ -3123,6 +3130,36 @@ export class BingoService implements OnModuleInit {
             .catch(() => undefined);
     }
 
+    /**
+     * Persist a bot buy-in gate OPEN decision where an admin can read it, so
+     * "why did bots buy before the player got there?" is answerable from
+     * /admin/bingo/alerts instead of a log file. Throttled - one round opens one
+     * room, so this writes at most a row per round - and entirely best-effort:
+     * diagnostics must never be able to fail a cartela purchase.
+     */
+    private async recordBotBuyGateOpened(
+        roomId: string,
+        reason: string,
+    ): Promise<void> {
+        const now = Date.now();
+        if (
+            now - this.botBuyGateAlertLastLoggedAt <
+            BOT_BUY_GATE_ALERT_THROTTLE_MS
+        ) {
+            return;
+        }
+        this.botBuyGateAlertLastLoggedAt = now;
+        await this.bingoOperationalAlertRepository
+            .save(
+                this.bingoOperationalAlertRepository.create({
+                    kind: 'bot_buy_gate_opened',
+                    roomId,
+                    message: `Bots were allowed to open this room's countdown: ${reason}`,
+                }),
+            )
+            .catch(() => undefined);
+    }
+
     /** Recent operational alerts (see BingoOperationalAlert), most-recent-first. */
     async listOperationalAlerts(limit = 100): Promise<BingoOperationalAlert[]> {
         const safeLimit = Math.min(Math.max(limit || 100, 1), 200);
@@ -5589,6 +5626,31 @@ export class BingoService implements OnModuleInit {
                 }
             }
 
+            // Every guard above reads only ALREADY-SETTLED places
+            // (room.settlementSummary / winnersByTier), so none of them can see
+            // the tie set being assembled right here. That left the one case
+            // they were written to prevent wide open: when two tickets tie for
+            // the SAME place, one bot holding two winning cartelas - or two bots
+            // that ended up sharing a pool name - passed every check twice and
+            // split the prize with itself, surfacing as two identically-named
+            // winners on the result card. Same rule as
+            // hasBotAlreadyWonDerashPlace, applied within the current split.
+            if (display.isBot) {
+                const alreadyInSplit = eligible.some(
+                    (e) =>
+                        e.isBot &&
+                        (e.ticket.userId === winner.userId ||
+                            (e.displayedName === displayedName &&
+                                e.phoneLast4 === phoneLast4)),
+                );
+                if (alreadyInSplit) {
+                    this.logger.warn(
+                        `Skipped duplicate Bingo place ${place} split share for bot ${winner.userId} ("${displayedName}") in room ${room.id} - that identity is already in this split`,
+                    );
+                    continue;
+                }
+            }
+
             eligible.push({
                 ticket: winner,
                 displayedName,
@@ -7446,21 +7508,33 @@ export class BingoService implements OnModuleInit {
         if ((room.soldTickets ?? 0) > 0) {
             return { allowed: true, secondsRemaining: 0 };
         }
+        // Opening a countdown happens once per room, so this is a couple of lines
+        // per round - and it is the only way to tell, after the fact, WHICH
+        // condition let bots in. The gate silently answering "allowed" is
+        // precisely what made several attempts at this bug undiagnosable.
+        let seen: Awaited<ReturnType<typeof this.getBotBuyObservations>> | null =
+            null;
         const open = (why: string) => {
-            // Opening a countdown happens once per room, so this is a handful of
-            // lines per round - and it is the only way to tell, after the fact,
-            // WHICH condition let bots in. The gate silently answering "allowed"
-            // is precisely what made the last two attempts undiagnosable.
+            const detail = seen
+                ? ` [viewed=${seen.viewedSecondsAgo ?? 'never'}s, playerSeen=${
+                      seen.playerSeenSecondsAgo ?? 'never'
+                  }s, lineageRoundEnded=${
+                      seen.lineageRoundEndedSecondsAgo ?? 'none'
+                  }s, lineageHadRealPlayers=${seen.lineageRoundHadRealPlayers}]`
+                : '';
             this.logger.log(
-                `Bot buy-in gate OPENING room ${room.id}: ${why}`,
+                `Bot buy-in gate OPENING room ${room.id}: ${why}${detail}`,
             );
+            // Also to the DB, so this is readable from /admin/bingo/alerts
+            // without shell access to the log files.
+            void this.recordBotBuyGateOpened(room.id, `${why}${detail}`);
             return { allowed: true, secondsRemaining: 0 };
         };
         try {
-            const seen = await this.getBotBuyObservations(room);
+            seen = await this.getBotBuyObservations(room);
 
-            if (seen.viewedSecondsAgo !== null) {
-                const waited = seen.viewedSecondsAgo;
+            if (seen!.viewedSecondsAgo !== null) {
+                const waited = seen!.viewedSecondsAgo;
                 if (waited >= BOT_BUY_PLAYER_GRACE_SECONDS) {
                     return open(`a player arrived ${waited}s ago`);
                 }
@@ -7473,7 +7547,7 @@ export class BingoService implements OnModuleInit {
 
             // No player has been served this room yet. The ONLY thing that makes
             // that acceptable is that there is no transition in flight to spoil.
-            const sinceRound = seen.lineageRoundEndedSecondsAgo;
+            const sinceRound = seen!.lineageRoundEndedSecondsAgo;
             if (sinceRound === null) {
                 return open('no round finished recently in this room lineage');
             }
@@ -7494,12 +7568,12 @@ export class BingoService implements OnModuleInit {
             // The ticket-based signal needs no new column at all, so the gate now
             // survives the heartbeat being broken, and vice versa.
             const seenRecently =
-                seen.playerSeenSecondsAgo !== null &&
-                seen.playerSeenSecondsAgo < PLAYER_PRESENCE_SECONDS;
-            if (!seen.lineageRoundHadRealPlayers && !seenRecently) {
+                seen!.playerSeenSecondsAgo !== null &&
+                seen!.playerSeenSecondsAgo < PLAYER_PRESENCE_SECONDS;
+            if (!seen!.lineageRoundHadRealPlayers && !seenRecently) {
                 return open(
                     `the round that just ended was bot-only and no player has been seen for ${
-                        seen.playerSeenSecondsAgo ?? 'ever'
+                        seen!.playerSeenSecondsAgo ?? 'ever'
                     }s`,
                 );
             }

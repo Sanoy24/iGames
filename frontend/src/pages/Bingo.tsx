@@ -1160,6 +1160,18 @@ const PLACE_LABEL: Record<PrefilledPlaceKey, string> = {
 // How long each live per-place win window stays on screen before the next in the
 // queue (or the underlying game) is shown again.
 const LIVE_PLACE_WIN_MS = 3_400;
+// A split place stacks one full 5x5 winner card PER winner, so the window needs
+// longer to be readable (and scrollable) than a single-winner one. Each extra
+// winner past the first adds this much. Mirrored server-side in
+// bingo.service.ts (LIVE_PLACE_WIN_SPLIT_EXTRA_MS) - the bot buy-in hold budgets
+// against these exact numbers, so keep the two in sync.
+const LIVE_PLACE_WIN_SPLIT_EXTRA_MS = 1_800;
+export function placeWinDisplayMs(winnerCount: number): number {
+    return (
+        LIVE_PLACE_WIN_MS +
+        Math.max(0, winnerCount - 1) * LIVE_PLACE_WIN_SPLIT_EXTRA_MS
+    );
+}
 // Beat where the winning ball sits in the "now calling" display BEFORE the 5×5
 // winner card pops  so the call is seen first, then the card, then the summary.
 const NOW_CALLING_HOLD_MS = 1_400;
@@ -1216,13 +1228,18 @@ function BingoLiveWinCard({
         drawnNumbers.length > 0 ? drawnNumbers[drawnNumbers.length - 1] : null;
     const splitWays = winners.length > 1;
 
+    // pointer-events-auto below is load-bearing: the backdrop that renders this
+    // card is deliberately click-through (pointer-events-none), and without
+    // re-enabling events here the overflow-y scroll never receives a touch or
+    // wheel gesture - a split place's second winner card was simply cut off
+    // with no way to reach it.
     return (
         <motion.div
             initial={{ scale: 0.82, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.9, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 300, damping: 21 }}
-            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5 max-h-[85vh] overflow-y-auto'
+            className='relative max-w-[300px] w-full mx-4 rounded-2xl p-2.5 space-y-2.5 max-h-[85vh] overflow-y-auto overscroll-contain pointer-events-auto'
             style={{
                 background: 'linear-gradient(160deg,#2b4f57,#1c333a)',
                 border: '2px solid rgba(167,139,250,0.7)',
@@ -1355,10 +1372,12 @@ function LivePlaceWinPopup({
     onDone: () => void;
 }) {
     const { t } = useTranslation();
+    // Hold a split place on screen longer - it stacks one card per winner.
+    const holdMs = placeWinDisplayMs(getEntryWinners(win.entry).length);
     useEffect(() => {
-        const id = setTimeout(onDone, LIVE_PLACE_WIN_MS);
+        const id = setTimeout(onDone, holdMs);
         return () => clearTimeout(id);
-    }, [win, onDone]);
+    }, [win, onDone, holdMs]);
 
     return (
         <motion.div

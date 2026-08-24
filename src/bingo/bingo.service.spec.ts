@@ -2353,6 +2353,73 @@ describe('BingoService cartela lifecycle guards', () => {
         expect(summaryWinners[0].winnerPhoneLast4).toBe('0851');
     });
 
+    // Reported from a live round: the result card showed the SAME bot name twice,
+    // splitting one place with itself. Every dedup guard (hasTicketAlready...,
+    // hasCartelaAlready..., hasBotAlreadyWonDerashPlace) reads only ALREADY-
+    // SETTLED places off room.settlementSummary/winnersByTier, so none of them
+    // could see the tie set being assembled in this very call - the one case
+    // they exist to prevent.
+    it('never lets one bot take two shares of the same split, even with two winning cartelas', async () => {
+        const { service, walletService } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            settlementSummary: {},
+            settledTiers: [],
+            winnersByTier: {},
+            botIdentityMap: { 'bot-1': { displayName: 'Tesf', phoneSuffix: '1975' } },
+        });
+        const mkTicket = (id: string, cartelaNumber: number) => ({
+            id,
+            userId: 'bot-1', // SAME bot, two cartelas
+            cartelaNumber,
+            grid: [[1]],
+            markedNumbers: [1],
+            wonTiers: [],
+            payoutMinor: 0,
+            status: 'active',
+            settlementStatus: 'pending',
+            walletCredits: [],
+        });
+        const ticketA = mkTicket('ticket-a', 259);
+        const ticketB = mkTicket('ticket-b', 260);
+        const botUser = {
+            id: 'bot-1',
+            displayName: 'Tesf',
+            phoneNumber: '0911111975',
+            productMetadata: {
+                botPolicy: { active: true, games: { bingo: { active: true } } },
+            },
+        };
+        const manager = {
+            findOne: jest.fn().mockResolvedValue(botUser),
+            save: jest.fn().mockImplementation(async (value) => value),
+            getRepository: jest.fn().mockReturnValue({
+                find: jest.fn().mockResolvedValue([]),
+            }),
+        };
+        walletService.creditInSession.mockResolvedValue({ id: 'credit-1' });
+
+        const awarded = await (service as any).awardDerashPlace({
+            room,
+            winners: [ticketA, ticketB],
+            place: '1st',
+            pattern: { id: 'pattern-1', name: 'Any Line' },
+            totalPotMinor: 200,
+            houseEdgePct: 20,
+            cfg: { prefilledFirstPlacePct: 100 },
+            manager,
+        });
+
+        // Exactly ONE share, and the whole prize - not two halves to one bot.
+        expect(awarded).toHaveLength(1);
+        const summaryWinners = (room.settlementSummary as any)['1st'].winners;
+        expect(summaryWinners).toHaveLength(1);
+        expect(walletService.creditInSession).toHaveBeenCalledTimes(1);
+        // The duplicate name that showed up on the result card is gone.
+        const names = summaryWinners.map((w: any) => w.winnerDisplayName);
+        expect(new Set(names).size).toBe(names.length);
+    });
+
     it('splits a derash place evenly between two cards that complete it in the same draw', async () => {
         const { service, walletService } = makeService({ rooms: [] });
         const room = makeRoom({
@@ -4802,6 +4869,47 @@ describe('BingoService.reconcileBotCartelasInRoom  first-bot-buy-in gate', () =>
             expect(call[1] ?? []).not.toContain(7);
             expect(call[1] ?? []).not.toContain(10);
         }
+    });
+
+    // Same decision, written where an admin can read it. The entity's own doc
+    // comment is the rationale: "an admin without log access can query this ...
+    // without needing a screen recording" - which is exactly how this bug had to
+    // be chased for several rounds.
+    it('records the OPEN decision, with the raw observations, to /admin/bingo/alerts', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            viewedSecondsAgo: null,
+            playerSeenSecondsAgo: null,
+            lineageRoundEndedSecondsAgo: 2,
+            lineageRoundHadRealPlayers: false,
+        });
+
+        await (h.service as any).isBotBuyAllowed(HOUSE_ROOM);
+
+        expect(h.mockOperationalAlertRepo.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'bot_buy_gate_opened',
+                roomId: 'room-1',
+            }),
+        );
+        const { message } = h.mockOperationalAlertRepo.create.mock.calls[0][0];
+        // Every input to the decision, so the row alone explains it.
+        expect(message).toContain('playerSeen=nevers');
+        expect(message).toContain('lineageRoundEnded=2s');
+        expect(message).toContain('lineageHadRealPlayers=false');
+    });
+
+    it('does not record an alert when the gate HOLDS - only openings are notable', async () => {
+        const h = makeService({ rooms: [] });
+        withObservations(h, {
+            playerSeenSecondsAgo: 1,
+            lineageRoundEndedSecondsAgo: 1,
+            lineageRoundHadRealPlayers: true,
+        });
+
+        await (h.service as any).isBotBuyAllowed(HOUSE_ROOM);
+
+        expect(h.mockOperationalAlertRepo.save).not.toHaveBeenCalled();
     });
 
     it('lets bots buy one second after the player actually landed on the buying screen', async () => {

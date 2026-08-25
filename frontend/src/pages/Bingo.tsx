@@ -61,6 +61,24 @@ const REVEAL_CATCHUP_BACKLOG = 10;
 const CATCHUP_TAIL = 3;
 const CATCHUP_BADGE_MS = 2_500;
 
+// The pacer intentionally runs ONE ball behind the server. That buffer is what
+// absorbs the draw scheduler's 0-250ms of tick jitter (SCHEDULER_TICK_MS in
+// bingo.scheduler.ts) and keeps the calling cadence even instead of lurching.
+// Anything beyond it is debt, and the pacer below works it off.
+const REVEAL_TARGET_BACKLOG = 1;
+// How that debt is worked off. Smoothness is the constraint here, not speed: the
+// rhythm the player hears/sees must not lurch. So we shave a SMALL slice off the
+// interval per ball of debt rather than dividing by it - dividing (3.0s -> 1.0s
+// at three balls behind) is a 3x rhythm change and reads as the game suddenly
+// sprinting. At 0.15 per ball capped at 0.45, the delay relaxes back toward the
+// steady cadence in ~15% steps (0.55x -> 0.70x -> 0.85x -> 1x) as the debt
+// clears: monotonic, each step under the threshold of being noticed, and never
+// faster than a little over half the normal pace even at the cap.
+const REVEAL_DRAIN_PER_BALL = 0.15;
+const REVEAL_DRAIN_MAX = 0.45;
+// Absolute floor, for rooms configured with a very short draw interval.
+const REVEAL_MIN_DRAIN_MS = 550;
+
 // Reveal cascade: a called number shows in "now calling" FIRST, then marks on the
 // board a beat later, then on the tickets a beat after that. Never the reverse.
 const NOW_CALLING_LEAD_MS = 500; // now calling → board
@@ -3215,11 +3233,33 @@ export function Bingo({ onBack }: BingoProps) {
         }
 
         // One steady, calm cadence for every ball, matched to the server's actual
-        // draw interval.
-        revealTimerRef.current = setTimeout(
-            processNextReveal,
-            serverIntervalMsRef.current,
-        );
+        // draw interval - but only while we are inside the intended one-ball
+        // buffer. Past that we are in DEBT, and this used to carry that debt for
+        // the rest of the round: it advanced exactly one ball per full interval,
+        // the same rate the server draws at, so a gap opened by a single hiccup
+        // (webview timer throttling, a batched socket delivery, render jank)
+        // never closed again. The client only clawed back the scheduler's
+        // 0-250ms of jitter per ball, so shedding ONE ball of debt took roughly
+        // 24 calls - longer than most rounds - while REVEAL_CATCHUP_BACKLOG does
+        // not engage until 10. Backlogs of 1-10 were therefore effectively
+        // permanent, which is why players saw the called count sitting 1-3 ahead
+        // of the board for a whole round and asked whether the game was straight.
+        // Shorten the delay in proportion to the debt so it drains over the next
+        // call or two, floored so it never turns into a visible speed-run.
+        const steadyMs = serverIntervalMsRef.current;
+        const debt = backlog - REVEAL_TARGET_BACKLOG;
+        const drain =
+            debt > 0
+                ? Math.min(REVEAL_DRAIN_PER_BALL * debt, REVEAL_DRAIN_MAX)
+                : 0;
+        const delayMs =
+            drain > 0
+                ? Math.max(
+                      REVEAL_MIN_DRAIN_MS,
+                      Math.round(steadyMs * (1 - drain)),
+                  )
+                : steadyMs;
+        revealTimerRef.current = setTimeout(processNextReveal, delayMs);
     }, [revealedCount, drawnNumbers.length, room?.status, processNextReveal]);
 
     // Cleanup on unmount

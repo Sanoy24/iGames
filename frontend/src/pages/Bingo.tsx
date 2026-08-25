@@ -1172,9 +1172,11 @@ export function placeWinDisplayMs(winnerCount: number): number {
         Math.max(0, winnerCount - 1) * LIVE_PLACE_WIN_SPLIT_EXTRA_MS
     );
 }
-// Beat where the winning ball sits in the "now calling" display BEFORE the 5×5
-// winner card pops  so the call is seen first, then the card, then the summary.
-const NOW_CALLING_HOLD_MS = 1_400;
+// Quiet beat AFTER the deciding ball has been fully called and marked on the
+// card, before the 5x5 winner card covers it. This is a pause on a finished
+// board now, not a race against the reveal: see the live win staging block in
+// BingoRoomView, which is what guarantees the ball has actually landed first.
+const NOW_CALLING_HOLD_MS = 1_800;
 
 export type LivePlaceWin = {
     place: PrefilledPlaceKey;
@@ -2477,20 +2479,6 @@ export function Bingo({ onBack }: BingoProps) {
         [],
     );
 
-    // Stage each live win: when a new place reaches the front of the queue, hold for
-    // a beat so the winning ball is seen in "now calling" first, THEN arm the 5×5
-    // card popup. Disarming on head change re-plays the beat for every place.
-    const [popupArmed, setPopupArmed] = useState(false);
-    const headPlace = livePlaceQueue[0]?.place ?? null;
-    useEffect(() => {
-        if (!headPlace) {
-            setPopupArmed(false);
-            return;
-        }
-        setPopupArmed(false);
-        const id = setTimeout(() => setPopupArmed(true), NOW_CALLING_HOLD_MS);
-        return () => clearTimeout(id);
-    }, [headPlace]);
 
     // Single source of truth for live win windows: watch the room's settlement
     // summary and queue a 5×5 window for each newly-won place. Whatever path
@@ -3282,6 +3270,56 @@ export function Bingo({ onBack }: BingoProps) {
         () => new Set(drawnNumbers.slice(0, ticketCount)),
         [drawnNumbers, ticketCount],
     );
+
+    // Live win staging.
+    //
+    // A place is decided by one specific ball, but the two clocks that matter here
+    // run independently: settlement arrives from the server the instant that ball
+    // is DRAWN, while the reveal narrates it on its own paced timeline
+    // (revealedCount -> boardCount -> ticketCount, a full second end to end).
+    // Arming the popup off settlement therefore dropped the winner card on top of
+    // a "now calling" display that was still mid-sequence - the player never saw
+    // the ball that decided the round being called, let alone landing on the card.
+    //
+    // So gate on the REVEAL, not on settlement: wait until the paced reveal has
+    // marked every ball the room had when this place reached the head of the
+    // queue, and only then hold the beat and arm. At the end of a round that
+    // reduces to "every number fully called and marked, pause, then the window";
+    // mid-round it still lets 3rd/2nd pop as soon as their own deciding ball has
+    // landed. The draw cadence itself is untouched - nothing snaps or speeds up,
+    // which is the property the commented-out snap below was protecting.
+    const [popupArmed, setPopupArmed] = useState(false);
+    const headPlace = livePlaceQueue[0]?.place ?? null;
+
+    // Ball count the room had when the current head took the front of the queue.
+    // Snapshotted per place so balls drawn AFTERWARDS - mid-round, while the game
+    // is still running and the list keeps growing - can't push the target out of
+    // reach and starve an early place's popup forever.
+    const drawnTotalRef = useRef(0);
+    useEffect(() => {
+        drawnTotalRef.current = drawnNumbers.length;
+    }, [drawnNumbers.length]);
+    const [decidedAtCount, setDecidedAtCount] = useState<number | null>(null);
+    useEffect(() => {
+        setDecidedAtCount(headPlace ? drawnTotalRef.current : null);
+    }, [headPlace]);
+
+    // Flips false -> true once and then stays put for the life of a head
+    // (ticketCount only grows, decidedAtCount is fixed per place), so the timer
+    // below is scheduled exactly once per place rather than being torn down and
+    // restarted - and the popup re-hidden - on every subsequent ball.
+    const revealReachedDecider =
+        decidedAtCount !== null && ticketCount >= decidedAtCount;
+
+    useEffect(() => {
+        if (!headPlace || !revealReachedDecider) {
+            setPopupArmed(false);
+            return;
+        }
+        setPopupArmed(false);
+        const id = setTimeout(() => setPopupArmed(true), NOW_CALLING_HOLD_MS);
+        return () => clearTimeout(id);
+    }, [headPlace, revealReachedDecider]);
 
     // True for the whole stretch between a round ending and its last place's win
     // popup closing  including the silent gaps before a popup arms and between

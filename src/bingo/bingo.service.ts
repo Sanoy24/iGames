@@ -4830,17 +4830,42 @@ export class BingoService implements OnModuleInit {
                 (_, i) => i + 1,
             ).filter((n) => !room.drawnNumbers.includes(n));
 
+            // Bot-win rooms (Win Sequence 'bot' slot, Cartel Dual below threshold)
+            // withhold the balls that would let a REAL cartela complete a still-open
+            // place before a bot has taken it. Every other room draws the full pool
+            // exactly as before. The audit metadata records the pool actually drawn
+            // from alongside the full remaining pool, so a steered draw is never
+            // logged as the uniform draw it wasn't - see resolveBotWinDrawPool.
+            const drawSteer = await this.resolveBotWinDrawPool({
+                room,
+                cfg,
+                remainingNumbers,
+                manager,
+            });
+            const drawPool = drawSteer.pool;
+
             const rngResult = await this.rngService.drawUniqueNumbers({
                 min: 1,
-                max: remainingNumbers.length,
+                max: drawPool.length,
                 count: 1,
                 gameType: 'bingo',
                 gameReference: `${room.id}:${room.drawnNumbers.length + 1}`,
-                metadata: { roomId: room.id, remainingNumbers },
+                metadata: {
+                    roomId: room.id,
+                    remainingNumbers,
+                    drawPool,
+                    steer: drawSteer.steer,
+                    withheldFromPool: drawSteer.withheld,
+                },
                 manager,
             });
 
-            const drawnNumber = remainingNumbers[rngResult.numbers[0] - 1];
+            const drawnNumber = drawPool[rngResult.numbers[0] - 1];
+            if (drawSteer.steer !== 'none') {
+                this.logger.log(
+                    `Bot win-steer (draw): room ${room.id} ball ${room.drawnNumbers.length + 1} drawn from ${drawPool.length}/${remainingNumbers.length} remaining (${drawSteer.steer}, ${drawSteer.withheld} withheld from real completions)`,
+                );
+            }
             room.drawnNumbers = [...room.drawnNumbers, drawnNumber];
             if (rngResult.auditLogId)
                 room.rngAuditLogIds = [
@@ -7967,6 +7992,195 @@ export class BingoService implements OnModuleInit {
      * a time (drop the cross-room cooldown first, then same-room dedup too)
      * until a bot is found  never held for the sake of avoiding a repeat.
      */
+    /**
+     * Draw-order steering for bot-win rooms: Win Sequence rooms pinned to a 'bot'
+     * ("Cartel") slot, and Cartel Dual while the room is below the real-player
+     * threshold - the same two activations the settlement redirect uses.
+     *
+     * Both mechanics used to be enforced ONLY at settlement, by
+     * `redirectRealWinsToBot` in evaluateAndSettleDerash: balls were drawn
+     * uniformly, a real player's cartela completed the place ON SCREEN (and was
+     * stamped into `completedPatterns`, which the client renders as a badge on
+     * their own card), and the prize was then moved to a bot. The player watched
+     * their own completed card lose. A mechanic whose entire purpose is
+     * concealment cannot confiscate in front of the player - the only thing that
+     * can actually be concealed is the ORDER in which cards complete.
+     *
+     * So while either mechanic is active, the balls that would let a REAL cartela
+     * complete a still-open place are withheld and the draw runs uniformly over
+     * the rest. Note what this deliberately does NOT do: it never picks a ball
+     * *because* it helps a bot. Nothing is accelerated, the round keeps its
+     * natural pace, and bots still win the way they always did - by holding the
+     * cards that complete first. Once a place settles it leaves
+     * openPrefilledPlaces, so real cartelas are free to complete against whatever
+     * places remain.
+     *
+     * Fallbacks, in order, once every remaining ball would complete a real card:
+     * prefer one that completes a bot's card too (the bot lands in the same tie
+     * set, which the settlement redirect resolves in its favour), otherwise draw
+     * from the full pool and let that redirect act as the backstop it always was.
+     * Both are last resorts - in a normal round the redirect should never fire.
+     *
+     * Returns the pool to draw from; `remainingNumbers` unchanged (`steer: 'none'`)
+     * whenever no steering applies.
+     */
+    private async resolveBotWinDrawPool(input: {
+        room: BingoRoom;
+        cfg: BingoConfig;
+        remainingNumbers: number[];
+        manager: EntityManager;
+    }): Promise<{
+        pool: number[];
+        steer: 'none' | 'protected' | 'bot-tie' | 'exhausted';
+        withheld: number;
+    }> {
+        const { room, cfg, remainingNumbers, manager } = input;
+        const unsteered = {
+            pool: remainingNumbers,
+            steer: 'none' as const,
+            withheld: 0,
+        };
+        // Derash places are the only thing the win-steer machinery ever settles.
+        if (room.winMode !== 'prefilled') return unsteered;
+        // Nothing to choose between, and never leave the pool empty.
+        if (remainingNumbers.length <= 1) return unsteered;
+
+        // Resolved exactly the way evaluateAndSettleDerash resolves them, so
+        // steering can never be on for a round the redirect is off for (or the
+        // reverse). A 'user' slot stands the bots down entirely.
+        if (room.winSequenceTarget === 'user') return unsteered;
+        let botWinActive = room.winSequenceTarget === 'bot';
+        if (!botWinActive && cfg.botWinMode === 'cartel-dual') {
+            const participation = this.resolveBingoBotParticipation(cfg);
+            if (!participation.belowEnabled) return unsteered;
+            const realPlayers = await this.countRealPlayersInRoom(
+                room.id,
+                manager,
+            );
+            botWinActive = realPlayers < participation.belowThreshold;
+        }
+        if (!botWinActive) return unsteered;
+
+        const openPlaces = this.openPrefilledPlaces(room, cfg);
+        if (openPlaces.length === 0) return unsteered;
+
+        const inPlayTickets = await manager.find(BingoTicket, {
+            where: { roomId: room.id, status: In(['active', 'won']) },
+        });
+        if (inPlayTickets.length === 0) return unsteered;
+
+        const botIds = await this.getBotUserIdsForTickets(
+            inPlayTickets,
+            manager,
+        );
+        const realTickets = inPlayTickets.filter(
+            (ticket) => !botIds.has(ticket.userId),
+        );
+        // Bot-only room: no real card can be beaten to a place, so draw normally.
+        if (realTickets.length === 0) return unsteered;
+
+        const patterns: BingoPattern[] = [];
+        for (const place of openPlaces) {
+            const pattern = await this.resolvePrefilledPlacePattern(
+                cfg,
+                place,
+                manager,
+                room.id,
+            );
+            if (pattern) patterns.push(pattern);
+        }
+        if (patterns.length === 0) return unsteered;
+
+        // `autoClaim` is irrelevant here: what is being protected is the player
+        // SEEING their card complete, which happens whether or not they would have
+        // claimed it. So every real cartela is protected, manual-claim included.
+        //
+        // A ball that isn't printed on a card can never complete it, so only the
+        // undrawn numbers actually ON the real cartelas are worth testing. That
+        // holds this to (real cards x <=24 numbers x open places) evaluations per
+        // draw instead of one per remaining ball per card - and real cards are few,
+        // since both activations imply a bot-heavy room.
+        const remainingSet = new Set(remainingNumbers);
+        const completesForReal = new Set<number>();
+        for (const ticket of realTickets) {
+            // A place this card ALREADY completes is past protecting - withholding
+            // balls for it would only shrink the pool for no gain (and, since every
+            // number on the card would then look "completing", could empty it).
+            const protectable = patterns.filter(
+                (pattern) =>
+                    !this.completesPrefilledPattern(
+                        ticket,
+                        pattern,
+                        room.drawnNumbers,
+                    ),
+            );
+            if (protectable.length === 0) continue;
+
+            const candidates = ticket.grid
+                .flat()
+                .filter(
+                    (value): value is number =>
+                        value !== null &&
+                        remainingSet.has(value) &&
+                        !completesForReal.has(value),
+                );
+            for (const candidate of candidates) {
+                const withCandidate = [...room.drawnNumbers, candidate];
+                const completes = protectable.some((pattern) =>
+                    this.completesPrefilledPattern(
+                        ticket,
+                        pattern,
+                        withCandidate,
+                    ),
+                );
+                if (completes) completesForReal.add(candidate);
+            }
+        }
+        if (completesForReal.size === 0) return unsteered;
+
+        const safe = remainingNumbers.filter(
+            (candidate) => !completesForReal.has(candidate),
+        );
+        if (safe.length > 0) {
+            return {
+                pool: safe,
+                steer: 'protected',
+                withheld: completesForReal.size,
+            };
+        }
+
+        // Every ball left finishes a real cartela. Prefer one that finishes a bot's
+        // card too, so the bot is inside the tie set the settlement redirect resolves.
+        const botTickets = inPlayTickets.filter((ticket) =>
+            botIds.has(ticket.userId),
+        );
+        const botTie = remainingNumbers.filter((candidate) => {
+            const withCandidate = [...room.drawnNumbers, candidate];
+            return botTickets.some((ticket) =>
+                patterns.some((pattern) =>
+                    this.completesPrefilledPattern(
+                        ticket,
+                        pattern,
+                        withCandidate,
+                    ),
+                ),
+            );
+        });
+        if (botTie.length > 0) {
+            return {
+                pool: botTie,
+                steer: 'bot-tie',
+                withheld: completesForReal.size,
+            };
+        }
+
+        return {
+            pool: remainingNumbers,
+            steer: 'exhausted',
+            withheld: completesForReal.size,
+        };
+    }
+
     private pickBotRedirectWinner(
         inPlay: BingoTicket[],
         botIds: Set<string>,

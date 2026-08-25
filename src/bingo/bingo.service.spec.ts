@@ -5895,3 +5895,371 @@ describe('BingoService.reconcileBotCartelasInRoom  Win Sequence overrides', () =
         expect(changed).toBe(false);
     });
 });
+
+
+// A real player's cartela must never COMPLETE a reserved place before the bot's
+// does. Enforcing that at settlement (redirectRealWinsToBot) is too late: the
+// card has already lit up on the player's screen and been stamped into
+// completedPatterns, so the redirect is visibly confiscating a card the player
+// watched win. resolveBotWinDrawPool moves the enforcement to the draw by
+// withholding the balls that would complete a real card.
+describe('BingoService.resolveBotWinDrawPool  bot-win draw-order steering', () => {
+    // Deterministic stand-in for the rules engine: a cartela "completes" when
+    // every number printed on it has been called. Keeps these tests about which
+    // balls are withheld, not about pattern geometry (covered in the rules spec).
+    function stubCompletion(service: BingoService) {
+        jest.spyOn(
+            service as any,
+            'completesPrefilledPattern',
+        ).mockImplementation((...args: unknown[]) => {
+            const ticket = args[0] as { grid: (number | null)[][] };
+            const drawn = args[2] as number[];
+            return ticket.grid
+                .flat()
+                .filter((v): v is number => v !== null)
+                .every((v) => drawn.includes(v));
+        });
+    }
+
+    function harness(
+        opts: {
+            room?: Partial<BingoRoom>;
+            tickets: Array<{
+                id: string;
+                userId: string;
+                grid: (number | null)[][];
+            }>;
+            botIds: string[];
+            realPlayers?: number;
+            belowThreshold?: number;
+        },
+    ) {
+        const { service } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'running',
+            drawnNumbers: [1, 2],
+            ...opts.room,
+        });
+        const manager = { find: jest.fn().mockResolvedValue(opts.tickets) };
+        stubCompletion(service);
+        jest.spyOn(service as any, 'getBotUserIdsForTickets').mockResolvedValue(
+            new Set(opts.botIds),
+        );
+        jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue([
+            '1st',
+        ]);
+        jest.spyOn(
+            service as any,
+            'resolvePrefilledPlacePattern',
+        ).mockResolvedValue({ id: 'pattern-1', name: 'Any Line' });
+        jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(
+            opts.realPlayers ?? 1,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({
+            belowEnabled: true,
+            belowThreshold: opts.belowThreshold ?? 10,
+            aboveEnabled: false,
+            aboveThreshold: 50,
+            shouldParticipate: () => true,
+        });
+        return { service, room, manager };
+    }
+
+    const call = (
+        service: BingoService,
+        room: BingoRoom,
+        manager: unknown,
+        cfg: Record<string, unknown>,
+        remainingNumbers = [3, 4, 5, 6, 7],
+    ) =>
+        (service as any).resolveBotWinDrawPool({
+            room,
+            cfg,
+            remainingNumbers,
+            manager,
+        }) as Promise<{ pool: number[]; steer: string; withheld: number }>;
+
+    it('withholds the ball that would complete a real cartela on a Win Sequence bot slot', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 7]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3, 4]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'off',
+        });
+
+        // 7 is the player's last missing number - it is the one ball that must
+        // not be called while the place is still open.
+        expect(result.pool).toEqual([3, 4, 5, 6]);
+        expect(result.steer).toBe('protected');
+        expect(result.withheld).toBe(1);
+    });
+
+    it('withholds it for below-threshold Cartel Dual too, with no Win Sequence at all', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: null },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3]] },
+            ],
+            botIds: ['bot-1'],
+            realPlayers: 2,
+            belowThreshold: 10,
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'cartel-dual',
+        });
+
+        expect(result.pool).toEqual([3, 4, 6, 7]);
+        expect(result.steer).toBe('protected');
+    });
+
+    it('leaves the draw alone once Cartel Dual is above its real-player threshold', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: null },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3]] },
+            ],
+            botIds: ['bot-1'],
+            realPlayers: 12,
+            belowThreshold: 10,
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'cartel-dual',
+        });
+
+        expect(result.pool).toEqual([3, 4, 5, 6, 7]);
+        expect(result.steer).toBe('none');
+    });
+
+    it('leaves the draw alone in every non-bot-win mode', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: null },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        for (const botWinMode of [
+            'off',
+            'statistical',
+            'guaranteed',
+            'hybrid',
+            'ranked-bot',
+        ]) {
+            const result = await call(service, room, manager, { botWinMode });
+            expect(result.steer).toBe('none');
+            expect(result.pool).toEqual([3, 4, 5, 6, 7]);
+        }
+    });
+
+    it('leaves the draw alone on a Win Sequence user slot, even under Cartel Dual', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'user' },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'cartel-dual',
+        });
+
+        expect(result.steer).toBe('none');
+        expect(result.pool).toEqual([3, 4, 5, 6, 7]);
+    });
+
+    it('leaves the draw alone in a bot-only room - there is no real card to beat', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-bot-a', userId: 'bot-1', grid: [[1, 2, 3]] },
+                { id: 't-bot-b', userId: 'bot-2', grid: [[1, 2, 4]] },
+            ],
+            botIds: ['bot-1', 'bot-2'],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'off',
+        });
+
+        expect(result.steer).toBe('none');
+        expect(result.pool).toEqual([3, 4, 5, 6, 7]);
+    });
+
+    it('never withholds for a place the real cartela has ALREADY completed', async () => {
+        // Both remaining balls are on a card that is already complete for the open
+        // place. Protecting it now would withhold every ball and empty the pool for
+        // nothing - the completion it was meant to prevent has already happened.
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot', drawnNumbers: [1, 2] },
+            tickets: [{ id: 't-real', userId: 'player-1', grid: [[1, 2]] }],
+            botIds: [],
+        });
+
+        const result = await call(service, room, manager, { botWinMode: 'off' }, [
+            3,
+            4,
+        ]);
+
+        expect(result.steer).toBe('none');
+        expect(result.pool).toEqual([3, 4]);
+    });
+
+    it('falls back to a ball that also completes a bot card when every ball completes a real one', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-real-a', userId: 'player-1', grid: [[1, 2, 3]] },
+                { id: 't-real-b', userId: 'player-2', grid: [[1, 2, 4]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 4]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(
+            service,
+            room,
+            manager,
+            { botWinMode: 'off' },
+            [3, 4],
+        );
+
+        // No safe ball left, so pick the one that puts the bot in the same tie set
+        // the settlement redirect resolves in its favour.
+        expect(result.pool).toEqual([4]);
+        expect(result.steer).toBe('bot-tie');
+    });
+
+    it('gives the whole pool back rather than deadlocking when no ball helps a bot either', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-real-a', userId: 'player-1', grid: [[1, 2, 3]] },
+                { id: 't-real-b', userId: 'player-2', grid: [[1, 2, 4]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 9]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(
+            service,
+            room,
+            manager,
+            { botWinMode: 'off' },
+            [3, 4],
+        );
+
+        expect(result.pool).toEqual([3, 4]);
+        expect(result.steer).toBe('exhausted');
+    });
+
+    it('leaves non-derash rooms alone - the win-steer machinery only settles places', async () => {
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot', winMode: 'line' },
+            tickets: [{ id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] }],
+            botIds: [],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'cartel-dual',
+        });
+
+        expect(result.steer).toBe('none');
+    });
+});
+
+describe('BingoService.drawNextNumber  drawing from the steered pool', () => {
+    it('draws the ball out of the steered pool, not the full remaining pool', async () => {
+        const { service, dataSource } = makeService({ rooms: [] });
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'running',
+            rankingMode: 'race',
+            drawnNumbers: [1, 2],
+            rngAuditLogIds: [],
+        });
+
+        jest.spyOn(service as any, 'getBingoConfig').mockResolvedValue({
+            minDrawsBeforeWin: 0,
+            botWinMode: 'off',
+        });
+        jest.spyOn(
+            service as any,
+            'refreshActiveBonusCampaignCache',
+        ).mockResolvedValue(undefined);
+        jest.spyOn(
+            service as any,
+            'getActiveScheduledBotPlay',
+        ).mockResolvedValue(null);
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(4);
+        jest.spyOn(service as any, 'getTakenSpots').mockResolvedValue([]);
+        jest.spyOn(
+            service as any,
+            'refreshBotWinnerDisplayNames',
+        ).mockResolvedValue(undefined);
+        jest.spyOn(service as any, 'evaluateAndSettleDerash').mockResolvedValue(
+            undefined,
+        );
+        jest.spyOn(service as any, 'evaluateAndSettleBonus').mockResolvedValue(
+            undefined,
+        );
+        jest.spyOn(service as any, 'finalizeDerashIfDone').mockResolvedValue(
+            undefined,
+        );
+        // Steering withheld everything except ball 42.
+        jest.spyOn(service as any, 'resolveBotWinDrawPool').mockResolvedValue({
+            pool: [42],
+            steer: 'protected',
+            withheld: 3,
+        });
+
+        const drawSpy = ((service as any).rngService.drawUniqueNumbers = jest
+            .fn()
+            .mockResolvedValue({ numbers: [1], auditLogId: 'audit-1' }));
+
+        const manager = {
+            findOne: jest.fn().mockResolvedValue(room),
+            save: jest.fn().mockImplementation(async (value) => value),
+        };
+        (dataSource.transaction as jest.Mock).mockImplementation(
+            async (cb: any) => cb(manager),
+        );
+
+        await service.drawNextNumber(room.id);
+
+        // Index 1 of a 1-ball pool is 42 - if the draw still indexed
+        // remainingNumbers it would have called ball 3 instead.
+        expect(room.drawnNumbers).toEqual([1, 2, 42]);
+
+        const rngInput = drawSpy.mock.calls[0][0] as {
+            max: number;
+            metadata: Record<string, unknown>;
+        };
+        expect(rngInput.max).toBe(1);
+        // The audit log has to describe the draw that actually happened: the
+        // restricted pool AND the full pool it was restricted from.
+        expect(rngInput.metadata.drawPool).toEqual([42]);
+        expect(rngInput.metadata.steer).toBe('protected');
+        expect(rngInput.metadata.withheldFromPool).toBe(3);
+        expect(
+            (rngInput.metadata.remainingNumbers as number[]).length,
+        ).toBe(73);
+    });
+});

@@ -9,6 +9,13 @@ export type User = {
     online?: boolean;
     /** Server-computed  true when this account is a house bot (productMetadata.botPolicy set). */
     isBot?: boolean;
+    /** AGENT only, server-computed (AdminService.listAgents)  live wallet balance. */
+    walletAvailableMinor?: number;
+    /** AGENT only, server-computed  admin-allocated deposit float not yet spent
+     * funding player deposits. Can be 0 even with a positive wallet balance (see
+     * WalletService.getAgentFloatRemaining)  that gap is what silently drops an
+     * agent out of the deposit pool with no visible config change. */
+    depositFloatRemainingMinor?: number;
     lastLoginAt?: string;
     workStartHour?: number;
     workStartMinute?: number;

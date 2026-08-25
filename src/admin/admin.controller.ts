@@ -13,11 +13,13 @@ import {
     Post,
     Put,
     Query,
+    Res,
     UnsupportedMediaTypeException,
     UploadedFile,
     UseGuards,
     UseInterceptors,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -133,6 +135,78 @@ export class AdminController {
             id,
             dto.verificationStatus,
             admin.id,
+        );
+    }
+
+    // ── Transactions (admin-wide money-movement feed) ────────────────────
+
+    @Get('transactions')
+    listTransactions(
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+        @Query('userId') userId?: string,
+        @Query('search') search?: string,
+        @Query('entryType') entryType?: string,
+        @Query('sourceType') sourceType?: string,
+        @Query('direction') direction?: 'credit' | 'debit',
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+    ) {
+        return this.adminService.getTransactions({
+            page: parseInt(page, 10) || 1,
+            limit: Math.min(parseInt(limit, 10) || 50, 200),
+            userId,
+            search,
+            entryType,
+            sourceType,
+            direction,
+            dateFrom,
+            dateTo,
+        });
+    }
+
+    @Get('transactions/export')
+    async exportTransactions(
+        @Res({ passthrough: true }) res: Response,
+        @Query('userId') userId?: string,
+        @Query('search') search?: string,
+        @Query('entryType') entryType?: string,
+        @Query('sourceType') sourceType?: string,
+        @Query('direction') direction?: 'credit' | 'debit',
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+    ) {
+        const csv = await this.adminService.exportTransactionsCsv({
+            userId,
+            search,
+            entryType,
+            sourceType,
+            direction,
+            dateFrom,
+            dateTo,
+        });
+        res.set({
+            'Content-Type': 'text/csv',
+            'Content-Disposition': `attachment; filename="transactions-${new Date().toISOString().slice(0, 10)}.csv"`,
+        });
+        return csv;
+    }
+
+    @Get('transactions/deposit-detail')
+    getTransactionDepositDetail(
+        @Query('provider') provider: 'telebirr' | 'mpesa',
+        @Query('sourceId') sourceId: string,
+    ) {
+        return this.adminService.getDepositDetailForTransaction(
+            provider === 'mpesa' ? 'mpesa' : 'telebirr',
+            sourceId,
+        );
+    }
+
+    @Get('transactions/withdrawal-detail')
+    getTransactionWithdrawalDetail(@Query('withdrawalId') withdrawalId: string) {
+        return this.adminService.getWithdrawalDetailForTransaction(
+            withdrawalId,
         );
     }
 

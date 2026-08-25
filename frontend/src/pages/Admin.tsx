@@ -20,6 +20,7 @@ import {
     Megaphone,
     Play,
     Plus,
+    Receipt,
     RefreshCw,
     Send,
     Settings,
@@ -100,6 +101,7 @@ import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
 import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
+import { TransactionsAdmin } from '../components/TransactionsAdmin';
 import { DepositsAdmin } from '../components/DepositsAdmin';
 import { SettlementsAdmin } from '../components/SettlementsAdmin';
 import { Donut, Bar, MiniTrendChart } from '../components/AdminCharts';
@@ -119,6 +121,7 @@ type AdminTab =
     | 'broadcast'
     | 'withdrawals'
     | 'deposits'
+    | 'transactions'
     | 'settlements'
     | 'support'
     | 'games'
@@ -154,6 +157,11 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
     { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={15} /> },
     { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
     { id: 'deposits', label: 'Deposits', icon: <Banknote size={15} /> },
+    {
+        id: 'transactions',
+        label: 'Transactions',
+        icon: <Receipt size={15} />,
+    },
     { id: 'settlements', label: 'Settlements', icon: <Banknote size={15} /> },
     { id: 'support', label: 'Support', icon: <LifeBuoy size={15} /> },
     { id: 'games', label: 'Games', icon: <Dices size={15} /> },
@@ -3799,6 +3807,7 @@ function AgentsAdmin() {
                             <tr>
                                 <th>Name</th>
                                 <th>Phone</th>
+                                <th>Balance</th>
                                 <th>Referral Code</th>
                                 <th>Working Hours</th>
                                 <th>On Duty</th>
@@ -3854,6 +3863,32 @@ function AgentsAdmin() {
                                         </td>
                                         <td className='adm-td-muted'>
                                             {a.phoneNumber ?? ''}
+                                        </td>
+                                        <td>
+                                            <div style={{ fontSize: 12 }}>
+                                                {formatCreditsFull(
+                                                    a.walletAvailableMinor ??
+                                                        0,
+                                                )}{' '}
+                                                ETB
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: 10,
+                                                    color: (a.depositFloatRemainingMinor ??
+                                                        0) <= 0
+                                                        ? 'var(--danger)'
+                                                        : 'var(--text-muted)',
+                                                }}
+                                                title='Admin-allocated deposit float not yet used funding player deposits  0 means this agent will not show as an available deposit destination, even with deposit permission and duty status both on.'
+                                            >
+                                                float:{' '}
+                                                {formatCreditsFull(
+                                                    a.depositFloatRemainingMinor ??
+                                                        0,
+                                                )}{' '}
+                                                ETB
+                                            </div>
                                         </td>
                                         <td className='adm-td-muted'>
                                             {a.referralCode ?? '—'}
@@ -17712,6 +17747,7 @@ export function Admin() {
                     {tab === 'broadcast' && <BroadcastAdmin />}
                     {tab === 'withdrawals' && <WithdrawalsAdmin />}
                     {tab === 'deposits' && <DepositsAdmin />}
+                    {tab === 'transactions' && <TransactionsAdmin />}
                     {tab === 'settlements' && <SettlementsAdmin />}
                     {tab === 'support' && <SupportConsole />}
                     {tab === 'games' && <GamesAdmin />}

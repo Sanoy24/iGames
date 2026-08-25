@@ -27,6 +27,22 @@ export class SystemConfig {
     welcomeBonusEnabled: boolean;
 
     /**
+     * Master on/off switch for deposit cashback: when a player's wallet drops to
+     * EXACTLY 0 from placing a bet (never from a withdrawal or an admin
+     * adjustment  see WalletService.maybeTriggerDepositCashback), they are
+     * credited `depositCashbackPct`% of their most recent Telebirr/M-Pesa
+     * deposit. A given deposit can trigger this at most once, ever, regardless
+     * of how many times the balance later returns to 0.
+     */
+    @Column({ type: 'boolean', default: false })
+    depositCashbackEnabled: boolean;
+
+    /** Whole-number percentage (10 = 10%) of the player's latest deposit credited
+     * back under depositCashbackEnabled. 0 = no cashback even if enabled. */
+    @Column({ type: 'int', default: 0 })
+    depositCashbackPct: number;
+
+    /**
      * Internal user id of the Master Wallet  a dedicated system account (no
      * login, no Telegram/password identity, roles: []) that is NOT any individual
      * admin's personal account. Every admin's ETB top-up and transfer-to-agent

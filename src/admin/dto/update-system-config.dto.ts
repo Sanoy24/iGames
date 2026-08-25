@@ -16,6 +16,18 @@ export class UpdateSystemConfigDto {
   @IsBoolean()
   welcomeBonusEnabled?: boolean;
 
+  /** Master on/off switch for deposit cashback (see SystemConfig.depositCashbackEnabled). */
+  @IsOptional()
+  @IsBoolean()
+  depositCashbackEnabled?: boolean;
+
+  /** Whole-number % of the player's latest deposit credited back when their balance hits 0. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  depositCashbackPct?: number;
+
   /** Minimum accepted Telebirr deposit (minor units). 0 = no minimum. */
   @IsOptional()
   @IsInt()

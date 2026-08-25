@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ConflictException,
     Injectable,
+    Logger,
     NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -70,6 +71,8 @@ export type WalletMutationResult = {
 
 @Injectable()
 export class WalletService {
+    private readonly logger = new Logger(WalletService.name);
+
     constructor(
         private readonly dataSource: DataSource,
         @InjectRepository(Wallet)
@@ -579,7 +582,150 @@ export class WalletService {
 
         this.gameEventsGateway.emitWalletUpdated(input.userId, result.wallet);
 
+        // Deposit cashback: only a STAKE debit that leaves the wallet at exactly
+        // 0 can trigger it  see maybeTriggerDepositCashback for why withdrawals/
+        // adjustments/transfers are deliberately excluded. Runs inside this same
+        // transaction, after the wallet update above is already committed to it,
+        // so any credit it issues is atomic with the debit that triggered it.
+        if (
+            input.direction === 'debit' &&
+            input.entryType === 'stake' &&
+            updatedWallet.availableMinor === 0
+        ) {
+            await this.maybeTriggerDepositCashback(input.userId, manager);
+        }
+
         return result;
+    }
+
+    /**
+     * When a bet/ticket purchase leaves a player's wallet at exactly 0, credit
+     * back `depositCashbackPct`% of their single most recent Telebirr/M-Pesa
+     * deposit  once per deposit, ever.
+     *
+     * Deliberately scoped to STAKE debits only (enforced by the caller, not
+     * here): a withdrawal debit reaching 0 is the player cashing OUT, not
+     * losing while playing, and paying cashback on that would be a direct
+     * exploit  deposit 100, immediately withdraw all 100, collect 10% for
+     * free without ever placing a bet. Admin adjustments and internal
+     * agent/master-wallet transfers are excluded the same way.
+     *
+     * The idempotency key is scoped to the DEPOSIT (`provider:depositId`), not
+     * to this zero-balance event, so a single deposit can fund at most one
+     * cashback payout no matter how many times the balance later returns to 0
+     * without a new deposit in between  otherwise a player could farm one
+     * deposit for cashback indefinitely by spending each payout back to zero.
+     *
+     * Runs inside the caller's transaction/manager (same wallet row, already
+     * locked by the triggering debit) so the payout is atomic with it. Every
+     * step is best-effort: this must NEVER fail the bet that triggered it, so
+     * all errors are caught and logged, never rethrown.
+     */
+    private async maybeTriggerDepositCashback(
+        userId: string,
+        manager: EntityManager,
+    ): Promise<void> {
+        try {
+            const config = await manager
+                .getRepository(SystemConfig)
+                .findOneBy({ key: 'global' });
+            if (!config?.depositCashbackEnabled) return;
+            const pct = config.depositCashbackPct ?? 0;
+            if (pct <= 0) return;
+
+            // Best-effort read of the Master Wallet id: by the time real gameplay
+            // is happening this is always set (AdminService creates it at
+            // bootstrap), but if it somehow isn't yet, skip rather than try to
+            // create it here  cashback must never be what blocks a bet.
+            const masterWalletUserId = config.masterWalletUserId;
+            if (!masterWalletUserId) return;
+
+            // Bots never receive cashback  same "real players only" rule as
+            // REAL_PLAYER_ONLY above, applied here without a join since we only
+            // have the one userId.
+            const botRows: Array<{ isBot: number }> = await manager.query(
+                `SELECT JSON_EXTRACT(productMetadata, '$.botPolicy') IS NOT NULL AS isBot
+                   FROM users WHERE id = ?`,
+                [userId],
+            );
+            if (Number(botRows?.[0]?.isBot) === 1) return;
+
+            // The player's single most recent CREDITED deposit, whichever
+            // provider they used. Deliberately Telebirr/M-Pesa receipts only
+            // never admin_topup / admin_to_agent_transfer / agent_to_user_transfer
+            // (not the player's own money going in, and crediting cashback off
+            // those would let an admin or agent hand out free cashback at will).
+            const depositRows: Array<{
+                provider: 'telebirr' | 'mpesa';
+                depositId: string;
+                amountMinor: string | number;
+            }> = await manager.query(
+                `SELECT provider, depositId, amountMinor FROM (
+                    SELECT 'telebirr' AS provider, receiptNo AS depositId, amountMinor, createdAt
+                      FROM telebirr_deposits WHERE userId = ? AND status = 'credited'
+                    UNION ALL
+                    SELECT 'mpesa' AS provider, confirmationCode AS depositId, amountMinor, createdAt
+                      FROM mpesa_deposits WHERE userId = ? AND status = 'credited'
+                 ) latest_deposit
+                 ORDER BY createdAt DESC
+                 LIMIT 1`,
+                [userId, userId],
+            );
+            const deposit = depositRows?.[0];
+            if (!deposit) return;
+
+            const cashbackAmount = Math.round(
+                (Number(deposit.amountMinor) * pct) / 100,
+            );
+            if (cashbackAmount <= 0) return;
+
+            const idKey = `deposit-cashback:${deposit.provider}:${deposit.depositId}`;
+
+            // Funded from the Master Wallet, mirroring AdminService.
+            // creditFromMasterWallet's own debit/credit pair  a separate,
+            // smaller copy rather than calling AdminService directly, since
+            // WalletService is a dependency OF AdminService and calling back
+            // would be a circular module dependency.
+            await this.debitInSession(
+                {
+                    userId: masterWalletUserId,
+                    amountMinor: cashbackAmount,
+                    entryType: 'adjustment',
+                    sourceType: 'deposit_cashback_funding',
+                    sourceId: deposit.depositId,
+                    idempotencyKey: `${idKey}:debit`,
+                    metadata: {
+                        targetUserId: userId,
+                        depositProvider: deposit.provider,
+                    },
+                },
+                manager,
+            );
+            await this.creditInSession(
+                {
+                    userId,
+                    amountMinor: cashbackAmount,
+                    entryType: 'bonus',
+                    sourceType: 'deposit_cashback',
+                    sourceId: deposit.depositId,
+                    idempotencyKey: `${idKey}:credit`,
+                    metadata: {
+                        depositProvider: deposit.provider,
+                        depositAmountMinor: Number(deposit.amountMinor),
+                        cashbackPct: pct,
+                    },
+                },
+                manager,
+            );
+        } catch (err) {
+            // Never let a cashback hiccup (including the Master Wallet running
+            // low, same as the welcome bonus) block the bet that triggered it.
+            this.logger.warn(
+                `Deposit cashback skipped for user ${userId}: ${
+                    err instanceof Error ? err.message : String(err)
+                }`,
+            );
+        }
     }
 
     private toWalletSummary(wallet: Wallet): WalletSummary {

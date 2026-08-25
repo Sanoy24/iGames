@@ -93,6 +93,8 @@ export class AdminService implements OnApplicationBootstrap {
                 telebirrCreditMinorPerBirr: 1, // flat 1:1  1 Birr deposited = 1 ETB credited
                 welcomeBonusMinor: 20,
                 welcomeBonusEnabled: false,
+                depositCashbackEnabled: false,
+                depositCashbackPct: 0,
             });
             await this.systemConfigRepository.save(config);
         }

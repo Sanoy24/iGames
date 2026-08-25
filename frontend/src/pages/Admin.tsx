@@ -4017,6 +4017,8 @@ function ConfigAdmin() {
         telebirrCreditMinorPerBirr: 1,
         welcomeBonusMinor: 20,
         welcomeBonusEnabled: false,
+        depositCashbackEnabled: false,
+        depositCashbackPct: 0,
         minDepositMinor: 0,
         withdrawalMinAmountMinor: 0,
         withdrawalMaxAmountMinor: 0,
@@ -4038,6 +4040,8 @@ function ConfigAdmin() {
         telebirrCreditMinorPerBirr: c.telebirrCreditMinorPerBirr,
         welcomeBonusMinor: c.welcomeBonusMinor,
         welcomeBonusEnabled: c.welcomeBonusEnabled ?? false,
+        depositCashbackEnabled: c.depositCashbackEnabled ?? false,
+        depositCashbackPct: c.depositCashbackPct ?? 0,
         minDepositMinor: c.minDepositMinor ?? 0,
         withdrawalMinAmountMinor: c.withdrawalMinAmountMinor,
         withdrawalMaxAmountMinor: c.withdrawalMaxAmountMinor,
@@ -4213,6 +4217,16 @@ function ConfigAdmin() {
                         'welcomeBonusEnabled',
                         'Welcome Bonus Active',
                         'Off = no bonus is credited, regardless of the amount above',
+                    )}
+                    {field(
+                        'depositCashbackPct',
+                        'Deposit Cashback (%)',
+                        'Credited when a bet leaves a player’s balance at exactly 0 - % of their most recent Telebirr/M-Pesa deposit (e.g. 100 ETB deposit, 10% → 10 ETB back). At most once per deposit.',
+                    )}
+                    {toggleField(
+                        'depositCashbackEnabled',
+                        'Deposit Cashback Active',
+                        'Off = no cashback is credited, regardless of the % above',
                     )}
                 </div>
             </div>

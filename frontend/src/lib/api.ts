@@ -627,6 +627,14 @@ export type SystemConfig = {
     welcomeBonusMinor: number;
     /** Master on/off switch for the welcome bonus, independent of the amount. */
     welcomeBonusEnabled: boolean;
+    /** Master on/off switch for deposit cashback: credits back a % of a player's
+     * latest Telebirr/M-Pesa deposit the moment their balance hits exactly 0
+     * from placing a bet (never from a withdrawal). See WalletService.
+     * maybeTriggerDepositCashback for the full rule. */
+    depositCashbackEnabled: boolean;
+    /** Whole-number % (10 = 10%) of the player's latest deposit credited back
+     * under depositCashbackEnabled. 0 = no cashback even if enabled. */
+    depositCashbackPct: number;
     minDepositMinor: number;
     withdrawalMinAmountMinor: number;
     withdrawalMaxAmountMinor: number;

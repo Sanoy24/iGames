@@ -3405,7 +3405,18 @@ export function Bingo({ onBack }: BingoProps) {
     // being over.
     const [lastBallSettled, setLastBallSettled] = useState(false);
     useEffect(() => {
-        if (!revealFinished) {
+        // Gate on the room ACTUALLY being completed, not just "the reveal has
+        // caught up to every ball we know about" - that same condition is also
+        // true during every ordinary mid-round pause (the pacer settles at zero
+        // backlog while waiting for the server's next draw), and real draw
+        // intervals routinely run longer than NOW_CALLING_HOLD_MS. Starting the
+        // hold there let it finish - and go stale - well before the round
+        // actually ended, so if the deciding ball arrived bundled straight into
+        // the `bingo.room.completed` payload (status and the final draw in one
+        // update), revealFinished and this already-elapsed hold both went true
+        // on the very same render: zero grace period for the ball that actually
+        // decided the round, right back to the bug this hold exists to prevent.
+        if (room?.status !== 'completed' || !revealFinished) {
             setLastBallSettled(false);
             return;
         }
@@ -3414,7 +3425,7 @@ export function Bingo({ onBack }: BingoProps) {
             NOW_CALLING_HOLD_MS,
         );
         return () => clearTimeout(id);
-    }, [revealFinished, room?.id]);
+    }, [revealFinished, room?.status, room?.id]);
     const revealSettled = revealFinished && lastBallSettled;
 
     // The status the ROUND PRESENTS AS, which is not the same thing as the status

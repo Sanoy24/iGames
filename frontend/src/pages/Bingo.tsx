@@ -554,9 +554,15 @@ CartelaGrid.displayName = 'CartelaGrid';
 function RecentCallsStrip({
     drawnNumbers,
     isPatternMode,
+    activePatternNames,
 }: {
     drawnNumbers: number[];
     isPatternMode: boolean;
+    /** Names of the pattern(s) this round is actually playing for (a pattern-mode
+     * round can have several active at once, each with its own prize)  shown
+     * next to the strip header so it stays in view while calling is live,
+     * instead of only surfacing once a pattern is already won. */
+    activePatternNames?: string[];
 }) {
     const { t } = useTranslation();
     const last = drawnNumbers.slice(-12);
@@ -569,8 +575,18 @@ function RecentCallsStrip({
 
     return (
         <div className='relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2'>
-            <div className='text-[8px] font-black uppercase tracking-widest text-slate-600 mb-1.5'>
-                {t('bingo.recentCalls')}
+            <div className='flex items-center justify-between gap-2 mb-1.5'>
+                <div className='text-[8px] font-black uppercase tracking-widest text-slate-600'>
+                    {t('bingo.recentCalls')}
+                </div>
+                {activePatternNames && activePatternNames.length > 0 && (
+                    <div className='flex items-center gap-1 min-w-0'>
+                        <span className='w-1 h-1 rounded-full bg-violet-400 flex-shrink-0' />
+                        <span className='text-[8px] font-black uppercase tracking-wide text-white truncate'>
+                            {activePatternNames.join(' · ')}
+                        </span>
+                    </div>
+                )}
             </div>
             {/* Keyed by number (unique per room)  NOT array index  so the sliding
           window doesn't remount every pill on each draw. Only the genuinely new
@@ -3946,6 +3962,11 @@ export function Bingo({ onBack }: BingoProps) {
                         <RecentCallsStrip
                             drawnNumbers={revealedNumbers}
                             isPatternMode={boardBingoStyle}
+                            activePatternNames={
+                                isPatternMode
+                                    ? Array.from(patternPrizeMap.values())
+                                    : undefined
+                            }
                         />
                     )}
 

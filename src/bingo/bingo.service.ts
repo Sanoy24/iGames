@@ -5484,6 +5484,15 @@ export class BingoService implements OnModuleInit {
                 manager,
                 cooldownRooms,
             );
+        // This path used to rank the queue and pay straight down it, with no bot-win
+        // logic of any kind - so a room whose places were reserved for bots paid the
+        // real player outright the moment rankingMode was 'leaderboard'. It now
+        // honours the reservation the same way the race path does.
+        const botWinReserved = await this.isBotWinReservedRoom(
+            room,
+            cfg,
+            manager,
+        );
 
         // Assign ranks by queue position, skipping bot users that already took a
         // prize so the final standings do not show the same bot identity repeatedly.
@@ -5511,9 +5520,38 @@ export class BingoService implements OnModuleInit {
                     continue;
                 }
 
+                // Redirect BEFORE awarding, never after: awardDerashPlace is what
+                // writes the settlement summary the standings are rendered from, so
+                // the bot is the only name that ever appears against this place.
+                let awardee = candidate;
+                if (botWinReserved && !botIds.has(candidate.userId)) {
+                    const botAwardee = this.pickBotRedirectWinner(
+                        inPlay.filter(
+                            (t) => !botGroups.nonBingoBotIds.has(t.userId),
+                        ),
+                        botGroups.bingoEnabledBotIds,
+                        pattern,
+                        room.drawnNumbers,
+                        room.numberRange ?? 75,
+                        { awardedBotUserIds, recentBotWinnerUserIds },
+                    );
+                    if (!botAwardee) {
+                        // No bot cartela to redirect to. Hold the place open rather
+                        // than pay the real player - exactly what the race path does.
+                        this.logger.warn(
+                            `${this.botWinReservationLabel(room)} held room ${room.id} place ${place} open (leaderboard): no bot cartela at all in the room to redirect to`,
+                        );
+                        break;
+                    }
+                    awardee = botAwardee;
+                    this.logger.log(
+                        `Bot win-steer (${this.botWinReservationLabel(room)}, leaderboard): room ${room.id} place ${place} redirected from real user ${candidate.userId} to bot ${botAwardee.userId}`,
+                    );
+                }
+
                 const awarded = await this.awardDerashPlace({
                     room,
-                    winners: [candidate],
+                    winners: [awardee],
                     place,
                     pattern,
                     totalPotMinor,
@@ -5521,8 +5559,8 @@ export class BingoService implements OnModuleInit {
                     cfg,
                     manager,
                 });
-                if (botIds.has(candidate.userId)) {
-                    awardedBotUserIds.add(candidate.userId);
+                if (botIds.has(awardee.userId)) {
+                    awardedBotUserIds.add(awardee.userId);
                 }
                 if (awarded.length > 0) {
                     awardedPlace = true;
@@ -6294,7 +6332,7 @@ export class BingoService implements OnModuleInit {
             // Non-exclusive: one tap grabs all the tiers the card currently completes and
             // that no one has taken yet  e.g. a card with three lines claims 1st (and
             // 2nd/3rd too if they are somehow still open).
-            let cartelDualContext:
+            let botWinRedirectContext:
                 | {
                       botIds: Set<string>;
                       bingoEnabledBotIds: Set<string>;
@@ -6304,19 +6342,16 @@ export class BingoService implements OnModuleInit {
                   }
                 | null
                 | undefined;
-            const getCartelDualContext = async () => {
-                if (cartelDualContext !== undefined) return cartelDualContext;
-                const realPlayers = await this.countRealPlayersInRoom(
-                    room.id,
-                    manager,
-                );
-                const participation = this.resolveBingoBotParticipation(cfg);
-                const belowThreshold =
-                    participation.belowEnabled &&
-                    realPlayers < participation.belowThreshold;
-                if (cfg.botWinMode !== 'cartel-dual' || !belowThreshold) {
-                    cartelDualContext = null;
-                    return cartelDualContext;
+            // Gated on isBotWinReservedRoom, NOT on cartel-dual alone: this test
+            // used to read `cfg.botWinMode !== 'cartel-dual' || !belowThreshold`
+            // and never looked at winSequenceTarget at all, so a real player could
+            // tap BINGO on a Cartel round and simply be paid.
+            const getBotWinRedirectContext = async () => {
+                if (botWinRedirectContext !== undefined)
+                    return botWinRedirectContext;
+                if (!(await this.isBotWinReservedRoom(room, cfg, manager))) {
+                    botWinRedirectContext = null;
+                    return botWinRedirectContext;
                 }
 
                 const inPlayTickets = await manager.find(BingoTicket, {
@@ -6335,7 +6370,7 @@ export class BingoService implements OnModuleInit {
                     manager,
                 );
                 const cooldownRooms = this.resolveBotWinnerCooldownRooms(cfg);
-                cartelDualContext = {
+                botWinRedirectContext = {
                     botIds: botGroups.botIds,
                     bingoEnabledBotIds: botGroups.bingoEnabledBotIds,
                     winnerEligibleTickets: inPlayTickets.filter(
@@ -6353,11 +6388,11 @@ export class BingoService implements OnModuleInit {
                             cooldownRooms,
                         ),
                 };
-                return cartelDualContext;
+                return botWinRedirectContext;
             };
 
-            // Fully independent counterpart to getCartelDualContext above, built the
-            // same way but keyed off ranked-bot instead of cartel-dual  never shares
+            // Fully independent counterpart to getBotWinRedirectContext above, built
+            // the same way but keyed off ranked-bot  never shares
             // state or triggers with it, since botWinMode is a single field and the
             // two modes are mutually exclusive.
             let rankedBotContext:
@@ -6425,7 +6460,7 @@ export class BingoService implements OnModuleInit {
 
             let awardedAny = false;
             let callerWonAny = false;
-            let heldByCartelDual = false;
+            let heldForBotWin = false;
             for (const place of this.openPrefilledPlaces(room, cfg)) {
                 const pattern = await this.resolvePrefilledPlacePattern(
                     cfg,
@@ -6435,30 +6470,34 @@ export class BingoService implements OnModuleInit {
                 );
                 if (!completesPattern(pattern)) continue;
                 let awardee = ticket;
-                const cartelContext = await getCartelDualContext();
-                if (cartelContext && !cartelContext.botIds.has(ticket.userId)) {
+                const redirectContext = await getBotWinRedirectContext();
+                if (
+                    redirectContext &&
+                    !redirectContext.botIds.has(ticket.userId)
+                ) {
                     const botAwardee = this.pickBotRedirectWinner(
-                        cartelContext.winnerEligibleTickets,
-                        cartelContext.bingoEnabledBotIds,
+                        redirectContext.winnerEligibleTickets,
+                        redirectContext.bingoEnabledBotIds,
                         pattern as BingoPattern,
                         room.drawnNumbers,
                         room.numberRange ?? 75,
                         {
-                            awardedBotUserIds: cartelContext.awardedBotUserIds,
+                            awardedBotUserIds:
+                                redirectContext.awardedBotUserIds,
                             recentBotWinnerUserIds:
-                                cartelContext.recentBotWinnerUserIds,
+                                redirectContext.recentBotWinnerUserIds,
                         },
                     );
                     if (!botAwardee) {
-                        heldByCartelDual = true;
+                        heldForBotWin = true;
                         this.logger.warn(
-                            `Cartel Dual ignored manual real-user claim in room ${room.id} place ${place}: no bot cartela at all in the room to redirect to`,
+                            `${this.botWinReservationLabel(room)} ignored manual real-user claim in room ${room.id} place ${place}: no bot cartela at all in the room to redirect to`,
                         );
                         continue;
                     }
                     awardee = botAwardee;
                     this.logger.log(
-                        `Bot win-steer (cartel-dual manual claim): room ${room.id} place ${place} redirected from real user ${ticket.userId} to bot ${botAwardee.userId}`,
+                        `Bot win-steer (${this.botWinReservationLabel(room)} manual claim): room ${room.id} place ${place} redirected from real user ${ticket.userId} to bot ${botAwardee.userId}`,
                     );
                 }
 
@@ -6519,8 +6558,8 @@ export class BingoService implements OnModuleInit {
                 awardedAny = awardedAny || wasAwarded;
                 callerWonAny =
                     callerWonAny || (wasAwarded && awardee.id === ticket.id);
-                if (wasAwarded && cartelContext?.botIds.has(awardee.userId)) {
-                    cartelContext.awardedBotUserIds.add(awardee.userId);
+                if (wasAwarded && redirectContext?.botIds.has(awardee.userId)) {
+                    redirectContext.awardedBotUserIds.add(awardee.userId);
                 }
                 if (wasAwarded && rankedContext?.botIds.has(awardee.userId)) {
                     rankedContext.awardedBotUserIds.add(awardee.userId);
@@ -6534,7 +6573,11 @@ export class BingoService implements OnModuleInit {
                 return finish(callerWonAny ? 'won' : 'ignored');
             }
 
-            if (heldByCartelDual) {
+            // Silently IGNORED, never 'disqualified': the caller's card really did
+            // complete, so penalising the tap would tell them something is off. They
+            // simply see no win - and with the draw steering in front of this, a real
+            // card should not have completed on a reserved round in the first place.
+            if (heldForBotWin) {
                 await manager.save(ticket);
                 return finish('ignored');
             }
@@ -7993,6 +8036,41 @@ export class BingoService implements OnModuleInit {
      * until a bot is found  never held for the sake of avoiding a repeat.
      */
     /**
+     * The single definition of "this round's places are reserved for bots":
+     * a Win Sequence room pinned to a 'bot' ("Cartel") slot, or Cartel Dual while
+     * the room is below its real-player threshold.
+     *
+     * Every path that has to honour that reservation asks THIS - the draw steering
+     * (resolveBotWinDrawPool), the race settlement, the leaderboard settlement and
+     * the manual "Bingo" claim. It exists because they used to each answer the
+     * question themselves and quietly disagreed: the leaderboard path had no
+     * bot-win logic at all, and the manual claim tested only cartel-dual and never
+     * looked at winSequenceTarget, so a Cartel round settled through either of
+     * those simply paid the real player.
+     *
+     * A 'user' slot is an outright veto - bots stand down for that round, so there
+     * is nothing to reserve and nothing to redirect to.
+     */
+    private async isBotWinReservedRoom(
+        room: BingoRoom,
+        cfg: BingoConfig,
+        manager: EntityManager,
+    ): Promise<boolean> {
+        if (room.winSequenceTarget === 'user') return false;
+        if (room.winSequenceTarget === 'bot') return true;
+        if (cfg.botWinMode !== 'cartel-dual') return false;
+        const participation = this.resolveBingoBotParticipation(cfg);
+        if (!participation.belowEnabled) return false;
+        const realPlayers = await this.countRealPlayersInRoom(room.id, manager);
+        return realPlayers < participation.belowThreshold;
+    }
+
+    /** Which reservation is in force, for logs that have to say why. */
+    private botWinReservationLabel(room: BingoRoom): string {
+        return room.winSequenceTarget === 'bot' ? 'Win Sequence' : 'Cartel Dual';
+    }
+
+    /**
      * Draw-order steering for bot-win rooms: Win Sequence rooms pinned to a 'bot'
      * ("Cartel") slot, and Cartel Dual while the room is below the real-player
      * threshold - the same two activations the settlement redirect uses.
@@ -8031,7 +8109,13 @@ export class BingoService implements OnModuleInit {
         manager: EntityManager;
     }): Promise<{
         pool: number[];
-        steer: 'none' | 'protected' | 'bot-tie' | 'exhausted';
+        steer:
+            | 'none'
+            | 'protected'
+            | 'bot-closes'
+            | 'bot-advance'
+            | 'bot-tie'
+            | 'exhausted';
         withheld: number;
     }> {
         const { room, cfg, remainingNumbers, manager } = input;
@@ -8044,22 +8128,8 @@ export class BingoService implements OnModuleInit {
         if (room.winMode !== 'prefilled') return unsteered;
         // Nothing to choose between, and never leave the pool empty.
         if (remainingNumbers.length <= 1) return unsteered;
-
-        // Resolved exactly the way evaluateAndSettleDerash resolves them, so
-        // steering can never be on for a round the redirect is off for (or the
-        // reverse). A 'user' slot stands the bots down entirely.
-        if (room.winSequenceTarget === 'user') return unsteered;
-        let botWinActive = room.winSequenceTarget === 'bot';
-        if (!botWinActive && cfg.botWinMode === 'cartel-dual') {
-            const participation = this.resolveBingoBotParticipation(cfg);
-            if (!participation.belowEnabled) return unsteered;
-            const realPlayers = await this.countRealPlayersInRoom(
-                room.id,
-                manager,
-            );
-            botWinActive = realPlayers < participation.belowThreshold;
-        }
-        if (!botWinActive) return unsteered;
+        if (!(await this.isBotWinReservedRoom(room, cfg, manager)))
+            return unsteered;
 
         const openPlaces = this.openPrefilledPlaces(room, cfg);
         if (openPlaces.length === 0) return unsteered;
@@ -8138,23 +8208,10 @@ export class BingoService implements OnModuleInit {
         }
         if (completesForReal.size === 0) return unsteered;
 
-        const safe = remainingNumbers.filter(
-            (candidate) => !completesForReal.has(candidate),
-        );
-        if (safe.length > 0) {
-            return {
-                pool: safe,
-                steer: 'protected',
-                withheld: completesForReal.size,
-            };
-        }
-
-        // Every ball left finishes a real cartela. Prefer one that finishes a bot's
-        // card too, so the bot is inside the tie set the settlement redirect resolves.
         const botTickets = inPlayTickets.filter((ticket) =>
             botIds.has(ticket.userId),
         );
-        const botTie = remainingNumbers.filter((candidate) => {
+        const completesForBot = (candidate: number) => {
             const withCandidate = [...room.drawnNumbers, candidate];
             return botTickets.some((ticket) =>
                 patterns.some((pattern) =>
@@ -8165,7 +8222,64 @@ export class BingoService implements OnModuleInit {
                     ),
                 ),
             );
-        });
+        };
+
+        const safe = remainingNumbers.filter(
+            (candidate) => !completesForReal.has(candidate),
+        );
+        if (safe.length > 0) {
+            // Reaching here means a real cartela is now ONE ball from completing an
+            // open place, so the round is living on the safe balls alone. Drawing
+            // purely at random from here brings the next real card to the same edge,
+            // and the one after that, until no safe ball is left - which is the
+            // corner where the old confiscation becomes visible again. So the place
+            // needs closing out before that happens.
+            //
+            // Note when this preference switches on: only once a real card is
+            // ALREADY one ball away, which is to say only once the round has run its
+            // natural length. It can never produce the six-call round an "always
+            // help the bot" rule would, and through the whole early and middle game
+            // it does nothing at all - the draw above is untouched.
+            const closesForBot = safe.filter(completesForBot);
+            if (closesForBot.length > 0) {
+                return {
+                    pool: closesForBot,
+                    steer: 'bot-closes',
+                    withheld: completesForReal.size,
+                };
+            }
+            // No bot is one ball away either. Lean toward balls actually PRINTED on
+            // a bot cartela so the bots keep closing the gap. Deliberately a weak
+            // nudge: these rooms are bot-heavy by definition, so bots hold most of
+            // the cards and therefore most of the numbers, and a draw restricted to
+            // "numbers some bot holds" still looks like an ordinary draw.
+            const onBotCards = new Set(
+                botTickets.flatMap((ticket) =>
+                    ticket.grid
+                        .flat()
+                        .filter((value): value is number => value !== null),
+                ),
+            );
+            const advancesBot = safe.filter((candidate) =>
+                onBotCards.has(candidate),
+            );
+            if (advancesBot.length > 0) {
+                return {
+                    pool: advancesBot,
+                    steer: 'bot-advance',
+                    withheld: completesForReal.size,
+                };
+            }
+            return {
+                pool: safe,
+                steer: 'protected',
+                withheld: completesForReal.size,
+            };
+        }
+
+        // Every ball left finishes a real cartela. Prefer one that finishes a bot's
+        // card too, so the bot is inside the tie set the settlement redirect resolves.
+        const botTie = remainingNumbers.filter(completesForBot);
         if (botTie.length > 0) {
             return {
                 pool: botTie,

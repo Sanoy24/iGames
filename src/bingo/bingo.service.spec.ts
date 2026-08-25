@@ -5988,7 +5988,9 @@ describe('BingoService.resolveBotWinDrawPool  bot-win draw-order steering', () =
             room: { winSequenceTarget: 'bot' },
             tickets: [
                 { id: 't-real', userId: 'player-1', grid: [[1, 2, 7]] },
-                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3, 4]] },
+                // Bot card shares none of the remaining balls, so neither of the
+                // bot-preference tiers can engage and the plain withholding shows.
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 20, 21]] },
             ],
             botIds: ['bot-1'],
         });
@@ -6009,7 +6011,7 @@ describe('BingoService.resolveBotWinDrawPool  bot-win draw-order steering', () =
             room: { winSequenceTarget: null },
             tickets: [
                 { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
-                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 30]] },
             ],
             botIds: ['bot-1'],
             realPlayers: 2,
@@ -6022,6 +6024,66 @@ describe('BingoService.resolveBotWinDrawPool  bot-win draw-order steering', () =
 
         expect(result.pool).toEqual([3, 4, 6, 7]);
         expect(result.steer).toBe('protected');
+    });
+
+    it('closes the place out with a bot once a real cartela is one ball away', async () => {
+        // Player needs 5; bot needs 3. Calling 3 ends the place with the bot and
+        // ends the danger, and it is a safe ball, so the player never completes.
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'off',
+        });
+
+        expect(result.pool).toEqual([3]);
+        expect(result.steer).toBe('bot-closes');
+    });
+
+    it('leans toward balls the bots actually hold when no bot can close yet', async () => {
+        // Player is one away, but no bot is - so nudge toward numbers printed on bot
+        // cartelas rather than burning safe balls on numbers that help nobody.
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3, 4]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'off',
+        });
+
+        expect(result.pool).toEqual([3, 4]);
+        expect(result.steer).toBe('bot-advance');
+    });
+
+    it('does not touch the draw at all until a real cartela is actually one ball away', async () => {
+        // Nobody is close: no withholding, no bot preference, plain uniform draw.
+        // This is the whole early and middle game.
+        const { service, room, manager } = harness({
+            room: { winSequenceTarget: 'bot' },
+            tickets: [
+                { id: 't-real', userId: 'player-1', grid: [[1, 2, 5, 6]] },
+                { id: 't-bot', userId: 'bot-1', grid: [[1, 2, 3, 4]] },
+            ],
+            botIds: ['bot-1'],
+        });
+
+        const result = await call(service, room, manager, {
+            botWinMode: 'off',
+        });
+
+        expect(result.pool).toEqual([3, 4, 5, 6, 7]);
+        expect(result.steer).toBe('none');
     });
 
     it('leaves the draw alone once Cartel Dual is above its real-player threshold', async () => {
@@ -6261,5 +6323,206 @@ describe('BingoService.drawNextNumber  drawing from the steered pool', () => {
         expect(
             (rngInput.metadata.remainingNumbers as number[]).length,
         ).toBe(73);
+    });
+});
+
+// The one place every path asks "are this round's places reserved for bots?".
+// It exists because the paths used to answer it themselves and disagreed.
+describe('BingoService.isBotWinReservedRoom  one activation for every path', () => {
+    const ask = (
+        room: Partial<BingoRoom>,
+        cfg: Record<string, unknown>,
+        realPlayers = 1,
+    ) => {
+        const { service } = makeService({ rooms: [] });
+        jest.spyOn(service as any, 'countRealPlayersInRoom').mockResolvedValue(
+            realPlayers,
+        );
+        jest.spyOn(
+            service as any,
+            'resolveBingoBotParticipation',
+        ).mockReturnValue({
+            belowEnabled: true,
+            belowThreshold: 10,
+            aboveEnabled: false,
+            aboveThreshold: 50,
+            shouldParticipate: () => true,
+        });
+        return (service as any).isBotWinReservedRoom(
+            makeRoom(room),
+            cfg,
+            {},
+        ) as Promise<boolean>;
+    };
+
+    it('reserves a Win Sequence bot slot whatever botWinMode says', async () => {
+        // This is the case the manual-claim gate used to miss entirely: it tested
+        // only cartel-dual, so a Cartel round in any other mode paid the claimer.
+        for (const botWinMode of ['off', 'statistical', 'guaranteed', 'hybrid']) {
+            await expect(
+                ask({ winSequenceTarget: 'bot' }, { botWinMode }),
+            ).resolves.toBe(true);
+        }
+    });
+
+    it('lets a Win Sequence user slot veto cartel-dual outright', async () => {
+        await expect(
+            ask({ winSequenceTarget: 'user' }, { botWinMode: 'cartel-dual' }),
+        ).resolves.toBe(false);
+    });
+
+    it('reserves cartel-dual only while below the real-player threshold', async () => {
+        await expect(
+            ask({ winSequenceTarget: null }, { botWinMode: 'cartel-dual' }, 2),
+        ).resolves.toBe(true);
+        await expect(
+            ask({ winSequenceTarget: null }, { botWinMode: 'cartel-dual' }, 12),
+        ).resolves.toBe(false);
+    });
+
+    it('reserves nothing in the ordinary modes', async () => {
+        for (const botWinMode of ['off', 'statistical', 'ranked-bot']) {
+            await expect(
+                ask({ winSequenceTarget: null }, { botWinMode }),
+            ).resolves.toBe(false);
+        }
+    });
+});
+
+// settleDerashLeaderboard had NO bot-win logic at all: it ranked the queue and
+// paid straight down it, so a reserved round paid the real player outright the
+// moment rankingMode was 'leaderboard'.
+describe('BingoService.settleDerashLeaderboard  honouring a bot reservation', () => {
+    const card = (rows: number[][]): (number | null)[][] => {
+        const g: (number | null)[][] = rows.map((r) => [...r]);
+        g[2][2] = null; // FREE centre
+        return g;
+    };
+    // Row 0 completes an "any line" as soon as those five numbers are called.
+    const cardWithTopRow = (block: number) =>
+        card([
+            [block + 1, block + 2, block + 3, block + 4, block + 5],
+            [block + 6, block + 7, block + 8, block + 9, block + 10],
+            [block + 11, block + 12, block + 12, block + 13, block + 14],
+            [block + 15, block + 16, block + 17, block + 18, block + 19],
+            [block + 20, block + 21, block + 22, block + 23, block + 24],
+        ]);
+
+    function setup(roomOverrides: Partial<BingoRoom>) {
+        const { service } = makeService({ rooms: [] });
+        const realTicket = {
+            id: 't-real',
+            userId: 'player-1',
+            grid: cardWithTopRow(0),
+            markedNumbers: [],
+            wonTiers: [],
+        };
+        const botTicket = {
+            id: 't-bot',
+            userId: 'bot-1',
+            grid: cardWithTopRow(100),
+            markedNumbers: [],
+            wonTiers: [],
+        };
+        const room = makeRoom({
+            winMode: 'prefilled',
+            status: 'running',
+            rankingMode: 'leaderboard',
+            // The real card's line lands at draw 5, the bot's at draw 10, so the
+            // real player ranks FIRST - precisely the case that used to pay out.
+            drawnNumbers: [1, 2, 3, 4, 5, 101, 102, 103, 104, 105],
+            ...roomOverrides,
+        });
+        const manager = {
+            find: jest.fn().mockResolvedValue([realTicket, botTicket]),
+            save: jest.fn().mockImplementation(async (v) => v),
+        };
+        jest.spyOn(service as any, 'countSoldTickets').mockResolvedValue(2);
+        jest.spyOn(service as any, 'openPrefilledPlaces').mockReturnValue([
+            '1st',
+        ]);
+        jest.spyOn(
+            service as any,
+            'resolvePrefilledPlacePattern',
+        ).mockResolvedValue({ id: 'any-line', patternType: 'any_line' });
+        jest.spyOn(
+            service as any,
+            'getBotUserGroupsForTickets',
+        ).mockResolvedValue({
+            botIds: new Set(['bot-1']),
+            bingoEnabledBotIds: new Set(['bot-1']),
+            nonBingoBotIds: new Set(),
+        });
+        jest.spyOn(
+            service as any,
+            'awardedBotUserIdsForTickets',
+        ).mockReturnValue(new Set());
+        jest.spyOn(
+            service as any,
+            'getPreviousBingoBotWinnerUserIds',
+        ).mockResolvedValue(new Set());
+        jest.spyOn(service as any, 'reconcileDerashPool').mockResolvedValue(
+            undefined,
+        );
+        const awardSpy = jest
+            .spyOn(service as any, 'awardDerashPlace')
+            .mockImplementation(async (input: any) => input.winners);
+        return { service, room, manager, awardSpy, realTicket, botTicket };
+    }
+
+    it('redirects the top-ranked real player to a bot on a Win Sequence bot slot', async () => {
+        const { service, room, manager, awardSpy, botTicket } = setup({
+            winSequenceTarget: 'bot',
+        });
+        jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(
+            botTicket,
+        );
+
+        await (service as any).settleDerashLeaderboard(
+            room,
+            { botWinMode: 'off' },
+            manager,
+        );
+
+        expect(awardSpy).toHaveBeenCalledTimes(1);
+        const input = awardSpy.mock.calls[0][0] as {
+            winners: { userId: string }[];
+        };
+        expect(input.winners.map((w) => w.userId)).toEqual(['bot-1']);
+    });
+
+    it('holds the place open rather than paying the real player when no bot can take it', async () => {
+        const { service, room, manager, awardSpy } = setup({
+            winSequenceTarget: 'bot',
+        });
+        jest.spyOn(service as any, 'pickBotRedirectWinner').mockReturnValue(
+            null,
+        );
+
+        await (service as any).settleDerashLeaderboard(
+            room,
+            { botWinMode: 'off' },
+            manager,
+        );
+
+        expect(awardSpy).not.toHaveBeenCalled();
+    });
+
+    it('still pays the real player normally when nothing is reserved', async () => {
+        const { service, room, manager, awardSpy } = setup({
+            winSequenceTarget: null,
+        });
+
+        await (service as any).settleDerashLeaderboard(
+            room,
+            { botWinMode: 'off' },
+            manager,
+        );
+
+        expect(awardSpy).toHaveBeenCalledTimes(1);
+        const input = awardSpy.mock.calls[0][0] as {
+            winners: { userId: string }[];
+        };
+        expect(input.winners.map((w) => w.userId)).toEqual(['player-1']);
     });
 });

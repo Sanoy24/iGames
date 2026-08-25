@@ -646,9 +646,12 @@ function CurrentBallDisplay({
             : '';
 
     if (status === 'completed') {
-        // While the paced reveal is still catching the card up to the round's
-        // actual final state, say so explicitly instead of declaring "complete"
-        // over a board that's visibly still filling in.
+        // `status` here is the PRESENTED status (see presentedStatus in
+        // BingoRoomView), so reaching this branch already means the reveal has
+        // called every ball - this can no longer replace the "now calling" tile
+        // with a trophy while the deciding ball is still queued up behind it.
+        // The catch-up wording below still applies to the far-behind branch,
+        // where the card is visibly filling in faster than it was called.
         const replaying = catchingUp && catchupKind === 'completed';
         return (
             <div className='flex flex-col items-center gap-1.5 py-2'>
@@ -3329,8 +3332,27 @@ export function Bingo({ onBack }: BingoProps) {
     // second independent timer. Always-mounted while true  never itself a source
     // of a gap  so the player never sees a fully-marked card with nothing
     // acknowledging the round is being resolved.
+    // True once the paced reveal has narrated every ball the server has given us.
+    // Until then the round is, as far as the player can see, still being called.
+    const revealFinished = revealedCount >= drawnNumbers.length;
+
+    // The status the ROUND PRESENTS AS, which is not the same thing as the status
+    // the server has already reached. The server flips a room to 'completed' on the
+    // draw that decides it, but the reveal is deliberately paced and is typically a
+    // ball or two behind. Handing the raw status straight to CurrentBallDisplay
+    // swapped the whole "now calling" tile for a "round finished" trophy while the
+    // deciding ball had not been called yet - so the ball that actually won the
+    // round was never seen being called at all; it only slid past in the small
+    // recent-calls strip, under a banner announcing the round was already over.
+    // Hold the round at 'running' until the narration catches up.
+    const presentedStatus =
+        room?.status === 'completed' && !revealFinished
+            ? 'running'
+            : (room?.status ?? 'open');
+
     const resultsRevealing =
         room?.status === 'completed' &&
+        revealFinished &&
         (livePlaceQueue.length > 0 || !!liveBonusWin);
 
     // When a place is won, the server already knows the winner.
@@ -3833,7 +3855,7 @@ export function Bingo({ onBack }: BingoProps) {
                             {
                                 key: 'called',
                                 label: t('bingo.statCalled'),
-                                value: `${drawnNumbers.length}/${ballCount}`,
+                                value: `${revealedNumbers.length}/${ballCount}`,
                                 color: 'text-red-400',
                             },
                         ].map((stat) => (
@@ -3963,16 +3985,20 @@ export function Bingo({ onBack }: BingoProps) {
                                         </span>
                                         <span
                                             className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded flex-shrink-0 ${
-                                                room.status === 'open'
+                                                presentedStatus === 'open'
                                                     ? 'bg-emerald-500/10 text-emerald-400'
-                                                    : room.status === 'running'
+                                                    : presentedStatus ===
+                                                        'running'
                                                       ? 'bg-red-500/10 text-red-400'
                                                       : 'bg-slate-700/50 text-slate-400'
                                             }`}
                                         >
-                                            {room.status === 'open'
+                                            {/* presentedStatus, not room.status: the pill must not
+                                          announce COMPLETED over a board that is still calling
+                                          the balls which completed it. */}
+                                            {presentedStatus === 'open'
                                                 ? t('bingo.buyOpen')
-                                                : room.status}
+                                                : presentedStatus}
                                         </span>
                                         {isPrefilledMode ? (
                                             <span className='text-[7px] font-black bg-amber-500/10 text-amber-400 px-1 py-0.5 rounded flex-shrink-0'>
@@ -3999,7 +4025,7 @@ export function Bingo({ onBack }: BingoProps) {
                                     <CurrentBallDisplay
                                         drawnNumbers={revealedNumbers}
                                         isPatternMode={boardBingoStyle}
-                                        status={room.status}
+                                        status={presentedStatus}
                                         count={revealedNumbers.length}
                                         max={ballCount}
                                         catchingUp={isCatchingUp}

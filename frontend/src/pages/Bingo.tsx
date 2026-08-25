@@ -3376,6 +3376,31 @@ export function Bingo({ onBack }: BingoProps) {
     // Until then the round is, as far as the player can see, still being called.
     const revealFinished = revealedCount >= drawnNumbers.length;
 
+    // revealFinished flips the INSTANT the last ball's own reveal step fires -
+    // same render, zero pause - which used to hand the last ball none of the
+    // NOW_CALLING_HOLD_MS beat every other ball's transition gets elsewhere
+    // (see popupArmed above). The board would swap straight from "now calling"
+    // to the completed/trophy state on the very same tick the final number
+    // appeared, so the ball that actually decided the round was never visible
+    // as "now calling" for any length of time at all - it was called and
+    // immediately buried under "round finished" copy. This holds the CURRENT
+    // ball on screen for that same beat before anything downstream (the status
+    // pill, the trophy, "revealing results…") is allowed to react to the round
+    // being over.
+    const [lastBallSettled, setLastBallSettled] = useState(false);
+    useEffect(() => {
+        if (!revealFinished) {
+            setLastBallSettled(false);
+            return;
+        }
+        const id = setTimeout(
+            () => setLastBallSettled(true),
+            NOW_CALLING_HOLD_MS,
+        );
+        return () => clearTimeout(id);
+    }, [revealFinished, room?.id]);
+    const revealSettled = revealFinished && lastBallSettled;
+
     // The status the ROUND PRESENTS AS, which is not the same thing as the status
     // the server has already reached. The server flips a room to 'completed' on the
     // draw that decides it, but the reveal is deliberately paced and is typically a
@@ -3384,15 +3409,16 @@ export function Bingo({ onBack }: BingoProps) {
     // deciding ball had not been called yet - so the ball that actually won the
     // round was never seen being called at all; it only slid past in the small
     // recent-calls strip, under a banner announcing the round was already over.
-    // Hold the round at 'running' until the narration catches up.
+    // Hold the round at 'running' until the narration catches up AND the settle
+    // beat above has elapsed.
     const presentedStatus =
-        room?.status === 'completed' && !revealFinished
+        room?.status === 'completed' && !revealSettled
             ? 'running'
             : (room?.status ?? 'open');
 
     const resultsRevealing =
         room?.status === 'completed' &&
-        revealFinished &&
+        revealSettled &&
         (livePlaceQueue.length > 0 || !!liveBonusWin);
 
     // When a place is won, the server already knows the winner.

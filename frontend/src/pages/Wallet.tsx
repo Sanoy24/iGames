@@ -1103,8 +1103,16 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                         type='button'
                                                         className='btn btn-ghost btn-sm'
                                                         onClick={() => {
+                                                            // Telebirr's own app expects the local
+                                                            // 9XXXXXXXX form, not the +251 we display
+                                                            // for readability - copying the +251
+                                                            // version made every paste-in fail until
+                                                            // the player manually stripped it first.
                                                             void navigator.clipboard?.writeText(
-                                                                activeAgent.phoneNumber!,
+                                                                activeAgent.phoneNumber!.replace(
+                                                                    /^\+?251/,
+                                                                    '',
+                                                                ),
                                                             );
                                                             addToast(
                                                                 'success',

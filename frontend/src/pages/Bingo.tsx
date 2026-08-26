@@ -839,20 +839,18 @@ const PatternTicketCard = memo(
                             ? `Cartela #${ticket.cartelaNumber}`
                             : `#${ticket.id.slice(-5)}`}
                     </span>
-                    <span
-                        className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
-                        style={
-                            won
-                                ? undefined
-                                : {
-                                      fontSize: 7,
-                                      padding: '1px 5px',
-                                      letterSpacing: 0,
-                                  }
-                        }
-                    >
-                        {won ? t('bingo.cardWon') : ticket.settlementStatus}
-                    </span>
+                    {!won && (
+                        <span
+                            className='badge badge-violet'
+                            style={{
+                                fontSize: 7,
+                                padding: '1px 5px',
+                                letterSpacing: 0,
+                            }}
+                        >
+                            {ticket.settlementStatus}
+                        </span>
+                    )}
                 </div>
                 {ticket.completedPatterns?.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>
@@ -951,20 +949,18 @@ const BingoTicketCard = memo(
                     <span className='text-[10px] font-black text-slate-400'>
                         #{ticket.id.slice(-5)}
                     </span>
-                    <span
-                        className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
-                        style={
-                            won
-                                ? undefined
-                                : {
-                                      fontSize: 7,
-                                      padding: '1px 5px',
-                                      letterSpacing: 0,
-                                  }
-                        }
-                    >
-                        {won ? t('bingo.cardWon') : ticket.settlementStatus}
-                    </span>
+                    {!won && (
+                        <span
+                            className='badge badge-violet'
+                            style={{
+                                fontSize: 7,
+                                padding: '1px 5px',
+                                letterSpacing: 0,
+                            }}
+                        >
+                            {ticket.settlementStatus}
+                        </span>
+                    )}
                 </div>
                 {ticket.wonTiers.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>

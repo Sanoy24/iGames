@@ -851,9 +851,7 @@ const PatternTicketCard = memo(
                                   }
                         }
                     >
-                        {won
-                            ? `+${formatCredits(ticket.payoutMinor)} ETB`
-                            : ticket.settlementStatus}
+                        {won ? t('bingo.cardWon') : ticket.settlementStatus}
                     </span>
                 </div>
                 {ticket.completedPatterns?.length > 0 && (
@@ -965,9 +963,7 @@ const BingoTicketCard = memo(
                                   }
                         }
                     >
-                        {won
-                            ? `+${formatCredits(ticket.payoutMinor)} ETB`
-                            : ticket.settlementStatus}
+                        {won ? t('bingo.cardWon') : ticket.settlementStatus}
                     </span>
                 </div>
                 {ticket.wonTiers.length > 0 && (
@@ -3981,11 +3977,11 @@ export function Bingo({ onBack }: BingoProps) {
                         <RecentCallsStrip
                             drawnNumbers={revealedNumbers}
                             isPatternMode={boardBingoStyle}
-                            activePatternNames={
-                                isPatternMode
-                                    ? Array.from(patternPrizeMap.values())
-                                    : undefined
-                            }
+                            // Server-resolved for both 'pattern' AND 'prefilled' mode
+                            // (see BingoRoom.activePatternNames) - prefilled's per-place
+                            // pattern only lives in BingoConfig otherwise, with no other
+                            // way for the player-facing room state to know it.
+                            activePatternNames={room?.activePatternNames}
                         />
                     )}
 

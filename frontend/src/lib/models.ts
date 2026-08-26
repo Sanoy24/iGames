@@ -303,6 +303,13 @@ export type BingoRoom = {
     numberRange: number;
     gridSize: number;
     patternPrizes: BingoPatternPrize[];
+    /** Names of the pattern(s) actually in play this round - resolved and
+     * snapshotted server-side at creation (see BingoRoom.activePatternNames'
+     * doc comment on the backend). Covers both 'pattern' mode (mirrors
+     * patternPrizes' names) and 'prefilled' mode (each enabled place's
+     * pattern, since that config otherwise never leaves BingoConfig). Empty
+     * for 'line' mode. */
+    activePatternNames: string[];
     scheduledStartAt: string;
     createdAt: string;
     drawnNumbers: number[];

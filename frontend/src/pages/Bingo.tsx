@@ -3059,31 +3059,6 @@ export function Bingo({ onBack }: BingoProps) {
         return () => cancelAnimationFrame(id);
     }, [room?.id, room?.status]);
 
-    // ── Win detection ────────────────────────────────────────────────────────────
-    useEffect(() => {
-        if (room?.status !== 'completed') return;
-        if (victoryRoomRef.current === room.id) return;
-        const allTickets = [...(room.tickets ?? []), ...localTickets];
-        const winners = allTickets.filter((t) => t.payoutMinor > 0);
-        if (!winners.length) return;
-        victoryRoomRef.current = room.id;
-        soundEngine.win();
-        void fireConfetti({
-            particleCount: 200,
-            spread: 90,
-            origin: { y: 0.55 },
-            colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'],
-        });
-        // The bell notification is created + pushed by the server at settlement (so it
-        // lands even if the player left the screen)  no client-side entry here to
-        // avoid a duplicate.
-        // The win credit landed server-side  pull the fresh balance into the header.
-        walletApi
-            .getWallet()
-            .then(setWallet)
-            .catch(() => undefined);
-    }, [room?.status, room?.tickets, room?.id, localTickets, setWallet]);
-
     // ── Chat scroll ──────────────────────────────────────────────────────────────
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -3442,6 +3417,39 @@ export function Bingo({ onBack }: BingoProps) {
         room?.status === 'completed' && !revealSettled
             ? 'running'
             : (room?.status ?? 'open');
+
+    // ── Win detection ────────────────────────────────────────────────────────────
+    // Gated on presentedStatus, not room.status: the server flips a room to
+    // 'completed' the instant the deciding ball is drawn, well before the paced
+    // reveal has narrated it. Firing confetti/the win sound off the raw status
+    // let both go off while the board was still visibly mid-round - sometimes
+    // a couple of calls before the winning number itself ever appeared on
+    // screen. Wait for the same "the player has actually seen it end" signal
+    // everything else downstream of the round (trophy, results-revealing badge)
+    // already waits for.
+    useEffect(() => {
+        if (presentedStatus !== 'completed' || !room) return;
+        if (victoryRoomRef.current === room.id) return;
+        const allTickets = [...(room.tickets ?? []), ...localTickets];
+        const winners = allTickets.filter((t) => t.payoutMinor > 0);
+        if (!winners.length) return;
+        victoryRoomRef.current = room.id;
+        soundEngine.win();
+        void fireConfetti({
+            particleCount: 200,
+            spread: 90,
+            origin: { y: 0.55 },
+            colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'],
+        });
+        // The bell notification is created + pushed by the server at settlement (so it
+        // lands even if the player left the screen)  no client-side entry here to
+        // avoid a duplicate.
+        // The win credit landed server-side  pull the fresh balance into the header.
+        walletApi
+            .getWallet()
+            .then(setWallet)
+            .catch(() => undefined);
+    }, [presentedStatus, room?.id, room?.tickets, localTickets, setWallet]);
 
     const resultsRevealing =
         room?.status === 'completed' &&

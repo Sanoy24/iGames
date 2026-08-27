@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { AdminService } from './admin.service';
@@ -26,7 +26,7 @@ import { TelegramModule } from '../telegram/telegram.module';
     LocationsModule,
     GameEventsModule,
     NotificationsModule,
-    TelegramModule,
+    forwardRef(() => TelegramModule),
   ],
   controllers: [AdminController],
   providers: [AdminService],

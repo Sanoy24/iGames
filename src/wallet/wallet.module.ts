@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -22,7 +22,7 @@ import { WalletService } from './wallet.service';
     LedgerModule,
     GameEventsModule,
     NotificationsModule,
-    TelegramModule,
+    forwardRef(() => TelegramModule),
     TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal, User, AgentActionLog, SystemConfig, WithdrawalFeeRange])
   ],
   controllers: [WalletController],

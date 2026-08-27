@@ -273,6 +273,35 @@ function isPatternGrid(grid: Array<Array<number | null>>): boolean {
     return grid.length === 5 && (grid[0]?.length ?? 0) === 5;
 }
 
+// Maps a built-in pattern's name to its i18n key so it renders in the
+// player's chosen language wherever the server hands us a bare name string
+// (BingoRoom.activePatternNames, a ticket's completedPatterns lookup, a bonus
+// campaign's patternName)  none of those carry the pattern id, and the
+// backend never localizes on its own. Keyed by name rather than id because
+// that's genuinely safe here: BingoService.updatePattern explicitly blocks
+// renaming a built-in (see its own doc comment), so this list can't drift out
+// from under a live pattern. An admin-authored pattern has no entry and falls
+// back to whatever name they typed  there is no way to localize a name only
+// the admin knows.
+const BUILT_IN_PATTERN_NAME_KEYS: Record<string, string> = {
+    'Any Line': 'bingo.patternAnyLine',
+    Corners: 'bingo.patternCorners',
+    'Cross (+)': 'bingo.patternCrossPlus',
+    'X Pattern': 'bingo.patternXShape',
+    'T Shape': 'bingo.patternTShape',
+    'L Shape': 'bingo.patternLShape',
+    'Any Two Lines': 'bingo.patternAnyTwoLines',
+    'Any Three Lines': 'bingo.patternAnyThreeLines',
+    'Full House': 'bingo.patternFullHouse',
+    'Small Cross': 'bingo.patternSmallCross',
+    'Small X': 'bingo.patternSmallX',
+};
+
+function localizePatternName(name: string, t: (key: string) => string): string {
+    const key = BUILT_IN_PATTERN_NAME_KEYS[name];
+    return key ? t(key) : name;
+}
+
 // ─── Number Board ─────────────────────────────────────────────────────────────
 // Flat grid of rounded-square cells. Called numbers glow with their group color.
 // Player card numbers are shown separately in the "My Card" section below.
@@ -583,7 +612,9 @@ function RecentCallsStrip({
                     <div className='flex items-center gap-1 min-w-0'>
                         <span className='w-1 h-1 rounded-full bg-violet-400 flex-shrink-0' />
                         <span className='text-[8px] font-black uppercase tracking-wide text-white truncate'>
-                            {activePatternNames.join(' · ')}
+                            {activePatternNames
+                                .map((name) => localizePatternName(name, t))
+                                .join(' · ')}
                         </span>
                     </div>
                 )}
@@ -855,11 +886,12 @@ const PatternTicketCard = memo(
                 {ticket.completedPatterns?.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>
                         {ticket.completedPatterns
-                            .map(
-                                (pid) =>
-                                    patternPrizeMap.get(pid) ??
-                                    t('bingo.pattern'),
-                            )
+                            .map((pid) => {
+                                const name = patternPrizeMap.get(pid);
+                                return name
+                                    ? localizePatternName(name, t)
+                                    : t('bingo.pattern');
+                            })
                             .join(' · ')}
                     </p>
                 )}
@@ -1616,7 +1648,10 @@ function BingoBonusBanner({
                     </div>
                     <div className='text-[12px] font-bold text-white truncate'>
                         {t('bingo.bonusActiveDesc', {
-                            pattern: campaign.patternName,
+                            pattern: localizePatternName(
+                                campaign.patternName,
+                                t,
+                            ),
                             amount: formatCreditsFull(campaign.prizeMinor),
                         })}
                     </div>

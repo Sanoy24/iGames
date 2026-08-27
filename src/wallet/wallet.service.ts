@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ConflictException,
     Injectable,
+    Logger,
     NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -26,6 +27,7 @@ import { resolveWithdrawalFeeMinor } from './withdrawal-fee-range.util';
 import { User } from '../users/entities/user.entity';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
+import { AdminNotificationBotService } from '../telegram/admin-notification-bot.service';
 
 export type WalletSummary = {
     id: string;
@@ -85,7 +87,10 @@ export class WalletService {
         private readonly ledgerService: LedgerService,
         private readonly gameEventsGateway: GameEventsGateway,
         private readonly notificationsService: NotificationsService,
+        private readonly adminNotificationBotService: AdminNotificationBotService,
     ) {}
+
+    private readonly logger = new Logger(WalletService.name);
 
     async ensureDefaultWallet(
         userId: string,
@@ -721,7 +726,7 @@ export class WalletService {
             throw new BadRequestException('Destination account is required');
         }
 
-        return this.dataSource.transaction(async (manager) => {
+        const withdrawal = await this.dataSource.transaction(async (manager) => {
             const config = await manager.query(
                 `SELECT * FROM system_configs WHERE \`key\` = 'global' LIMIT 1`,
             );
@@ -828,6 +833,34 @@ export class WalletService {
             });
 
             return withdrawal;
+        });
+
+        // Outside the transaction, best-effort: an admin-alert failure must never
+        // affect the withdrawal that already committed.
+        void this.notifyAdminsOfWithdrawalRequested(userId, withdrawal).catch(
+            (err) =>
+                this.logger.error(
+                    `Failed to notify admins of withdrawal ${withdrawal.id}`,
+                    err instanceof Error ? err.stack : err,
+                ),
+        );
+
+        return withdrawal;
+    }
+
+    private async notifyAdminsOfWithdrawalRequested(
+        userId: string,
+        withdrawal: Withdrawal,
+    ): Promise<void> {
+        const user = await this.dataSource
+            .getRepository(User)
+            .findOneBy({ id: userId });
+        await this.adminNotificationBotService.notifyWithdrawalRequested({
+            withdrawalId: withdrawal.id,
+            displayName: user?.displayName ?? 'Unknown user',
+            phoneNumber: user?.phoneNumber,
+            amountMinor: withdrawal.amountMinor,
+            destinationAccount: withdrawal.destinationAccount,
         });
     }
 

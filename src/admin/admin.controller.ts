@@ -51,6 +51,7 @@ import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { AgentsService } from '../agents/agents.service';
+import { AdminNotificationBotService } from '../telegram/admin-notification-bot.service';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import { UpdateSettlementDto } from './dto/update-settlement.dto';
 import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
@@ -80,6 +81,7 @@ export class AdminController {
         private readonly locationsService: LocationsService,
         private readonly gameEventsGateway: GameEventsGateway,
         private readonly agentsService: AgentsService,
+        private readonly adminNotificationBotService: AdminNotificationBotService,
     ) {}
 
     @Get('stats/overview')
@@ -601,6 +603,17 @@ export class AdminController {
     }
 
     // ── Withdrawals ───────────────────────────────────────────────────
+
+    /**
+     * Sends a harmless sample message to every admin currently linked to the
+     * withdrawal-alert Telegram bot  lets the dashboard confirm the bot is
+     * wired up correctly (token set, at least one admin has /start'd it)
+     * without waiting for a real withdrawal request.
+     */
+    @Post('withdrawal-notifications/test')
+    sendTestWithdrawalNotification() {
+        return this.adminNotificationBotService.sendTestAlert();
+    }
 
     @Get('withdrawals')
     getAllWithdrawals() {

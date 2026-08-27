@@ -119,6 +119,7 @@ function makeService({
         mockLedgerService,
         mockEventsGateway,
         mockNotificationsService,
+        { notifyWithdrawalRequested: jest.fn() } as any,
     );
 
     return { service, mockManager, mockDataSource, mockLedgerService };
@@ -245,6 +246,7 @@ function makeVerifyService(input: {
         mockLedgerService,
         mockEventsGateway,
         mockNotificationsService,
+        { notifyWithdrawalRequested: jest.fn() } as any,
     );
 
     return {
@@ -778,6 +780,7 @@ function makeLeaderboardService(input: {
         {} as any,
         {} as any,
         {} as any,
+        { notifyWithdrawalRequested: jest.fn() } as any,
     );
 
     return { service, mockDataSource, qb };
@@ -898,6 +901,7 @@ function makeFloatRemainingService(input: {
         {} as any,
         {} as any,
         {} as any,
+        { notifyWithdrawalRequested: jest.fn() } as any,
     );
 
     return { service, qb, walletRepository };
@@ -1037,6 +1041,7 @@ function makeRoutingService(input: {
         {} as any, // ledgerService
         {} as any, // gameEventsGateway
         {} as any, // notificationsService
+        { notifyWithdrawalRequested: jest.fn() } as any, // adminNotificationBotService
     );
 
     return { service, qb, withdrawalRepository, systemConfigRepository };

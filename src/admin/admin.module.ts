@@ -14,6 +14,7 @@ import { UsersModule } from '../users/users.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { GameEventsModule } from '../events/game-events.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TelegramModule } from '../telegram/telegram.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     LocationsModule,
     GameEventsModule,
     NotificationsModule,
+    TelegramModule,
   ],
   controllers: [AdminController],
   providers: [AdminService],

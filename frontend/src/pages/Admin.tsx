@@ -4289,6 +4289,8 @@ function ConfigAdmin() {
                 </div>
             </div>
 
+            <WithdrawalAlertBotPanel />
+
             <WithdrawalFeeRangesAdmin />
 
             <div className='adm-panel'>
@@ -4540,6 +4542,62 @@ function ConfigAdmin() {
                     ETB
                 </p>
             )}
+        </div>
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Withdrawal Alert Bot  a standalone Telegram bot (see TELEGRAM_ADMIN_BOT_TOKEN)
+// that pings whichever admin(s) have linked it whenever a withdrawal is
+// requested. Nothing to configure here beyond confirming it's wired up: the
+// button below asks the backend to send a harmless sample message to every
+// currently-linked admin.
+// ══════════════════════════════════════════════════════════════════
+function WithdrawalAlertBotPanel() {
+    const addToast = useStore((s) => s.addToast);
+    const [sending, setSending] = useState(false);
+
+    const sendTest = async () => {
+        setSending(true);
+        try {
+            const { recipientCount } =
+                await adminApi.sendTestWithdrawalNotification();
+            if (recipientCount === 0) {
+                addToast(
+                    'error',
+                    'No admin has linked the withdrawal-alert bot yet. Open it on Telegram and send /start.',
+                );
+            } else {
+                addToast(
+                    'success',
+                    `Test alert sent to ${recipientCount} linked admin${recipientCount === 1 ? '' : 's'}.`,
+                );
+            }
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setSending(false);
+        }
+    };
+
+    return (
+        <div className='adm-panel'>
+            <div className='adm-panel-head'>Withdrawal Alert Bot</div>
+            <p className='adm-field-hint' style={{ padding: '0 16px' }}>
+                Admins who have linked the withdrawal-alert Telegram bot (send
+                it /start and share your phone) get pinged there whenever a
+                player requests a withdrawal. Use this to confirm delivery is
+                working.
+            </p>
+            <div style={{ padding: '0 16px 16px' }}>
+                <button
+                    className='adm-btn adm-btn-primary'
+                    onClick={sendTest}
+                    disabled={sending}
+                >
+                    {sending ? 'Sending…' : 'Send Test Alert'}
+                </button>
+            </div>
         </div>
     );
 }

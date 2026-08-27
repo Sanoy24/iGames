@@ -910,6 +910,11 @@ export const adminApi = {
                 agentWallet: Wallet;
             }>('/admin/wallet/transfer-to-agent', { agentId, amountMinor, idempotencyKey })
             .then((r) => r.data),
+    /** Sends a sample alert to every admin linked to the withdrawal-alert Telegram bot. */
+    sendTestWithdrawalNotification: () =>
+        api
+            .post<{ recipientCount: number }>('/admin/withdrawal-notifications/test')
+            .then((r) => r.data),
 };
 
 // ── Notifications (per-user bell) ─────────────────────────────────

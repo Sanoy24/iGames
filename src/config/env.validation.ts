@@ -24,6 +24,9 @@ type EnvConfig = {
     TELEGRAM_AGENT_BOT_WEBHOOK_URL: string;
     /** The standalone agent-frontend deployment's bare URL  its own domain, own Vite project. */
     TELEGRAM_AGENT_MINIAPP_URL: string;
+    /** Separate, standalone bot that pings admin(s) when a withdrawal is requested. */
+    TELEGRAM_ADMIN_BOT_TOKEN: string;
+    TELEGRAM_ADMIN_BOT_WEBHOOK_URL: string;
     AUTH_MODE: AuthMode;
     TELEBIRR_EXPECTED_RECEIVER_NAME: string;
     TELEBIRR_EXPECTED_RECEIVER_ACCOUNT: string;
@@ -82,6 +85,12 @@ export function validateEnv(raw: Record<string, unknown>): EnvConfig {
         TELEGRAM_AGENT_MINIAPP_URL: readString(
             raw,
             'TELEGRAM_AGENT_MINIAPP_URL',
+            '',
+        ),
+        TELEGRAM_ADMIN_BOT_TOKEN: readString(raw, 'TELEGRAM_ADMIN_BOT_TOKEN', ''),
+        TELEGRAM_ADMIN_BOT_WEBHOOK_URL: readString(
+            raw,
+            'TELEGRAM_ADMIN_BOT_WEBHOOK_URL',
             '',
         ),
         AUTH_MODE: readAuthMode(raw),

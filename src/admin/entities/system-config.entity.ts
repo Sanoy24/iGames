@@ -125,6 +125,34 @@ export class SystemConfig {
     @Column({ type: 'boolean', default: true })
     agentWithdrawalRoutingEnabled: boolean;
 
+    /**
+     * Master on/off switch for restricting WHEN withdrawals can be requested.
+     * Off (default) = withdrawals are always open, ignoring the fields below.
+     * See WalletService.requestWithdrawal / getWithdrawalFeeConfig and
+     * common/agent-duty.util's isWithinWorkingWindow, which this reuses
+     * (same Ethiopia-time day/hour window shape as an agent's working hours).
+     */
+    @Column({ type: 'boolean', default: false })
+    withdrawalScheduleEnabled: boolean;
+
+    /** Days withdrawals are open (0=Sun..6=Sat). Empty/null = every day. */
+    @Column({ type: 'json', nullable: true })
+    withdrawalScheduleDaysOfWeek?: number[] | null;
+
+    /** Ethiopia local time the daily withdrawal window opens. Null = open all day (on the allowed days). */
+    @Column({ type: 'int', nullable: true })
+    withdrawalScheduleStartHour?: number | null;
+
+    @Column({ type: 'int', nullable: true })
+    withdrawalScheduleStartMinute?: number | null;
+
+    /** Ethiopia local time the daily withdrawal window closes. Overnight windows (end < start) are supported. */
+    @Column({ type: 'int', nullable: true })
+    withdrawalScheduleEndHour?: number | null;
+
+    @Column({ type: 'int', nullable: true })
+    withdrawalScheduleEndMinute?: number | null;
+
     @CreateDateColumn({ type: 'timestamp' })
     createdAt: Date;
 

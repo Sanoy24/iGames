@@ -203,6 +203,7 @@ export const walletApi = {
                     maxAmountMinor: number | null;
                     feeMinor: number;
                 }>;
+                schedule: { open: boolean; message?: string };
             }>('/wallet/withdrawal-fee-config')
             .then((r) => r.data),
 };
@@ -649,6 +650,14 @@ export type SystemConfig = {
     recentWinsEnabled?: boolean;
     /** On: a pending withdrawal is only visible/claimable by the requesting player's own agent. Off: no agent sees or can claim any withdrawal, every request goes to admin only. */
     agentWithdrawalRoutingEnabled?: boolean;
+    /** Master on/off switch for restricting WHEN withdrawals can be requested. Off = always open. */
+    withdrawalScheduleEnabled?: boolean;
+    /** Days withdrawals are open (0=Sun..6=Sat). Empty/absent = every day. */
+    withdrawalScheduleDaysOfWeek?: number[];
+    withdrawalScheduleStartHour?: number | null;
+    withdrawalScheduleStartMinute?: number | null;
+    withdrawalScheduleEndHour?: number | null;
+    withdrawalScheduleEndMinute?: number | null;
 };
 
 /** Money-movement entryTypes the Transactions admin feed shows  mirrors

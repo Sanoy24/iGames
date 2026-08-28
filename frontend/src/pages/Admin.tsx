@@ -4064,6 +4064,12 @@ function ConfigAdmin() {
         leaderboardEnabled: false,
         recentWinsEnabled: false,
         agentWithdrawalRoutingEnabled: true,
+        withdrawalScheduleEnabled: false,
+        withdrawalScheduleDaysOfWeek: [],
+        withdrawalScheduleStartHour: null,
+        withdrawalScheduleStartMinute: null,
+        withdrawalScheduleEndHour: null,
+        withdrawalScheduleEndMinute: null,
     });
     const [perf, setPerf] = useState<AgentPerformance[]>([]);
     const [loading, setLoading] = useState(true);
@@ -4085,6 +4091,12 @@ function ConfigAdmin() {
         leaderboardEnabled: c.leaderboardEnabled ?? false,
         recentWinsEnabled: c.recentWinsEnabled ?? false,
         agentWithdrawalRoutingEnabled: c.agentWithdrawalRoutingEnabled ?? true,
+        withdrawalScheduleEnabled: c.withdrawalScheduleEnabled ?? false,
+        withdrawalScheduleDaysOfWeek: c.withdrawalScheduleDaysOfWeek ?? [],
+        withdrawalScheduleStartHour: c.withdrawalScheduleStartHour ?? null,
+        withdrawalScheduleStartMinute: c.withdrawalScheduleStartMinute ?? null,
+        withdrawalScheduleEndHour: c.withdrawalScheduleEndHour ?? null,
+        withdrawalScheduleEndMinute: c.withdrawalScheduleEndMinute ?? null,
     });
 
     useEffect(() => {
@@ -4285,6 +4297,156 @@ function ConfigAdmin() {
                         'agentWithdrawalRoutingEnabled',
                         'Route Withdrawals to Agents',
                         "ON = a withdrawal request is only visible/claimable by the requesting player's own agent (a player with no agent falls to admin). OFF = no agent sees any withdrawal request, everything goes to admin only  see each agent's \"Withdrawal Requests\" count on the Agent Performance table below.",
+                    )}
+                </div>
+                <div style={{ padding: '4px 16px 16px' }}>
+                    {toggleField(
+                        'withdrawalScheduleEnabled',
+                        'Restrict Withdrawal Hours',
+                        'OFF = withdrawals are always open. ON = a player who requests (or opens the withdraw form) outside the window below is told when it reopens (e.g. "opens tomorrow at 09:00").',
+                    )}
+                    {form.withdrawalScheduleEnabled && (
+                        <div
+                            className='adm-field-grid'
+                            style={{ marginTop: 12 }}
+                        >
+                            <label className='adm-field'>
+                                <span>
+                                    Open Window{' '}
+                                    <em className='adm-field-hint'>
+                                        {' '}
+                                        Ethiopia time (UTC+3) · blank = open
+                                        all day
+                                    </em>
+                                </span>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        gap: 8,
+                                        alignItems: 'center',
+                                    }}
+                                >
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={23}
+                                        placeholder='Start Hr'
+                                        value={
+                                            form.withdrawalScheduleStartHour ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleStartHour:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                    <span>:</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={59}
+                                        placeholder='Min'
+                                        value={
+                                            form.withdrawalScheduleStartMinute ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleStartMinute:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                    <span>to</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={23}
+                                        placeholder='End Hr'
+                                        value={
+                                            form.withdrawalScheduleEndHour ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleEndHour:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                    <span>:</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={59}
+                                        placeholder='Min'
+                                        value={
+                                            form.withdrawalScheduleEndMinute ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleEndMinute:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                </div>
+                            </label>
+                            <label
+                                className='adm-field'
+                                style={{ gridColumn: 'span 2' }}
+                            >
+                                <span>
+                                    Open Days{' '}
+                                    <em className='adm-field-hint'>
+                                        {' '}
+                                        none selected = every day
+                                    </em>
+                                </span>
+                                <DaysPicker
+                                    value={
+                                        form.withdrawalScheduleDaysOfWeek ?? []
+                                    }
+                                    onChange={(v) =>
+                                        setForm((f) => ({
+                                            ...f,
+                                            withdrawalScheduleDaysOfWeek: v,
+                                        }))
+                                    }
+                                />
+                            </label>
+                        </div>
                     )}
                 </div>
             </div>

@@ -113,3 +113,76 @@ export function isAgentEffectivelyOnDuty(
     if (mode === 'off') return false;
     return isWithinWorkingWindow(agent, at);
 }
+
+/**
+ * When a window (same shape as WorkingWindowAgent, e.g. the withdrawal
+ * schedule in SystemConfig) next opens, given it is CLOSED at `at`. Returns
+ * null if it's already open, or if the window has no restriction at all
+ * (which would also mean it's always open). Searches forward minute-by-minute
+ * up to 7 days rather than re-deriving day/overnight-window math, so it stays
+ * correct for every isWithinWorkingWindow case (including overnight windows)
+ * by construction  cheap enough since this only runs when showing a
+ * "closed, opens at..." message, never on a hot path.
+ */
+export function getNextWindowOpen(
+    window: WorkingWindowAgent,
+    at: Date = new Date(),
+): Date | null {
+    if (isWithinWorkingWindow(window, at)) return null;
+    const STEP_MS = 60_000;
+    const MAX_STEPS = 7 * 24 * 60; // 7 days
+    for (let i = 1; i <= MAX_STEPS; i++) {
+        const candidate = new Date(at.getTime() + i * STEP_MS);
+        if (isWithinWorkingWindow(window, candidate)) return candidate;
+    }
+    return null;
+}
+
+const WEEKDAY_NAMES = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+];
+
+/** Ethiopia-local calendar date only (no time-of-day), as a UTC-epoch-ms day marker for diffing. */
+function ethiopiaCalendarDay(at: Date): number {
+    const shifted = new Date(at.getTime() + ETHIOPIA_UTC_OFFSET_MIN * 60_000);
+    return Date.UTC(
+        shifted.getUTCFullYear(),
+        shifted.getUTCMonth(),
+        shifted.getUTCDate(),
+    );
+}
+
+/**
+ * Human message for "closed now, opens at `nextOpen`" (e.g. the result of
+ * getNextWindowOpen above)  "in N minute(s)/hour(s)" for later today,
+ * "tomorrow at HH:MM" for the next calendar day, or "on <Weekday> at HH:MM"
+ * further out. Calendar-day boundaries use Ethiopia local time, matching
+ * ethiopiaWallClock/isWithinWorkingWindow above.
+ */
+export function describeNextOpen(nextOpen: Date, now: Date = new Date()): string {
+    const dayDiff = Math.round(
+        (ethiopiaCalendarDay(nextOpen) - ethiopiaCalendarDay(now)) / 86_400_000,
+    );
+    const shifted = new Date(nextOpen.getTime() + ETHIOPIA_UTC_OFFSET_MIN * 60_000);
+    const timeStr = `${String(shifted.getUTCHours()).padStart(2, '0')}:${String(shifted.getUTCMinutes()).padStart(2, '0')}`;
+
+    if (dayDiff <= 0) {
+        const minutesUntil = Math.max(
+            1,
+            Math.round((nextOpen.getTime() - now.getTime()) / 60_000),
+        );
+        if (minutesUntil < 60) {
+            return `Withdrawals open in ${minutesUntil} minute${minutesUntil === 1 ? '' : 's'}.`;
+        }
+        const hours = Math.round(minutesUntil / 60);
+        return `Withdrawals open in about ${hours} hour${hours === 1 ? '' : 's'}.`;
+    }
+    if (dayDiff === 1) return `Withdrawals open tomorrow at ${timeStr}.`;
+    return `Withdrawals open on ${WEEKDAY_NAMES[shifted.getUTCDay()]} at ${timeStr}.`;
+}

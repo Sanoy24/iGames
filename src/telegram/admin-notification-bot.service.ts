@@ -266,7 +266,7 @@ export class AdminNotificationBotService
         const text =
             `💸 New withdrawal request\n` +
             `User: ${details.displayName}${details.phoneNumber ? ` (${details.phoneNumber})` : ''}\n` +
-            `Amount: ${(details.amountMinor / 100).toFixed(2)} ETB\n` +
+            `Amount: ${details.amountMinor.toLocaleString('en-US')} ETB\n` +
             `To: ${details.destinationAccount}\n` +
             `Ref: ${details.withdrawalId}`;
 

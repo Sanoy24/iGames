@@ -223,6 +223,7 @@ describe('AgentsService  deposit-agent listing excludes agents with no float rem
                     id: 'agent-funded',
                     displayName: 'Funded Agent',
                     phoneNumber: '0912345678',
+                    mpesaPhoneNumber: '0912345678',
                 },
             ]);
             expect(walletService.getAgentFloatRemaining).toHaveBeenCalledWith([

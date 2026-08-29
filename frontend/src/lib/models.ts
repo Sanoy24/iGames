@@ -4,6 +4,8 @@ export type User = {
     roles: string[];
     email?: string;
     phoneNumber?: string;
+    /** AGENT only: M-Pesa deposit destination, if different from phoneNumber. */
+    mpesaPhoneNumber?: string | null;
     status?: string;
     /** Server-computed  true when the user has a live socket connection right now. */
     online?: boolean;

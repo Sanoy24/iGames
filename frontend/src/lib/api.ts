@@ -248,6 +248,8 @@ export type ActiveAgent = {
     id?: string;
     displayName: string;
     phoneNumber: string | null;
+    /** M-Pesa deposit destination  already falls back to phoneNumber server-side when unset. */
+    mpesaPhoneNumber?: string | null;
 };
 
 export const paymentsApi = {

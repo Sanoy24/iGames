@@ -1057,6 +1057,17 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                         Finding the agent on duty…
                                     </div>
                                 ) : activeAgent ? (
+                                    (() => {
+                                        // M-Pesa and Telebirr are different networks, so an agent may
+                                        // register a different number with each  never fall back to
+                                        // the Telebirr phoneNumber while on the M-Pesa tab (that was the
+                                        // bug: both tabs showed the same number regardless of provider).
+                                        const depositPhoneNumber =
+                                            provider === 'mpesa'
+                                                ? (activeAgent.mpesaPhoneNumber ??
+                                                  activeAgent.phoneNumber)
+                                                : activeAgent.phoneNumber;
+                                        return (
                                     <div
                                         style={{
                                             background: 'rgba(250,204,21,0.07)',
@@ -1106,7 +1117,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                 size={14}
                                                 style={{ color: 'var(--gold)' }}
                                             />
-                                            {activeAgent.phoneNumber ? (
+                                            {depositPhoneNumber ? (
                                                 <>
                                                     <strong
                                                         style={{
@@ -1115,9 +1126,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                                 '0.02em',
                                                         }}
                                                     >
-                                                        {
-                                                            activeAgent.phoneNumber
-                                                        }
+                                                        {depositPhoneNumber}
                                                     </strong>
                                                     <button
                                                         type='button'
@@ -1129,7 +1138,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                             // version made every paste-in fail until
                                                             // the player manually stripped it first.
                                                             void navigator.clipboard?.writeText(
-                                                                activeAgent.phoneNumber!.replace(
+                                                                depositPhoneNumber!.replace(
                                                                     /^\+?251/,
                                                                     '',
                                                                 ),
@@ -1161,6 +1170,8 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                             )}
                                         </div>
                                     </div>
+                                        );
+                                    })()
                                 ) : (
                                     <div
                                         style={{

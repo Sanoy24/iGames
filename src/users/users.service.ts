@@ -497,6 +497,7 @@ export class UsersService {
 
     async createAgentUser(input: {
         phoneNumber: string;
+        mpesaPhoneNumber?: string;
         displayName: string;
         password: string;
         workStartHour?: number;
@@ -511,6 +512,14 @@ export class UsersService {
             throw new BadRequestException(
                 'Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)',
             );
+        const normalizedMpesaPhone = input.mpesaPhoneNumber
+            ? normalizeEthiopianPhone(input.mpesaPhoneNumber)
+            : null;
+        if (input.mpesaPhoneNumber && !normalizedMpesaPhone) {
+            throw new BadRequestException(
+                'Enter a valid Ethiopian phone number for M-Pesa (e.g. 09XXXXXXXX)',
+            );
+        }
 
         return this.dataSource.transaction(async (manager) => {
             const authRepo = manager.getRepository(AuthIdentity);
@@ -544,6 +553,7 @@ export class UsersService {
             const user = userRepo.create({
                 displayName: input.displayName.trim(),
                 phoneNumber: normalizedPhone,
+                mpesaPhoneNumber: normalizedMpesaPhone,
                 roles: ['agent'],
                 status: 'active',
                 referralCode: await this.allocateReferralCode(manager),
@@ -665,6 +675,7 @@ export class UsersService {
         update: {
             displayName?: string;
             phoneNumber?: string;
+            mpesaPhoneNumber?: string | null;
             password?: string;
             workStartHour?: number;
             workStartMinute?: number;
@@ -701,6 +712,20 @@ export class UsersService {
                     profileSnapshot: { phoneNumber: normalizedPhone },
                 },
             );
+        }
+        if (update.mpesaPhoneNumber !== undefined) {
+            if (update.mpesaPhoneNumber === null) {
+                user.mpesaPhoneNumber = null;
+            } else {
+                const normalizedMpesaPhone = normalizeEthiopianPhone(
+                    update.mpesaPhoneNumber,
+                );
+                if (!normalizedMpesaPhone)
+                    throw new BadRequestException(
+                        'Enter a valid Ethiopian phone number for M-Pesa (e.g. 09XXXXXXXX)',
+                    );
+                user.mpesaPhoneNumber = normalizedMpesaPhone;
+            }
         }
         if (update.password !== undefined && update.password.trim() !== '') {
             const passwordHash = await argon2.hash(update.password, {

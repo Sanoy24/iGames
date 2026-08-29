@@ -2752,6 +2752,7 @@ function AgentsAdmin() {
     const [form, setForm] = useState({
         displayName: '',
         phoneNumber: '',
+        mpesaPhoneNumber: '',
         password: '',
         workStartHour: 8,
         workStartMinute: 0,
@@ -2766,6 +2767,7 @@ function AgentsAdmin() {
     const [editForm, setEditForm] = useState({
         displayName: '',
         phoneNumber: '',
+        mpesaPhoneNumber: '',
         password: '',
         workStartHour: 8,
         workStartMinute: 0,
@@ -2847,6 +2849,7 @@ function AgentsAdmin() {
             await adminAgentsApi.createAgent({
                 displayName: form.displayName,
                 phoneNumber: form.phoneNumber,
+                mpesaPhoneNumber: form.mpesaPhoneNumber.trim() || undefined,
                 password: form.password,
                 workStartHour: form.workStartHour,
                 workStartMinute: form.workStartMinute,
@@ -2862,6 +2865,7 @@ function AgentsAdmin() {
             setForm({
                 displayName: '',
                 phoneNumber: '',
+                mpesaPhoneNumber: '',
                 password: '',
                 workStartHour: 8,
                 workStartMinute: 0,
@@ -2885,6 +2889,7 @@ function AgentsAdmin() {
         setEditForm({
             displayName: agent.displayName,
             phoneNumber: agent.phoneNumber || '',
+            mpesaPhoneNumber: agent.mpesaPhoneNumber || '',
             password: '',
             workStartHour:
                 agent.workStartHour !== undefined ? agent.workStartHour : 8,
@@ -2929,6 +2934,10 @@ function AgentsAdmin() {
             const payload: any = {
                 displayName: editForm.displayName,
                 phoneNumber: editForm.phoneNumber,
+                mpesaPhoneNumber:
+                    editForm.mpesaPhoneNumber.trim() === ''
+                        ? null
+                        : editForm.mpesaPhoneNumber.trim(),
                 workStartHour: editForm.workStartHour,
                 workStartMinute: editForm.workStartMinute,
                 workEndHour: editForm.workEndHour,
@@ -3050,6 +3059,28 @@ function AgentsAdmin() {
                                     setForm((f) => ({
                                         ...f,
                                         phoneNumber: e.target.value,
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label className='adm-field'>
+                            <span>
+                                M-Pesa Phone{' '}
+                                <em className='adm-field-hint'>
+                                    {' '}
+                                    optional  blank = same as phone number
+                                    above
+                                </em>
+                            </span>
+                            <input
+                                className='input'
+                                type='tel'
+                                placeholder='07XXXXXXXX'
+                                value={form.mpesaPhoneNumber}
+                                onChange={(e) =>
+                                    setForm((f) => ({
+                                        ...f,
+                                        mpesaPhoneNumber: e.target.value,
                                     }))
                                 }
                             />
@@ -3270,6 +3301,28 @@ function AgentsAdmin() {
                                     setEditForm((f) => ({
                                         ...f,
                                         phoneNumber: e.target.value,
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label className='adm-field'>
+                            <span>
+                                M-Pesa Phone{' '}
+                                <em className='adm-field-hint'>
+                                    {' '}
+                                    optional  blank = same as phone number
+                                    above
+                                </em>
+                            </span>
+                            <input
+                                className='input'
+                                type='tel'
+                                placeholder='07XXXXXXXX'
+                                value={editForm.mpesaPhoneNumber}
+                                onChange={(e) =>
+                                    setEditForm((f) => ({
+                                        ...f,
+                                        mpesaPhoneNumber: e.target.value,
                                     }))
                                 }
                             />

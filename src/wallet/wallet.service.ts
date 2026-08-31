@@ -98,8 +98,6 @@ export class WalletService {
         private readonly adminNotificationBotService: AdminNotificationBotService,
     ) {}
 
-    private readonly logger = new Logger(WalletService.name);
-
     async ensureDefaultWallet(
         userId: string,
         manager?: EntityManager,

@@ -4,11 +4,20 @@ export type User = {
     roles: string[];
     email?: string;
     phoneNumber?: string;
+    /** AGENT only: M-Pesa deposit destination, if different from phoneNumber. */
+    mpesaPhoneNumber?: string | null;
     status?: string;
     /** Server-computed  true when the user has a live socket connection right now. */
     online?: boolean;
     /** Server-computed  true when this account is a house bot (productMetadata.botPolicy set). */
     isBot?: boolean;
+    /** AGENT only, server-computed (AdminService.listAgents)  live wallet balance. */
+    walletAvailableMinor?: number;
+    /** AGENT only, server-computed  admin-allocated deposit float not yet spent
+     * funding player deposits. Can be 0 even with a positive wallet balance (see
+     * WalletService.getAgentFloatRemaining)  that gap is what silently drops an
+     * agent out of the deposit pool with no visible config change. */
+    depositFloatRemainingMinor?: number;
     lastLoginAt?: string;
     workStartHour?: number;
     workStartMinute?: number;
@@ -296,6 +305,13 @@ export type BingoRoom = {
     numberRange: number;
     gridSize: number;
     patternPrizes: BingoPatternPrize[];
+    /** Names of the pattern(s) actually in play this round - resolved and
+     * snapshotted server-side at creation (see BingoRoom.activePatternNames'
+     * doc comment on the backend). Covers both 'pattern' mode (mirrors
+     * patternPrizes' names) and 'prefilled' mode (each enabled place's
+     * pattern, since that config otherwise never leaves BingoConfig). Empty
+     * for 'line' mode. */
+    activePatternNames: string[];
     scheduledStartAt: string;
     createdAt: string;
     drawnNumbers: number[];

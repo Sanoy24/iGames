@@ -54,6 +54,17 @@ export class User {
     @Column({ type: 'varchar', length: 50, nullable: true })
     phoneNumber?: string;
 
+    /**
+     * AGENT-only: the phone/account players should send M-PESA deposits to,
+     * when it differs from this agent's main `phoneNumber` (used for login,
+     * Telegram linking, and as the Telebirr deposit destination). Null = no
+     * separate M-Pesa account  callers fall back to `phoneNumber` (see
+     * AgentsService.getActiveAgentsDepositInfo), so an agent who hasn't set
+     * one keeps working exactly as before this field existed.
+     */
+    @Column({ type: 'varchar', length: 50, nullable: true })
+    mpesaPhoneNumber?: string | null;
+
     @Column({ type: 'timestamp', nullable: true })
     lastLoginAt?: Date;
 

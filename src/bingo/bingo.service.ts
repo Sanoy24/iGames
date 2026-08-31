@@ -233,6 +233,7 @@ export type BingoRoomResponse = {
         name: string;
         prizeMinor: number;
     }>;
+    activePatternNames: string[];
     scheduledStartAt: Date | null;
     createdAt: Date;
     drawnNumbers: number[];
@@ -2576,6 +2577,15 @@ export class BingoService implements OnModuleInit {
         const winSequenceTarget =
             winMode === 'prefilled' ? this.resolveWinSequenceTarget(cfg) : null;
         if (winSequenceTarget) await this.advanceWinSequencePosition(cfg);
+        // Auto-rotating rooms have no per-room pattern config (that's only a
+        // custom-slot/admin-DTO thing) - 'pattern' mode here would always have
+        // patternPrizes: [], so there's nothing to name. 'prefilled' mode DOES
+        // have a global per-place config (BingoConfig.prefilledXPatternId),
+        // which is what this resolves and snapshots.
+        const activePatternNames = await this.resolveActivePatternNames(
+            winMode,
+            cfg,
+        );
 
         const room = this.bingoRoomRepository.create({
             name,
@@ -2592,6 +2602,7 @@ export class BingoService implements OnModuleInit {
             numberRange,
             gridSize,
             patternPrizes: [],
+            activePatternNames,
             houseEdgePct: cfg.houseEdgePct ?? 20,
             rankingMode: cfg.prefilledRankingMode ?? 'race',
             winSequenceTarget,
@@ -3241,6 +3252,10 @@ export class BingoService implements OnModuleInit {
         const winSequenceTarget =
             winMode === 'prefilled' ? this.resolveWinSequenceTarget(cfg) : null;
         if (winSequenceTarget) await this.advanceWinSequencePosition(cfg);
+        const activePatternNames =
+            winMode === 'pattern'
+                ? (dto.patternPrizes ?? []).map((pp) => pp.name)
+                : await this.resolveActivePatternNames(winMode, cfg);
 
         const room = this.bingoRoomRepository.create({
             name: dto.name,
@@ -3252,6 +3267,7 @@ export class BingoService implements OnModuleInit {
             numberRange,
             gridSize,
             patternPrizes: dto.patternPrizes ?? [],
+            activePatternNames,
             houseEdgePct: cfg.houseEdgePct ?? 20,
             rankingMode: cfg.prefilledRankingMode ?? 'race',
             winSequenceTarget,
@@ -3788,6 +3804,10 @@ export class BingoService implements OnModuleInit {
         const winSequenceTarget =
             winMode === 'prefilled' ? this.resolveWinSequenceTarget(cfg) : null;
         if (winSequenceTarget) await this.advanceWinSequencePosition(cfg);
+        const activePatternNames =
+            winMode === 'pattern'
+                ? (slot.patternPrizes ?? []).map((pp) => pp.name)
+                : await this.resolveActivePatternNames(winMode, cfg);
 
         const room = this.bingoRoomRepository.create({
             name: slot.name,
@@ -3799,6 +3819,7 @@ export class BingoService implements OnModuleInit {
             numberRange,
             gridSize,
             patternPrizes: slot.patternPrizes ?? [],
+            activePatternNames,
             houseEdgePct: cfg.houseEdgePct ?? 20,
             rankingMode: cfg.prefilledRankingMode ?? 'race',
             winSequenceTarget,
@@ -6694,6 +6715,77 @@ export class BingoService implements OnModuleInit {
     }
 
     /**
+     * Resolve the pattern NAME(S) actually in play for a room about to be
+     * created, so BingoRoom.activePatternNames can be snapshotted (see that
+     * field's doc comment). Only 'prefilled' mode needs resolving here -
+     * 'pattern' mode's names come straight off the patternPrizes the caller
+     * already has, and 'line' mode has none.
+     *
+     * Mirrors resolvePrefilledPlacePattern's per-place → shared default →
+     * "Any Line" fallback chain, but reads directly off the repository (no
+     * transactional manager, no operational-alert logging) since this only
+     * needs a display name, not a settlement-grade pattern lookup, and runs
+     * before the room row exists.
+     */
+    private async resolveActivePatternNames(
+        winMode: BingoWinMode,
+        cfg: BingoConfig,
+    ): Promise<string[]> {
+        if (winMode !== 'prefilled') return [];
+
+        const enabledPlaceIds: Array<string | null | undefined> = [
+            cfg.prefilledFirstPatternId, // 1st place is always enabled
+            cfg.prefilledSecondPlaceEnabled
+                ? cfg.prefilledSecondPatternId
+                : undefined,
+            cfg.prefilledThirdPlaceEnabled
+                ? cfg.prefilledThirdPatternId
+                : undefined,
+            cfg.prefilledFourthPlaceEnabled
+                ? cfg.prefilledFourthPatternId
+                : undefined,
+            cfg.prefilledFifthPlaceEnabled
+                ? cfg.prefilledFifthPatternId
+                : undefined,
+        ].filter((id) => id !== undefined);
+
+        const resolvedIds = enabledPlaceIds.map(
+            (id) => id ?? cfg.prefilledWinPatternId ?? null,
+        );
+        const uniqueIds = [
+            ...new Set(
+                resolvedIds.filter((id): id is string => id !== null),
+            ),
+        ];
+
+        const nameById = new Map<string, string>();
+        if (uniqueIds.length > 0) {
+            const found = await this.bingoPatternRepository.find({
+                where: { id: In(uniqueIds) },
+            });
+            for (const pattern of found) nameById.set(pattern.id, pattern.name);
+        }
+
+        const needsAnyLineFallback = resolvedIds.some(
+            (id) => !id || !nameById.has(id),
+        );
+        const anyLineName = needsAnyLineFallback
+            ? ((
+                  await this.bingoPatternRepository.findOne({
+                      where: { name: 'Any Line' },
+                  })
+              )?.name ?? null)
+            : null;
+
+        const names = resolvedIds
+            .map((id) =>
+                id && nameById.has(id) ? nameById.get(id)! : anyLineName,
+            )
+            .filter((name): name is string => !!name);
+        return [...new Set(names)];
+    }
+
+    /**
      * Prize a derash/prefilled place pays out, in minor units.
      *
      * The whole house-adjusted pool is distributed across the ENABLED places by
@@ -8385,6 +8477,7 @@ export class BingoService implements OnModuleInit {
             numberRange: room.numberRange ?? 90,
             gridSize: room.gridSize ?? 75,
             patternPrizes: room.patternPrizes ?? [],
+            activePatternNames: room.activePatternNames ?? [],
             scheduledStartAt: room.scheduledStartAt,
             createdAt: room.createdAt,
             drawnNumbers: room.drawnNumbers,

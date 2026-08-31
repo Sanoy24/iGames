@@ -20,6 +20,7 @@ import {
     Megaphone,
     Play,
     Plus,
+    Receipt,
     RefreshCw,
     Send,
     Settings,
@@ -100,6 +101,7 @@ import { GamesAdmin } from '../components/GamesAdmin';
 import { PoolAdmin } from '../components/PoolAdmin';
 import { WerkAdmin, WerkBotManager } from '../components/WerkAdmin';
 import { GameTransactionsAdmin } from '../components/GameTransactionsAdmin';
+import { TransactionsAdmin } from '../components/TransactionsAdmin';
 import { DepositsAdmin } from '../components/DepositsAdmin';
 import { SettlementsAdmin } from '../components/SettlementsAdmin';
 import { Donut, Bar, MiniTrendChart } from '../components/AdminCharts';
@@ -119,6 +121,7 @@ type AdminTab =
     | 'broadcast'
     | 'withdrawals'
     | 'deposits'
+    | 'transactions'
     | 'settlements'
     | 'support'
     | 'games'
@@ -154,6 +157,11 @@ const TABS: Array<{ id: AdminTab; label: string; icon: React.ReactNode }> = [
     { id: 'broadcast', label: 'Broadcast', icon: <Megaphone size={15} /> },
     { id: 'withdrawals', label: 'Withdrawals', icon: <Wallet size={15} /> },
     { id: 'deposits', label: 'Deposits', icon: <Banknote size={15} /> },
+    {
+        id: 'transactions',
+        label: 'Transactions',
+        icon: <Receipt size={15} />,
+    },
     { id: 'settlements', label: 'Settlements', icon: <Banknote size={15} /> },
     { id: 'support', label: 'Support', icon: <LifeBuoy size={15} /> },
     { id: 'games', label: 'Games', icon: <Dices size={15} /> },
@@ -2744,6 +2752,7 @@ function AgentsAdmin() {
     const [form, setForm] = useState({
         displayName: '',
         phoneNumber: '',
+        mpesaPhoneNumber: '',
         password: '',
         workStartHour: 8,
         workStartMinute: 0,
@@ -2758,6 +2767,7 @@ function AgentsAdmin() {
     const [editForm, setEditForm] = useState({
         displayName: '',
         phoneNumber: '',
+        mpesaPhoneNumber: '',
         password: '',
         workStartHour: 8,
         workStartMinute: 0,
@@ -2839,6 +2849,7 @@ function AgentsAdmin() {
             await adminAgentsApi.createAgent({
                 displayName: form.displayName,
                 phoneNumber: form.phoneNumber,
+                mpesaPhoneNumber: form.mpesaPhoneNumber.trim() || undefined,
                 password: form.password,
                 workStartHour: form.workStartHour,
                 workStartMinute: form.workStartMinute,
@@ -2854,6 +2865,7 @@ function AgentsAdmin() {
             setForm({
                 displayName: '',
                 phoneNumber: '',
+                mpesaPhoneNumber: '',
                 password: '',
                 workStartHour: 8,
                 workStartMinute: 0,
@@ -2877,6 +2889,7 @@ function AgentsAdmin() {
         setEditForm({
             displayName: agent.displayName,
             phoneNumber: agent.phoneNumber || '',
+            mpesaPhoneNumber: agent.mpesaPhoneNumber || '',
             password: '',
             workStartHour:
                 agent.workStartHour !== undefined ? agent.workStartHour : 8,
@@ -2921,6 +2934,10 @@ function AgentsAdmin() {
             const payload: any = {
                 displayName: editForm.displayName,
                 phoneNumber: editForm.phoneNumber,
+                mpesaPhoneNumber:
+                    editForm.mpesaPhoneNumber.trim() === ''
+                        ? null
+                        : editForm.mpesaPhoneNumber.trim(),
                 workStartHour: editForm.workStartHour,
                 workStartMinute: editForm.workStartMinute,
                 workEndHour: editForm.workEndHour,
@@ -3042,6 +3059,28 @@ function AgentsAdmin() {
                                     setForm((f) => ({
                                         ...f,
                                         phoneNumber: e.target.value,
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label className='adm-field'>
+                            <span>
+                                M-Pesa Phone{' '}
+                                <em className='adm-field-hint'>
+                                    {' '}
+                                    optional  blank = same as phone number
+                                    above
+                                </em>
+                            </span>
+                            <input
+                                className='input'
+                                type='tel'
+                                placeholder='07XXXXXXXX'
+                                value={form.mpesaPhoneNumber}
+                                onChange={(e) =>
+                                    setForm((f) => ({
+                                        ...f,
+                                        mpesaPhoneNumber: e.target.value,
                                     }))
                                 }
                             />
@@ -3262,6 +3301,28 @@ function AgentsAdmin() {
                                     setEditForm((f) => ({
                                         ...f,
                                         phoneNumber: e.target.value,
+                                    }))
+                                }
+                            />
+                        </label>
+                        <label className='adm-field'>
+                            <span>
+                                M-Pesa Phone{' '}
+                                <em className='adm-field-hint'>
+                                    {' '}
+                                    optional  blank = same as phone number
+                                    above
+                                </em>
+                            </span>
+                            <input
+                                className='input'
+                                type='tel'
+                                placeholder='07XXXXXXXX'
+                                value={editForm.mpesaPhoneNumber}
+                                onChange={(e) =>
+                                    setEditForm((f) => ({
+                                        ...f,
+                                        mpesaPhoneNumber: e.target.value,
                                     }))
                                 }
                             />
@@ -3799,6 +3860,7 @@ function AgentsAdmin() {
                             <tr>
                                 <th>Name</th>
                                 <th>Phone</th>
+                                <th>Balance</th>
                                 <th>Referral Code</th>
                                 <th>Working Hours</th>
                                 <th>On Duty</th>
@@ -3854,6 +3916,32 @@ function AgentsAdmin() {
                                         </td>
                                         <td className='adm-td-muted'>
                                             {a.phoneNumber ?? ''}
+                                        </td>
+                                        <td>
+                                            <div style={{ fontSize: 12 }}>
+                                                {formatCreditsFull(
+                                                    a.walletAvailableMinor ??
+                                                        0,
+                                                )}{' '}
+                                                ETB
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: 10,
+                                                    color: (a.depositFloatRemainingMinor ??
+                                                        0) <= 0
+                                                        ? 'var(--danger)'
+                                                        : 'var(--text-muted)',
+                                                }}
+                                                title='Admin-allocated deposit float not yet used funding player deposits  0 means this agent will not show as an available deposit destination, even with deposit permission and duty status both on.'
+                                            >
+                                                float:{' '}
+                                                {formatCreditsFull(
+                                                    a.depositFloatRemainingMinor ??
+                                                        0,
+                                                )}{' '}
+                                                ETB
+                                            </div>
                                         </td>
                                         <td className='adm-td-muted'>
                                             {a.referralCode ?? '—'}
@@ -4031,6 +4119,12 @@ function ConfigAdmin() {
         leaderboardEnabled: false,
         recentWinsEnabled: false,
         agentWithdrawalRoutingEnabled: true,
+        withdrawalScheduleEnabled: false,
+        withdrawalScheduleDaysOfWeek: [],
+        withdrawalScheduleStartHour: null,
+        withdrawalScheduleStartMinute: null,
+        withdrawalScheduleEndHour: null,
+        withdrawalScheduleEndMinute: null,
     });
     const [perf, setPerf] = useState<AgentPerformance[]>([]);
     const [loading, setLoading] = useState(true);
@@ -4054,6 +4148,12 @@ function ConfigAdmin() {
         leaderboardEnabled: c.leaderboardEnabled ?? false,
         recentWinsEnabled: c.recentWinsEnabled ?? false,
         agentWithdrawalRoutingEnabled: c.agentWithdrawalRoutingEnabled ?? true,
+        withdrawalScheduleEnabled: c.withdrawalScheduleEnabled ?? false,
+        withdrawalScheduleDaysOfWeek: c.withdrawalScheduleDaysOfWeek ?? [],
+        withdrawalScheduleStartHour: c.withdrawalScheduleStartHour ?? null,
+        withdrawalScheduleStartMinute: c.withdrawalScheduleStartMinute ?? null,
+        withdrawalScheduleEndHour: c.withdrawalScheduleEndHour ?? null,
+        withdrawalScheduleEndMinute: c.withdrawalScheduleEndMinute ?? null,
     });
 
     useEffect(() => {
@@ -4266,7 +4366,159 @@ function ConfigAdmin() {
                         "ON = a withdrawal request is only visible/claimable by the requesting player's own agent (a player with no agent falls to admin). OFF = no agent sees any withdrawal request, everything goes to admin only  see each agent's \"Withdrawal Requests\" count on the Agent Performance table below.",
                     )}
                 </div>
+                <div style={{ padding: '4px 16px 16px' }}>
+                    {toggleField(
+                        'withdrawalScheduleEnabled',
+                        'Restrict Withdrawal Hours',
+                        'OFF = withdrawals are always open. ON = a player who requests (or opens the withdraw form) outside the window below is told when it reopens (e.g. "opens tomorrow at 09:00").',
+                    )}
+                    {form.withdrawalScheduleEnabled && (
+                        <div
+                            className='adm-field-grid'
+                            style={{ marginTop: 12 }}
+                        >
+                            <label className='adm-field'>
+                                <span>
+                                    Open Window{' '}
+                                    <em className='adm-field-hint'>
+                                        {' '}
+                                        Ethiopia time (UTC+3) · blank = open
+                                        all day
+                                    </em>
+                                </span>
+                                <div
+                                    style={{
+                                        display: 'flex',
+                                        gap: 8,
+                                        alignItems: 'center',
+                                    }}
+                                >
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={23}
+                                        placeholder='Start Hr'
+                                        value={
+                                            form.withdrawalScheduleStartHour ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleStartHour:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                    <span>:</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={59}
+                                        placeholder='Min'
+                                        value={
+                                            form.withdrawalScheduleStartMinute ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleStartMinute:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                    <span>to</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={23}
+                                        placeholder='End Hr'
+                                        value={
+                                            form.withdrawalScheduleEndHour ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleEndHour:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                    <span>:</span>
+                                    <input
+                                        className='input'
+                                        type='number'
+                                        min={0}
+                                        max={59}
+                                        placeholder='Min'
+                                        value={
+                                            form.withdrawalScheduleEndMinute ??
+                                            ''
+                                        }
+                                        style={{ width: 80 }}
+                                        onChange={(e) =>
+                                            setForm((f) => ({
+                                                ...f,
+                                                withdrawalScheduleEndMinute:
+                                                    e.target.value === ''
+                                                        ? null
+                                                        : Number(
+                                                              e.target.value,
+                                                          ),
+                                            }))
+                                        }
+                                    />
+                                </div>
+                            </label>
+                            <label
+                                className='adm-field'
+                                style={{ gridColumn: 'span 2' }}
+                            >
+                                <span>
+                                    Open Days{' '}
+                                    <em className='adm-field-hint'>
+                                        {' '}
+                                        none selected = every day
+                                    </em>
+                                </span>
+                                <DaysPicker
+                                    value={
+                                        form.withdrawalScheduleDaysOfWeek ?? []
+                                    }
+                                    onChange={(v) =>
+                                        setForm((f) => ({
+                                            ...f,
+                                            withdrawalScheduleDaysOfWeek: v,
+                                        }))
+                                    }
+                                />
+                            </label>
+                        </div>
+                    )}
+                </div>
             </div>
+
+            <WithdrawalAlertBotPanel />
 
             <WithdrawalFeeRangesAdmin />
 
@@ -4519,6 +4771,62 @@ function ConfigAdmin() {
                     ETB
                 </p>
             )}
+        </div>
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Withdrawal Alert Bot  a standalone Telegram bot (see TELEGRAM_ADMIN_BOT_TOKEN)
+// that pings whichever admin(s) have linked it whenever a withdrawal is
+// requested. Nothing to configure here beyond confirming it's wired up: the
+// button below asks the backend to send a harmless sample message to every
+// currently-linked admin.
+// ══════════════════════════════════════════════════════════════════
+function WithdrawalAlertBotPanel() {
+    const addToast = useStore((s) => s.addToast);
+    const [sending, setSending] = useState(false);
+
+    const sendTest = async () => {
+        setSending(true);
+        try {
+            const { recipientCount } =
+                await adminApi.sendTestWithdrawalNotification();
+            if (recipientCount === 0) {
+                addToast(
+                    'error',
+                    'No admin has linked the withdrawal-alert bot yet. Open it on Telegram and send /start.',
+                );
+            } else {
+                addToast(
+                    'success',
+                    `Test alert sent to ${recipientCount} linked admin${recipientCount === 1 ? '' : 's'}.`,
+                );
+            }
+        } catch (e) {
+            addToast('error', getErrorMessage(e));
+        } finally {
+            setSending(false);
+        }
+    };
+
+    return (
+        <div className='adm-panel'>
+            <div className='adm-panel-head'>Withdrawal Alert Bot</div>
+            <p className='adm-field-hint' style={{ padding: '0 16px' }}>
+                Admins who have linked the withdrawal-alert Telegram bot (send
+                it /start and share your phone) get pinged there whenever a
+                player requests a withdrawal. Use this to confirm delivery is
+                working.
+            </p>
+            <div style={{ padding: '0 16px 16px' }}>
+                <button
+                    className='adm-btn adm-btn-primary'
+                    onClick={sendTest}
+                    disabled={sending}
+                >
+                    {sending ? 'Sending…' : 'Send Test Alert'}
+                </button>
+            </div>
         </div>
     );
 }
@@ -17726,6 +18034,7 @@ export function Admin() {
                     {tab === 'broadcast' && <BroadcastAdmin />}
                     {tab === 'withdrawals' && <WithdrawalsAdmin />}
                     {tab === 'deposits' && <DepositsAdmin />}
+                    {tab === 'transactions' && <TransactionsAdmin />}
                     {tab === 'settlements' && <SettlementsAdmin />}
                     {tab === 'support' && <SupportConsole />}
                     {tab === 'games' && <GamesAdmin />}

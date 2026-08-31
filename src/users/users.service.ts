@@ -497,6 +497,7 @@ export class UsersService {
 
     async createAgentUser(input: {
         phoneNumber: string;
+        mpesaPhoneNumber?: string;
         displayName: string;
         password: string;
         workStartHour?: number;
@@ -511,6 +512,14 @@ export class UsersService {
             throw new BadRequestException(
                 'Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX)',
             );
+        const normalizedMpesaPhone = input.mpesaPhoneNumber
+            ? normalizeEthiopianPhone(input.mpesaPhoneNumber)
+            : null;
+        if (input.mpesaPhoneNumber && !normalizedMpesaPhone) {
+            throw new BadRequestException(
+                'Enter a valid Ethiopian phone number for M-Pesa (e.g. 09XXXXXXXX)',
+            );
+        }
 
         return this.dataSource.transaction(async (manager) => {
             const authRepo = manager.getRepository(AuthIdentity);
@@ -544,6 +553,7 @@ export class UsersService {
             const user = userRepo.create({
                 displayName: input.displayName.trim(),
                 phoneNumber: normalizedPhone,
+                mpesaPhoneNumber: normalizedMpesaPhone,
                 roles: ['agent'],
                 status: 'active',
                 referralCode: await this.allocateReferralCode(manager),
@@ -665,6 +675,7 @@ export class UsersService {
         update: {
             displayName?: string;
             phoneNumber?: string;
+            mpesaPhoneNumber?: string | null;
             password?: string;
             workStartHour?: number;
             workStartMinute?: number;
@@ -701,6 +712,20 @@ export class UsersService {
                     profileSnapshot: { phoneNumber: normalizedPhone },
                 },
             );
+        }
+        if (update.mpesaPhoneNumber !== undefined) {
+            if (update.mpesaPhoneNumber === null) {
+                user.mpesaPhoneNumber = null;
+            } else {
+                const normalizedMpesaPhone = normalizeEthiopianPhone(
+                    update.mpesaPhoneNumber,
+                );
+                if (!normalizedMpesaPhone)
+                    throw new BadRequestException(
+                        'Enter a valid Ethiopian phone number for M-Pesa (e.g. 09XXXXXXXX)',
+                    );
+                user.mpesaPhoneNumber = normalizedMpesaPhone;
+            }
         }
         if (update.password !== undefined && update.password.trim() !== '') {
             const passwordHash = await argon2.hash(update.password, {
@@ -1459,6 +1484,84 @@ export class UsersService {
             phoneNumber: match.user.phoneNumber,
             displayName: match.user.displayName,
         };
+    }
+
+    /**
+     * Look up an EXISTING admin by phone number  used by the admin
+     * notification bot's contact-share handler to match a Telegram user to an
+     * already-created admin account (see ensureAdminAccount /
+     * ADMIN_BOOTSTRAP_ACCOUNTS  there is no self-service admin creation
+     * endpoint). Mirrors findAgentByPhone; never creates a user.
+     */
+    async findAdminByPhone(phoneNumber: string): Promise<User | null> {
+        const normalizedPhone = normalizeEthiopianPhone(phoneNumber);
+        if (!normalizedPhone) return null;
+
+        const identities =
+            await this.findLivePasswordIdentities(normalizedPhone);
+        const match = identities.find(
+            ({ user }) =>
+                Array.isArray(user.roles) &&
+                user.roles.includes('admin' as any),
+        );
+        return match?.user ?? null;
+    }
+
+    /**
+     * Every admin currently linked to the admin notification bot (role-scoped
+     * telegram identity, `${telegramUserId}#admin`  see
+     * linkTelegramIdentityToUser), excluding chats Telegram has told us are
+     * blocked and accounts that are no longer an active admin. This IS the
+     * withdrawal-alert recipient list: which admin(s) get pinged (one, two, a
+     * handful) is controlled entirely by which admin account(s) have linked
+     * this bot, not by a separate config table.
+     */
+    async findAdminTelegramRecipients(): Promise<
+        Array<{ identityId: string; telegramChatId: string; displayName: string }>
+    > {
+        const identities = await this.authIdentityRepository.find({
+            where: {
+                provider: 'telegram',
+                providerUserId: Like('%#admin'),
+                telegramBlockedAt: IsNull(),
+            },
+        });
+        if (identities.length === 0) return [];
+
+        const users = await this.userRepository.findBy({
+            id: In(identities.map((i) => i.userId)),
+        });
+        const userById = new Map(users.map((u) => [u.id, u]));
+
+        const recipients: Array<{
+            identityId: string;
+            telegramChatId: string;
+            displayName: string;
+        }> = [];
+        for (const identity of identities) {
+            const user = userById.get(identity.userId);
+            if (
+                !user ||
+                user.status !== 'active' ||
+                !Array.isArray(user.roles) ||
+                !user.roles.includes('admin' as any)
+            ) {
+                continue;
+            }
+            recipients.push({
+                identityId: identity.id,
+                telegramChatId: identity.providerUserId.split('#')[0],
+                displayName: user.displayName,
+            });
+        }
+        return recipients;
+    }
+
+    /** Record that this admin notification identity's chat is unreachable (Telegram 403). */
+    async markAdminTelegramBlocked(identityId: string): Promise<void> {
+        await this.authIdentityRepository.update(identityId, {
+            telegramBlockedAt: new Date(),
+        });
     }
 
     async changePassword(

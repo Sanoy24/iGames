@@ -203,6 +203,7 @@ export const walletApi = {
                     maxAmountMinor: number | null;
                     feeMinor: number;
                 }>;
+                schedule: { open: boolean; message?: string };
             }>('/wallet/withdrawal-fee-config')
             .then((r) => r.data),
 };
@@ -247,6 +248,8 @@ export type ActiveAgent = {
     id?: string;
     displayName: string;
     phoneNumber: string | null;
+    /** M-Pesa deposit destination  already falls back to phoneNumber server-side when unset. */
+    mpesaPhoneNumber?: string | null;
 };
 
 export const paymentsApi = {
@@ -657,7 +660,64 @@ export type SystemConfig = {
     recentWinsEnabled?: boolean;
     /** On: a pending withdrawal is only visible/claimable by the requesting player's own agent. Off: no agent sees or can claim any withdrawal, every request goes to admin only. */
     agentWithdrawalRoutingEnabled?: boolean;
+    /** Master on/off switch for restricting WHEN withdrawals can be requested. Off = always open. */
+    withdrawalScheduleEnabled?: boolean;
+    /** Days withdrawals are open (0=Sun..6=Sat). Empty/absent = every day. */
+    withdrawalScheduleDaysOfWeek?: number[];
+    withdrawalScheduleStartHour?: number | null;
+    withdrawalScheduleStartMinute?: number | null;
+    withdrawalScheduleEndHour?: number | null;
+    withdrawalScheduleEndMinute?: number | null;
 };
+
+/** Money-movement entryTypes the Transactions admin feed shows  mirrors
+ * AdminService.MONEY_MOVEMENT_ENTRY_TYPES. Excludes stake/win/refund (gameplay). */
+export type AdminTransactionEntryType =
+    | 'deposit'
+    | 'adjustment'
+    | 'bonus'
+    | 'withdrawal'
+    | 'agent_receipt'
+    | 'reversal';
+
+export type AdminTransaction = {
+    id: string;
+    createdAt: string;
+    userId: string;
+    user?: { id: string; displayName: string; phoneNumber?: string } | null;
+    direction: 'credit' | 'debit';
+    entryType: AdminTransactionEntryType;
+    sourceType: string;
+    sourceId: string;
+    amountMinor: number;
+    balanceAfterMinor: number;
+    metadata?: Record<string, unknown>;
+};
+
+export type AdminTransactionFilters = {
+    page?: number;
+    limit?: number;
+    userId?: string;
+    search?: string;
+    entryType?: AdminTransactionEntryType[];
+    sourceType?: string;
+    direction?: 'credit' | 'debit';
+    dateFrom?: string;
+    dateTo?: string;
+};
+
+function transactionFilterParams(filters: AdminTransactionFilters) {
+    const params: Record<string, string> = {};
+    if (filters.userId) params.userId = filters.userId;
+    if (filters.search) params.search = filters.search;
+    if (filters.entryType?.length)
+        params.entryType = filters.entryType.join(',');
+    if (filters.sourceType) params.sourceType = filters.sourceType;
+    if (filters.direction) params.direction = filters.direction;
+    if (filters.dateFrom) params.dateFrom = filters.dateFrom;
+    if (filters.dateTo) params.dateTo = filters.dateTo;
+    return params;
+}
 
 export type WithdrawalFeeRange = {
     id: string;
@@ -868,6 +928,11 @@ export const adminApi = {
                 adminWallet: Wallet;
                 agentWallet: Wallet;
             }>('/admin/wallet/transfer-to-agent', { agentId, amountMinor, idempotencyKey })
+            .then((r) => r.data),
+    /** Sends a sample alert to every admin linked to the withdrawal-alert Telegram bot. */
+    sendTestWithdrawalNotification: () =>
+        api
+            .post<{ recipientCount: number }>('/admin/withdrawal-notifications/test')
             .then((r) => r.data),
 };
 
@@ -2489,4 +2554,72 @@ export const adminDepositsApi = {
                 verificationStatus,
             })
             .then((r) => r.data),
+};
+
+export const adminTransactionsApi = {
+    list: (filters: AdminTransactionFilters = {}) =>
+        api
+            .get<{
+                data: AdminTransaction[];
+                total: number;
+                page: number;
+                limit: number;
+                totalPages: number;
+            }>('/admin/transactions', {
+                params: {
+                    page: filters.page,
+                    limit: filters.limit,
+                    ...transactionFilterParams(filters),
+                },
+            })
+            .then((r) => r.data),
+    /** Triggers a browser download of the currently-filtered set as CSV. */
+    exportCsv: async (filters: AdminTransactionFilters = {}) => {
+        const res = await api.get<Blob>('/admin/transactions/export', {
+            params: transactionFilterParams(filters),
+            responseType: 'blob',
+        });
+        const url = URL.createObjectURL(res.data);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    },
+    getDepositDetail: (provider: 'telebirr' | 'mpesa', sourceId: string) =>
+        api
+            .get<TransactionSourceDetail>(
+                '/admin/transactions/deposit-detail',
+                { params: { provider, sourceId } },
+            )
+            .then((r) => r.data),
+    getWithdrawalDetail: (withdrawalId: string) =>
+        api
+            .get<TransactionSourceDetail>(
+                '/admin/transactions/withdrawal-detail',
+                { params: { withdrawalId } },
+            )
+            .then((r) => r.data),
+};
+
+/** Loose structural shape of the deposit/withdrawal detail responses  these
+ * come straight from the TelebirrDeposit/MpesaDeposit/Withdrawal entities,
+ * which the frontend has no shared type for (DepositsAdmin uses the same
+ * untyped `any[]` convention for the same reason). Only the fields the
+ * Transactions detail modal actually renders are named; anything else is
+ * still readable via its RawFieldsTable fallback without being declared here. */
+export type TransactionSourceDetail = {
+    status?: string;
+    fundedBy?: string;
+    agent?: { displayName?: string };
+    payerName?: string;
+    payerPhone?: string;
+    verificationStatus?: string;
+    destinationAccount?: string;
+    serviceChargeMinor?: number;
+    netAmountMinor?: number;
+    telebirrReference?: string;
+    adminNotes?: string;
 };

@@ -27,6 +27,13 @@ import { resolveWithdrawalFeeMinor } from './withdrawal-fee-range.util';
 import { User } from '../users/entities/user.entity';
 import { SystemConfig } from '../admin/entities/system-config.entity';
 import { normalizeEthiopianPhone } from '../common/phone.util';
+import { AdminNotificationBotService } from '../telegram/admin-notification-bot.service';
+import {
+    describeNextOpen,
+    getNextWindowOpen,
+    isWithinWorkingWindow,
+    WorkingWindowAgent,
+} from '../common/agent-duty.util';
 
 export type WalletSummary = {
     id: string;
@@ -88,7 +95,10 @@ export class WalletService {
         private readonly ledgerService: LedgerService,
         private readonly gameEventsGateway: GameEventsGateway,
         private readonly notificationsService: NotificationsService,
+        private readonly adminNotificationBotService: AdminNotificationBotService,
     ) {}
+
+    private readonly logger = new Logger(WalletService.name);
 
     async ensureDefaultWallet(
         userId: string,
@@ -836,24 +846,78 @@ export class WalletService {
     }
 
     /** Player-facing withdrawal fee config, so the withdraw form can show a fee
-     * estimate before submission without requiring the agent role. */
+     * estimate before submission without requiring the agent role. Also
+     * carries the withdrawal-schedule status so the form can tell the player
+     * up front (before they even fill it in) when withdrawals reopen. */
     async getWithdrawalFeeConfig(): Promise<{
         withdrawalFeeRanges: Array<{
             minAmountMinor: number;
             maxAmountMinor: number | null;
             feeMinor: number;
         }>;
+        schedule: { open: boolean; message?: string };
     }> {
-        const ranges = await this.withdrawalFeeRangeRepository.find({
-            where: { active: true },
-            order: { minAmountMinor: 'ASC' },
-        });
+        const [ranges, systemConfig] = await Promise.all([
+            this.withdrawalFeeRangeRepository.find({
+                where: { active: true },
+                order: { minAmountMinor: 'ASC' },
+            }),
+            this.systemConfigRepository.findOneBy({ key: 'global' }),
+        ]);
         return {
             withdrawalFeeRanges: ranges.map((r) => ({
                 minAmountMinor: r.minAmountMinor,
                 maxAmountMinor: r.maxAmountMinor,
                 feeMinor: r.feeMinor,
             })),
+            schedule: this.getWithdrawalScheduleStatus(systemConfig ?? undefined),
+        };
+    }
+
+    /**
+     * Builds the isWithinWorkingWindow-compatible shape from the raw
+     * withdrawal-schedule config fields, or null when the schedule is off
+     * (always open) or the config row doesn't exist yet. Accepts either a
+     * SystemConfig entity (JSON column already parsed) or a raw SQL row
+     * (JSON column possibly still a string, hence the defensive parse)  see
+     * requestWithdrawal's raw `SELECT *` vs getWithdrawalFeeConfig's repository read.
+     */
+    private buildWithdrawalScheduleWindow(cfg?: {
+        withdrawalScheduleEnabled?: boolean | number | null;
+        withdrawalScheduleDaysOfWeek?: unknown;
+        withdrawalScheduleStartHour?: number | null;
+        withdrawalScheduleStartMinute?: number | null;
+        withdrawalScheduleEndHour?: number | null;
+        withdrawalScheduleEndMinute?: number | null;
+    }): WorkingWindowAgent | null {
+        if (!cfg?.withdrawalScheduleEnabled) return null;
+        const daysRaw = cfg.withdrawalScheduleDaysOfWeek;
+        const days: number[] = Array.isArray(daysRaw)
+            ? daysRaw
+            : typeof daysRaw === 'string' && daysRaw
+              ? JSON.parse(daysRaw)
+              : [];
+        return {
+            workDaysOfWeek: days,
+            workStartHour: cfg.withdrawalScheduleStartHour ?? null,
+            workStartMinute: cfg.withdrawalScheduleStartMinute ?? null,
+            workEndHour: cfg.withdrawalScheduleEndHour ?? null,
+            workEndMinute: cfg.withdrawalScheduleEndMinute ?? null,
+        };
+    }
+
+    private getWithdrawalScheduleStatus(
+        cfg?: Parameters<WalletService['buildWithdrawalScheduleWindow']>[0],
+    ): { open: boolean; message?: string } {
+        const window = this.buildWithdrawalScheduleWindow(cfg);
+        if (!window) return { open: true };
+        if (isWithinWorkingWindow(window)) return { open: true };
+        const nextOpen = getNextWindowOpen(window);
+        return {
+            open: false,
+            message: nextOpen
+                ? describeNextOpen(nextOpen)
+                : 'Withdrawals are currently closed.',
         };
     }
 
@@ -867,7 +931,7 @@ export class WalletService {
             throw new BadRequestException('Destination account is required');
         }
 
-        return this.dataSource.transaction(async (manager) => {
+        const withdrawal = await this.dataSource.transaction(async (manager) => {
             const config = await manager.query(
                 `SELECT * FROM system_configs WHERE \`key\` = 'global' LIMIT 1`,
             );
@@ -880,6 +944,11 @@ export class WalletService {
                 (systemConfig?.maxPendingWithdrawalsPerUser as number) ?? 1;
             const minWalletBalance =
                 (systemConfig?.minWalletBalanceMinor as number) ?? 0;
+
+            const schedule = this.getWithdrawalScheduleStatus(systemConfig);
+            if (!schedule.open) {
+                throw new ConflictException(schedule.message);
+            }
 
             if (minAmount > 0 && amountMinor < minAmount) {
                 throw new BadRequestException(
@@ -974,6 +1043,34 @@ export class WalletService {
             });
 
             return withdrawal;
+        });
+
+        // Outside the transaction, best-effort: an admin-alert failure must never
+        // affect the withdrawal that already committed.
+        void this.notifyAdminsOfWithdrawalRequested(userId, withdrawal).catch(
+            (err) =>
+                this.logger.error(
+                    `Failed to notify admins of withdrawal ${withdrawal.id}`,
+                    err instanceof Error ? err.stack : err,
+                ),
+        );
+
+        return withdrawal;
+    }
+
+    private async notifyAdminsOfWithdrawalRequested(
+        userId: string,
+        withdrawal: Withdrawal,
+    ): Promise<void> {
+        const user = await this.dataSource
+            .getRepository(User)
+            .findOneBy({ id: userId });
+        await this.adminNotificationBotService.notifyWithdrawalRequested({
+            withdrawalId: withdrawal.id,
+            displayName: user?.displayName ?? 'Unknown user',
+            phoneNumber: user?.phoneNumber,
+            amountMinor: withdrawal.amountMinor,
+            destinationAccount: withdrawal.destinationAccount,
         });
     }
 

@@ -433,7 +433,14 @@ export class AgentsService {
      * reasoning as getActiveAgentDepositInfo above.
      */
     async getActiveAgentsDepositInfo(): Promise<
-        Array<{ id: string; displayName: string; phoneNumber: string | null }>
+        Array<{
+            id: string;
+            displayName: string;
+            phoneNumber: string | null;
+            /** M-Pesa deposit destination  falls back to phoneNumber when the
+             * agent hasn't set a separate one, so callers never need their own fallback. */
+            mpesaPhoneNumber: string | null;
+        }>
     > {
         const agents = await this.usersService.findOnDutyAgents();
         const eligible = agents.filter(
@@ -451,6 +458,7 @@ export class AgentsService {
                 id: a.id,
                 displayName: a.displayName,
                 phoneNumber: a.phoneNumber ?? null,
+                mpesaPhoneNumber: a.mpesaPhoneNumber ?? a.phoneNumber ?? null,
             }));
     }
 

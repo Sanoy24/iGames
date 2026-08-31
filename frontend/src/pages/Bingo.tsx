@@ -273,6 +273,35 @@ function isPatternGrid(grid: Array<Array<number | null>>): boolean {
     return grid.length === 5 && (grid[0]?.length ?? 0) === 5;
 }
 
+// Maps a built-in pattern's name to its i18n key so it renders in the
+// player's chosen language wherever the server hands us a bare name string
+// (BingoRoom.activePatternNames, a ticket's completedPatterns lookup, a bonus
+// campaign's patternName)  none of those carry the pattern id, and the
+// backend never localizes on its own. Keyed by name rather than id because
+// that's genuinely safe here: BingoService.updatePattern explicitly blocks
+// renaming a built-in (see its own doc comment), so this list can't drift out
+// from under a live pattern. An admin-authored pattern has no entry and falls
+// back to whatever name they typed  there is no way to localize a name only
+// the admin knows.
+const BUILT_IN_PATTERN_NAME_KEYS: Record<string, string> = {
+    'Any Line': 'bingo.patternAnyLine',
+    Corners: 'bingo.patternCorners',
+    'Cross (+)': 'bingo.patternCrossPlus',
+    'X Pattern': 'bingo.patternXShape',
+    'T Shape': 'bingo.patternTShape',
+    'L Shape': 'bingo.patternLShape',
+    'Any Two Lines': 'bingo.patternAnyTwoLines',
+    'Any Three Lines': 'bingo.patternAnyThreeLines',
+    'Full House': 'bingo.patternFullHouse',
+    'Small Cross': 'bingo.patternSmallCross',
+    'Small X': 'bingo.patternSmallX',
+};
+
+function localizePatternName(name: string, t: (key: string) => string): string {
+    const key = BUILT_IN_PATTERN_NAME_KEYS[name];
+    return key ? t(key) : name;
+}
+
 // ─── Number Board ─────────────────────────────────────────────────────────────
 // Flat grid of rounded-square cells. Called numbers glow with their group color.
 // Player card numbers are shown separately in the "My Card" section below.
@@ -554,9 +583,15 @@ CartelaGrid.displayName = 'CartelaGrid';
 function RecentCallsStrip({
     drawnNumbers,
     isPatternMode,
+    activePatternNames,
 }: {
     drawnNumbers: number[];
     isPatternMode: boolean;
+    /** Names of the pattern(s) this round is actually playing for (a pattern-mode
+     * round can have several active at once, each with its own prize)  shown
+     * next to the strip header so it stays in view while calling is live,
+     * instead of only surfacing once a pattern is already won. */
+    activePatternNames?: string[];
 }) {
     const { t } = useTranslation();
     const last = drawnNumbers.slice(-12);
@@ -569,8 +604,20 @@ function RecentCallsStrip({
 
     return (
         <div className='relative overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2'>
-            <div className='text-[8px] font-black uppercase tracking-widest text-slate-600 mb-1.5'>
-                {t('bingo.recentCalls')}
+            <div className='flex items-center justify-between gap-2 mb-1.5'>
+                <div className='text-[8px] font-black uppercase tracking-widest text-slate-600'>
+                    {t('bingo.recentCalls')}
+                </div>
+                {activePatternNames && activePatternNames.length > 0 && (
+                    <div className='flex items-center gap-1 min-w-0'>
+                        <span className='w-1 h-1 rounded-full bg-violet-400 flex-shrink-0' />
+                        <span className='text-[8px] font-black uppercase tracking-wide text-white truncate'>
+                            {activePatternNames
+                                .map((name) => localizePatternName(name, t))
+                                .join(' · ')}
+                        </span>
+                    </div>
+                )}
             </div>
             {/* Keyed by number (unique per room)  NOT array index  so the sliding
           window doesn't remount every pill on each draw. Only the genuinely new
@@ -823,31 +870,28 @@ const PatternTicketCard = memo(
                             ? `Cartela #${ticket.cartelaNumber}`
                             : `#${ticket.id.slice(-5)}`}
                     </span>
-                    <span
-                        className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
-                        style={
-                            won
-                                ? undefined
-                                : {
-                                      fontSize: 7,
-                                      padding: '1px 5px',
-                                      letterSpacing: 0,
-                                  }
-                        }
-                    >
-                        {won
-                            ? `+${formatCredits(ticket.payoutMinor)} ETB`
-                            : ticket.settlementStatus}
-                    </span>
+                    {!won && (
+                        <span
+                            className='badge badge-violet'
+                            style={{
+                                fontSize: 7,
+                                padding: '1px 5px',
+                                letterSpacing: 0,
+                            }}
+                        >
+                            {ticket.settlementStatus}
+                        </span>
+                    )}
                 </div>
                 {ticket.completedPatterns?.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>
                         {ticket.completedPatterns
-                            .map(
-                                (pid) =>
-                                    patternPrizeMap.get(pid) ??
-                                    t('bingo.pattern'),
-                            )
+                            .map((pid) => {
+                                const name = patternPrizeMap.get(pid);
+                                return name
+                                    ? localizePatternName(name, t)
+                                    : t('bingo.pattern');
+                            })
                             .join(' · ')}
                     </p>
                 )}
@@ -937,22 +981,18 @@ const BingoTicketCard = memo(
                     <span className='text-[10px] font-black text-slate-400'>
                         #{ticket.id.slice(-5)}
                     </span>
-                    <span
-                        className={`badge ${won ? 'badge-gold' : 'badge-violet'}`}
-                        style={
-                            won
-                                ? undefined
-                                : {
-                                      fontSize: 7,
-                                      padding: '1px 5px',
-                                      letterSpacing: 0,
-                                  }
-                        }
-                    >
-                        {won
-                            ? `+${formatCredits(ticket.payoutMinor)} ETB`
-                            : ticket.settlementStatus}
-                    </span>
+                    {!won && (
+                        <span
+                            className='badge badge-violet'
+                            style={{
+                                fontSize: 7,
+                                padding: '1px 5px',
+                                letterSpacing: 0,
+                            }}
+                        >
+                            {ticket.settlementStatus}
+                        </span>
+                    )}
                 </div>
                 {ticket.wonTiers.length > 0 && (
                     <p className='text-[9px] text-amber-400 font-bold -mt-1'>
@@ -1608,7 +1648,10 @@ function BingoBonusBanner({
                     </div>
                     <div className='text-[12px] font-bold text-white truncate'>
                         {t('bingo.bonusActiveDesc', {
-                            pattern: campaign.patternName,
+                            pattern: localizePatternName(
+                                campaign.patternName,
+                                t,
+                            ),
                             amount: formatCreditsFull(campaign.prizeMinor),
                         })}
                     </div>
@@ -3043,31 +3086,6 @@ export function Bingo({ onBack }: BingoProps) {
         return () => cancelAnimationFrame(id);
     }, [room?.id, room?.status]);
 
-    // ── Win detection ────────────────────────────────────────────────────────────
-    useEffect(() => {
-        if (room?.status !== 'completed') return;
-        if (victoryRoomRef.current === room.id) return;
-        const allTickets = [...(room.tickets ?? []), ...localTickets];
-        const winners = allTickets.filter((t) => t.payoutMinor > 0);
-        if (!winners.length) return;
-        victoryRoomRef.current = room.id;
-        soundEngine.win();
-        void fireConfetti({
-            particleCount: 200,
-            spread: 90,
-            origin: { y: 0.55 },
-            colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'],
-        });
-        // The bell notification is created + pushed by the server at settlement (so it
-        // lands even if the player left the screen)  no client-side entry here to
-        // avoid a duplicate.
-        // The win credit landed server-side  pull the fresh balance into the header.
-        walletApi
-            .getWallet()
-            .then(setWallet)
-            .catch(() => undefined);
-    }, [room?.status, room?.tickets, room?.id, localTickets, setWallet]);
-
     // ── Chat scroll ──────────────────────────────────────────────────────────────
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -3376,6 +3394,42 @@ export function Bingo({ onBack }: BingoProps) {
     // Until then the round is, as far as the player can see, still being called.
     const revealFinished = revealedCount >= drawnNumbers.length;
 
+    // revealFinished flips the INSTANT the last ball's own reveal step fires -
+    // same render, zero pause - which used to hand the last ball none of the
+    // NOW_CALLING_HOLD_MS beat every other ball's transition gets elsewhere
+    // (see popupArmed above). The board would swap straight from "now calling"
+    // to the completed/trophy state on the very same tick the final number
+    // appeared, so the ball that actually decided the round was never visible
+    // as "now calling" for any length of time at all - it was called and
+    // immediately buried under "round finished" copy. This holds the CURRENT
+    // ball on screen for that same beat before anything downstream (the status
+    // pill, the trophy, "revealing results…") is allowed to react to the round
+    // being over.
+    const [lastBallSettled, setLastBallSettled] = useState(false);
+    useEffect(() => {
+        // Gate on the room ACTUALLY being completed, not just "the reveal has
+        // caught up to every ball we know about" - that same condition is also
+        // true during every ordinary mid-round pause (the pacer settles at zero
+        // backlog while waiting for the server's next draw), and real draw
+        // intervals routinely run longer than NOW_CALLING_HOLD_MS. Starting the
+        // hold there let it finish - and go stale - well before the round
+        // actually ended, so if the deciding ball arrived bundled straight into
+        // the `bingo.room.completed` payload (status and the final draw in one
+        // update), revealFinished and this already-elapsed hold both went true
+        // on the very same render: zero grace period for the ball that actually
+        // decided the round, right back to the bug this hold exists to prevent.
+        if (room?.status !== 'completed' || !revealFinished) {
+            setLastBallSettled(false);
+            return;
+        }
+        const id = setTimeout(
+            () => setLastBallSettled(true),
+            NOW_CALLING_HOLD_MS,
+        );
+        return () => clearTimeout(id);
+    }, [revealFinished, room?.status, room?.id]);
+    const revealSettled = revealFinished && lastBallSettled;
+
     // The status the ROUND PRESENTS AS, which is not the same thing as the status
     // the server has already reached. The server flips a room to 'completed' on the
     // draw that decides it, but the reveal is deliberately paced and is typically a
@@ -3384,15 +3438,49 @@ export function Bingo({ onBack }: BingoProps) {
     // deciding ball had not been called yet - so the ball that actually won the
     // round was never seen being called at all; it only slid past in the small
     // recent-calls strip, under a banner announcing the round was already over.
-    // Hold the round at 'running' until the narration catches up.
+    // Hold the round at 'running' until the narration catches up AND the settle
+    // beat above has elapsed.
     const presentedStatus =
-        room?.status === 'completed' && !revealFinished
+        room?.status === 'completed' && !revealSettled
             ? 'running'
             : (room?.status ?? 'open');
 
+    // ── Win detection ────────────────────────────────────────────────────────────
+    // Gated on presentedStatus, not room.status: the server flips a room to
+    // 'completed' the instant the deciding ball is drawn, well before the paced
+    // reveal has narrated it. Firing confetti/the win sound off the raw status
+    // let both go off while the board was still visibly mid-round - sometimes
+    // a couple of calls before the winning number itself ever appeared on
+    // screen. Wait for the same "the player has actually seen it end" signal
+    // everything else downstream of the round (trophy, results-revealing badge)
+    // already waits for.
+    useEffect(() => {
+        if (presentedStatus !== 'completed' || !room) return;
+        if (victoryRoomRef.current === room.id) return;
+        const allTickets = [...(room.tickets ?? []), ...localTickets];
+        const winners = allTickets.filter((t) => t.payoutMinor > 0);
+        if (!winners.length) return;
+        victoryRoomRef.current = room.id;
+        soundEngine.win();
+        void fireConfetti({
+            particleCount: 200,
+            spread: 90,
+            origin: { y: 0.55 },
+            colors: ['#FFD700', '#FF4444', '#00FF88', '#FFFFFF'],
+        });
+        // The bell notification is created + pushed by the server at settlement (so it
+        // lands even if the player left the screen)  no client-side entry here to
+        // avoid a duplicate.
+        // The win credit landed server-side  pull the fresh balance into the header.
+        walletApi
+            .getWallet()
+            .then(setWallet)
+            .catch(() => undefined);
+    }, [presentedStatus, room?.id, room?.tickets, localTickets, setWallet]);
+
     const resultsRevealing =
         room?.status === 'completed' &&
-        revealFinished &&
+        revealSettled &&
         (livePlaceQueue.length > 0 || !!liveBonusWin);
 
     // When a place is won, the server already knows the winner.
@@ -3920,6 +4008,11 @@ export function Bingo({ onBack }: BingoProps) {
                         <RecentCallsStrip
                             drawnNumbers={revealedNumbers}
                             isPatternMode={boardBingoStyle}
+                            // Server-resolved for both 'pattern' AND 'prefilled' mode
+                            // (see BingoRoom.activePatternNames) - prefilled's per-place
+                            // pattern only lives in BingoConfig otherwise, with no other
+                            // way for the player-facing room state to know it.
+                            activePatternNames={room?.activePatternNames}
                         />
                     )}
 

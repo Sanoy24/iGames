@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GameEventsModule } from '../events/game-events.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { TelegramModule } from '../telegram/telegram.module';
 import { Wallet } from './entities/wallet.entity';
 import { WagerLimit } from './entities/wager-limit.entity';
 import { Withdrawal } from './entities/withdrawal.entity';
@@ -21,6 +22,7 @@ import { WalletService } from './wallet.service';
     LedgerModule,
     GameEventsModule,
     NotificationsModule,
+    forwardRef(() => TelegramModule),
     TypeOrmModule.forFeature([Wallet, WagerLimit, Withdrawal, User, AgentActionLog, SystemConfig, WithdrawalFeeRange])
   ],
   controllers: [WalletController],

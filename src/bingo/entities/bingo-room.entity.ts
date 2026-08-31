@@ -120,6 +120,20 @@ export class BingoRoom {
     @Column({ type: 'json', default: '[]' })
     patternPrizes: BingoPatternPrize[];
 
+    /**
+     * Names of the pattern(s) actually in play this round, resolved and
+     * snapshotted once at creation (like rankingMode below) so a mid-round admin
+     * edit to a place's pattern can't shift what the player-facing UI shows for
+     * an already-running room. For 'pattern' mode this mirrors patternPrizes'
+     * names; for 'prefilled' mode it's each ENABLED place's pattern (1st/2nd/
+     * 3rd/...), resolved through the same per-place → shared default →
+     * "Any Line" fallback settlement uses, de-duplicated. This is the only place
+     * that resolution reaches the room state - BingoConfig's prefilledXPatternId
+     * fields are never otherwise exposed to the player. Empty for 'line' mode.
+     */
+    @Column({ type: 'json', default: '[]' })
+    activePatternNames: string[];
+
     /** Room-scoped bot aliases + masked phone suffixes for Bingo display. */
     @Column({ type: 'json', nullable: true })
     botIdentityMap?: Record<string, BingoBotIdentity>;

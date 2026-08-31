@@ -901,6 +901,222 @@ export class AdminService implements OnApplicationBootstrap {
         return repo.save(deposit);
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // Transactions (admin-wide money-movement feed)
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * entryTypes that represent real MONEY MOVEMENT an admin would want to audit
+     * - deposits, admin/agent transfers, adjustments, withdrawals, agent
+     * commission payouts, reversals. Deliberately excludes 'stake'/'win'/
+     * 'refund': those are gameplay noise (every bet and every win), and on a
+     * live platform would bury the transactions an admin actually cares about
+     * under a firehose of ticket purchases. A player's own full history
+     * (including gameplay) is still available via GET /wallet/ledger and the
+     * per-user admin activity view  this feed is deliberately narrower.
+     */
+    private static readonly MONEY_MOVEMENT_ENTRY_TYPES: LedgerEntryType[] = [
+        'deposit',
+        'adjustment',
+        'bonus',
+        'withdrawal',
+        'agent_receipt',
+        'reversal',
+    ];
+
+    /** Shared WHERE-building for getTransactions/exportTransactionsCsv, so the
+     * two can never silently drift into counting different rows. */
+    private buildTransactionsQuery(filters: {
+        userId?: string;
+        search?: string;
+        entryType?: string;
+        sourceType?: string;
+        direction?: 'credit' | 'debit';
+        dateFrom?: string;
+        dateTo?: string;
+    }) {
+        const requestedTypes = filters.entryType
+            ?.split(',')
+            .map((t) => t.trim())
+            .filter((t): t is LedgerEntryType =>
+                AdminService.MONEY_MOVEMENT_ENTRY_TYPES.includes(
+                    t as LedgerEntryType,
+                ),
+            );
+        // An entryType filter that named only gameplay types (or nothing valid at
+        // all) is treated as "no filter", not "match nothing"  IN () is invalid
+        // SQL, and silently returning zero rows for a bad filter would look like
+        // a bug rather than an ignored param.
+        const types =
+            requestedTypes && requestedTypes.length > 0
+                ? requestedTypes
+                : AdminService.MONEY_MOVEMENT_ENTRY_TYPES;
+
+        const qb = this.dataSource
+            .getRepository(LedgerEntry)
+            .createQueryBuilder('le')
+            .leftJoinAndSelect('le.user', 'user')
+            .where('le.entryType IN (:...types)', { types });
+
+        if (filters.userId) {
+            qb.andWhere('le.userId = :userId', { userId: filters.userId });
+        }
+        if (filters.search?.trim()) {
+            qb.andWhere(
+                '(user.displayName LIKE :search OR user.phoneNumber LIKE :search)',
+                { search: `%${filters.search.trim()}%` },
+            );
+        }
+        if (filters.sourceType?.trim()) {
+            qb.andWhere('le.sourceType = :sourceType', {
+                sourceType: filters.sourceType.trim(),
+            });
+        }
+        if (filters.direction) {
+            qb.andWhere('le.direction = :direction', {
+                direction: filters.direction,
+            });
+        }
+        if (filters.dateFrom) {
+            qb.andWhere('le.createdAt >= :dateFrom', {
+                dateFrom: filters.dateFrom,
+            });
+        }
+        if (filters.dateTo) {
+            qb.andWhere('le.createdAt <= :dateTo', { dateTo: filters.dateTo });
+        }
+        return qb;
+    }
+
+    async getTransactions(filters: {
+        page: number;
+        limit: number;
+        userId?: string;
+        search?: string;
+        entryType?: string;
+        sourceType?: string;
+        direction?: 'credit' | 'debit';
+        dateFrom?: string;
+        dateTo?: string;
+    }) {
+        const skip = (filters.page - 1) * filters.limit;
+        const [data, total] = await this.buildTransactionsQuery(filters)
+            .orderBy('le.createdAt', 'DESC')
+            .skip(skip)
+            .take(filters.limit)
+            .getManyAndCount();
+
+        return {
+            data,
+            total,
+            page: filters.page,
+            limit: filters.limit,
+            totalPages: Math.ceil(total / filters.limit),
+        };
+    }
+
+    /**
+     * Same filters as getTransactions, no pagination  capped instead, so a
+     * broad/unfiltered export can't run away on a large ledger. An admin who
+     * genuinely needs more than this in one file should narrow the date range.
+     */
+    private static readonly CSV_EXPORT_ROW_CAP = 20_000;
+
+    async exportTransactionsCsv(filters: {
+        userId?: string;
+        search?: string;
+        entryType?: string;
+        sourceType?: string;
+        direction?: 'credit' | 'debit';
+        dateFrom?: string;
+        dateTo?: string;
+    }): Promise<string> {
+        const rows = await this.buildTransactionsQuery(filters)
+            .orderBy('le.createdAt', 'DESC')
+            .take(AdminService.CSV_EXPORT_ROW_CAP)
+            .getMany();
+
+        const escape = (value: unknown): string => {
+            const s = value === null || value === undefined ? '' : String(value);
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+
+        const header = [
+            'Date',
+            'User',
+            'Phone',
+            'Direction',
+            'Type',
+            'Source',
+            'AmountETB',
+            'BalanceAfterETB',
+            'SourceId',
+        ];
+        const lines = [header.join(',')];
+        for (const row of rows) {
+            lines.push(
+                [
+                    row.createdAt?.toISOString(),
+                    row.user?.displayName,
+                    row.user?.phoneNumber,
+                    row.direction,
+                    row.entryType,
+                    row.sourceType,
+                    row.amountMinor,
+                    row.balanceAfterMinor,
+                    row.sourceId,
+                ]
+                    .map(escape)
+                    .join(','),
+            );
+        }
+        return lines.join('\n');
+    }
+
+    /**
+     * Detail behind a deposit-sourced transaction row (sourceType telebirr_receipt
+     * / mpesa_receipt): the receipt itself  payer info, verification status,
+     * which agent (if any) funded it. `sourceId` is the ledger entry's own
+     * sourceId, which for these two sourceTypes IS the deposit's receiptNo/
+     * confirmationCode (see PaymentsService.submitTelebirrReceipt et al).
+     */
+    async getDepositDetailForTransaction(
+        provider: 'telebirr' | 'mpesa',
+        sourceId: string,
+    ): Promise<TelebirrDeposit | MpesaDeposit> {
+        const deposit =
+            provider === 'telebirr'
+                ? await this.dataSource.getRepository(TelebirrDeposit).findOne({
+                      where: { receiptNo: sourceId },
+                      relations: ['user', 'agent'],
+                  })
+                : await this.dataSource.getRepository(MpesaDeposit).findOne({
+                      where: { confirmationCode: sourceId },
+                      relations: ['user', 'agent'],
+                  });
+        if (!deposit) throw new NotFoundException('Deposit not found');
+        return deposit;
+    }
+
+    /**
+     * Detail behind a withdrawal-sourced transaction row (sourceType
+     * 'withdrawal'). `sourceId` is the ledger entry's sourceId, which for this
+     * sourceType IS the withdrawal's own id (see WalletService's withdrawal
+     * ledger entries).
+     */
+    async getWithdrawalDetailForTransaction(
+        withdrawalId: string,
+    ): Promise<Withdrawal> {
+        const withdrawal = await this.dataSource
+            .getRepository(Withdrawal)
+            .findOne({
+                where: { id: withdrawalId },
+                relations: ['user', 'agent', 'processor'],
+            });
+        if (!withdrawal) throw new NotFoundException('Withdrawal not found');
+        return withdrawal;
+    }
+
     async getPlatformStats() {
         // 1. Total active liabilities (money in wallets)
         const walletStats = await this.dataSource
@@ -1297,8 +1513,29 @@ export class AdminService implements OnApplicationBootstrap {
         return this.usersService.createAgentUser(input);
     }
 
+    /**
+     * Agent list, enriched with their live wallet balance and deposit-float
+     * remaining  neither is visible anywhere else on the Agent Accounts screen,
+     * which is exactly what made a depleted float invisible until a player
+     * reported "no agent available for deposits" and it took a direct DB query
+     * to explain why. Batched (one query per field, not one per agent) so this
+     * stays cheap regardless of page size.
+     */
     async listAgents(page: number, limit: number) {
-        return this.usersService.listAgents(page, limit);
+        const result = await this.usersService.listAgents(page, limit);
+        const agentIds = result.data.map((a) => a.id);
+        const [balances, floatRemaining] = await Promise.all([
+            this.walletService.getAvailableBalances(agentIds),
+            this.walletService.getAgentFloatRemaining(agentIds),
+        ]);
+        return {
+            ...result,
+            data: result.data.map((a) => ({
+                ...a,
+                walletAvailableMinor: balances.get(a.id) ?? 0,
+                depositFloatRemainingMinor: floatRemaining.get(a.id) ?? 0,
+            })),
+        };
     }
 
     async getUserActivity(userId: string, limit = 20) {

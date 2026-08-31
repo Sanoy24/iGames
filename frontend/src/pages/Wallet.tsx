@@ -285,6 +285,10 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
             feeMinor: number;
         }>;
     } | null>(null);
+    const [withdrawSchedule, setWithdrawSchedule] = useState<{
+        open: boolean;
+        message?: string;
+    } | null>(null);
 
     const loadWallet = useCallback(async () => {
         try {
@@ -567,10 +571,26 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                 // Fetch fee tiers so we can show an estimate before submission. Uses the
                 // player-scoped endpoint (not agentApi.getConfig, which is agent-role-only
                 // and would 403 for a plain player, silently zeroing out the fee note).
+                // Also carries the withdrawal-schedule status, so a player who opens this
+                // form outside the configured window is told immediately, not after typing
+                // an amount and hitting submit.
                 walletApi
                     .getWithdrawalFeeConfig()
-                    .then((c) => setWithdrawFeeConfig(c))
-                    .catch(() => setWithdrawFeeConfig(null));
+                    .then((c) => {
+                        setWithdrawFeeConfig(c);
+                        setWithdrawSchedule(c.schedule);
+                        if (!c.schedule.open) {
+                            addToast(
+                                'error',
+                                c.schedule.message ??
+                                    'Withdrawals are currently closed.',
+                            );
+                        }
+                    })
+                    .catch(() => {
+                        setWithdrawFeeConfig(null);
+                        setWithdrawSchedule(null);
+                    });
             }
             return next;
         });
@@ -1037,6 +1057,17 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                         Finding the agent on duty…
                                     </div>
                                 ) : activeAgent ? (
+                                    (() => {
+                                        // M-Pesa and Telebirr are different networks, so an agent may
+                                        // register a different number with each  never fall back to
+                                        // the Telebirr phoneNumber while on the M-Pesa tab (that was the
+                                        // bug: both tabs showed the same number regardless of provider).
+                                        const depositPhoneNumber =
+                                            provider === 'mpesa'
+                                                ? (activeAgent.mpesaPhoneNumber ??
+                                                  activeAgent.phoneNumber)
+                                                : activeAgent.phoneNumber;
+                                        return (
                                     <div
                                         style={{
                                             background: 'rgba(250,204,21,0.07)',
@@ -1086,7 +1117,7 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                 size={14}
                                                 style={{ color: 'var(--gold)' }}
                                             />
-                                            {activeAgent.phoneNumber ? (
+                                            {depositPhoneNumber ? (
                                                 <>
                                                     <strong
                                                         style={{
@@ -1095,16 +1126,22 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                                                 '0.02em',
                                                         }}
                                                     >
-                                                        {
-                                                            activeAgent.phoneNumber
-                                                        }
+                                                        {depositPhoneNumber}
                                                     </strong>
                                                     <button
                                                         type='button'
                                                         className='btn btn-ghost btn-sm'
                                                         onClick={() => {
+                                                            // Telebirr's own app expects the local
+                                                            // 9XXXXXXXX form, not the +251 we display
+                                                            // for readability - copying the +251
+                                                            // version made every paste-in fail until
+                                                            // the player manually stripped it first.
                                                             void navigator.clipboard?.writeText(
-                                                                activeAgent.phoneNumber!,
+                                                                depositPhoneNumber!.replace(
+                                                                    /^\+?251/,
+                                                                    '',
+                                                                ),
                                                             );
                                                             addToast(
                                                                 'success',
@@ -1133,6 +1170,8 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                             )}
                                         </div>
                                     </div>
+                                        );
+                                    })()
                                 ) : (
                                     <div
                                         style={{
@@ -1641,6 +1680,25 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                     </strong>
                                 </p>
 
+                                {withdrawSchedule &&
+                                    !withdrawSchedule.open && (
+                                        <p
+                                            style={{
+                                                fontSize: 13,
+                                                color: 'var(--red, #ef4444)',
+                                                background:
+                                                    'rgba(239,68,68,0.1)',
+                                                border: '1px solid rgba(239,68,68,0.3)',
+                                                borderRadius: 8,
+                                                padding: '8px 12px',
+                                                margin: '0 0 12px',
+                                            }}
+                                        >
+                                            {withdrawSchedule.message ??
+                                                'Withdrawals are currently closed.'}
+                                        </p>
+                                    )}
+
                                 <div
                                     className='preset-amounts'
                                     style={{ marginBottom: 12 }}
@@ -1843,12 +1901,15 @@ export function Wallet({ onNavigate }: { onNavigate?: (tab: AppTab) => void }) {
                                     disabled={
                                         isWithdrawing ||
                                         !withdrawAmount ||
-                                        !withdrawPhone.trim()
+                                        !withdrawPhone.trim() ||
+                                        withdrawSchedule?.open === false
                                     }
                                 >
                                     {isWithdrawing
                                         ? 'Submitting…'
-                                        : 'Submit Withdrawal Request'}
+                                        : withdrawSchedule?.open === false
+                                          ? 'Withdrawals Closed'
+                                          : 'Submit Withdrawal Request'}
                                 </button>
                             </div>
                         </motion.div>

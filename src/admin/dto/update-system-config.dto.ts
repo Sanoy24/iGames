@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsNumber, IsObject, IsOptional, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsNumber, IsObject, IsOptional, Max, Min } from 'class-validator';
 
 export class UpdateSystemConfigDto {
   @IsOptional()
@@ -95,4 +95,38 @@ export class UpdateSystemConfigDto {
   @IsOptional()
   @IsBoolean()
   agentWithdrawalRoutingEnabled?: boolean;
+
+  /** Master on/off switch for restricting WHEN withdrawals can be requested. Off = always open. */
+  @IsOptional()
+  @IsBoolean()
+  withdrawalScheduleEnabled?: boolean;
+
+  /** Days withdrawals are open (0=Sun..6=Sat). Empty/absent = every day. */
+  @IsOptional()
+  @IsArray()
+  withdrawalScheduleDaysOfWeek?: number[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  withdrawalScheduleStartHour?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  withdrawalScheduleStartMinute?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  withdrawalScheduleEndHour?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  withdrawalScheduleEndMinute?: number;
 }

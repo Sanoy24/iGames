@@ -5,6 +5,12 @@ export class CreateAgentDto {
   @Matches(/^(\+?251|0)[79]\d{8}$/, { message: 'Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX or +2519XXXXXXXX)' })
   phoneNumber: string;
 
+  /** M-Pesa deposit destination, if different from phoneNumber above. Blank = players send M-Pesa to phoneNumber too. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\+?251|0)[79]\d{8}$/, { message: 'Enter a valid Ethiopian phone number (e.g. 09XXXXXXXX or +2519XXXXXXXX)' })
+  mpesaPhoneNumber?: string;
+
   @IsString()
   @MinLength(2)
   displayName: string;

@@ -13,11 +13,13 @@ import {
     Post,
     Put,
     Query,
+    Res,
     UnsupportedMediaTypeException,
     UploadedFile,
     UseGuards,
     UseInterceptors,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -49,6 +51,7 @@ import { UsersService } from '../users/users.service';
 import { WalletService } from '../wallet/wallet.service';
 import { GameEventsGateway } from '../events/game-events.gateway';
 import { AgentsService } from '../agents/agents.service';
+import { AdminNotificationBotService } from '../telegram/admin-notification-bot.service';
 import { CreateSettlementDto } from './dto/create-settlement.dto';
 import { UpdateSettlementDto } from './dto/update-settlement.dto';
 import { UPLOADS_ROOT, RECEIPT_MIME_TYPES } from '../common/uploads.constants';
@@ -78,6 +81,7 @@ export class AdminController {
         private readonly locationsService: LocationsService,
         private readonly gameEventsGateway: GameEventsGateway,
         private readonly agentsService: AgentsService,
+        private readonly adminNotificationBotService: AdminNotificationBotService,
     ) {}
 
     @Get('stats/overview')
@@ -133,6 +137,78 @@ export class AdminController {
             id,
             dto.verificationStatus,
             admin.id,
+        );
+    }
+
+    // ── Transactions (admin-wide money-movement feed) ────────────────────
+
+    @Get('transactions')
+    listTransactions(
+        @Query('page') page: string = '1',
+        @Query('limit') limit: string = '50',
+        @Query('userId') userId?: string,
+        @Query('search') search?: string,
+        @Query('entryType') entryType?: string,
+        @Query('sourceType') sourceType?: string,
+        @Query('direction') direction?: 'credit' | 'debit',
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+    ) {
+        return this.adminService.getTransactions({
+            page: parseInt(page, 10) || 1,
+            limit: Math.min(parseInt(limit, 10) || 50, 200),
+            userId,
+            search,
+            entryType,
+            sourceType,
+            direction,
+            dateFrom,
+            dateTo,
+        });
+    }
+
+    @Get('transactions/export')
+    async exportTransactions(
+        @Res({ passthrough: true }) res: Response,
+        @Query('userId') userId?: string,
+        @Query('search') search?: string,
+        @Query('entryType') entryType?: string,
+        @Query('sourceType') sourceType?: string,
+        @Query('direction') direction?: 'credit' | 'debit',
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+    ) {
+        const csv = await this.adminService.exportTransactionsCsv({
+            userId,
+            search,
+            entryType,
+            sourceType,
+            direction,
+            dateFrom,
+            dateTo,
+        });
+        res.set({
+            'Content-Type': 'text/csv',
+            'Content-Disposition': `attachment; filename="transactions-${new Date().toISOString().slice(0, 10)}.csv"`,
+        });
+        return csv;
+    }
+
+    @Get('transactions/deposit-detail')
+    getTransactionDepositDetail(
+        @Query('provider') provider: 'telebirr' | 'mpesa',
+        @Query('sourceId') sourceId: string,
+    ) {
+        return this.adminService.getDepositDetailForTransaction(
+            provider === 'mpesa' ? 'mpesa' : 'telebirr',
+            sourceId,
+        );
+    }
+
+    @Get('transactions/withdrawal-detail')
+    getTransactionWithdrawalDetail(@Query('withdrawalId') withdrawalId: string) {
+        return this.adminService.getWithdrawalDetailForTransaction(
+            withdrawalId,
         );
     }
 
@@ -527,6 +603,17 @@ export class AdminController {
     }
 
     // ── Withdrawals ───────────────────────────────────────────────────
+
+    /**
+     * Sends a harmless sample message to every admin currently linked to the
+     * withdrawal-alert Telegram bot  lets the dashboard confirm the bot is
+     * wired up correctly (token set, at least one admin has /start'd it)
+     * without waiting for a real withdrawal request.
+     */
+    @Post('withdrawal-notifications/test')
+    sendTestWithdrawalNotification() {
+        return this.adminNotificationBotService.sendTestAlert();
+    }
 
     @Get('withdrawals')
     getAllWithdrawals() {

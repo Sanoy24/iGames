@@ -74,7 +74,19 @@ const LEDGER_KEY: Record<string, string> = {
     agent_receipt: 'agentTransfer',
 };
 
-const FAQ_KEYS = ['currency', 'deposit', 'withdraw', 'instant'] as const;
+const FAQ_KEYS = [
+    'currency',
+    'deposit',
+    'withdraw',
+    'bingo',
+    'instant',
+] as const;
+
+const FAQ_IMAGES: Partial<Record<(typeof FAQ_KEYS)[number], string[]>> = {
+    deposit: ['/faq/deposit-guide.png'],
+    withdraw: ['/faq/withdrawal-guide.png'],
+    bingo: ['/faq/bingo-gameplay-guide.png', '/faq/bingo-win-patterns.png'],
+};
 
 function useCountdownSecs(targetIso: string | null | undefined) {
     const [secs, setSecs] = useState<number | null>(null);
@@ -282,7 +294,15 @@ function PoolWaitingTicker({
 
 // ─── FAQ ─────────────────────────────────────────────────────────────────────
 
-const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
+const FaqItem = memo(function FaqItem({
+    q,
+    a,
+    images,
+}: {
+    q: string;
+    a: string;
+    images?: string[];
+}) {
     const [open, setOpen] = React.useState(false);
     return (
         <div className={`rule-item${open ? ' open' : ''}`}>
@@ -300,16 +320,31 @@ const FaqItem = memo(function FaqItem({ q, a }: { q: string; a: string }) {
             </button>
             <AnimatePresence initial={false}>
                 {open && (
-                    <motion.p
-                        className='rule-answer'
+                    <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.2 }}
-                        style={{ overflow: 'hidden', margin: 0 }}
+                        style={{ overflow: 'hidden' }}
                     >
-                        {a}
-                    </motion.p>
+                        <p className='rule-answer'>{a}</p>
+                        {images && images.length > 0 && (
+                            <div className='rule-answer-images'>
+                                {images.map((src) => (
+                                    <img
+                                        key={src}
+                                        src={src}
+                                        alt={q}
+                                        loading='lazy'
+                                        className='rule-answer-img'
+                                        onClick={() =>
+                                            window.open(src, '_blank')
+                                        }
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </motion.div>
                 )}
             </AnimatePresence>
         </div>
@@ -943,6 +978,7 @@ export function Home({ onNavigate }: Props) {
                             key={k}
                             q={t(`faq.${k}.q`)}
                             a={t(`faq.${k}.a`)}
+                            images={FAQ_IMAGES[k]}
                         />
                     ))}
                 </div>

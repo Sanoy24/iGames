@@ -1437,8 +1437,24 @@
     font-size: 13px;
     color: var(--text-secondary);
     line-height: 1.6;
-    padding: 0 0 14px 2px;
+    padding: 0 0 8px 2px;
     margin: 0;
+}
+.rule-answer-images {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 0 0 14px 2px;
+    -webkit-overflow-scrolling: touch;
+}
+.rule-answer-img {
+    height: 180px;
+    width: auto;
+    flex-shrink: 0;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    object-fit: cover;
 }
 
 /* ══════════════════════════════════════════════════════════
